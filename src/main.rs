@@ -1,9 +1,11 @@
 //! codeq — a deterministic single source of truth for repository intelligence,
 //! built for AI agents.
 //!
-//! This is the v1 proving spine: index a repo into SQLite, then answer
-//! `files`, `changed`, and `stats` with a stable JSON envelope and daemonless
-//! freshness. Symbols, imports, and context come next.
+//! Indexes a repository into SQLite (daemonless, incremental, ignore-aware) and
+//! answers structured queries over files, symbols, imports, and file/import
+//! aggregates, plus token-budgeted context assembly — all as compact JSON.
+//! Results are deterministic and reproducible; codeq reports facts, it does not
+//! guess intent or rank by opinion.
 
 mod commands;
 mod context;
@@ -55,9 +57,6 @@ enum Command {
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 200)]
         limit: usize,
-        /// Emit JSON (currently the only format).
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
     /// Files changed relative to a Git ref (merge-base with HEAD).
     Changed {
@@ -67,8 +66,6 @@ enum Command {
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
     /// List defined symbols (functions, structs, classes, …).
     Symbols {
@@ -89,8 +86,6 @@ enum Command {
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 200)]
         limit: usize,
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
     /// The structure of a file top to bottom: definitions, signatures, nesting.
     Outline {
@@ -99,8 +94,6 @@ enum Command {
         /// Include docstrings for each definition.
         #[arg(long)]
         docs: bool,
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
     /// Locate the definition(s) of an exact symbol name.
     Definitions {
@@ -109,8 +102,6 @@ enum Command {
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
     /// List import statements (raw, unresolved module strings).
     Imports {
@@ -119,8 +110,6 @@ enum Command {
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 200)]
         limit: usize,
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
     /// Files that import a module matching the query (raw string match).
     Importers {
@@ -129,8 +118,6 @@ enum Command {
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
     /// Assemble token-budgeted context from explicit seeds.
     Context {
@@ -157,26 +144,18 @@ enum Command {
         /// Omit chunk source text (return provenance only).
         #[arg(long)]
         no_text: bool,
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
     /// Summary counts for the current index.
     Stats {
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
     /// Factual aggregation of the index for orientation (grouped counts).
     Map {
         /// Max rows per list (0 = unlimited).
         #[arg(long, default_value_t = 20)]
         limit: usize,
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
     /// Describe what codeq can do: commands, languages, fact kinds, schema.
     Capabilities {
-        #[arg(long, default_value_t = true)]
-        json: bool,
     },
 }
 
@@ -196,7 +175,6 @@ fn main() -> ExitCode {
             pattern,
             language,
             limit,
-            json: _,
         } => commands::cmd_files(
             &cwd,
             pattern.as_deref(),
@@ -207,7 +185,6 @@ fn main() -> ExitCode {
         Command::Changed {
             compare_to,
             limit,
-            json: _,
         } => commands::cmd_changed(&cwd, &compare_to, limit, out),
         Command::Symbols {
             pattern,
@@ -216,7 +193,6 @@ fn main() -> ExitCode {
             path,
             signatures,
             limit,
-            json: _,
         } => commands::cmd_symbols(
             &cwd,
             pattern.as_deref(),
@@ -230,22 +206,18 @@ fn main() -> ExitCode {
         Command::Outline {
             file,
             docs,
-            json: _,
         } => commands::cmd_outline(&cwd, &file, docs, out),
         Command::Definitions {
             symbol,
             limit,
-            json: _,
         } => commands::cmd_definitions(&cwd, &symbol, limit, out),
         Command::Imports {
             path,
             limit,
-            json: _,
         } => commands::cmd_imports(&cwd, path.as_deref(), limit, out),
         Command::Importers {
             query,
             limit,
-            json: _,
         } => commands::cmd_importers(&cwd, &query, limit, out),
         Command::Context {
             symbols,
@@ -255,7 +227,6 @@ fn main() -> ExitCode {
             max_tokens,
             expand,
             no_text,
-            json: _,
         } => commands::cmd_context(
             &cwd,
             context::Request {
@@ -269,9 +240,9 @@ fn main() -> ExitCode {
             },
             out,
         ),
-        Command::Stats { json: _ } => commands::cmd_stats(&cwd, out),
-        Command::Map { limit, json: _ } => commands::cmd_map(&cwd, limit, out),
-        Command::Capabilities { json: _ } => commands::cmd_capabilities(out),
+        Command::Stats {} => commands::cmd_stats(&cwd, out),
+        Command::Map { limit } => commands::cmd_map(&cwd, limit, out),
+        Command::Capabilities {} => commands::cmd_capabilities(out),
     };
 
     match result {

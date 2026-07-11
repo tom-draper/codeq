@@ -2,6 +2,22 @@
 
 > A persistent, deterministic single source of truth for repository intelligence, built for AI agents.
 
+## Implementation Status
+
+This document is the design rationale. A working prototype now exists; see
+[README.md](./README.md) for the commands that actually ship today. Built so far:
+
+- Daemonless, incremental, ignore-aware indexing into SQLite (WAL).
+- `index`, `files`, `changed`, `stats`, `map`, `capabilities`.
+- Tree-sitter symbols/imports for **Rust** and **Python**: `symbols`, `definitions`,
+  `outline` (with signatures + docstrings), `imports`, `importers`.
+- Token-budgeted `context` assembly with explicit seeds and opt-in mechanical expansion.
+- Compact-by-default JSON with a meta-only-when-noteworthy envelope; 29 integration tests.
+
+The guiding principle, learned in practice: **report facts, never opinions** — deterministic,
+reproducible output with no relevance ranking or intent inference. Sections below that
+predate this (notably around `context` ranking) are superseded by it.
+
 ## Mission
 
 AI coding agents repeatedly do the same expensive work:
@@ -268,13 +284,16 @@ Good context output should minimize:
 - arbitrary line slicing
 - repeated model calls for follow-up lookup
 
-### Relevance Is the Hard Part, and It Is Not Free
+### Relevance Is a Trap; Assembly Must Stay Mechanical
 
-`--max-tokens` has two halves: fitting a budget (easy) and choosing what fills it (hard). This draft calls `context` the most valuable command but never says how it ranks. Commit to a concrete, deterministic, explainable model rather than implying magic:
+`--max-tokens` has two halves: fitting a budget (easy) and choosing what fills it (hard). The temptation is to "rank by relevance" — but any hidden or heuristic ranking is exactly what makes an agent stop trusting the output and fall back to `rg`. So `context` does not rank by relevance. It assembles mechanically from explicit seeds:
 
-- Seeds are explicit inputs — changed symbols, a named symbol, a path prefix — never inferred task intent. `codeq` does not know the task; the agent does.
-- Rank candidates by a deterministic score: graph distance from the seeds over import/definition edges, then changed-recency, then a stable tiebreak. No hidden semantic scoring.
+- Seeds are explicit inputs — named symbols, or changed files — never inferred task intent. `codeq` does not know the task; the agent does. The default returns *exactly the seeds*.
+- Expansion is opt-in and mechanical: one deterministic hop to definitions referenced *by name* inside the seed chunks. No graph-distance scoring, no recency weighting, no semantic judgement — just "these seeds, optionally plus what they name."
+- Ordering within the result is stated plainly (seeds first, then referenced, each by path+line; a chunk over budget is skipped, not reordered) and is fully reproducible.
 - Always emit the query plan and the omitted candidates. When the budget truncates, the agent must be told what was dropped and how to request the next slice. A confident, incomplete context that hides its omissions is this product's worst failure mode.
+
+This is the general rule for the whole tool: **report facts, never opinions.** Deterministic, reproducible, transparent output — no relevance ranking, no intent inference. Where a summary is ordered by a count (e.g. `map`), the count is present in every row so the ordering explains itself.
 
 ### Token Counts Are Model-Specific
 
