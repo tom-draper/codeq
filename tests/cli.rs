@@ -1,0 +1,515 @@
+//! Integration tests: drive the real `codeq` binary against programmatic
+//! fixture repositories and assert on the JSON contract agents consume.
+//!
+//! These deliberately exercise the CLI end to end (not internals), because the
+//! stable output envelope *is* the product surface.
+
+use std::path::Path;
+use std::process::{Command, Output};
+
+use assert_cmd::cargo::CommandCargoExt;
+use serde_json::Value;
+use tempfile::TempDir;
+
+/// A throwaway repository under a temp dir.
+struct Fixture {
+    dir: TempDir,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        Fixture {
+            dir: TempDir::new().expect("tempdir"),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        self.dir.path()
+    }
+
+    fn write(&self, rel: &str, contents: &str) -> &Self {
+        self.write_bytes(rel, contents.as_bytes());
+        self
+    }
+
+    fn write_bytes(&self, rel: &str, bytes: &[u8]) -> &Self {
+        let p = self.path().join(rel);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(p, bytes).unwrap();
+        self
+    }
+
+    fn remove(&self, rel: &str) {
+        std::fs::remove_file(self.path().join(rel)).unwrap();
+    }
+
+    /// Run git with deterministic identity/config injected.
+    fn git(&self, args: &[&str]) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(self.path())
+            .args([
+                "-c",
+                "user.email=codeq@test",
+                "-c",
+                "user.name=codeq",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn git_init_commit(&self) {
+        self.git(&["init", "-q", "-b", "main"]);
+        self.git(&["add", "-A"]);
+        self.git(&["commit", "-q", "-m", "init"]);
+    }
+
+    fn raw(&self, args: &[&str]) -> Output {
+        Command::cargo_bin("codeq")
+            .unwrap()
+            .current_dir(self.path())
+            .args(args)
+            .output()
+            .expect("run codeq")
+    }
+
+    /// Run codeq, assert success, and parse stdout as JSON.
+    fn run(&self, args: &[&str]) -> Value {
+        let out = self.raw(args);
+        assert!(
+            out.status.success(),
+            "codeq {:?} exited {}: {}",
+            args,
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+            panic!(
+                "codeq {:?} produced invalid JSON: {e}\n{}",
+                args,
+                String::from_utf8_lossy(&out.stdout)
+            )
+        })
+    }
+}
+
+/// Collect a string field from every element of `data`.
+fn field_set(v: &Value, key: &str) -> Vec<String> {
+    v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r[key].as_str().map(|s| s.to_string()))
+        .collect()
+}
+
+/// Collect a JSON array of strings into a Vec.
+fn field_names(v: &Value) -> Vec<String> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s.as_str().map(|s| s.to_string()))
+        .collect()
+}
+
+/// Collect the `symbol` of every chunk in a `context` result's `data` object.
+fn chunk_symbols(data: &Value) -> Vec<String> {
+    data["chunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["symbol"].as_str().map(|s| s.to_string()))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Contract / schema lock
+// ---------------------------------------------------------------------------
+
+#[test]
+fn default_output_is_lean_when_nothing_noteworthy() {
+    // The token-tax fix: a fresh, clean call is just {schema, data} — no repo
+    // or index meta blocks to pay for.
+    let f = Fixture::new();
+    f.write("a.py", "def x():\n    pass\n");
+    f.run(&["index"]);
+    let v = f.run(&["stats"]); // second call: nothing changed
+
+    let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|s| s.as_str()).collect();
+    keys.sort();
+    assert_eq!(keys, ["data", "schema"], "clean call should carry no meta");
+    assert_eq!(v["schema"], "codeq.result.v1");
+}
+
+#[test]
+fn meta_flag_returns_full_stable_envelope() {
+    let f = Fixture::new();
+    f.write("a.py", "def x():\n    pass\n");
+    let v = f.run(&["stats", "--meta"]);
+
+    let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|s| s.as_str()).collect();
+    keys.sort();
+    assert_eq!(keys, ["data", "index", "repo", "schema"]);
+    assert_eq!(v["schema"], "codeq.result.v1");
+    assert_eq!(v["index"]["schema"], 1);
+    assert_eq!(v["index"]["fresh"], true);
+    assert!(v["index"]["elapsed_ms"].is_u64());
+    assert!(v["repo"]["root"].is_string());
+    assert!(v["repo"]["vcs"].is_string());
+}
+
+#[test]
+fn reindex_surfaces_index_block_without_meta() {
+    // When work was actually done, the index block appears even in lean mode —
+    // meta shows up precisely when it carries signal.
+    let f = Fixture::new();
+    f.write("a.py", "def x():\n    pass\n");
+    let v = f.run(&["index"]); // first index: reparses the file
+    assert_eq!(v["index"]["reindexed_files"], 1);
+}
+
+#[test]
+fn fields_projection_keeps_only_requested_columns() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() {}\nfn two() {}\n");
+    let v = f.run(&["symbols", "--fields", "name,path"]);
+    for row in v["data"].as_array().unwrap() {
+        let mut keys: Vec<&str> = row.as_object().unwrap().keys().map(|s| s.as_str()).collect();
+        keys.sort();
+        assert_eq!(keys, ["name", "path"], "projection should drop other fields");
+    }
+}
+
+#[test]
+fn capabilities_describes_the_tool() {
+    let f = Fixture::new();
+    let v = f.run(&["capabilities"]);
+    let d = &v["data"];
+    let cmds = field_names(&d["commands"]);
+    assert!(cmds.contains(&"context".to_string()), "{cmds:?}");
+    assert!(cmds.contains(&"capabilities".to_string()));
+    let langs = field_names(&d["extraction_languages"]);
+    assert!(langs.contains(&"rust".to_string()) && langs.contains(&"python".to_string()));
+    assert_eq!(d["result_schema"], "codeq.result.v1");
+}
+
+// ---------------------------------------------------------------------------
+// Inventory + ignore handling
+// ---------------------------------------------------------------------------
+
+#[test]
+fn indexes_files_and_respects_gitignore() {
+    let f = Fixture::new();
+    f.write("src/a.rs", "fn a() {}\n")
+        .write("noise.log", "junk\n")
+        .write(".gitignore", "*.log\n");
+    f.git_init_commit();
+
+    let v = f.run(&["files"]);
+    let paths = field_set(&v, "path");
+    assert!(paths.contains(&"src/a.rs".to_string()), "paths: {paths:?}");
+    assert!(
+        !paths.iter().any(|p| p.ends_with(".log")),
+        "gitignored file leaked: {paths:?}"
+    );
+}
+
+#[test]
+fn binary_file_is_indexed_without_language() {
+    let f = Fixture::new();
+    f.write_bytes("blob.bin", &[0u8, 1, 2, 0, 255, 3]);
+    f.write("real.py", "def y():\n    pass\n");
+    let v = f.run(&["files"]);
+    let blob = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "blob.bin")
+        .expect("binary file indexed");
+    assert!(
+        blob.get("language").is_none(),
+        "binary file should have no language: {blob}"
+    );
+}
+
+#[test]
+fn non_git_directory_works() {
+    let f = Fixture::new();
+    f.write("a.py", "def z():\n    pass\n");
+    let v = f.run(&["stats", "--meta"]);
+    assert_eq!(v["repo"]["vcs"], "none");
+    assert!(v["repo"].get("head").is_none());
+    assert_eq!(v["data"]["files"], 1);
+}
+
+#[test]
+fn unicode_paths_are_handled() {
+    let f = Fixture::new();
+    f.write("src/café/naïve.py", "def accented():\n    pass\n");
+    let files = field_set(&f.run(&["files"]), "path");
+    assert!(
+        files.iter().any(|p| p.contains("café/na")),
+        "unicode path missing: {files:?}"
+    );
+    let syms = field_set(&f.run(&["symbols"]), "name");
+    assert!(syms.contains(&"accented".to_string()), "syms: {syms:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Robustness / adversarial
+// ---------------------------------------------------------------------------
+
+#[test]
+fn malformed_source_does_not_crash() {
+    let f = Fixture::new();
+    f.write("broken.rs", "fn ( { struct )) impl for 123 use ;;;\n");
+    // Indexing and querying must succeed even on unparseable input.
+    f.run(&["index"]);
+    f.run(&["symbols"]);
+    f.run(&["imports"]);
+}
+
+#[test]
+#[cfg(unix)]
+fn symlink_cycle_terminates() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    f.write("dir/real.py", "def ok():\n    pass\n");
+    symlink(f.path().join("dir"), f.path().join("dir/loop")).unwrap();
+    // Must not infinitely recurse; default walk does not follow symlinks.
+    let v = f.run(&["files"]);
+    let paths = field_set(&v, "path");
+    assert!(paths.contains(&"dir/real.py".to_string()), "{paths:?}");
+}
+
+#[test]
+fn large_file_is_handled() {
+    let f = Fixture::new();
+    let big = "x".repeat(1_500_000);
+    f.write("big.txt", &big);
+    f.write("a.py", "def small():\n    pass\n");
+    let v = f.run(&["stats"]);
+    assert!(v["data"]["files"].as_i64().unwrap() >= 2);
+}
+
+// ---------------------------------------------------------------------------
+// Incremental lifecycle
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reindex_counts_only_content_changes() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() {}\n");
+    f.run(&["index"]);
+
+    // Rewrite identical bytes: mtime may bump but content hash is unchanged, so
+    // nothing is reparsed and the whole index block stays out of the envelope.
+    f.write("a.rs", "fn one() {}\n");
+    let v = f.run(&["stats"]);
+    assert!(
+        v.get("index").is_none(),
+        "identical rewrite must not count as reindex: {v}"
+    );
+
+    // Real content change: exactly one file reparsed.
+    f.write("a.rs", "fn one() {}\nfn two() {}\n");
+    let v = f.run(&["stats"]);
+    assert_eq!(v["index"]["reindexed_files"], 1);
+}
+
+#[test]
+fn deleting_a_file_cascades_to_its_facts() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn alpha() {}\n");
+    assert_eq!(f.run(&["definitions", "alpha"])["data"].as_array().unwrap().len(), 1);
+
+    f.remove("a.rs");
+    let defs = f.run(&["definitions", "alpha"]);
+    assert_eq!(defs["data"].as_array().unwrap().len(), 0, "fact not pruned");
+    let files = field_set(&f.run(&["files"]), "path");
+    assert!(!files.contains(&"a.rs".to_string()), "file row not pruned");
+}
+
+// ---------------------------------------------------------------------------
+// Symbols / imports correctness
+// ---------------------------------------------------------------------------
+
+#[test]
+fn extracts_rust_symbols_and_imports() {
+    let f = Fixture::new();
+    f.write(
+        "lib.rs",
+        "use crate::db::Store;\nstruct Widget;\nfn build() -> Widget { Widget }\n",
+    );
+    let syms = field_set(&f.run(&["symbols"]), "name");
+    assert!(syms.contains(&"Widget".to_string()), "{syms:?}");
+    assert!(syms.contains(&"build".to_string()), "{syms:?}");
+    // Imports must not leak into symbols.
+    assert!(!syms.iter().any(|s| s.contains("crate::db")), "{syms:?}");
+
+    let mods = field_set(&f.run(&["imports"]), "module");
+    assert!(mods.contains(&"crate::db::Store".to_string()), "{mods:?}");
+
+    let importers = field_set(&f.run(&["importers", "db::Store"]), "path");
+    assert_eq!(importers, vec!["lib.rs".to_string()]);
+}
+
+#[test]
+fn definitions_returns_precise_ranges() {
+    let f = Fixture::new();
+    f.write("m.py", "def first():\n    pass\n\ndef target():\n    return 1\n");
+    let v = f.run(&["definitions", "target"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    let r = &rows[0];
+    assert_eq!(r["kind"], "function");
+    assert_eq!(r["start_line"], 4); // 1-based
+    assert!(r["end_byte"].as_i64().unwrap() > r["start_byte"].as_i64().unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// Git-aware changed + exit codes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn changed_reports_modified_and_untracked() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn a() {}\n").write("b.rs", "fn b() {}\n");
+    f.git_init_commit();
+
+    f.write("a.rs", "fn a() {}\n// edit\n"); // modify tracked
+    f.write("c.rs", "fn c() {}\n"); // new untracked
+
+    let paths = field_set(&f.run(&["changed", "--compare-to", "HEAD"]), "path");
+    assert!(paths.contains(&"a.rs".to_string()), "{paths:?}");
+    assert!(paths.contains(&"c.rs".to_string()), "{paths:?}");
+    assert!(!paths.contains(&"b.rs".to_string()), "unchanged b leaked: {paths:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Context assembly
+// ---------------------------------------------------------------------------
+
+#[test]
+fn context_requires_explicit_seeds() {
+    let f = Fixture::new();
+    f.write("m.py", "def solo():\n    return 42\n");
+    let out = f.raw(&["context"]);
+    assert!(!out.status.success(), "context with no seeds should fail");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("seeds"));
+}
+
+#[test]
+fn context_symbol_seed_returns_chunk_with_text_and_range() {
+    let f = Fixture::new();
+    f.write("m.py", "def solo():\n    return 42\n");
+    let v = f.run(&["context", "--symbols", "solo"]);
+    let d = &v["data"];
+    let chunks = d["chunks"].as_array().unwrap();
+    assert_eq!(chunks.len(), 1, "only the seed, no references: {chunks:?}");
+    let c = &chunks[0];
+    assert_eq!(c["symbol"], "solo");
+    assert_eq!(c["reason"], "seed");
+    assert_eq!(c["start_line"], 1);
+    assert!(c["text"].as_str().unwrap().contains("return 42"));
+    assert!(d["budget"]["used_tokens"].as_u64().unwrap() > 0);
+    assert_eq!(d["budget"]["tokenizer"], "approx:4-bytes-per-token");
+}
+
+#[test]
+fn context_expands_to_referenced_definitions() {
+    let f = Fixture::new();
+    f.write(
+        "m.py",
+        "def helper():\n    return 1\n\ndef caller():\n    return helper()\n",
+    );
+    let v = f.run(&["context", "--symbols", "caller", "--no-text"]);
+    let chunks = v["data"]["chunks"].as_array().unwrap();
+    let seed = chunks.iter().find(|c| c["symbol"] == "caller").unwrap();
+    let neigh = chunks.iter().find(|c| c["symbol"] == "helper").unwrap();
+    assert_eq!(seed["reason"], "seed");
+    assert_eq!(neigh["reason"], "referenced");
+    // --no-text means provenance only.
+    assert!(seed.get("text").is_none());
+}
+
+#[test]
+fn context_no_expand_returns_only_seeds() {
+    let f = Fixture::new();
+    f.write(
+        "m.py",
+        "def helper():\n    return 1\n\ndef caller():\n    return helper()\n",
+    );
+    let v = f.run(&["context", "--symbols", "caller", "--no-expand", "--no-text"]);
+    let names = chunk_symbols(&v["data"]);
+    assert_eq!(names, vec!["caller".to_string()], "expansion should be off");
+}
+
+#[test]
+fn context_respects_token_budget() {
+    let f = Fixture::new();
+    f.write("m.py", "def aa():\n    pass\n\ndef bb():\n    return 123\n");
+
+    // Ample budget: both seeds fit, used == sum of est, nothing omitted.
+    let v = f.run(&[
+        "context", "--symbols", "aa,bb", "--no-expand", "--no-text",
+    ]);
+    let d = &v["data"];
+    let chunks = d["chunks"].as_array().unwrap();
+    let sum: u64 = chunks
+        .iter()
+        .map(|c| c["est_tokens"].as_u64().unwrap())
+        .sum();
+    let used = d["budget"]["used_tokens"].as_u64().unwrap();
+    assert_eq!(sum, used);
+    assert!(used <= 12000);
+    assert!(d["omitted"].as_array().unwrap().is_empty());
+
+    // Starve the budget: nothing fits, everything is reported as omitted.
+    let v = f.run(&[
+        "context", "--symbols", "aa,bb", "--no-expand", "--no-text",
+        "--max-tokens", "1",
+    ]);
+    let d = &v["data"];
+    assert!(d["budget"]["used_tokens"].as_u64().unwrap() <= 1);
+    assert!(!d["omitted"].as_array().unwrap().is_empty(), "omissions must be visible");
+}
+
+#[test]
+fn context_changed_mode_seeds_from_git() {
+    let f = Fixture::new();
+    f.write("a.py", "def old():\n    pass\n");
+    f.git_init_commit();
+    f.write("a.py", "def old():\n    pass\n\ndef fresh():\n    pass\n");
+
+    let v = f.run(&["context", "--changed", "--compare-to", "HEAD", "--no-text"]);
+    let d = &v["data"];
+    assert!(d["plan"]["modes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m == "changed"));
+    let names = chunk_symbols(d);
+    assert!(names.contains(&"fresh".to_string()), "changed seed missing: {names:?}");
+}
+
+#[test]
+fn changed_without_git_fails_with_nonzero_exit() {
+    let f = Fixture::new();
+    f.write("a.py", "def x():\n    pass\n");
+    let out = f.raw(&["changed", "--compare-to", "main"]);
+    assert!(!out.status.success(), "expected non-zero exit");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("Git"), "stderr should mention Git: {stderr}");
+}

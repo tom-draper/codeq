@@ -1,0 +1,32 @@
+[package]
+name = "codeq"
+version = "0.0.1"
+edition = "2021"
+description = "A deterministic single source of truth for repository intelligence, built for AI agents."
+license = "MIT"
+
+[[bin]]
+name = "codeq"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+blake3 = "1"
+clap = { version = "4", features = ["derive"] }
+ignore = "0.4"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+streaming-iterator = "0.1.9"
+tree-sitter = "0.26.10"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
+tempfile = "3.27.0"
