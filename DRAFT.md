@@ -140,6 +140,25 @@ Call graphs, references, implementations, duplicate detection, and type-aware re
 
 v1 should win by being reliable and fast on syntactic and filesystem facts.
 
+### 6. Untrusted Repositories Are the Default, Not the Exception
+
+Agents routinely run against code they did not write: a freshly cloned repo, a contributor's PR branch, a dependency. Two trust boundaries follow, and the draft currently ignores both:
+
+- **Project-local query packs under `.codeq/queries/` are repo-controlled input.** Auto-loading them means a cloned repository can decide how `codeq` extracts facts inside an agent's session. Even if Tree-sitter queries are not arbitrary code execution, they can be pathological (catastrophic backtracking, memory blowup) or crafted to emit misleading facts an agent then trusts. Local packs should be opt-in per repo, not silently loaded from an untrusted checkout.
+- **Parsers run over adversarial content.** Malformed, enormous, or deliberately hostile source must degrade to bounded work and lower confidence, never a crash or a hang. This overlaps with the testing section but is a security property, not just robustness.
+
+### 7. Parallel Agents Share One Index
+
+The target user is agents, and agents fan out — several processes against the same repo at once. Daemonless plus a single `.codeq/index.db` makes concurrency a correctness issue, not a later optimization:
+
+- Use SQLite in WAL mode so reads are not blocked by a reindex.
+- Guard the cold-start case against a thundering herd: N processes hitting a stale index should not all reindex the whole repo. A single-writer lock, with readers proceeding on the last-good index and a clear "index is being rebuilt" freshness state, beats N redundant rebuilds or N corrupt reads.
+- A crashed or killed indexer must leave a recoverable index, not a half-written one. Reindex should be transactional and resumable.
+
+### 8. The Honest Baseline Is the Agent's Built-in Tools, Not Raw Shell
+
+This draft repeatedly compares `codeq` to `find | rg | cat | sed | awk`. That baseline flatters the tool. Modern agent harnesses already ship structured file search, glob, and grep primitives that are fast and well integrated. `codeq` must beat *those*, and by enough to justify being an extra dependency the agent must learn and the environment must install. Frame the benchmark suite against the agent's real starting toolkit, not a strawman shell pipeline.
+
 ## v1 Goals
 
 The first useful version should optimize for a narrow but dependable agent workflow:
@@ -166,6 +185,12 @@ Targets should be measured on warm and cold runs.
 | Incremental parse of a small edited file | <100ms |
 | Peak memory on large repositories | <200MB |
 
+These figures need conditions attached, or they will be quietly false:
+
+- **Daemonless means a cold query pays for everything.** A cold invocation is process start + SQLite open + freshness check + the query itself. The `<10ms`/`<20ms` query rows are warm-process, index-open figures; the honest end-to-end number for a one-off agent call is closer to the `<100ms` startup row. State which regime each target describes.
+- **The no-op freshness check is not a flat constant.** `<20ms` holds only if the check is cheaper than a full `stat` walk of the tree. On an 80k-file repo it is not, unless it leans on a single cheap signal (git `HEAD` plus a dirty-set probe, or the git index mtime) rather than walking every file. Condition this target on repo size and on Git being present.
+- **Branch switches and rebases are a separate, unbounded tier.** Agents routinely move between refs. A checkout can change thousands of files at once, so the reconciliation after it is not a `<100ms` incremental parse — it is a partial reindex whose cost scales with the diff. The table above silently assumes small working-tree edits; large-diff reconciliation needs its own, larger target.
+
 Initial full-index targets should be treated as benchmark goals, not promises:
 
 | Repository | Target |
@@ -177,6 +202,14 @@ Initial full-index targets should be treated as benchmark goals, not promises:
 ## v1 Commands
 
 The CLI should be small enough that agents can discover and use it reliably.
+
+The list below is broader than the narrowness the rest of this document preaches. Treat it as tiered, not flat, or it reads as a v1 promise the roadmap does not keep:
+
+- **Proving set (build first):** `index`, `files`, `changed`, `symbols`, `definitions`, `imports`/`importers`, `context`. If these are fast, fresh, structured, and reliable, agents already have a better primitive than shell pipelines. Everything else is unproven until these land.
+- **Project facts** (`routes`, `sql`, `tests`, `configs`, `docker`, `migrations`): deferred to Milestone 4 and gated behind confidence reporting. They are the most valuable-looking and the most likely to become a maintenance trap; their presence in this list must not imply v1 coverage.
+- **Discovery** (`capabilities`, `schema`, `status`): cheap, and worth having early because they make the rest self-describing to agents.
+
+The roadmap, not this list, defines sequencing.
 
 ### Repository
 
@@ -235,6 +268,22 @@ Good context output should minimize:
 - arbitrary line slicing
 - repeated model calls for follow-up lookup
 
+### Relevance Is the Hard Part, and It Is Not Free
+
+`--max-tokens` has two halves: fitting a budget (easy) and choosing what fills it (hard). This draft calls `context` the most valuable command but never says how it ranks. Commit to a concrete, deterministic, explainable model rather than implying magic:
+
+- Seeds are explicit inputs — changed symbols, a named symbol, a path prefix — never inferred task intent. `codeq` does not know the task; the agent does.
+- Rank candidates by a deterministic score: graph distance from the seeds over import/definition edges, then changed-recency, then a stable tiebreak. No hidden semantic scoring.
+- Always emit the query plan and the omitted candidates. When the budget truncates, the agent must be told what was dropped and how to request the next slice. A confident, incomplete context that hides its omissions is this product's worst failure mode.
+
+### Token Counts Are Model-Specific
+
+`--max-tokens` is only as trustworthy as the tokenizer behind it. A count computed with one model's tokenizer can under- or over-shoot another's, and an overshoot causes the exact budget overflow the product promises to prevent. Decide explicitly:
+
+- Default to a documented byte/char approximation, and label the count as approximate in the output.
+- Offer an optional exact tokenizer for named model families, paying the binary-size cost only where asked for.
+- Never report a bare token number as if it were authoritative across models.
+
 ## Output Contract
 
 Every JSON response should have a predictable envelope:
@@ -259,6 +308,16 @@ Every JSON response should have a predictable envelope:
 ```
 
 JSONL commands may emit one fact per line, but the schema still needs a documented version.
+
+### The Envelope Is a Per-Call Token Tax
+
+There is a direct tension between "put freshness metadata in every response" and "minimize tokens," and this draft names only the first half. The `repo` and `index` blocks above repeat on every call an agent makes; across a task that is real, recurring overhead spent on boilerplate the model usually does not read.
+
+Resolve it deliberately:
+
+- Keep the envelope minimal. When the index is fresh and clean, collapse it — a single `"fresh": true` is enough; the agent needs the full block only when something is off.
+- Offer a compact mode (`--no-meta`, or metadata only on change) for agents that track freshness out of band.
+- Every field must earn its tokens. `elapsed_ms` and `reindexed_files` help a human debug and do little for the model mid-task; consider gating verbose fields behind a flag.
 
 ## Fact Model
 
@@ -287,6 +346,8 @@ Each fact should include:
 - confidence
 - indexed timestamp or content hash
 - enough location data to fetch the exact surrounding code without rereading the file blindly
+
+A caution on "stable id": an id that encodes a byte range is not stable across edits, because ranges shift whenever content above them changes. Be explicit about the guarantee. Ids should be content-addressed (a hash of path + kind + name + normalized range) and stable *within one index version and working-tree state* — enough for an agent to correlate facts across calls in a single session. They are not durable identifiers to persist across edits or schema versions, and the output should not invite agents to treat them that way.
 
 ## Architecture
 
