@@ -69,7 +69,7 @@ struct Plan {
     /// Distinct seed symbol names resolved.
     seeds: Vec<String>,
     expansion: &'static str,
-    ranking: &'static str,
+    order: &'static str,
 }
 
 #[derive(Serialize)]
@@ -268,7 +268,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
             } else {
                 "disabled"
             },
-            ranking: "seed, then referenced, then path+line; budget-skip on overflow",
+            order: "seeds first, then referenced defs; each group by path+line; a chunk over budget is skipped, not reordered",
         },
         budget: Budget {
             max_tokens: req.max_tokens,

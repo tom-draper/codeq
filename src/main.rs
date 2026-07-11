@@ -149,9 +149,11 @@ enum Command {
         /// Approximate token budget for included chunks.
         #[arg(long, default_value_t = 12000)]
         max_tokens: u64,
-        /// Disable the one-hop referenced-symbol expansion.
+        /// Also include definitions referenced by name in the seed chunks
+        /// (one deterministic hop). Off by default: the default returns exactly
+        /// the seeds requested.
         #[arg(long)]
-        no_expand: bool,
+        expand: bool,
         /// Omit chunk source text (return provenance only).
         #[arg(long)]
         no_text: bool,
@@ -160,6 +162,14 @@ enum Command {
     },
     /// Summary counts for the current index.
     Stats {
+        #[arg(long, default_value_t = true)]
+        json: bool,
+    },
+    /// Factual aggregation of the index for orientation (grouped counts).
+    Map {
+        /// Max rows per list (0 = unlimited).
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
         #[arg(long, default_value_t = true)]
         json: bool,
     },
@@ -243,7 +253,7 @@ fn main() -> ExitCode {
             compare_to,
             path,
             max_tokens,
-            no_expand,
+            expand,
             no_text,
             json: _,
         } => commands::cmd_context(
@@ -254,12 +264,13 @@ fn main() -> ExitCode {
                 compare_to,
                 path,
                 max_tokens,
-                expand: !no_expand,
+                expand,
                 include_text: !no_text,
             },
             out,
         ),
         Command::Stats { json: _ } => commands::cmd_stats(&cwd, out),
+        Command::Map { limit, json: _ } => commands::cmd_map(&cwd, limit, out),
         Command::Capabilities { json: _ } => commands::cmd_capabilities(out),
     };
 

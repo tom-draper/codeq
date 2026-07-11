@@ -502,6 +502,238 @@ pub fn cmd_stats(cwd: &Path, out: Out) -> Result<()> {
     s.emit(data)
 }
 
+// `map` is a factual aggregation of the index — grouped counts, nothing more.
+// It makes no judgement about importance or intent. Where a list is ordered by
+// a count, that count is present in every row so the ordering is transparent
+// and reproducible; ties break on name/path. Nothing here is a heuristic guess.
+
+#[derive(Serialize)]
+struct MapLang {
+    language: String,
+    files: i64,
+    bytes: i64,
+    symbols: i64,
+}
+
+#[derive(Serialize)]
+struct MapTotals {
+    files: i64,
+    symbols: i64,
+    imports: i64,
+}
+
+#[derive(Serialize)]
+struct DirStat {
+    dir: String,
+    files: i64,
+    symbols: i64,
+}
+
+#[derive(Serialize)]
+struct ModuleImports {
+    /// Raw import string, exactly as written (unresolved).
+    module: String,
+    /// Number of distinct files that import it.
+    importers: i64,
+}
+
+#[derive(Serialize)]
+struct FileDefs {
+    path: String,
+    definitions: i64,
+    bytes: i64,
+}
+
+#[derive(Serialize)]
+struct RepoMap {
+    /// How each ordered list is sorted, stated plainly so results are predictable.
+    ordering: &'static str,
+    totals: MapTotals,
+    languages: Vec<MapLang>,
+    directories: Vec<DirStat>,
+    manifests: Vec<String>,
+    imports_by_module: Vec<ModuleImports>,
+    definitions_by_file: Vec<FileDefs>,
+}
+
+/// `map` — one call that summarises the index for orientation. Deliberately
+/// factual: counts grouped by language, directory, imported module, and file.
+/// `--limit` bounds each list; `--limit 0` returns everything.
+pub fn cmd_map(cwd: &Path, limit: usize, out: Out) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let conn = &s.db.conn;
+    let cap = if limit == 0 { 1_000_000 } else { limit };
+
+    let totals = MapTotals {
+        files: conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?,
+        symbols: conn.query_row(
+            "SELECT COUNT(*) FROM facts WHERE kind <> 'import'",
+            [],
+            |r| r.get(0),
+        )?,
+        imports: conn.query_row(
+            "SELECT COUNT(*) FROM facts WHERE kind = 'import'",
+            [],
+            |r| r.get(0),
+        )?,
+    };
+
+    // Languages: file/byte counts merged with symbol counts.
+    let mut langs: BTreeMap<String, (i64, i64, i64)> = BTreeMap::new();
+    {
+        let mut st = conn.prepare(
+            "SELECT COALESCE(language,'(unknown)'), COUNT(*), COALESCE(SUM(size_bytes),0)
+             FROM files GROUP BY language",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        })?;
+        for row in rows {
+            let (l, f, b) = row?;
+            let e = langs.entry(l).or_default();
+            e.0 += f;
+            e.1 += b;
+        }
+        let mut st = conn.prepare(
+            "SELECT COALESCE(language,'(unknown)'), COUNT(*)
+             FROM facts WHERE kind <> 'import' GROUP BY language",
+        )?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (l, c) = row?;
+            langs.entry(l).or_default().2 += c;
+        }
+    }
+    let mut languages: Vec<MapLang> = langs
+        .into_iter()
+        .map(|(language, (files, bytes, symbols))| MapLang {
+            language,
+            files,
+            bytes,
+            symbols,
+        })
+        .collect();
+    languages.sort_by(|a, b| b.files.cmp(&a.files).then(a.language.cmp(&b.language)));
+    languages.truncate(cap);
+
+    // Imports grouped by module (raw string), counted by distinct importing file.
+    let imports_by_module: Vec<ModuleImports> = {
+        let mut st = conn.prepare(
+            "SELECT name, COUNT(DISTINCT path) c FROM facts
+             WHERE kind = 'import' AND name IS NOT NULL
+             GROUP BY name ORDER BY c DESC, name LIMIT ?1",
+        )?;
+        let rows = st.query_map([cap as i64], |r| {
+            Ok(ModuleImports {
+                module: r.get(0)?,
+                importers: r.get(1)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+
+    // Definitions grouped by file.
+    let definitions_by_file: Vec<FileDefs> = {
+        let mut st = conn.prepare(
+            "SELECT facts.path, COUNT(*) c, files.size_bytes
+             FROM facts JOIN files ON files.path = facts.path
+             WHERE facts.kind <> 'import'
+             GROUP BY facts.path ORDER BY c DESC, facts.path LIMIT ?1",
+        )?;
+        let rows = st.query_map([cap as i64], |r| {
+            Ok(FileDefs {
+                path: r.get(0)?,
+                definitions: r.get(1)?,
+                bytes: r.get(2)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+
+    // Directories + manifests: one scan of file paths.
+    let mut dir_files: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+    let mut manifests: Vec<String> = Vec::new();
+    {
+        let mut st = conn.prepare("SELECT path, size_bytes FROM files")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (path, size) = row?;
+            let e = dir_files.entry(top_dir(&path)).or_default();
+            e.0 += 1;
+            e.1 += size;
+            if is_manifest(&path) {
+                manifests.push(path);
+            }
+        }
+    }
+    let mut dir_syms: BTreeMap<String, i64> = BTreeMap::new();
+    {
+        let mut st = conn.prepare("SELECT path FROM facts WHERE kind <> 'import'")?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+        for row in rows {
+            *dir_syms.entry(top_dir(&row?)).or_default() += 1;
+        }
+    }
+    let mut directories: Vec<DirStat> = dir_files
+        .into_iter()
+        .map(|(dir, (files, _bytes))| {
+            let symbols = dir_syms.get(&dir).copied().unwrap_or(0);
+            DirStat { dir, files, symbols }
+        })
+        .collect();
+    directories.sort_by(|a, b| b.files.cmp(&a.files).then(a.dir.cmp(&b.dir)));
+    directories.truncate(cap);
+    manifests.sort();
+    manifests.truncate(cap);
+
+    let data = RepoMap {
+        ordering: "lists ordered by their visible count (files/importers/definitions) desc, ties by name/path",
+        totals,
+        languages,
+        directories,
+        manifests,
+        imports_by_module,
+        definitions_by_file,
+    };
+    s.emit(data)
+}
+
+/// The first path component, or "(root)" for top-level files.
+fn top_dir(path: &str) -> String {
+    match path.split_once('/') {
+        Some((d, _)) => d.to_string(),
+        None => "(root)".to_string(),
+    }
+}
+
+/// Recognise common project manifest / metadata files by basename.
+fn is_manifest(path: &str) -> bool {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    if base.starts_with("README") {
+        return true;
+    }
+    matches!(
+        base,
+        "Cargo.toml"
+            | "Cargo.lock"
+            | "package.json"
+            | "pyproject.toml"
+            | "setup.py"
+            | "setup.cfg"
+            | "requirements.txt"
+            | "Pipfile"
+            | "go.mod"
+            | "go.sum"
+            | "pom.xml"
+            | "build.gradle"
+            | "Gemfile"
+            | "Makefile"
+            | "Dockerfile"
+            | "docker-compose.yml"
+            | "tsconfig.json"
+    )
+}
+
 /// Self-description so an agent can discover what codeq supports without
 /// guessing. Deliberately does not require (or refresh) an index.
 pub fn cmd_capabilities(out: Out) -> Result<()> {
@@ -509,7 +741,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "result_schema": RESULT_SCHEMA,
         "index_schema": SCHEMA_VERSION,
         "commands": [
-            "index", "files", "changed", "stats",
+            "index", "files", "changed", "stats", "map",
             "symbols", "definitions", "outline", "imports", "importers",
             "context", "capabilities",
         ],

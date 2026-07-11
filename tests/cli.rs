@@ -461,6 +461,47 @@ fn outline_orders_by_position_and_nests() {
 }
 
 // ---------------------------------------------------------------------------
+// Map (factual aggregation, no opinion)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn map_is_factual_and_reproducible() {
+    let f = Fixture::new();
+    f.write("src/a.rs", "use crate::db::Store;\nfn one() {}\nfn two() {}\n");
+    f.write("src/b.rs", "use crate::db::Store;\nstruct S;\n");
+    f.write("Cargo.toml", "[package]\nname = \"x\"\n");
+    f.write("README.md", "# x\n");
+    f.run(&["index"]);
+
+    let v = f.run(&["map"]);
+    let d = &v["data"];
+
+    assert_eq!(d["totals"]["files"], 4);
+
+    let manifests = field_names(&d["manifests"]);
+    assert!(manifests.contains(&"Cargo.toml".to_string()));
+    assert!(manifests.contains(&"README.md".to_string()));
+
+    // Import counts are plain facts, and the count is in the row.
+    let store = d["imports_by_module"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["module"] == "crate::db::Store")
+        .unwrap();
+    assert_eq!(store["importers"], 2);
+
+    // definitions_by_file is ordered by its visible count; a.rs (2) before b.rs (1).
+    let df = d["definitions_by_file"].as_array().unwrap();
+    assert_eq!(df[0]["path"], "src/a.rs");
+    assert_eq!(df[0]["definitions"], 2);
+
+    // Same inputs, identical output — no hidden state, no ranking drift.
+    let v2 = f.run(&["map"]);
+    assert_eq!(v, v2, "map must be byte-for-byte reproducible");
+}
+
+// ---------------------------------------------------------------------------
 // Context assembly
 // ---------------------------------------------------------------------------
 
@@ -497,7 +538,8 @@ fn context_expands_to_referenced_definitions() {
         "m.py",
         "def helper():\n    return 1\n\ndef caller():\n    return helper()\n",
     );
-    let v = f.run(&["context", "--symbols", "caller", "--no-text"]);
+    // Expansion is opt-in.
+    let v = f.run(&["context", "--symbols", "caller", "--expand", "--no-text"]);
     let chunks = v["data"]["chunks"].as_array().unwrap();
     let seed = chunks.iter().find(|c| c["symbol"] == "caller").unwrap();
     let neigh = chunks.iter().find(|c| c["symbol"] == "helper").unwrap();
@@ -508,15 +550,16 @@ fn context_expands_to_referenced_definitions() {
 }
 
 #[test]
-fn context_no_expand_returns_only_seeds() {
+fn context_default_returns_only_the_seeds() {
+    // No expansion, no surprises: the default is exactly what was asked for.
     let f = Fixture::new();
     f.write(
         "m.py",
         "def helper():\n    return 1\n\ndef caller():\n    return helper()\n",
     );
-    let v = f.run(&["context", "--symbols", "caller", "--no-expand", "--no-text"]);
+    let v = f.run(&["context", "--symbols", "caller", "--no-text"]);
     let names = chunk_symbols(&v["data"]);
-    assert_eq!(names, vec!["caller".to_string()], "expansion should be off");
+    assert_eq!(names, vec!["caller".to_string()], "default must not expand");
 }
 
 #[test]
@@ -525,9 +568,8 @@ fn context_respects_token_budget() {
     f.write("m.py", "def aa():\n    pass\n\ndef bb():\n    return 123\n");
 
     // Ample budget: both seeds fit, used == sum of est, nothing omitted.
-    let v = f.run(&[
-        "context", "--symbols", "aa,bb", "--no-expand", "--no-text",
-    ]);
+    // (Default is no expansion, so only the two seeds are candidates.)
+    let v = f.run(&["context", "--symbols", "aa,bb", "--no-text"]);
     let d = &v["data"];
     let chunks = d["chunks"].as_array().unwrap();
     let sum: u64 = chunks
@@ -541,8 +583,7 @@ fn context_respects_token_budget() {
 
     // Starve the budget: nothing fits, everything is reported as omitted.
     let v = f.run(&[
-        "context", "--symbols", "aa,bb", "--no-expand", "--no-text",
-        "--max-tokens", "1",
+        "context", "--symbols", "aa,bb", "--no-text", "--max-tokens", "1",
     ]);
     let d = &v["data"];
     assert!(d["budget"]["used_tokens"].as_u64().unwrap() <= 1);
