@@ -83,9 +83,22 @@ enum Command {
         /// Restrict to paths containing this substring.
         #[arg(long)]
         path: Option<String>,
+        /// Include each symbol's signature (declaration minus body).
+        #[arg(long)]
+        signatures: bool,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 200)]
         limit: usize,
+        #[arg(long, default_value_t = true)]
+        json: bool,
+    },
+    /// The structure of a file top to bottom: definitions, signatures, nesting.
+    Outline {
+        /// File to outline (repo-relative path or basename).
+        file: String,
+        /// Include docstrings for each definition.
+        #[arg(long)]
+        docs: bool,
         #[arg(long, default_value_t = true)]
         json: bool,
     },
@@ -191,6 +204,7 @@ fn main() -> ExitCode {
             kind,
             language,
             path,
+            signatures,
             limit,
             json: _,
         } => commands::cmd_symbols(
@@ -199,9 +213,15 @@ fn main() -> ExitCode {
             kind.as_deref(),
             language.as_deref(),
             path.as_deref(),
+            signatures,
             limit,
             out,
         ),
+        Command::Outline {
+            file,
+            docs,
+            json: _,
+        } => commands::cmd_outline(&cwd, &file, docs, out),
         Command::Definitions {
             symbol,
             limit,

@@ -398,6 +398,69 @@ fn changed_reports_modified_and_untracked() {
 }
 
 // ---------------------------------------------------------------------------
+// Signatures / docstrings / outline
+// ---------------------------------------------------------------------------
+
+#[test]
+fn definitions_include_signature_and_rust_doc() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "/// Adds two numbers.\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n",
+    );
+    let v = f.run(&["definitions", "add"]);
+    let r = &v["data"][0];
+    assert_eq!(r["signature"], "pub fn add(a: i32, b: i32) -> i32");
+    assert_eq!(r["doc"], "Adds two numbers.");
+}
+
+#[test]
+fn python_docstring_and_signature_extracted() {
+    let f = Fixture::new();
+    f.write("m.py", "def greet():\n    \"\"\"Say hi.\"\"\"\n    return 1\n");
+    let v = f.run(&["definitions", "greet"]);
+    let r = &v["data"][0];
+    assert_eq!(r["signature"], "def greet():");
+    assert_eq!(r["doc"], "Say hi.");
+}
+
+#[test]
+fn symbols_signature_is_opt_in() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn solo() {}\n");
+
+    let plain = f.run(&["symbols"]);
+    assert!(plain["data"][0].get("signature").is_none(), "should be off by default");
+
+    let with = f.run(&["symbols", "--signatures"]);
+    assert_eq!(with["data"][0]["signature"], "fn solo()");
+}
+
+#[test]
+fn outline_orders_by_position_and_nests() {
+    let f = Fixture::new();
+    f.write(
+        "m.py",
+        "class C:\n    def m(self):\n        pass\n\ndef f():\n    pass\n",
+    );
+    let v = f.run(&["outline", "m.py"]);
+    let rows = v["data"].as_array().unwrap();
+    let names: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["C", "m", "f"], "source order");
+
+    let depth = |name: &str| {
+        rows.iter()
+            .find(|r| r["name"] == name)
+            .unwrap()["depth"]
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(depth("C"), 0);
+    assert_eq!(depth("m"), 1, "method nested in class");
+    assert_eq!(depth("f"), 0);
+}
+
+// ---------------------------------------------------------------------------
 // Context assembly
 // ---------------------------------------------------------------------------
 

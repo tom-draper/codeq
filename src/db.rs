@@ -66,6 +66,8 @@ impl Db {
                 start_col  INTEGER NOT NULL,
                 end_line   INTEGER NOT NULL,
                 end_col    INTEGER NOT NULL,
+                signature  TEXT,
+                doc        TEXT,
                 source     TEXT NOT NULL,
                 confidence REAL NOT NULL,
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
@@ -77,6 +79,13 @@ impl Db {
             CREATE INDEX IF NOT EXISTS facts_path ON facts(path);
             "#,
         )?;
+        // Best-effort column additions for indexes created before these fields
+        // existed. Errors (column already present) are expected and ignored.
+        let _ = self
+            .conn
+            .execute("ALTER TABLE facts ADD COLUMN signature TEXT", []);
+        let _ = self.conn.execute("ALTER TABLE facts ADD COLUMN doc TEXT", []);
+
         self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
         Ok(())
     }

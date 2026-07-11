@@ -186,6 +186,9 @@ struct SymbolRow {
     language: Option<String>,
     start_line: i64,
     end_line: i64,
+    /// Only populated when the caller passes --signatures.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
 }
 
 pub fn cmd_symbols(
@@ -194,13 +197,14 @@ pub fn cmd_symbols(
     kind: Option<&str>,
     language: Option<&str>,
     path: Option<&str>,
+    signatures: bool,
     limit: usize,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
     let mut sql = String::from(
-        "SELECT name, kind, path, language, start_line, end_line
+        "SELECT name, kind, path, language, start_line, end_line, signature
          FROM facts WHERE name IS NOT NULL AND kind <> 'import'",
     );
     let mut args: Vec<String> = Vec::new();
@@ -237,6 +241,7 @@ pub fn cmd_symbols(
             language: r.get(3)?,
             start_line: r.get(4)?,
             end_line: r.get(5)?,
+            signature: if signatures { r.get(6)? } else { None },
         })
     })?;
     let data: Vec<SymbolRow> = rows.collect::<std::result::Result<_, _>>()?;
@@ -256,6 +261,10 @@ struct DefinitionRow {
     end_col: i64,
     start_byte: i64,
     end_byte: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    doc: Option<String>,
 }
 
 pub fn cmd_definitions(cwd: &Path, symbol: &str, limit: usize, out: Out) -> Result<()> {
@@ -263,7 +272,8 @@ pub fn cmd_definitions(cwd: &Path, symbol: &str, limit: usize, out: Out) -> Resu
 
     let mut sql = String::from(
         "SELECT name, kind, path, language,
-                start_line, start_col, end_line, end_col, start_byte, end_byte
+                start_line, start_col, end_line, end_col, start_byte, end_byte,
+                signature, doc
          FROM facts WHERE name = ?1 AND kind <> 'import'
          ORDER BY path, start_line",
     );
@@ -284,9 +294,92 @@ pub fn cmd_definitions(cwd: &Path, symbol: &str, limit: usize, out: Out) -> Resu
             end_col: r.get(7)?,
             start_byte: r.get(8)?,
             end_byte: r.get(9)?,
+            signature: r.get(10)?,
+            doc: r.get(11)?,
         })
     })?;
     let data: Vec<DefinitionRow> = rows.collect::<std::result::Result<_, _>>()?;
+    s.emit(data)
+}
+
+#[derive(Serialize)]
+struct OutlineRow {
+    name: String,
+    kind: String,
+    /// Nesting level derived from byte containment (methods inside a class, …).
+    depth: usize,
+    start_line: i64,
+    end_line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    doc: Option<String>,
+}
+
+struct OutlineDef {
+    name: String,
+    kind: String,
+    start_byte: i64,
+    end_byte: i64,
+    start_line: i64,
+    end_line: i64,
+    signature: Option<String>,
+    doc: Option<String>,
+}
+
+/// `outline <file>` — the structure of a file top to bottom: every definition
+/// in source order, with its signature and a nesting depth so containment
+/// (methods within a class, nested functions) is visible.
+pub fn cmd_outline(cwd: &Path, file: &str, docs: bool, out: Out) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    let mut stmt = s.db.conn.prepare(
+        "SELECT name, kind, start_byte, end_byte, start_line, end_line, signature, doc
+         FROM facts
+         WHERE kind <> 'import' AND (path = ?1 OR path LIKE ?2)
+         ORDER BY start_byte, end_byte DESC",
+    )?;
+    let suffix = format!("%/{file}");
+    let defs: Vec<OutlineDef> = stmt
+        .query_map((file, &suffix), |r| {
+            Ok(OutlineDef {
+                name: r.get(0)?,
+                kind: r.get(1)?,
+                start_byte: r.get(2)?,
+                end_byte: r.get(3)?,
+                start_line: r.get(4)?,
+                end_line: r.get(5)?,
+                signature: r.get(6)?,
+                doc: r.get(7)?,
+            })
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+
+    // Depth = number of other defs whose byte range strictly encloses this one.
+    let data: Vec<OutlineRow> = defs
+        .iter()
+        .map(|d| {
+            let depth = defs
+                .iter()
+                .filter(|o| {
+                    !std::ptr::eq(*o, d)
+                        && o.start_byte <= d.start_byte
+                        && o.end_byte >= d.end_byte
+                        && (o.start_byte != d.start_byte || o.end_byte != d.end_byte)
+                })
+                .count();
+            OutlineRow {
+                name: d.name.clone(),
+                kind: d.kind.clone(),
+                depth,
+                start_line: d.start_line,
+                end_line: d.end_line,
+                signature: d.signature.clone(),
+                doc: if docs { d.doc.clone() } else { None },
+            }
+        })
+        .collect();
+
     s.emit(data)
 }
 
@@ -417,7 +510,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "index_schema": SCHEMA_VERSION,
         "commands": [
             "index", "files", "changed", "stats",
-            "symbols", "definitions", "imports", "importers",
+            "symbols", "definitions", "outline", "imports", "importers",
             "context", "capabilities",
         ],
         // Languages with symbol + import extraction.
