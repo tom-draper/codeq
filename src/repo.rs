@@ -4,6 +4,7 @@
 //! plain directory tree, we just can't answer `changed --compare-to <ref>` or
 //! report a HEAD/dirty state without it.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -95,6 +96,68 @@ impl Repo {
         paths.dedup();
         Ok(paths)
     }
+
+    /// New-side changed line ranges per file, relative to `reference` (merge-base
+    /// with HEAD). Untracked files map to the whole file `(1, usize::MAX)`.
+    /// Used to find which definitions a change actually touched.
+    pub fn changed_line_ranges(
+        &self,
+        reference: &str,
+    ) -> Result<HashMap<String, Vec<(usize, usize)>>> {
+        if !self.is_git {
+            return Err(anyhow!("`changed --symbols` requires a Git repository"));
+        }
+        let base = git(&self.root, &["merge-base", reference, "HEAD"])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| reference.to_string());
+
+        let mut map: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+
+        // `-U0` gives hunk headers with no context, so each @@ range is exactly
+        // the changed new-side lines.
+        let diff = git(&self.root, &["diff", "-U0", "--no-color", &base])?;
+        let mut current: Option<String> = None;
+        for line in diff.lines() {
+            if let Some(rest) = line.strip_prefix("+++ ") {
+                current = if rest == "/dev/null" {
+                    None
+                } else {
+                    Some(rest.strip_prefix("b/").unwrap_or(rest).to_string())
+                };
+            } else if line.starts_with("@@ ") {
+                if let (Some(path), Some((start, count))) = (&current, parse_new_hunk(line)) {
+                    if count > 0 {
+                        map.entry(path.clone())
+                            .or_default()
+                            .push((start, start + count - 1));
+                    }
+                }
+            }
+        }
+
+        // Untracked files: treat the whole file as changed.
+        let untracked = git(&self.root, &["ls-files", "--others", "--exclude-standard"])?;
+        for line in untracked.lines() {
+            let p = line.trim();
+            if !p.is_empty() {
+                map.insert(p.to_string(), vec![(1, usize::MAX)]);
+            }
+        }
+
+        Ok(map)
+    }
+}
+
+/// Parse the new-side `+c,d` field of a `@@ -a,b +c,d @@` hunk header into
+/// `(start_line, line_count)`. A missing count means 1.
+fn parse_new_hunk(line: &str) -> Option<(usize, usize)> {
+    let plus = line.split_whitespace().find(|t| t.starts_with('+'))?;
+    let spec = &plus[1..];
+    let (start, count) = match spec.split_once(',') {
+        Some((a, b)) => (a.parse().ok()?, b.parse().ok()?),
+        None => (spec.parse().ok()?, 1),
+    };
+    Some((start, count))
 }
 
 fn git_toplevel(start: &Path) -> Option<PathBuf> {

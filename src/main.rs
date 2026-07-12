@@ -63,6 +63,9 @@ enum Command {
         /// Ref to compare against, e.g. main.
         #[arg(long, default_value = "main")]
         compare_to: String,
+        /// Report the definitions the change touched, not the files.
+        #[arg(long)]
+        symbols: bool,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
@@ -102,6 +105,25 @@ enum Command {
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
+    },
+    /// Word-boundary references to an exact symbol name, with enclosing symbol.
+    References {
+        /// Exact symbol name to find references to.
+        name: String,
+        /// Restrict to paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Restrict to a language.
+        #[arg(long)]
+        language: Option<String>,
+        /// Maximum matches to return (0 = unlimited).
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    /// The definition(s) enclosing a location, e.g. src/foo.rs:412.
+    At {
+        /// Location as <path>:<line>.
+        location: String,
     },
     /// List import statements (raw, unresolved module strings).
     Imports {
@@ -204,8 +226,9 @@ fn main() -> ExitCode {
         ),
         Command::Changed {
             compare_to,
+            symbols,
             limit,
-        } => commands::cmd_changed(&cwd, &compare_to, limit, out),
+        } => commands::cmd_changed(&cwd, &compare_to, symbols, limit, out),
         Command::Symbols {
             pattern,
             kind,
@@ -231,6 +254,20 @@ fn main() -> ExitCode {
             symbol,
             limit,
         } => commands::cmd_definitions(&cwd, &symbol, limit, out),
+        Command::References {
+            name,
+            path,
+            language,
+            limit,
+        } => commands::cmd_references(
+            &cwd,
+            &name,
+            path.as_deref(),
+            language.as_deref(),
+            limit,
+            out,
+        ),
+        Command::At { location } => commands::cmd_at(&cwd, &location, out),
         Command::Imports {
             path,
             limit,

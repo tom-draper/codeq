@@ -88,11 +88,13 @@ Run inside a repository. Output is compact JSON on stdout.
 | --- | --- |
 | `codeq index [--rebuild]` | Build or refresh the index. |
 | `codeq files [pattern] [--language L]` | Indexed files, optionally filtered. |
-| `codeq changed --compare-to <ref>` | Files changed vs a git ref (merge-base with HEAD) + untracked. |
+| `codeq changed --compare-to <ref> [--symbols]` | Files changed vs a git ref; with `--symbols`, the definitions the change touched. |
 | `codeq stats` | Counts by language and total bytes. |
 | `codeq map [--limit N]` | Factual aggregation for orientation (see below). |
 | `codeq symbols [pattern] [--kind K] [--language L] [--path P] [--signatures]` | Defined symbols. |
 | `codeq definitions <name>` | Exact-name definition(s) with signature, doc, and precise ranges. |
+| `codeq references <name> [--path P] [--language L]` | Word-boundary uses of a symbol, each with its enclosing definition; definition sites flagged. |
+| `codeq at <path>:<line>` | The definition(s) enclosing a location (e.g. from a stack trace), innermost first. |
 | `codeq outline <file> [--docs]` | A file's definitions top to bottom, with signatures and nesting depth. |
 | `codeq imports [path]` | Import statements (raw module strings). |
 | `codeq importers <query>` | Files whose imports match `query` (raw string match). |

@@ -461,6 +461,78 @@ fn outline_orders_by_position_and_nests() {
 }
 
 // ---------------------------------------------------------------------------
+// references / at / changed --symbols
+// ---------------------------------------------------------------------------
+
+#[test]
+fn references_flags_definition_vs_use_with_enclosing_symbol() {
+    let f = Fixture::new();
+    f.write(
+        "m.py",
+        "def helper():\n    return 1\n\ndef caller():\n    return helper()\n",
+    );
+    let v = f.run(&["references", "helper"]);
+    let refs = v["data"]["references"].as_array().unwrap();
+
+    let def = refs.iter().find(|r| r["line"] == 1).unwrap();
+    assert_eq!(def["definition"], true, "line 1 is the definition site");
+
+    let use_site = refs.iter().find(|r| r["line"] == 5).unwrap();
+    assert!(use_site.get("definition").is_none(), "use site is not a definition");
+    assert_eq!(use_site["symbol"], "caller", "use is inside caller");
+}
+
+#[test]
+fn references_uses_word_boundaries() {
+    let f = Fixture::new();
+    // `find` must not match `finder`.
+    f.write("a.rs", "fn find() {}\nfn finder() {}\nfn c() { find(); }\n");
+    let v = f.run(&["references", "find"]);
+    let lines: Vec<i64> = v["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["line"].as_i64().unwrap())
+        .collect();
+    assert!(lines.contains(&1), "definition line");
+    assert!(lines.contains(&3), "call site");
+    assert!(!lines.contains(&2), "must not match finder");
+}
+
+#[test]
+fn at_resolves_innermost_enclosing_definition() {
+    let f = Fixture::new();
+    f.write("m.py", "class C:\n    def meth(self):\n        return 1\n");
+    // Line 3 is inside both C and meth; innermost (meth) comes first.
+    let v = f.run(&["at", "m.py:3"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows[0]["name"], "meth");
+    assert_eq!(rows[0]["kind"], "function");
+}
+
+#[test]
+fn at_rejects_bad_location() {
+    let f = Fixture::new();
+    f.write("m.py", "def x():\n    pass\n");
+    assert!(!f.raw(&["at", "m.py"]).status.success(), "missing :line");
+    assert!(!f.raw(&["at", "m.py:abc"]).status.success(), "non-numeric line");
+}
+
+#[test]
+fn changed_symbols_reports_only_touched_definitions() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn keep() {\n    1;\n}\n\nfn change() {\n    1;\n}\n");
+    f.git_init_commit();
+    // Edit only change()'s body.
+    f.write("a.rs", "fn keep() {\n    1;\n}\n\nfn change() {\n    2;\n}\n");
+
+    let v = f.run(&["changed", "--symbols", "--compare-to", "HEAD"]);
+    let names = field_set(&v, "name");
+    assert!(names.contains(&"change".to_string()), "{names:?}");
+    assert!(!names.contains(&"keep".to_string()), "untouched fn leaked: {names:?}");
+}
+
+// ---------------------------------------------------------------------------
 // Search (content + enclosing symbol)
 // ---------------------------------------------------------------------------
 

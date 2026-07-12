@@ -1,7 +1,7 @@
 //! Command implementations for the v1 proving spine:
 //! `index`, `files`, `changed`, `stats`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
@@ -149,8 +149,28 @@ struct ChangedRow {
     indexed: bool,
 }
 
-pub fn cmd_changed(cwd: &Path, compare_to: &str, limit: usize, out: Out) -> Result<()> {
+#[derive(Serialize)]
+struct ChangedSymbolRow {
+    name: String,
+    kind: String,
+    path: String,
+    start_line: i64,
+    end_line: i64,
+}
+
+pub fn cmd_changed(
+    cwd: &Path,
+    compare_to: &str,
+    symbols: bool,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
+
+    if symbols {
+        return changed_symbols(&s, compare_to, limit);
+    }
+
     let mut paths = s.repo.changed_since(compare_to)?;
     if limit > 0 && paths.len() > limit {
         paths.truncate(limit);
@@ -161,11 +181,7 @@ pub fn cmd_changed(cwd: &Path, compare_to: &str, limit: usize, out: Out) -> Resu
         let indexed: bool = s
             .db
             .conn
-            .query_row(
-                "SELECT 1 FROM files WHERE path = ?1",
-                [&p],
-                |_| Ok(true),
-            )
+            .query_row("SELECT 1 FROM files WHERE path = ?1", [&p], |_| Ok(true))
             .unwrap_or(false);
         let language = language_for(&p).map(|l| l.to_string());
         data.push(ChangedRow {
@@ -173,6 +189,53 @@ pub fn cmd_changed(cwd: &Path, compare_to: &str, limit: usize, out: Out) -> Resu
             language,
             indexed,
         });
+    }
+    s.emit(data)
+}
+
+/// Definitions whose line range overlaps a changed hunk — "which functions did
+/// this change touch". Deterministic (path, start_line).
+fn changed_symbols(s: &Session, compare_to: &str, limit: usize) -> Result<()> {
+    let ranges = s.repo.changed_line_ranges(compare_to)?;
+    let mut paths: Vec<&String> = ranges.keys().collect();
+    paths.sort();
+
+    let mut stmt = s.db.conn.prepare(
+        "SELECT name, kind, start_line, end_line FROM facts
+         WHERE path = ?1 AND kind <> 'import' ORDER BY start_line",
+    )?;
+
+    let mut data: Vec<ChangedSymbolRow> = Vec::new();
+    for p in paths {
+        let hunks = &ranges[p];
+        let defs = stmt.query_map([p], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?;
+        for def in defs {
+            let (name, kind, start_line, end_line) = def?;
+            // Compare in usize so the untracked whole-file sentinel (usize::MAX)
+            // doesn't wrap when cast.
+            let ds = start_line.max(0) as usize;
+            let de = end_line.max(0) as usize;
+            let touched = hunks.iter().any(|&(hs, he)| he >= ds && hs <= de);
+            if touched {
+                data.push(ChangedSymbolRow {
+                    name,
+                    kind,
+                    path: p.clone(),
+                    start_line,
+                    end_line,
+                });
+            }
+        }
+    }
+    if limit > 0 && data.len() > limit {
+        data.truncate(limit);
     }
     s.emit(data)
 }
@@ -283,6 +346,47 @@ pub fn cmd_definitions(cwd: &Path, symbol: &str, limit: usize, out: Out) -> Resu
 
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map([symbol], |r| {
+        Ok(DefinitionRow {
+            name: r.get(0)?,
+            kind: r.get(1)?,
+            path: r.get(2)?,
+            language: r.get(3)?,
+            start_line: r.get(4)?,
+            start_col: r.get(5)?,
+            end_line: r.get(6)?,
+            end_col: r.get(7)?,
+            start_byte: r.get(8)?,
+            end_byte: r.get(9)?,
+            signature: r.get(10)?,
+            doc: r.get(11)?,
+        })
+    })?;
+    let data: Vec<DefinitionRow> = rows.collect::<std::result::Result<_, _>>()?;
+    s.emit(data)
+}
+
+/// `at <path>:<line>` — the definition(s) enclosing a location, innermost first.
+/// Turns a stack-trace or compiler-error line into "what code is this".
+pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let (path, line_str) = location
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow!("expected <path>:<line>, got '{location}'"))?;
+    let line: i64 = line_str
+        .parse()
+        .map_err(|_| anyhow!("invalid line number in '{location}'"))?;
+    let suffix = format!("%/{path}");
+
+    let mut stmt = s.db.conn.prepare(
+        "SELECT name, kind, path, language,
+                start_line, start_col, end_line, end_col, start_byte, end_byte,
+                signature, doc
+         FROM facts
+         WHERE kind <> 'import' AND (path = ?1 OR path LIKE ?2)
+           AND start_line <= ?3 AND end_line >= ?3
+         ORDER BY (end_byte - start_byte) ASC, path",
+    )?;
+    let rows = stmt.query_map((path, &suffix, line), |r| {
         Ok(DefinitionRow {
             name: r.get(0)?,
             kind: r.get(1)?,
@@ -502,12 +606,13 @@ pub fn cmd_stats(cwd: &Path, out: Out) -> Result<()> {
     s.emit(data)
 }
 
-#[derive(Serialize)]
-struct MatchRow {
+/// One matched line, shared by `search` and `references`.
+#[derive(Serialize, Clone)]
+struct Hit {
     path: String,
     line: usize,
     col: usize,
-    /// The definition that encloses this match, if any (innermost).
+    /// The innermost definition enclosing this match, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     symbol: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -518,7 +623,7 @@ struct MatchRow {
 
 #[derive(Serialize)]
 struct SearchResult {
-    matches: Vec<MatchRow>,
+    matches: Vec<Hit>,
     /// True when `--limit` cut the results off — the agent knows to narrow the query.
     truncated: bool,
 }
@@ -532,35 +637,18 @@ struct FileDef {
 
 const MAX_LINE: usize = 240;
 
-/// `search <pattern>` — content search over indexed, non-binary files, with each
-/// match annotated by its enclosing definition. Regex by default (linear-time,
-/// no catastrophic backtracking); `--fixed` for a literal string. This is the
-/// factual answer to "where does this text appear, and what is it inside".
-#[allow(clippy::too_many_arguments)]
-pub fn cmd_search(
-    cwd: &Path,
-    pattern: &str,
-    fixed: bool,
-    ignore_case: bool,
+/// Scan indexed, non-binary files for `re`, one hit per matching line, each
+/// annotated with its enclosing definition. Deterministic order (path, then
+/// line). Returns `(hits, truncated)`.
+fn scan_files(
+    s: &Session,
+    re: &regex::Regex,
     path: Option<&str>,
     language: Option<&str>,
     limit: usize,
-    out: Out,
-) -> Result<()> {
-    let s = Session::open(cwd, false, out)?;
-
-    let expr = if fixed {
-        regex::escape(pattern)
-    } else {
-        pattern.to_string()
-    };
-    let re = regex::RegexBuilder::new(&expr)
-        .case_insensitive(ignore_case)
-        .build()
-        .map_err(|e| anyhow!("invalid pattern: {e}"))?;
-
+) -> Result<(Vec<Hit>, bool)> {
     // Restrict the file set with the same filters, to read less from disk.
-    let mut sql = String::from("SELECT path, language FROM files WHERE 1=1");
+    let mut sql = String::from("SELECT path FROM files WHERE 1=1");
     let mut args: Vec<String> = Vec::new();
     if let Some(p) = path {
         sql.push_str(" AND path LIKE ?");
@@ -581,7 +669,7 @@ pub fn cmd_search(
     };
 
     let cap = if limit == 0 { usize::MAX } else { limit };
-    let mut matches: Vec<MatchRow> = Vec::new();
+    let mut hits: Vec<Hit> = Vec::new();
     let mut truncated = false;
 
     let mut def_stmt = s.db.conn.prepare(
@@ -634,27 +722,113 @@ pub fn cmd_search(
                 .map(|&s| s - 1)
                 .unwrap_or(text.len());
             let raw = &text[line_start..line_end.min(text.len())];
-            let text_field = cap_str(raw.trim_end(), MAX_LINE);
-
             let enclosing = innermost(&defs, off);
 
-            matches.push(MatchRow {
+            hits.push(Hit {
                 path: rel.clone(),
                 line: line_idx + 1,
                 col: off - line_start,
                 symbol: enclosing.map(|d| d.name.clone()),
                 kind: enclosing.map(|d| d.kind.clone()),
-                text: text_field,
+                text: cap_str(raw.trim_end(), MAX_LINE),
             });
 
-            if matches.len() >= cap {
+            if hits.len() >= cap {
                 truncated = true;
                 break 'outer;
             }
         }
     }
 
+    Ok((hits, truncated))
+}
+
+/// `search <pattern>` — content search over indexed, non-binary files, with each
+/// match annotated by its enclosing definition. Regex by default (linear-time,
+/// no catastrophic backtracking); `--fixed` for a literal string. This is the
+/// factual answer to "where does this text appear, and what is it inside".
+#[allow(clippy::too_many_arguments)]
+pub fn cmd_search(
+    cwd: &Path,
+    pattern: &str,
+    fixed: bool,
+    ignore_case: bool,
+    path: Option<&str>,
+    language: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    let expr = if fixed {
+        regex::escape(pattern)
+    } else {
+        pattern.to_string()
+    };
+    let re = regex::RegexBuilder::new(&expr)
+        .case_insensitive(ignore_case)
+        .build()
+        .map_err(|e| anyhow!("invalid pattern: {e}"))?;
+
+    let (matches, truncated) = scan_files(&s, &re, path, language, limit)?;
     s.emit(SearchResult { matches, truncated })
+}
+
+#[derive(Serialize)]
+struct ReferenceRow {
+    #[serde(flatten)]
+    hit: Hit,
+    /// True when this line is the definition site of the symbol (not a use).
+    #[serde(skip_serializing_if = "is_false")]
+    definition: bool,
+}
+
+#[derive(Serialize)]
+struct ReferencesResult {
+    references: Vec<ReferenceRow>,
+    truncated: bool,
+}
+
+/// `references <name>` — word-boundary occurrences of an exact symbol name,
+/// each annotated with its enclosing definition, and definition sites flagged.
+/// These are *textual* references (not type-resolved) — honest and deterministic,
+/// but far more precise than a substring grep.
+pub fn cmd_references(
+    cwd: &Path,
+    name: &str,
+    path: Option<&str>,
+    language: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    let expr = format!(r"\b{}\b", regex::escape(name));
+    let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
+    let (hits, truncated) = scan_files(&s, &re, path, language, limit)?;
+
+    // Definition sites of this exact name: (path, start_line).
+    let mut defsites: HashSet<(String, i64)> = HashSet::new();
+    {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT path, start_line FROM facts WHERE name = ?1 AND kind <> 'import'",
+        )?;
+        let rows =
+            stmt.query_map([name], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            defsites.insert(row?);
+        }
+    }
+
+    let references = hits
+        .into_iter()
+        .map(|h| {
+            let definition = defsites.contains(&(h.path.clone(), h.line as i64));
+            ReferenceRow { hit: h, definition }
+        })
+        .collect();
+
+    s.emit(ReferencesResult { references, truncated })
 }
 
 /// The innermost definition whose byte range contains `off`.
@@ -662,6 +836,10 @@ fn innermost(defs: &[FileDef], off: usize) -> Option<&FileDef> {
     defs.iter()
         .filter(|d| d.start_byte <= off && off < d.end_byte)
         .max_by_key(|d| d.start_byte)
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn cap_str(s: &str, max: usize) -> String {
@@ -913,8 +1091,8 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "index_schema": SCHEMA_VERSION,
         "commands": [
             "index", "files", "changed", "stats", "map",
-            "symbols", "definitions", "outline", "search", "imports", "importers",
-            "context", "capabilities",
+            "symbols", "definitions", "references", "outline", "at", "search",
+            "imports", "importers", "context", "capabilities",
         ],
         // Languages with symbol + import extraction.
         "extraction_languages": ["rust", "python"],
