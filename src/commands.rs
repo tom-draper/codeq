@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::Serialize;
 
 use crate::context::{self, Request};
@@ -502,6 +502,177 @@ pub fn cmd_stats(cwd: &Path, out: Out) -> Result<()> {
     s.emit(data)
 }
 
+#[derive(Serialize)]
+struct MatchRow {
+    path: String,
+    line: usize,
+    col: usize,
+    /// The definition that encloses this match, if any (innermost).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    /// The matched line, trailing whitespace trimmed and capped.
+    text: String,
+}
+
+#[derive(Serialize)]
+struct SearchResult {
+    matches: Vec<MatchRow>,
+    /// True when `--limit` cut the results off — the agent knows to narrow the query.
+    truncated: bool,
+}
+
+struct FileDef {
+    name: String,
+    kind: String,
+    start_byte: usize,
+    end_byte: usize,
+}
+
+const MAX_LINE: usize = 240;
+
+/// `search <pattern>` — content search over indexed, non-binary files, with each
+/// match annotated by its enclosing definition. Regex by default (linear-time,
+/// no catastrophic backtracking); `--fixed` for a literal string. This is the
+/// factual answer to "where does this text appear, and what is it inside".
+#[allow(clippy::too_many_arguments)]
+pub fn cmd_search(
+    cwd: &Path,
+    pattern: &str,
+    fixed: bool,
+    ignore_case: bool,
+    path: Option<&str>,
+    language: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    let expr = if fixed {
+        regex::escape(pattern)
+    } else {
+        pattern.to_string()
+    };
+    let re = regex::RegexBuilder::new(&expr)
+        .case_insensitive(ignore_case)
+        .build()
+        .map_err(|e| anyhow!("invalid pattern: {e}"))?;
+
+    // Restrict the file set with the same filters, to read less from disk.
+    let mut sql = String::from("SELECT path, language FROM files WHERE 1=1");
+    let mut args: Vec<String> = Vec::new();
+    if let Some(p) = path {
+        sql.push_str(" AND path LIKE ?");
+        args.push(format!("%{p}%"));
+    }
+    if let Some(l) = language {
+        sql.push_str(" AND language = ?");
+        args.push(l.to_string());
+    }
+    sql.push_str(" ORDER BY path");
+
+    let files: Vec<String> = {
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let refs: Vec<&dyn rusqlite::ToSql> =
+            args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(refs.as_slice(), |r| r.get::<_, String>(0))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+
+    let cap = if limit == 0 { usize::MAX } else { limit };
+    let mut matches: Vec<MatchRow> = Vec::new();
+    let mut truncated = false;
+
+    let mut def_stmt = s.db.conn.prepare(
+        "SELECT name, kind, start_byte, end_byte FROM facts
+         WHERE path = ?1 AND kind <> 'import'",
+    )?;
+
+    'outer: for rel in files {
+        let bytes = match std::fs::read(s.repo.root.join(&rel)) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        if bytes.iter().take(8192).any(|b| *b == 0) {
+            continue; // binary
+        }
+        let text = String::from_utf8_lossy(&bytes);
+
+        // Line-start offsets for O(log n) line lookup.
+        let mut line_starts = vec![0usize];
+        for (i, b) in text.as_bytes().iter().enumerate() {
+            if *b == b'\n' {
+                line_starts.push(i + 1);
+            }
+        }
+
+        // Definitions in this file, for enclosing-symbol resolution.
+        let defs: Vec<FileDef> = def_stmt
+            .query_map([&rel], |r| {
+                Ok(FileDef {
+                    name: r.get(0)?,
+                    kind: r.get(1)?,
+                    start_byte: r.get::<_, i64>(2)? as usize,
+                    end_byte: r.get::<_, i64>(3)? as usize,
+                })
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+
+        let mut last_line = usize::MAX;
+        for m in re.find_iter(&text) {
+            let off = m.start();
+            let line_idx = line_starts.partition_point(|&s| s <= off) - 1;
+            if line_idx == last_line {
+                continue; // one row per line
+            }
+            last_line = line_idx;
+
+            let line_start = line_starts[line_idx];
+            let line_end = line_starts
+                .get(line_idx + 1)
+                .map(|&s| s - 1)
+                .unwrap_or(text.len());
+            let raw = &text[line_start..line_end.min(text.len())];
+            let text_field = cap_str(raw.trim_end(), MAX_LINE);
+
+            let enclosing = innermost(&defs, off);
+
+            matches.push(MatchRow {
+                path: rel.clone(),
+                line: line_idx + 1,
+                col: off - line_start,
+                symbol: enclosing.map(|d| d.name.clone()),
+                kind: enclosing.map(|d| d.kind.clone()),
+                text: text_field,
+            });
+
+            if matches.len() >= cap {
+                truncated = true;
+                break 'outer;
+            }
+        }
+    }
+
+    s.emit(SearchResult { matches, truncated })
+}
+
+/// The innermost definition whose byte range contains `off`.
+fn innermost(defs: &[FileDef], off: usize) -> Option<&FileDef> {
+    defs.iter()
+        .filter(|d| d.start_byte <= off && off < d.end_byte)
+        .max_by_key(|d| d.start_byte)
+}
+
+fn cap_str(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let t: String = s.chars().take(max).collect();
+        format!("{t}…")
+    }
+}
+
 // `map` is a factual aggregation of the index — grouped counts, nothing more.
 // It makes no judgement about importance or intent. Where a list is ordered by
 // a count, that count is present in every row so the ordering is transparent
@@ -742,7 +913,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "index_schema": SCHEMA_VERSION,
         "commands": [
             "index", "files", "changed", "stats", "map",
-            "symbols", "definitions", "outline", "imports", "importers",
+            "symbols", "definitions", "outline", "search", "imports", "importers",
             "context", "capabilities",
         ],
         // Languages with symbol + import extraction.

@@ -461,6 +461,80 @@ fn outline_orders_by_position_and_nests() {
 }
 
 // ---------------------------------------------------------------------------
+// Search (content + enclosing symbol)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn search_annotates_matches_with_enclosing_symbol() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn add(a: i32) -> i32 {\n    let magic = 42;\n    a + magic\n}\n",
+    );
+    let v = f.run(&["search", "magic"]);
+    let m = v["data"]["matches"].as_array().unwrap();
+    assert!(!m.is_empty());
+    for row in m {
+        assert_eq!(row["symbol"], "add");
+        assert_eq!(row["kind"], "function");
+    }
+    assert_eq!(v["data"]["truncated"], false);
+}
+
+#[test]
+fn search_top_level_match_has_no_symbol() {
+    let f = Fixture::new();
+    f.write("a.rs", "// TODO cleanup\nfn f() {}\n");
+    let v = f.run(&["search", "TODO"]);
+    let row = &v["data"]["matches"][0];
+    assert_eq!(row["line"], 1);
+    assert!(row.get("symbol").is_none(), "comment is inside no definition");
+}
+
+#[test]
+fn search_fixed_is_literal_not_regex() {
+    let f = Fixture::new();
+    f.write("a.py", "x = a.b\ny = aXb\n");
+    // Regex `a.b` matches both `a.b` and `aXb` (. is any char).
+    let re = f.run(&["search", "a.b"]);
+    assert_eq!(re["data"]["matches"].as_array().unwrap().len(), 2);
+    // Literal `a.b` matches only the first line.
+    let fixed = f.run(&["search", "a.b", "--fixed"]);
+    let m = fixed["data"]["matches"].as_array().unwrap();
+    assert_eq!(m.len(), 1);
+    assert_eq!(m[0]["line"], 1);
+}
+
+#[test]
+fn search_language_filter() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn foo() { bar(); }\n");
+    f.write("b.py", "def foo():\n    bar()\n");
+    let v = f.run(&["search", "bar", "--language", "python"]);
+    let m = v["data"]["matches"].as_array().unwrap();
+    assert!(m.iter().all(|r| r["path"] == "b.py"), "{m:?}");
+    assert!(!m.is_empty());
+}
+
+#[test]
+fn search_reports_truncation() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn a() {}\nfn b() {}\nfn c() {}\n");
+    let v = f.run(&["search", "fn", "--limit", "1"]);
+    assert_eq!(v["data"]["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(v["data"]["truncated"], true, "truncation must be visible");
+}
+
+#[test]
+fn search_invalid_regex_fails() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn f() {}\n");
+    let out = f.raw(&["search", "("]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("invalid pattern"));
+}
+
+// ---------------------------------------------------------------------------
 // Map (factual aggregation, no opinion)
 // ---------------------------------------------------------------------------
 

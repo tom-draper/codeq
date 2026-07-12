@@ -119,6 +119,26 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// Content search; each match annotated with its enclosing definition.
+    Search {
+        /// Pattern to search for (regex by default).
+        pattern: String,
+        /// Treat the pattern as a literal string, not a regex.
+        #[arg(long)]
+        fixed: bool,
+        /// Case-insensitive matching.
+        #[arg(long, short = 'i')]
+        ignore_case: bool,
+        /// Restrict to paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Restrict to a language.
+        #[arg(long)]
+        language: Option<String>,
+        /// Maximum matches to return (0 = unlimited).
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
     /// Assemble token-budgeted context from explicit seeds.
     Context {
         /// Seed symbols (comma-separated), e.g. authenticate,Session.
@@ -219,6 +239,23 @@ fn main() -> ExitCode {
             query,
             limit,
         } => commands::cmd_importers(&cwd, &query, limit, out),
+        Command::Search {
+            pattern,
+            fixed,
+            ignore_case,
+            path,
+            language,
+            limit,
+        } => commands::cmd_search(
+            &cwd,
+            &pattern,
+            fixed,
+            ignore_case,
+            path.as_deref(),
+            language.as_deref(),
+            limit,
+            out,
+        ),
         Command::Context {
             symbols,
             changed,
