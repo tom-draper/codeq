@@ -79,6 +79,10 @@ under the repo root (git-ignored, safe to delete).
 - **Tree-sitter extraction.** Symbols and imports come from Tree-sitter queries, so they
   distinguish a definition from a mention. Import strings are **raw** — codeq does not
   resolve path aliases, package roots, or module systems.
+- **Index-backed search.** File contents are held in a SQLite FTS5 index, so `search` and
+  `references` query the index instead of re-reading the filesystem: a literal or symbol
+  query is narrowed by the full-text index, then confirmed with a precise regex / word
+  boundary check. (The tradeoff is index size — it holds a copy of the text.)
 
 ## Commands
 

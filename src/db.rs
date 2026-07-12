@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub struct Db {
     pub conn: Connection,
@@ -79,6 +79,16 @@ impl Db {
             CREATE INDEX IF NOT EXISTS facts_path ON facts(path);
             "#,
         )?;
+
+        // Full-text content index. `tokenchars '_'` keeps identifiers whole
+        // (foo_bar is one token), which aligns FTS tokens with word boundaries.
+        self.conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
+                 path UNINDEXED, language UNINDEXED, body,
+                 tokenize = \"unicode61 tokenchars '_'\"
+             );",
+        )?;
+
         // Best-effort column additions for indexes created before these fields
         // existed. Errors (column already present) are expected and ignored.
         let _ = self
@@ -86,6 +96,14 @@ impl Db {
             .execute("ALTER TABLE facts ADD COLUMN signature TEXT", []);
         let _ = self.conn.execute("ALTER TABLE facts ADD COLUMN doc TEXT", []);
 
+        // On a schema version change, wipe derived data so the next refresh
+        // rebuilds everything (including the FTS index) from scratch.
+        let prev = self.get_meta("schema_version")?;
+        if prev.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
+            self.conn.execute("DELETE FROM files", [])?; // cascades to facts
+            let _ = self.conn.execute("DELETE FROM content_fts", []);
+            let _ = self.set_meta("last_indexed_at", "0");
+        }
         self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
         Ok(())
     }

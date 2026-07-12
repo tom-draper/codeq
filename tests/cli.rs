@@ -162,7 +162,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 1);
+    assert_eq!(v["index"]["schema"], 2);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -595,6 +595,24 @@ fn search_reports_truncation() {
     let v = f.run(&["search", "fn", "--limit", "1"]);
     assert_eq!(v["data"]["matches"].as_array().unwrap().len(), 1);
     assert_eq!(v["data"]["truncated"], true, "truncation must be visible");
+}
+
+#[test]
+fn search_reflects_deleted_files() {
+    // Content lives in the FTS index; a removed file must not leave phantom
+    // matches behind.
+    let f = Fixture::new();
+    f.write("a.rs", "fn zzunique() {}\n");
+    assert_eq!(
+        f.run(&["search", "zzunique"])["data"]["matches"].as_array().unwrap().len(),
+        1
+    );
+    f.remove("a.rs");
+    assert_eq!(
+        f.run(&["search", "zzunique"])["data"]["matches"].as_array().unwrap().len(),
+        0,
+        "deleted file still searchable — FTS not pruned"
+    );
 }
 
 #[test]

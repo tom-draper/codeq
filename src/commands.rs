@@ -39,7 +39,8 @@ impl Session {
         let repo = Repo::discover(cwd)?;
         let db = Db::open(&repo.root)?;
         if rebuild {
-            db.conn.execute("DELETE FROM files", [])?;
+            db.conn.execute("DELETE FROM files", [])?; // cascades to facts
+            db.conn.execute("DELETE FROM content_fts", [])?;
         }
         let stats = refresh(&db, &repo.root)?;
         Ok(Session {
@@ -637,37 +638,64 @@ struct FileDef {
 
 const MAX_LINE: usize = 240;
 
-/// Scan indexed, non-binary files for `re`, one hit per matching line, each
-/// annotated with its enclosing definition. Deterministic order (path, then
-/// line). Returns `(hits, truncated)`.
-fn scan_files(
+/// Candidate file bodies pulled from the FTS index — no filesystem reads.
+/// When `match_query` is set, FTS narrows to files containing those tokens
+/// (a safe superset for literal/word queries); otherwise every text file is a
+/// candidate (regex, which FTS cannot prefilter safely). `path`/`language`
+/// filters are applied after fetch.
+fn fetch_bodies(
     s: &Session,
-    re: &regex::Regex,
+    match_query: Option<&str>,
     path: Option<&str>,
     language: Option<&str>,
-    limit: usize,
-) -> Result<(Vec<Hit>, bool)> {
-    // Restrict the file set with the same filters, to read less from disk.
-    let mut sql = String::from("SELECT path FROM files WHERE 1=1");
-    let mut args: Vec<String> = Vec::new();
-    if let Some(p) = path {
-        sql.push_str(" AND path LIKE ?");
-        args.push(format!("%{p}%"));
-    }
-    if let Some(l) = language {
-        sql.push_str(" AND language = ?");
-        args.push(l.to_string());
-    }
-    sql.push_str(" ORDER BY path");
-
-    let files: Vec<String> = {
-        let mut stmt = s.db.conn.prepare(&sql)?;
-        let refs: Vec<&dyn rusqlite::ToSql> =
-            args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
-        let rows = stmt.query_map(refs.as_slice(), |r| r.get::<_, String>(0))?;
-        rows.collect::<std::result::Result<_, _>>()?
+) -> Result<Vec<(String, String)>> {
+    let sql = if match_query.is_some() {
+        "SELECT path, language, body FROM content_fts WHERE body MATCH ?1 ORDER BY path"
+    } else {
+        "SELECT path, language, body FROM content_fts ORDER BY path"
     };
 
+    let raw: Vec<(String, Option<String>, String)> = {
+        let mut stmt = s.db.conn.prepare(sql)?;
+        let collected = if let Some(q) = match_query {
+            let rows = stmt.query_map([q], row_to_body)?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            let rows = stmt.query_map([], row_to_body)?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        collected
+    };
+
+    let mut out = Vec::new();
+    for (p, lang, body) in raw {
+        if let Some(pf) = path {
+            if !p.contains(pf) {
+                continue;
+            }
+        }
+        if let Some(lf) = language {
+            if lang.as_deref() != Some(lf) {
+                continue;
+            }
+        }
+        out.push((p, body));
+    }
+    Ok(out)
+}
+
+fn row_to_body(r: &rusqlite::Row) -> rusqlite::Result<(String, Option<String>, String)> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+}
+
+/// Run `re` over candidate bodies, one hit per matching line, each annotated
+/// with its enclosing definition. Deterministic order (path, then line).
+fn scan_bodies(
+    s: &Session,
+    re: &regex::Regex,
+    candidates: Vec<(String, String)>,
+    limit: usize,
+) -> Result<(Vec<Hit>, bool)> {
     let cap = if limit == 0 { usize::MAX } else { limit };
     let mut hits: Vec<Hit> = Vec::new();
     let mut truncated = false;
@@ -677,16 +705,7 @@ fn scan_files(
          WHERE path = ?1 AND kind <> 'import'",
     )?;
 
-    'outer: for rel in files {
-        let bytes = match std::fs::read(s.repo.root.join(&rel)) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-        if bytes.iter().take(8192).any(|b| *b == 0) {
-            continue; // binary
-        }
-        let text = String::from_utf8_lossy(&bytes);
-
+    'outer: for (rel, text) in candidates {
         // Line-start offsets for O(log n) line lookup.
         let mut line_starts = vec![0usize];
         for (i, b) in text.as_bytes().iter().enumerate() {
@@ -743,6 +762,38 @@ fn scan_files(
     Ok((hits, truncated))
 }
 
+/// Maximal `[alnum_]+` runs — the token units of our FTS tokenizer.
+fn tokens_of(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for ch in s.chars() {
+        if ch == '_' || ch.is_alphanumeric() {
+            cur.push(ch);
+        } else if !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// An FTS5 MATCH string requiring every token (implicit AND), each quoted.
+/// Returns `None` when there is no token to prefilter on.
+fn fts_match(tokens: &[String]) -> Option<String> {
+    if tokens.is_empty() {
+        return None;
+    }
+    Some(
+        tokens
+            .iter()
+            .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
 /// `search <pattern>` — content search over indexed, non-binary files, with each
 /// match annotated by its enclosing definition. Regex by default (linear-time,
 /// no catastrophic backtracking); `--fixed` for a literal string. This is the
@@ -770,7 +821,16 @@ pub fn cmd_search(
         .build()
         .map_err(|e| anyhow!("invalid pattern: {e}"))?;
 
-    let (matches, truncated) = scan_files(&s, &re, path, language, limit)?;
+    // A literal search must contain all its tokens, so FTS can prefilter safely.
+    // A regex cannot be prefiltered without risking false negatives, so it scans
+    // every text body — still from the index, not the filesystem.
+    let match_query = if fixed {
+        fts_match(&tokens_of(pattern))
+    } else {
+        None
+    };
+    let candidates = fetch_bodies(&s, match_query.as_deref(), path, language)?;
+    let (matches, truncated) = scan_bodies(&s, &re, candidates, limit)?;
     s.emit(SearchResult { matches, truncated })
 }
 
@@ -805,7 +865,10 @@ pub fn cmd_references(
 
     let expr = format!(r"\b{}\b", regex::escape(name));
     let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
-    let (hits, truncated) = scan_files(&s, &re, path, language, limit)?;
+    // The name is a token, so FTS narrows to files that contain it.
+    let match_query = fts_match(&tokens_of(name));
+    let candidates = fetch_bodies(&s, match_query.as_deref(), path, language)?;
+    let (hits, truncated) = scan_bodies(&s, &re, candidates, limit)?;
 
     // Definition sites of this exact name: (path, start_line).
     let mut defsites: HashSet<(String, i64)> = HashSet::new();

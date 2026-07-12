@@ -80,6 +80,11 @@ pub fn refresh(db: &Db, repo_root: &Path) -> Result<RefreshStats> {
                 signature, doc, source, confidence)
              VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
         )?;
+        // FTS5 has no UPSERT; update is delete-then-insert keyed by path.
+        let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
+        let mut ins_fts = tx.prepare(
+            "INSERT INTO content_fts(path, language, body) VALUES(?1, ?2, ?3)",
+        )?;
 
         let now = now_ns();
 
@@ -135,11 +140,8 @@ pub fn refresh(db: &Db, repo_root: &Path) -> Result<RefreshStats> {
                 }
             };
             let hash = blake3::hash(&bytes).to_hex().to_string();
-            let language = if looks_binary(&bytes) {
-                None
-            } else {
-                language_for(&rel)
-            };
+            let is_binary = looks_binary(&bytes);
+            let language = if is_binary { None } else { language_for(&rel) };
 
             let content_changed = existing
                 .get(&rel)
@@ -150,6 +152,13 @@ pub fn refresh(db: &Db, repo_root: &Path) -> Result<RefreshStats> {
 
             if content_changed {
                 reindexed += 1;
+                // Content-derived data: drop stale, rebuild. FTS first (covers
+                // text files even when we can't classify their language).
+                del_fts.execute([&rel])?;
+                if !is_binary {
+                    let body = String::from_utf8_lossy(&bytes);
+                    ins_fts.execute((&rel, language, body.as_ref()))?;
+                }
                 // Facts are derived from content: drop stale ones, re-extract.
                 del_facts.execute([&rel])?;
                 if let Some(lang) = language {
@@ -180,6 +189,8 @@ pub fn refresh(db: &Db, repo_root: &Path) -> Result<RefreshStats> {
     // Drop files that vanished from the tree.
     {
         let mut del = tx.prepare("DELETE FROM files WHERE path = ?1")?;
+        // FTS is not FK-linked to files, so remove it explicitly.
+        let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
         let gone: Vec<String> = existing
             .keys()
             .filter(|p| !seen.contains_key(*p))
@@ -187,6 +198,7 @@ pub fn refresh(db: &Db, repo_root: &Path) -> Result<RefreshStats> {
             .collect();
         for p in gone {
             del.execute([&p])?;
+            del_fts.execute([&p])?;
         }
     }
 
