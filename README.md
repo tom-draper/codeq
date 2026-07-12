@@ -19,6 +19,45 @@ shell pipelines.
 > the design rationale and [GEMINI.md](./GEMINI.md) / [GPT.md](./GPT.md) for the critical
 > reviews that shaped it.
 
+## Why not just `grep` and `find`?
+
+`grep` and `find` operate on **bytes and lines**. `codeq` operates on a **parsed,
+persistent model of the code**. That difference buys five things shell tools cannot give:
+
+- **Structure.** Shell tools match text with no idea what it *is*. `grep authenticate`
+  returns the definition, every call, comment mentions, and substrings all mixed together.
+  `codeq definitions authenticate` returns *the definition*, with signature and doc.
+  `codeq search` goes further: every match is annotated with the definition that encloses
+  it — grep tells you `file:625`, codeq tells you you're inside `fn cmd_search`.
+
+- **Relationships.** `importers` answers "who imports this?", `outline` gives a file's
+  structure and nesting, `map` aggregates imports and definitions across the whole repo.
+  None of these are reachable from a single byte-level scan.
+
+- **Understand without reading.** `outline` and `definitions --signatures` let an agent
+  grasp an API surface from signatures and docstrings alone — no function bodies, so far
+  fewer tokens. `grep` can't strip a body; it doesn't know where the body is.
+
+- **Compute once, keep fresh.** `codeq` parses each file once into SQLite; queries hit an
+  index, and only changed files (by size + mtime) are re-parsed. Parsing is the expensive
+  part `grep` never does — so the win is amortized across a *session* of many structured
+  queries against a mostly-stable tree, which is exactly the agent workload. (For a single
+  one-off text search, `ripgrep` will often beat a cold index — `codeq` is not trying to
+  replace `rg` for that.)
+
+- **A stable contract.** Versioned JSON with byte/line ranges, an extraction `source`, and
+  a `confidence` — instead of unstructured text re-parsed with brittle regex every time.
+
+**The honest boundary:** `codeq`'s facts are *syntactic*, not deeply semantic. It knows an
+identifier is a function definition; it does **not** resolve a call to its definition across
+module aliases, generics, or build systems. Half-right resolution would produce exactly the
+untrustworthy results that send an agent back to `grep`, so `codeq` deliberately stops at
+facts it can guarantee.
+
+In one line: *grep and find answer "where do these bytes appear." `codeq` answers "what is
+defined here, what is it, what's its shape, what depends on it, and give me just enough of
+it to fit my budget" — computed once and kept fresh.*
+
 ## Install
 
 ```bash
