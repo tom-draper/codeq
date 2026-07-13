@@ -192,6 +192,24 @@ fn fields_projection_keeps_only_requested_columns() {
 }
 
 #[test]
+fn fields_projects_rows_inside_object_results() {
+    // --fields must project the rows even when they're nested in a wrapper
+    // object (references/search/context), the token-saving lever agents need.
+    let f = Fixture::new();
+    f.write("a.rs", "fn helper() {}\nfn caller() { helper(); }\n");
+    let v = f.run(&["references", "helper", "--fields", "path,line"]);
+    let refs = v["data"]["references"].as_array().unwrap();
+    assert!(!refs.is_empty());
+    for r in refs {
+        let mut keys: Vec<&str> = r.as_object().unwrap().keys().map(|s| s.as_str()).collect();
+        keys.sort();
+        assert_eq!(keys, ["line", "path"], "row not projected: {r}");
+    }
+    // The wrapper's scalar field survives.
+    assert!(v["data"].get("truncated").is_some());
+}
+
+#[test]
 fn capabilities_describes_the_tool() {
     let f = Fixture::new();
     let v = f.run(&["capabilities"]);

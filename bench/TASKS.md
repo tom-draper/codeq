@@ -72,9 +72,13 @@ where raw grep output is already minimal.**
 ## Findings fed back
 
 - codeq's output overhead is real on high-cardinality locate results
-  (`importers` of a ubiquitous module: 5.2k vs 2.1k tok). `--fields` should be
-  the default advice for those, and `context`'s `plan`/`budget` metadata could
-  be opt-out to shave tokens.
+  (`importers` of a ubiquitous module: 5.2k vs 2.1k tok). **Fixed the lever:**
+  `--fields` now projects the rows inside object-wrapped results
+  (`search`/`references`/`context`/`map`), not just top-level arrays — so
+  `codeq importers vitest --fields path` is ~half the tokens (20.8k → 10.5k
+  bytes), and `references --fields path,line` ~56% smaller. Previously `--fields`
+  silently emptied those results.
+- `context`'s `plan`/`budget` metadata could still be opt-out to shave tokens.
 
 ## Caveats
 

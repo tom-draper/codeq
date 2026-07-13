@@ -70,8 +70,11 @@ impl<T: Serialize> Envelope<T> {
     }
 }
 
-/// Retain only `fields` on each object; works on an array of objects or a
-/// single object. Non-object data is left untouched.
+/// Retain only `fields` on each result row, wherever the rows live: a top-level
+/// array (`files`, `symbols`, …) or an array nested inside the data object
+/// (`matches` for `search`, `references`, `chunks` for `context`, the grouped
+/// lists in `map`). Scalar/metadata fields on the wrapper object (e.g.
+/// `truncated`) are left intact. Non-object rows are untouched.
 fn project(data: &mut Value, fields: &[String]) {
     match data {
         Value::Array(rows) => {
@@ -79,7 +82,15 @@ fn project(data: &mut Value, fields: &[String]) {
                 project_obj(row, fields);
             }
         }
-        obj @ Value::Object(_) => project_obj(obj, fields),
+        Value::Object(map) => {
+            for value in map.values_mut() {
+                if let Value::Array(rows) = value {
+                    for row in rows {
+                        project_obj(row, fields);
+                    }
+                }
+            }
+        }
         _ => {}
     }
 }

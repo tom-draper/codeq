@@ -116,7 +116,8 @@ Run inside a repository. Output is compact JSON on stdout.
 
 ### Global options
 
-- `--fields a,b,c` — keep only these fields on each row (pay for what you need).
+- `--fields a,b,c` — keep only these fields on each result row (pay for what you need);
+  works on list commands and the rows inside `search`/`references`/`context`/`map`.
 - `--meta` — include the full `repo`/`index` metadata envelope (see below).
 - `--pretty` — pretty-print for humans (implies `--meta`).
 
