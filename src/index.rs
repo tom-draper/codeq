@@ -151,13 +151,20 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
             // Something moved: read + hash to decide whether content actually
             // changed. Read once, reuse the bytes for fact extraction.
-            let bytes = match std::fs::read(abs) {
+            let mut bytes = match std::fs::read(abs) {
                 Ok(b) => b,
                 Err(_) => {
                     partial_failures += 1;
                     continue; // unreadable; leave prior row untouched
                 }
             };
+            // Strip a leading UTF-8 BOM so line-1 `^`/`$` anchors match and the
+            // stored byte offsets align with the logical content — ripgrep and
+            // editors do the same. A BOM before the first char otherwise hides
+            // line 1 from anchored search (common in C#/Windows-authored files).
+            if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                bytes.drain(..3);
+            }
             let hash = blake3::hash(&bytes).to_hex().to_string();
             let is_binary = looks_binary(&bytes);
             let language = if is_binary { None } else { language_for(&rel) };

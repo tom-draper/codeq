@@ -44,16 +44,39 @@ TIMING_RUNS = 3
 # SEARCH battery: (name, codeq args after `search`, rg args after the fixed
 # `rg -n --no-heading --no-messages`). The two must express the SAME query.
 SEARCH_ACTIONS = [
+    # literals & words
     ("literal-return", ["return"],                    ["return"]),
+    ("literal-null",   ["null"],                       ["null"]),
+    ("word-test",      ["-w", "test"],                 ["-w", "test"]),
+    ("word-error",     ["-w", "error"],                ["-w", "error"]),
+    ("word-self",      ["-w", "self"],                 ["-w", "self"]),
+    ("ci-http",        ["-i", "http"],                 ["-i", "http"]),
+    ("ci-license",     ["-i", "license"],              ["-i", "license"]),
+    ("fixed-arrow",    ["--fixed", "=>"],              ["-F", "=>"]),
+    ("fixed-coloncolon", ["--fixed", "::"],            ["-F", "::"]),
+    ("fixed-dotdot",   ["--fixed", ".."],              ["-F", ".."]),
+    # line anchors (the class the ^/$ regression lived in)
     ("anchor-import",  ["^import"],                    ["^import"]),
     ("anchor-func",    ["^func "],                     ["^func "]),
     ("anchor-def",     ["^def "],                      ["^def "]),
-    ("word-test",      ["-w", "test"],                 ["-w", "test"]),
-    ("fixed-arrow",    ["--fixed", "=>"],              ["-F", "=>"]),
-    ("alt-todo",       ["TODO|FIXME|XXX"],             ["TODO|FIXME|XXX"]),
+    ("anchor-class",   ["^class "],                     ["^class "]),
+    ("anchor-pub",     ["^pub "],                       ["^pub "]),
+    ("anchor-hash",    ["^#"],                          ["^#"]),
+    ("anchor-brace-eol", ["\\{$"],                     ["\\{$"]),
+    ("anchor-semi-eol", [";$"],                         [";$"]),
+    # character classes, quantifiers, groups, alternation
     ("class-error",    ["[A-Z][a-zA-Z]+Error"],        ["[A-Z][a-zA-Z]+Error"]),
+    ("class-hexcolor", ["#[0-9a-fA-F]{6}"],            ["#[0-9a-fA-F]{6}"]),
+    ("class-const",    ["[A-Z][A-Z_]{3,}"],            ["[A-Z][A-Z_]{3,}"]),
     ("semver",         ["[0-9]+\\.[0-9]+\\.[0-9]+"],   ["[0-9]+\\.[0-9]+\\.[0-9]+"]),
-    ("ci-http",        ["-i", "http"],                 ["-i", "http"]),
+    ("alt-todo",       ["TODO|FIXME|XXX|HACK"],        ["TODO|FIXME|XXX|HACK"]),
+    ("alt-visibility", ["(public|private|protected)"], ["(public|private|protected)"]),
+    ("optional",       ["colou?r"],                    ["colou?r"]),
+    ("group-call",     ["\\.(map|filter|reduce)\\("],  ["\\.(map|filter|reduce)\\("]),
+    ("word-boundary",  ["\\bconst\\b"],                ["\\bconst\\b"]),
+    ("whitespace",     ["=\\s+function"],              ["=\\s+function"]),
+    ("digits",         ["0x[0-9a-fA-F]+"],             ["0x[0-9a-fA-F]+"]),
+    ("email-ish",      ["[a-z]+@[a-z]+\\.[a-z]+"],     ["[a-z]+@[a-z]+\\.[a-z]+"]),
 ]
 
 
@@ -165,12 +188,53 @@ def nav_battery(path):
     return out
 
 
+FUZZ_K = 60  # identifiers sampled per repo for the auto-generated correctness battery
+
+
+def fuzz_battery(path):
+    """Auto-generate a large correctness battery: sample real identifiers from
+    codeq's own symbol table and superset-check each literal against `rg -F`.
+    Single run each (correctness only, no timing) so hundreds of cases stay fast.
+    Every identifier that exists must be found by codeq at least everywhere rg
+    finds it — this is where a substring/prefilter regression would light up."""
+    p = subprocess.run([CODEQ, "symbols", "--fields", "name"],
+                       cwd=path, capture_output=True)
+    try:
+        data = json.loads(p.stdout)["data"]
+    except (ValueError, KeyError):
+        return {"total": 0, "pass": 0, "fail": 0, "failures": []}
+    names = sorted({d["name"] for d in data
+                    if len(d.get("name", "")) >= 6 and d["name"].isidentifier()})
+    if not names:
+        return {"total": 0, "pass": 0, "fail": 0, "failures": []}
+    step = max(1, len(names) // FUZZ_K)
+    sample = names[::step][:FUZZ_K]
+
+    npass, failures = 0, []
+    for lit in sample:
+        cq_out = subprocess.run([CODEQ, "search", "--fixed", lit, "--limit", "0"],
+                                cwd=path, capture_output=True).stdout
+        rg_out = subprocess.run(["rg", "-F", "-n", "--no-heading", "--no-messages", lit],
+                                cwd=path, capture_output=True).stdout
+        cq, ok = codeq_lines(cq_out)
+        missing = rg_lines(rg_out) - cq
+        if ok and not missing:
+            npass += 1
+        else:
+            failures.append({"literal": lit, "missing": len(missing),
+                             "sample": sorted(missing)[:3], "crash": not ok})
+    return {"total": len(sample), "pass": npass,
+            "fail": len(sample) - npass, "failures": failures[:10]}
+
+
 def run_repo(name, lang, path):
     t0 = time.perf_counter()
     subprocess.run([CODEQ, "index"], cwd=path, capture_output=True)
     index_ms = (time.perf_counter() - t0) * 1000
     actions = search_battery(path) + nav_battery(path)
-    return {"lang": lang, "index_ms": round(index_ms, 2), "actions": actions}
+    fuzz = fuzz_battery(path)
+    return {"lang": lang, "index_ms": round(index_ms, 2),
+            "actions": actions, "fuzz": fuzz}
 
 
 def codeq_commit():
@@ -200,7 +264,13 @@ def summarize(repos):
     n_time, n_bytes = ratios(nav)
     read = [a for a in nav if a["name"] == "read-symbol"]
     r_time, r_bytes = ratios(read)
+    fuzz_total = sum(r["fuzz"]["total"] for r in repos.values())
+    fuzz_pass = sum(r["fuzz"]["pass"] for r in repos.values())
+    fuzz_fail = sum(r["fuzz"]["fail"] for r in repos.values())
+    total_tests = len(search) + fuzz_total   # correctness assertions this run
     return {
+        "repos": len(repos),
+        "total_correctness_tests": total_tests,
         "search_total": len(search), "correctness_pass": passed,
         "correctness_fail": failed, "errors": errored,
         "actions_total": len(search),   # kept for trend.py back-compat
@@ -209,6 +279,7 @@ def summarize(repos):
         "nav_total": len(nav),
         "median_nav_time": n_time, "median_nav_bytes": n_bytes,
         "median_read_symbol_bytes": r_bytes,     # headline token win vs `cat`
+        "fuzz_total": fuzz_total, "fuzz_pass": fuzz_pass, "fuzz_fail": fuzz_fail,
     }
 
 
@@ -236,8 +307,11 @@ def main():
         json.dump(result, f, indent=2)
 
     s = result["summary"]
-    print(f"\n  SEARCH correctness: {s['correctness_pass']}/{s['search_total']} PASS"
+    print(f"\n  {s['repos']} repos | {s['total_correctness_tests']} correctness assertions this run")
+    print(f"  SEARCH   : {s['correctness_pass']}/{s['search_total']} PASS"
           f" ({s['correctness_fail']} FAIL, {s['errors']} ERROR)")
+    print(f"  FUZZ     : {s['fuzz_pass']}/{s['fuzz_total']} PASS ({s['fuzz_fail']} FAIL)"
+          f"   (auto-generated from real identifiers)")
     print(f"  search   codeq/rg  time {s['median_codeq_over_rg_time']}x"
           f"  bytes {s['median_codeq_over_rg_bytes']}x   (<1 = codeq wins)")
     print(f"  nav      codeq/base time {s['median_nav_time']}x"
@@ -250,6 +324,9 @@ def main():
                       f" e.g. {a['missing_sample'][:3]}")
             elif a.get("verdict") == "ERROR":
                 print(f"  ERROR {rname}/{a['name']}: tool failure (bad flag / crash / no JSON)")
+        for fz in r["fuzz"]["failures"]:
+            print(f"  FUZZ-FAIL {rname}: '{fz['literal']}' codeq missed {fz['missing']}"
+                  f"{' (CRASH)' if fz['crash'] else ''}, e.g. {fz['sample']}")
     print(f"\n  wrote {dest}")
 
 

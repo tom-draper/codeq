@@ -162,7 +162,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 4);
+    assert_eq!(v["index"]["schema"], 5);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -1089,6 +1089,22 @@ fn search_anchors_are_line_oriented_like_grep() {
     let end = f.run(&["search", "x;$"]);
     let em = end["data"]["matches"].as_array().unwrap();
     assert_eq!(em.len(), 2, "x;$ should match `mod x;` and `use crate::x;`: {em:?}");
+}
+
+#[test]
+fn search_strips_leading_utf8_bom() {
+    // A UTF-8 BOM before the first char must not hide line 1 from `^` anchors or
+    // shift offsets — the index strips it, like ripgrep and editors do.
+    let f = Fixture::new();
+    f.write_bytes("a.cs", b"\xEF\xBB\xBF#region Foo\nint x = 1;\n#endregion\n");
+
+    let hits = f.run(&["search", "^#"]);
+    let m = hits["data"]["matches"].as_array().unwrap();
+    assert_eq!(m.len(), 2, "both #region (line 1) and #endregion must match: {m:?}");
+    assert_eq!(m[0]["line"], 1, "line-1 #region must be found despite the BOM");
+    // The BOM must not leak into the matched line text either.
+    assert!(m[0]["text"].as_str().unwrap().starts_with("#region"),
+            "BOM leaked into text: {:?}", m[0]["text"]);
 }
 
 #[test]

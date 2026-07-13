@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 
-pub const SCHEMA_VERSION: i64 = 4;
+// v5: index strips a leading UTF-8 BOM, changing stored bodies/offsets for
+// BOM-prefixed files — bump so pre-fix indexes rebuild on upgrade.
+pub const SCHEMA_VERSION: i64 = 5;
 
 pub struct Db {
     pub conn: Connection,

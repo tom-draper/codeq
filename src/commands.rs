@@ -749,7 +749,9 @@ pub fn cmd_read(
     let rel = resolve_file(&s, file)?;
     let bytes = std::fs::read(s.repo.root.join(&rel))
         .map_err(|e| anyhow!("cannot read {rel}: {e}"))?;
-    let text = String::from_utf8_lossy(&bytes);
+    // Match the index: drop a leading UTF-8 BOM so line/column numbering here
+    // agrees with what search and the symbol facts report.
+    let text = String::from_utf8_lossy(bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes));
     let file_lines: Vec<&str> = text.lines().collect();
     let n = file_lines.len();
 
