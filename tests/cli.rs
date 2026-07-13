@@ -381,6 +381,12 @@ fn extracts_rust_symbols_and_imports() {
 
     let importers = field_set(&f.run(&["importers", "db::Store"]), "path");
     assert_eq!(importers, vec!["lib.rs".to_string()]);
+
+    // A file-path query is accepted symmetrically with `imports <file>`: the
+    // module string is `crate::db::Store`, never the path, so `importers`
+    // reduces `src/db.rs` to its stem `db` and still matches.
+    let by_path = field_set(&f.run(&["importers", "src/db.rs"]), "path");
+    assert_eq!(by_path, vec!["lib.rs".to_string()], "path query should resolve via stem");
 }
 
 #[test]

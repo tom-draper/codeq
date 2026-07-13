@@ -932,7 +932,14 @@ pub fn cmd_importers(cwd: &Path, query: &str, limit: usize, out: Out) -> Result<
         sql.push_str(&format!(" LIMIT {limit}"));
     }
 
-    let pattern = format!("%{query}%");
+    // Accept a file path symmetrically with `imports <file>`: import module
+    // strings never contain the on-disk path (Rust `crate::db`, JS `./db`), so
+    // a path query like `src/db.rs` would silently match nothing. When the query
+    // looks like a path (has a separator), fall back to its module stem — the
+    // file's base name without extension — matched as a substring. Still purely
+    // textual and a safe superset; a bare module token is used verbatim.
+    let needle = importer_needle(query);
+    let pattern = format!("%{needle}%");
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map([&pattern], |r| {
         Ok(ImportRow {
@@ -944,6 +951,22 @@ pub fn cmd_importers(cwd: &Path, query: &str, limit: usize, out: Out) -> Result<
     })?;
     let data: Vec<ImportRow> = rows.collect::<std::result::Result<_, _>>()?;
     s.emit(data)
+}
+
+/// The substring to match import module strings against. A path-shaped query
+/// (contains `/` or `\`) is reduced to its file stem so `importers src/db.rs`
+/// matches `crate::db` / `./db`; a plain module token is returned unchanged so
+/// dotted modules like `foo.bar` keep working.
+fn importer_needle(query: &str) -> &str {
+    if query.contains('/') || query.contains('\\') {
+        Path::new(query)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(query)
+    } else {
+        query
+    }
 }
 
 pub fn cmd_context(cwd: &Path, req: Request, out: Out) -> Result<()> {

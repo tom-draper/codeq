@@ -179,7 +179,8 @@ enum Command {
     },
     /// Files that import a module matching the query (raw string match).
     Importers {
-        /// Module or path substring to match against import statements.
+        /// Module token or file path to match against import statements.
+        /// A path (e.g. `src/db.rs`) is reduced to its stem (`db`).
         query: String,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]

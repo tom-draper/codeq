@@ -4,6 +4,29 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 6: module-graph task → `importers <file>` silently returned nothing
+
+Task: understand codeq's own module structure — "what imports `db`?" `imports
+src/commands.rs` worked (lists module strings). But `importers src/db.rs` — the
+natural mirror of `imports <file>` — returned `[]`.
+
+- **FIXED (false negative): `importers` matched the query as a substring of
+  import *module strings*, which never contain the file path.** Rust imports are
+  `crate::db::Db`, JS is `./db`; none contain `src/db.rs`, so a path query
+  matched nothing and looked like "db.rs is imported by no one" — a wrong,
+  trust-eroding answer (an agent would treat db.rs as dead). The two sibling
+  commands were also asymmetric: `imports` takes a *file*, `importers` wanted a
+  *module token*. **Fixed:** a path-shaped query (contains a separator) is now
+  reduced to its module stem, so `importers src/db.rs` → `%db%` and finds all 3
+  importers. Plain module tokens (`db`, `db::Store`) and dotted modules
+  (`foo.bar`) are unchanged — the separator check avoids touching them. Still
+  purely textual / a safe superset. Help text corrected (it wrongly promised
+  "path substring"). Regression test asserts the path form resolves.
+- Same failure *class* as sessions 4 and 5: a silent false result surfaced by
+  actually running the workflow. Here it was reaching for the obvious symmetric
+  call (`imports <file>` ⇒ `importers <file>`) and getting an empty, misleading
+  answer instead of an error or a result.
+
 ## 2026-07-13 — session 5: reviewing my own diff → `context --changed` was too coarse
 
 Used codeq to review what my recent commit touched: `changed --symbols
