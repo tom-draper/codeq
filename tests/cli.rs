@@ -649,6 +649,50 @@ fn search_count_per_file() {
 }
 
 #[test]
+fn search_in_filters_by_syntactic_class() {
+    let f = Fixture::new();
+    // 'needle' in a comment (l1), a string (l2), and code (l3).
+    f.write(
+        "a.rs",
+        "// needle here\nlet s = \"needle\";\nfn needle_fn() {}\n",
+    );
+    let matches = |v: &serde_json::Value| v["data"]["matches"].as_array().unwrap().len();
+
+    assert_eq!(matches(&f.run(&["search", "needle"])), 3, "all classes");
+
+    let com = f.run(&["search", "needle", "--in", "comments"]);
+    assert_eq!(matches(&com), 1);
+    assert_eq!(com["data"]["matches"][0]["line"], 1);
+
+    let strg = f.run(&["search", "needle", "--in", "strings"]);
+    assert_eq!(matches(&strg), 1);
+    assert_eq!(strg["data"]["matches"][0]["line"], 2);
+
+    let code = f.run(&["search", "needle", "--in", "code"]);
+    assert_eq!(matches(&code), 1);
+    assert_eq!(code["data"]["matches"][0]["line"], 3);
+}
+
+#[test]
+fn search_in_excludes_unparseable_languages() {
+    let f = Fixture::new();
+    f.write("notes.md", "needle in markdown\n"); // markdown: no parser
+    // Without --in it's found; with --in we can't classify, so it's excluded
+    // (never guessed) rather than returned as code.
+    assert_eq!(
+        f.run(&["search", "needle", "--path", "notes.md"])["data"]["matches"]
+            .as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        f.run(&["search", "needle", "--path", "notes.md", "--in", "code"])["data"]["matches"]
+            .as_array().unwrap().len(),
+        0,
+        "unparseable file must be excluded from --in, not guessed"
+    );
+}
+
+#[test]
 fn search_invalid_regex_fails() {
     let f = Fixture::new();
     f.write("a.rs", "fn f() {}\n");

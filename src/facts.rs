@@ -282,3 +282,92 @@ const PYTHON_QUERY: &str = r#"
 (import_from_statement module_name: (dotted_name) @name) @import
 (import_from_statement module_name: (relative_import) @name) @import
 "#;
+
+/// Syntactic class of a byte position, for `search --in`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Span {
+    Comment,
+    Str,
+}
+
+/// Classifies byte offsets as inside a comment or string literal. Built once
+/// per search; supports the languages we have parsers for.
+pub struct Classifier {
+    rust: ClsSpec,
+    python: ClsSpec,
+}
+
+struct ClsSpec {
+    parser: Parser,
+    query: Query,
+    names: Vec<String>,
+}
+
+impl ClsSpec {
+    fn new(language: tree_sitter::Language, query_src: &str) -> Result<ClsSpec> {
+        let mut parser = Parser::new();
+        parser.set_language(&language)?;
+        let query = Query::new(&language, query_src)?;
+        let names = query.capture_names().iter().map(|s| s.to_string()).collect();
+        Ok(ClsSpec {
+            parser,
+            query,
+            names,
+        })
+    }
+
+    /// Comment/string byte spans, sorted by start. Non-overlapping in practice.
+    fn spans(&mut self, src: &[u8]) -> Vec<(usize, usize, Span)> {
+        let tree = match self.parser.parse(src, None) {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+        let mut cursor = QueryCursor::new();
+        let mut out = Vec::new();
+        let mut it = cursor.matches(&self.query, tree.root_node(), src);
+        while let Some(m) = it.next() {
+            for cap in m.captures {
+                let span = match self.names[cap.index as usize].as_str() {
+                    "comment" => Span::Comment,
+                    "string" => Span::Str,
+                    _ => continue,
+                };
+                out.push((cap.node.start_byte(), cap.node.end_byte(), span));
+            }
+        }
+        out.sort_by_key(|(s, _, _)| *s);
+        out
+    }
+}
+
+impl Classifier {
+    pub fn new() -> Result<Classifier> {
+        Ok(Classifier {
+            rust: ClsSpec::new(tree_sitter_rust::LANGUAGE.into(), RUST_SPANS)?,
+            python: ClsSpec::new(tree_sitter_python::LANGUAGE.into(), PYTHON_SPANS)?,
+        })
+    }
+
+    /// Spans for a file, or `None` when the language has no parser (caller must
+    /// then exclude the file rather than guess).
+    pub fn spans(&mut self, language: &str, src: &[u8]) -> Option<Vec<(usize, usize, Span)>> {
+        match language {
+            "rust" => Some(self.rust.spans(src)),
+            "python" => Some(self.python.spans(src)),
+            _ => None,
+        }
+    }
+}
+
+const RUST_SPANS: &str = r#"
+(line_comment) @comment
+(block_comment) @comment
+(string_literal) @string
+(raw_string_literal) @string
+(char_literal) @string
+"#;
+
+const PYTHON_SPANS: &str = r#"
+(comment) @comment
+(string) @string
+"#;

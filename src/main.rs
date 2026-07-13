@@ -157,6 +157,9 @@ enum Command {
         /// Restrict to a language.
         #[arg(long)]
         language: Option<String>,
+        /// Restrict matches to code, comments, or strings (parsed languages only).
+        #[arg(long = "in", value_name = "code|comments|strings")]
+        in_kind: Option<String>,
         /// Show N lines of context before and after each match.
         #[arg(long, short = 'C', default_value_t = 0)]
         context: usize,
@@ -297,6 +300,7 @@ fn main() -> ExitCode {
             ignore_case,
             path,
             language,
+            in_kind,
             context,
             before,
             after,
@@ -311,6 +315,7 @@ fn main() -> ExitCode {
                 ignore_case,
                 path: path.as_deref(),
                 language: language.as_deref(),
+                in_kind: in_kind.as_deref(),
                 before: before.max(context),
                 after: after.max(context),
                 files_with_matches,

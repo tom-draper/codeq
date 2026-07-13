@@ -11,6 +11,7 @@ use serde::Serialize;
 use crate::context::{self, Request};
 use crate::db::{Db, SCHEMA_VERSION};
 use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
+use crate::facts::{Classifier, Span};
 use crate::index::{language_for, refresh};
 use crate::repo::Repo;
 
@@ -651,10 +652,55 @@ enum OutMode {
     Count,
 }
 
+/// Restrict matches by the syntactic class of their position.
+#[derive(Clone, Copy, PartialEq)]
+enum InFilter {
+    Any,
+    Code,
+    Comments,
+    Strings,
+}
+
+impl InFilter {
+    fn parse(s: &str) -> Result<InFilter> {
+        Ok(match s {
+            "any" => InFilter::Any,
+            "code" => InFilter::Code,
+            "comment" | "comments" => InFilter::Comments,
+            "string" | "strings" => InFilter::Strings,
+            other => return Err(anyhow!("--in must be code|comments|strings, got '{other}'")),
+        })
+    }
+
+    fn accepts(self, cls: Option<Span>) -> bool {
+        match self {
+            InFilter::Any => true,
+            InFilter::Code => cls.is_none(),
+            InFilter::Comments => cls == Some(Span::Comment),
+            InFilter::Strings => cls == Some(Span::Str),
+        }
+    }
+}
+
+/// The class of byte offset `off` given sorted, non-overlapping `spans`.
+fn class_at(spans: &[(usize, usize, Span)], off: usize) -> Option<Span> {
+    let idx = spans.partition_point(|(s, _, _)| *s <= off);
+    if idx == 0 {
+        return None;
+    }
+    let (s, e, c) = spans[idx - 1];
+    if s <= off && off < e {
+        Some(c)
+    } else {
+        None
+    }
+}
+
 struct ScanOpts {
     before: usize,
     after: usize,
     out: OutMode,
+    in_filter: InFilter,
     limit: usize,
 }
 
@@ -762,38 +808,63 @@ fn load_file_defs(stmt: &mut rusqlite::Statement, path: &str) -> Result<Vec<File
 }
 
 /// Run `re` over candidate bodies and shape the output per `opts.out`.
-/// Deterministic order (path, then line).
+/// Deterministic order (path, then line). When `opts.in_filter` is not `Any`,
+/// matches are classified via `classifier`; files in a language we cannot parse
+/// are excluded (never guessed).
 fn run_search(
     s: &Session,
     re: &regex::Regex,
     candidates: Vec<(String, Option<String>, String)>,
     opts: &ScanOpts,
+    mut classifier: Option<&mut Classifier>,
 ) -> Result<SearchData> {
     let cap = if opts.limit == 0 { usize::MAX } else { opts.limit };
+    let filtering = opts.in_filter != InFilter::Any;
 
-    match opts.out {
-        OutMode::Files => {
-            let mut files = Vec::new();
-            let mut truncated = false;
-            for (path, _lang, body) in &candidates {
-                if re.is_match(body) {
-                    files.push(path.clone());
+    let mut def_stmt = s.db.conn.prepare(
+        "SELECT name, kind, start_byte, end_byte FROM facts
+         WHERE path = ?1 AND kind <> 'import'",
+    )?;
+
+    let mut files: Vec<String> = Vec::new();
+    let mut counts: Vec<FileCount> = Vec::new();
+    let mut hits: Vec<Hit> = Vec::new();
+    let mut truncated = false;
+
+    'outer: for (rel, lang, body) in &candidates {
+        // Classify positions if filtering; skip files we can't parse.
+        let spans = if filtering {
+            match classifier
+                .as_deref_mut()
+                .and_then(|c| c.spans(lang.as_deref().unwrap_or(""), body.as_bytes()))
+            {
+                Some(sp) => sp,
+                None => continue,
+            }
+        } else {
+            Vec::new()
+        };
+        let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(&spans, off));
+
+        let starts = line_starts_of(body);
+
+        match opts.out {
+            OutMode::Files => {
+                if re.find_iter(body).any(|m| accept(m.start())) {
+                    files.push(rel.clone());
                     if files.len() >= cap {
                         truncated = true;
-                        break;
+                        break 'outer;
                     }
                 }
             }
-            Ok(SearchData::Files { files, truncated })
-        }
-        OutMode::Count => {
-            let mut counts = Vec::new();
-            let mut truncated = false;
-            for (path, _lang, body) in &candidates {
-                let starts = line_starts_of(body);
+            OutMode::Count => {
                 let mut last = usize::MAX;
                 let mut n = 0usize;
                 for m in re.find_iter(body) {
+                    if !accept(m.start()) {
+                        continue;
+                    }
                     let li = starts.partition_point(|&s| s <= m.start()) - 1;
                     if li != last {
                         last = li;
@@ -802,45 +873,34 @@ fn run_search(
                 }
                 if n > 0 {
                     counts.push(FileCount {
-                        path: path.clone(),
+                        path: rel.clone(),
                         count: n,
                     });
                     if counts.len() >= cap {
                         truncated = true;
-                        break;
+                        break 'outer;
                     }
                 }
             }
-            Ok(SearchData::Counts { counts, truncated })
-        }
-        OutMode::Matches => {
-            let mut hits: Vec<Hit> = Vec::new();
-            let mut truncated = false;
-            let mut def_stmt = s.db.conn.prepare(
-                "SELECT name, kind, start_byte, end_byte FROM facts
-                 WHERE path = ?1 AND kind <> 'import'",
-            )?;
-
-            'outer: for (rel, _lang, body) in &candidates {
-                let starts = line_starts_of(body);
+            OutMode::Matches => {
                 let defs = load_file_defs(&mut def_stmt, rel)?;
-
                 let mut last_line = usize::MAX;
                 for m in re.find_iter(body) {
                     let off = m.start();
+                    if !accept(off) {
+                        continue;
+                    }
                     let line_idx = starts.partition_point(|&s| s <= off) - 1;
                     if line_idx == last_line {
                         continue; // one row per line
                     }
                     last_line = line_idx;
 
-                    let line_start = starts[line_idx];
                     let enclosing = innermost(&defs, off);
-
                     hits.push(Hit {
                         path: rel.clone(),
                         line: line_idx + 1,
-                        col: off - line_start,
+                        col: off - starts[line_idx],
                         symbol: enclosing.map(|d| d.name.clone()),
                         kind: enclosing.map(|d| d.kind.clone()),
                         text: line_text(body, &starts, line_idx),
@@ -855,20 +915,23 @@ fn run_search(
                             (line_idx + 1)..(line_idx + 1 + opts.after),
                         ),
                     });
-
                     if hits.len() >= cap {
                         truncated = true;
                         break 'outer;
                     }
                 }
             }
-
-            Ok(SearchData::Matches {
-                matches: hits,
-                truncated,
-            })
         }
     }
+
+    Ok(match opts.out {
+        OutMode::Files => SearchData::Files { files, truncated },
+        OutMode::Count => SearchData::Counts { counts, truncated },
+        OutMode::Matches => SearchData::Matches {
+            matches: hits,
+            truncated,
+        },
+    })
 }
 
 /// Maximal `[alnum_]+` runs — the token units of our FTS tokenizer.
@@ -911,6 +974,7 @@ pub struct SearchArgs<'a> {
     pub ignore_case: bool,
     pub path: Option<&'a str>,
     pub language: Option<&'a str>,
+    pub in_kind: Option<&'a str>,
     pub before: usize,
     pub after: usize,
     pub files_with_matches: bool,
@@ -952,13 +1016,25 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     } else {
         OutMode::Matches
     };
+    let in_filter = match args.in_kind {
+        Some(k) => InFilter::parse(k)?,
+        None => InFilter::Any,
+    };
+    // The classifier (re-parses candidates) is only built when --in is used.
+    let mut classifier = if in_filter == InFilter::Any {
+        None
+    } else {
+        Some(Classifier::new()?)
+    };
+
     let opts = ScanOpts {
         before: args.before,
         after: args.after,
         out: out_mode,
+        in_filter,
         limit: args.limit,
     };
-    let data = run_search(&s, &re, candidates, &opts)?;
+    let data = run_search(&s, &re, candidates, &opts, classifier.as_mut())?;
     s.emit(data)
 }
 
@@ -1000,9 +1076,10 @@ pub fn cmd_references(
         before: 0,
         after: 0,
         out: OutMode::Matches,
+        in_filter: InFilter::Any,
         limit,
     };
-    let (hits, truncated) = match run_search(&s, &re, candidates, &opts)? {
+    let (hits, truncated) = match run_search(&s, &re, candidates, &opts, None)? {
         SearchData::Matches { matches, truncated } => (matches, truncated),
         _ => unreachable!("references always uses Matches mode"),
     };
