@@ -256,6 +256,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "language", "--language");
             optn(&mut args, a, "limit", "--limit");
         }
+        "codeq_stats" => args.push("stats".into()),
         "codeq_capabilities" => args.push("capabilities".into()),
         _ => return None,
     }
@@ -333,6 +334,9 @@ fn tools() -> Value {
         tool("codeq_files",
             "List indexed files, optionally filtered by path substring or language.",
             json!({ "pattern": str_, "language": str_, "limit": int_ }), &[]),
+        tool("codeq_stats",
+            "Index summary: file/symbol/import counts by language and total bytes.",
+            json!({}), &[]),
         tool("codeq_capabilities",
             "Describe what codeq supports: commands, languages, fact kinds, schema.",
             json!({}), &[]),

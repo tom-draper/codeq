@@ -407,7 +407,7 @@ struct Caller {
 /// `path` restricts to callers *located* in matching files.
 fn callers_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Caller>> {
     let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))?;
-    let candidates = fetch_bodies(s, fts_substring(name).as_deref(), path, None)?;
+    let candidates = fetch_bodies(s, like_of(name).as_deref(), path, None)?;
     // Callers means references in *code* — not comments, strings, or prose in
     // unparseable files (which are excluded). Uses the cached comment/string spans.
     let opts = ScanOpts {
@@ -1096,32 +1096,42 @@ struct FileDef {
 const MAX_LINE: usize = 240;
 
 /// Candidate file bodies pulled from the FTS index — no filesystem reads.
-/// When `match_query` is set, FTS narrows to files containing those tokens
-/// (a safe superset for literal/word queries); otherwise every text file is a
-/// candidate (regex, which FTS cannot prefilter safely). `path`/`language`
-/// filters are applied after fetch.
+/// When `like` holds one or more `%literal%` patterns, the content index (a
+/// trigram FTS5 table) narrows to files whose body matches ANY of them, via
+/// trigram-accelerated `LIKE` — a safe superset (`_`/`%` in the literal act as
+/// wildcards, only broadening; the precise regex confirms). `LIKE` is used
+/// rather than FTS `MATCH`, which silently drops substring matches for many
+/// short/underscore terms. With no patterns, every text file is a candidate
+/// (regex with no extractable literal). `path`/`language` filters apply after.
 fn fetch_bodies(
     s: &Session,
-    match_query: Option<&str>,
+    like: Option<&[String]>,
     path: Option<&str>,
     language: Option<&str>,
 ) -> Result<Vec<(String, Option<String>, String)>> {
-    let sql = if match_query.is_some() {
-        "SELECT path, language, body FROM content_fts WHERE body MATCH ?1 ORDER BY path"
-    } else {
-        "SELECT path, language, body FROM content_fts ORDER BY path"
-    };
+    let patterns = like.filter(|l| !l.is_empty());
+
+    let mut sql = String::from("SELECT path, language, body FROM content_fts");
+    if let Some(pats) = patterns {
+        let clause = (1..=pats.len())
+            .map(|i| format!("body LIKE ?{i}"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        sql.push_str(&format!(" WHERE {clause}"));
+    }
+    sql.push_str(" ORDER BY path");
 
     let raw: Vec<(String, Option<String>, String)> = {
-        let mut stmt = s.db.conn.prepare(sql)?;
-        let collected = if let Some(q) = match_query {
-            let rows = stmt.query_map([q], row_to_body)?;
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        if let Some(pats) = patterns {
+            let params: Vec<&dyn rusqlite::ToSql> =
+                pats.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+            let rows = stmt.query_map(params.as_slice(), row_to_body)?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         } else {
             let rows = stmt.query_map([], row_to_body)?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
-        };
-        collected
+        }
     };
 
     let mut out = Vec::new();
@@ -1324,24 +1334,32 @@ fn run_search(
     })
 }
 
-/// Quote a literal as an FTS5 trigram substring MATCH term. Trigram needs >= 3
-/// characters; shorter literals can't be prefiltered (caller must full-scan).
-fn fts_substring(lit: &str) -> Option<String> {
+/// A `%literal%` LIKE pattern for the content index — trigram needs >= 3 chars,
+/// so shorter literals can't be prefiltered (caller full-scans). `_`/`%` in the
+/// literal are left as LIKE wildcards: only broadens the candidate set (a safe
+/// superset), and the precise regex confirms.
+fn like_pattern(lit: &str) -> Option<String> {
     if lit.chars().count() < 3 {
         return None;
     }
-    Some(format!("\"{}\"", lit.replace('"', "\"\"")))
+    Some(format!("%{lit}%"))
 }
 
-/// Build a trigram prefilter for a regex: a set of literals such that *every*
-/// match must contain at least one of them (as a substring), OR-ed together.
-/// Uses regex-syntax prefix/suffix literal extraction. Returns `None` when no
-/// safe prefilter exists — the caller then full-scans, which is always correct.
+/// A single-literal prefilter (for `--fixed` search and `references`).
+fn like_of(lit: &str) -> Option<Vec<String>> {
+    like_pattern(lit).map(|p| vec![p])
+}
+
+/// Build a prefilter for a regex: a set of literals such that *every* match must
+/// contain at least one of them (as a substring), OR-ed as LIKE patterns. Uses
+/// regex-syntax prefix/suffix literal extraction, then an inner-literal fallback.
+/// Returns `None` when no safe prefilter exists — the caller then full-scans,
+/// which is always correct.
 ///
-/// Correctness: a finite prefix (or suffix) literal set means every match
-/// starts (or ends) with one of the literals, so it contains one as a
-/// substring; the trigram OR is a true superset and never drops a match.
-fn regex_prefilter(pattern: &str) -> Option<String> {
+/// Correctness: a finite prefix (or suffix) literal set means every match starts
+/// (or ends) with one of the literals, so it contains one as a substring; the
+/// LIKE OR is a true superset and never drops a match.
+fn regex_prefilter(pattern: &str) -> Option<Vec<String>> {
     let hir = regex_syntax::parse(pattern).ok()?;
     usable_literals(ExtractKind::Prefix, &hir)
         .or_else(|| usable_literals(ExtractKind::Suffix, &hir))
@@ -1352,7 +1370,7 @@ fn regex_prefilter(pattern: &str) -> Option<String> {
 /// HIR. This catches a literal buried in the middle (e.g. `.*needle.*`) that
 /// prefix/suffix extraction misses. A required literal is a safe single-term
 /// prefilter; when there isn't one >= 3 chars we return None and full-scan.
-fn inner_required_literal(hir: &regex_syntax::hir::Hir) -> Option<String> {
+fn inner_required_literal(hir: &regex_syntax::hir::Hir) -> Option<Vec<String>> {
     fn flush(cur: &mut Vec<u8>, best: &mut Vec<u8>) {
         if cur.len() > best.len() {
             *best = cur.clone();
@@ -1386,14 +1404,10 @@ fn inner_required_literal(hir: &regex_syntax::hir::Hir) -> Option<String> {
     walk(hir, &mut cur, &mut best);
     flush(&mut cur, &mut best);
     let s = std::str::from_utf8(&best).ok()?;
-    if s.chars().count() >= 3 {
-        Some(format!("\"{}\"", s.replace('"', "\"\"")))
-    } else {
-        None
-    }
+    like_pattern(s).map(|p| vec![p])
 }
 
-fn usable_literals(kind: ExtractKind, hir: &regex_syntax::hir::Hir) -> Option<String> {
+fn usable_literals(kind: ExtractKind, hir: &regex_syntax::hir::Hir) -> Option<Vec<String>> {
     let mut ex = LiteralExtractor::new();
     ex.kind(kind);
     let seq = ex.extract(hir);
@@ -1406,12 +1420,9 @@ fn usable_literals(kind: ExtractKind, hir: &regex_syntax::hir::Hir) -> Option<St
         let s = std::str::from_utf8(lit.as_bytes()).ok()?;
         // Any alternative shorter than a trigram is unfilterable, which would
         // make the whole OR unsafe — bail to a full scan instead.
-        if s.chars().count() < 3 {
-            return None;
-        }
-        terms.push(format!("\"{}\"", s.replace('"', "\"\"")));
+        terms.push(like_pattern(s)?);
     }
-    Some(terms.join(" OR "))
+    Some(terms)
 }
 
 /// Include/exclude glob filter over repo-relative paths, ripgrep-style: a `!`
@@ -1518,7 +1529,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     // usable >=3-char literal), in which case we scan every body — still from
     // the index, never the filesystem, and always correct.
     let match_query = if args.fixed {
-        fts_substring(args.pattern)
+        like_of(args.pattern)
     } else {
         regex_prefilter(args.pattern)
     };
@@ -1585,7 +1596,7 @@ pub fn cmd_references(
     let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
     // The name is a substring of every reference, so the trigram index narrows
     // to files that contain it (the \b matcher then confirms word boundaries).
-    let match_query = fts_substring(name);
+    let match_query = like_of(name);
     let candidates = fetch_bodies(&s, match_query.as_deref(), path, language)?;
     let opts = ScanOpts {
         before: 0,

@@ -992,6 +992,19 @@ fn search_inner_literal_prefilter() {
 }
 
 #[test]
+fn search_finds_mid_token_and_underscore_substrings() {
+    // Regression: the trigram MATCH prefilter silently dropped substring matches
+    // for many short/underscore terms (e.g. `search ode` returned nothing though
+    // `decode` contains it). The LIKE prefilter must find them.
+    let f = Fixture::new();
+    f.write("a.rs", "fn decode() {}\nlet my_var = 1;\n");
+    let count = |pat: &str| f.run(&["search", pat])["data"]["matches"].as_array().unwrap().len();
+    assert_eq!(count("ode"), 1, "mid-token substring of decode");
+    assert_eq!(count("cod"), 1, "3-char mid-token substring");
+    assert_eq!(count("y_va"), 1, "underscore substring of my_var");
+}
+
+#[test]
 fn search_glob_include_and_exclude() {
     let f = Fixture::new();
     f.write("src/a.rs", "fn hit() {}\n");

@@ -4,6 +4,33 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 4: MCP-coverage audit → found a CRITICAL search bug
+
+Set out to audit whether every command has an MCP tool. The audit query
+(`search 'codeq_' --in strings`) returned nothing, which surfaced a serious bug.
+
+- **CRITICAL, FIXED: `search`/`references`/`callers` dropped matches
+  (false negatives).** The content prefilter used FTS5 trigram `MATCH`, which
+  silently fails for many substrings: `search 'ode'` returned 0 though `decode`
+  contains it; raw `MATCH "ode"` → 0 while `LIKE '%ode%'` → 20 (ground truth).
+  Even worse, `MATCH "codeq_"` matched *fewer* docs than `MATCH "codeq_map"` —
+  impossible for correct substring search. Trigram `MATCH` is just unreliable
+  for arbitrary substrings; the tokenizer's intended substring interface is
+  `LIKE`/`GLOB`. **Fixed:** the prefilter now emits trigram-accelerated `LIKE
+  '%literal%'` clauses (OR-ed for regex literal sets) instead of `MATCH`. Still
+  a safe superset (`_`/`%` act as wildcards → broader; the regex confirms).
+  Regression test added; `search ode/cod/codeq_` now match ground truth. This is
+  the most important dogfood find — a correctness bug that erodes trust in the
+  whole tool, invisible to the test suite until real use hit it.
+
+- **Minor, FIXED: `stats` had no MCP tool.** The audit's actual answer: 17 of 18
+  query commands were exposed; `stats` was missing. Added `codeq_stats`.
+
+- **Usage insight: `--in` classifies by the match's START position.** A pattern
+  like `tool("codeq_` starts in code and overlaps a string, so `--in strings`
+  excludes it. To find string-embedded content, the pattern must *begin* inside
+  the string (`search 'codeq_' --in strings`). Non-obvious; reader beware.
+
 ## 2026-07-13 — session 3: perf-smell audit (via `search` + `read`)
 
 Audited for other full-scan queries like the callees_of one, using
