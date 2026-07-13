@@ -95,11 +95,13 @@ impl Db {
             "#,
         )?;
 
-        // Full-text content index using the trigram tokenizer, which supports
-        // arbitrary substring MATCH (>= 3 chars). This lets us prefilter *regex*
-        // searches by their required literals (Zoekt/csearch style), not just
-        // token/word queries. Case-insensitive so it's a safe superset for both
-        // case-sensitive and -i searches (the real matcher confirms).
+        // Full-text content index using the trigram tokenizer, which lets
+        // SQLite accelerate `LIKE '%literal%'` on any substring of >= 3 chars.
+        // We prefilter with LIKE (not FTS `MATCH`, which silently drops matches
+        // for many substrings) by a regex's required literals (Zoekt/csearch
+        // style), not just token/word queries. Case-insensitive so it's a safe
+        // superset for both case-sensitive and -i searches (the real matcher
+        // confirms).
         self.conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
                  path UNINDEXED, language UNINDEXED, body,

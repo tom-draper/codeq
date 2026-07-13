@@ -4,6 +4,31 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 7: `at`/`outline` are sound — and caught my own stale docs
+
+Stress-tested the location commands. `at <file>:<line>` correctly returns the
+enclosing definition (method interior → the method; struct field line → the
+struct; blank gap / import region → `[]`). `outline` is correct too, and its
+`depth` field is real (0 for flat defs, 1 for Python class methods and nested
+Rust fns — verified it reaches 1 in bench/*.py, commands.rs, mcp.rs). No bug in
+either command.
+
+The find this round was **doc drift caught by using codeq to read the code**:
+
+- **FIXED (stale doc): `cmd_importers`'s doc comment still said it "deliberately
+  does not resolve a file path to the module spelling."** That was true until
+  session 6, when I made it do exactly that — but I updated the CLI help and
+  missed the doc comment. `at src/commands.rs:930` printed the stale doc back at
+  me. Corrected.
+- **FIXED (stale doc): the `content_fts` schema comment in db.rs still described
+  querying by trigram `MATCH`.** Leftover from session 4, which replaced `MATCH`
+  with `LIKE` precisely because MATCH drops matches. Found via `search 'MATCH'
+  --in comments`. Corrected to describe the LIKE prefilter.
+- Lesson: rapid fix-commits leave doc/comment drift that the test suite can't
+  see. `at` (prints a def's doc) and `search --in comments` are effective drift
+  detectors — worth a sweep after a run of behavioural changes. Both stale docs
+  were introduced by *my own* prior sessions; codeq caught them.
+
 ## 2026-07-13 — session 6: module-graph task → `importers <file>` silently returned nothing
 
 Task: understand codeq's own module structure — "what imports `db`?" `imports

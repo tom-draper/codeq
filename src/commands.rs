@@ -918,8 +918,9 @@ pub fn cmd_imports(cwd: &Path, path: Option<&str>, limit: usize, out: Out) -> Re
 }
 
 /// `importers <query>` — files that import a module matching `query`. This is a
-/// raw string match against the import as written; it deliberately does not
-/// resolve `query` (a file path) to the module spelling used at the import site.
+/// raw substring match against the import as written. A module token (`db`,
+/// `db::Store`) matches verbatim; a file-path query (`src/db.rs`) is reduced to
+/// its module stem first (see `importer_needle`) so it mirrors `imports <file>`.
 pub fn cmd_importers(cwd: &Path, query: &str, limit: usize, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
