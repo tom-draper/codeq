@@ -869,6 +869,61 @@ fn search_invalid_regex_fails() {
 }
 
 // ---------------------------------------------------------------------------
+// MCP server
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mcp_server_handshake_and_tool_call() {
+    use std::io::Write;
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    f.write("a.rs", "fn target() {}\n");
+
+    let mut child = PCommand::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let reqs = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"codeq_definitions","arguments":{"symbol":"target"}}}"#,
+    ];
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        for r in reqs {
+            writeln!(stdin, "{r}").unwrap();
+        }
+    } // drop stdin -> EOF, server exits after processing
+
+    let out = child.wait_with_output().unwrap();
+    let msgs: Vec<Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    // The notification produced no response: 3 requests -> 3 responses.
+    assert_eq!(msgs.len(), 3, "{msgs:?}");
+    assert_eq!(msgs[0]["result"]["serverInfo"]["name"], "codeq");
+    assert_eq!(msgs[0]["result"]["protocolVersion"], "2025-06-18");
+    assert!(msgs[1]["result"]["tools"].as_array().unwrap().len() >= 10);
+
+    // The tool result carries codeq's JSON output.
+    let text = msgs[2]["result"]["content"][0]["text"].as_str().unwrap();
+    let data: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(data["data"][0]["name"], "target");
+    assert_eq!(data["data"][0]["kind"], "function");
+}
+
+// ---------------------------------------------------------------------------
 // Map (factual aggregation, no opinion)
 // ---------------------------------------------------------------------------
 

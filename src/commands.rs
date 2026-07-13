@@ -1505,7 +1505,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "commands": [
             "index", "files", "changed", "stats", "map",
             "symbols", "definitions", "references", "outline", "at", "search",
-            "imports", "importers", "context", "capabilities",
+            "imports", "importers", "context", "capabilities", "mcp",
         ],
         // Languages with symbol + import extraction.
         "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go"],

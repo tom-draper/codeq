@@ -170,6 +170,27 @@ Assembles the smallest useful slice of code for a task, under a token budget, fr
 - The result includes a `plan` (what was seeded, how it was ordered) and an `omitted` list
   when the budget truncates, so an agent knows what was left out and can request more.
 
+## MCP server
+
+`codeq mcp` runs a Model Context Protocol server over stdio, so agent hosts (Claude Code,
+Cursor, …) can call codeq natively instead of shelling out. It's dependency-free (no async
+runtime) and bridges each tool call to the CLI in the server's working directory.
+
+Register it with your host, e.g.:
+
+```json
+{
+  "mcpServers": {
+    "codeq": { "command": "codeq", "args": ["mcp"] }
+  }
+}
+```
+
+Exposed tools: `codeq_map`, `codeq_search`, `codeq_symbols`, `codeq_definitions`,
+`codeq_references`, `codeq_outline`, `codeq_at`, `codeq_imports`, `codeq_importers`,
+`codeq_changed`, `codeq_context`, `codeq_files`, `codeq_capabilities`. Each returns codeq's
+JSON as the tool result. Start with `codeq_map` to orient.
+
 ## Examples
 
 ```bash
@@ -184,9 +205,9 @@ codeq context --symbols authenticate --expand --max-tokens 8000
 ## Development
 
 ```bash
-cargo test    # 29 integration tests drive the binary against fixture repos
+cargo test    # 56 integration tests drive the binary against fixture repos
 ```
 
 Tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,
-binary/unicode/large files, non-git repos, deleted-file cascade) and assert that `map` is
-byte-for-byte reproducible.
+binary/unicode/large files, non-git repos, deleted-file cascade), assert that `map` is
+byte-for-byte reproducible, and that the regex prefilter never drops a match.

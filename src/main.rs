@@ -13,6 +13,7 @@ mod db;
 mod envelope;
 mod facts;
 mod index;
+mod mcp;
 mod repo;
 
 use std::path::PathBuf;
@@ -223,6 +224,8 @@ enum Command {
     /// Describe what codeq can do: commands, languages, fact kinds, schema.
     Capabilities {
     },
+    /// Run as an MCP server over stdio (for agent hosts to call codeq natively).
+    Mcp,
 }
 
 fn main() -> ExitCode {
@@ -358,6 +361,7 @@ fn main() -> ExitCode {
         Command::Stats {} => commands::cmd_stats(&cwd, out),
         Command::Map { limit } => commands::cmd_map(&cwd, limit, out),
         Command::Capabilities {} => commands::cmd_capabilities(out),
+        Command::Mcp => mcp::serve(),
     };
 
     match result {
