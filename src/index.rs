@@ -263,7 +263,9 @@ pub fn language_for(path: &str) -> Option<&'static str> {
         "sql" => "sql",
         "sh" | "bash" => "shell",
         "c" | "h" => "c",
-        "cc" | "cpp" | "cxx" | "hpp" => "cpp",
+        "cc" | "cpp" | "cxx" | "hpp" | "hh" => "cpp",
+        "cs" => "csharp",
+        "php" => "php",
         "rb" => "ruby",
         _ => return None,
     };

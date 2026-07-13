@@ -66,6 +66,9 @@ pub struct Extractor {
     java: LangSpec,
     ruby: LangSpec,
     c: LangSpec,
+    cpp: LangSpec,
+    csharp: LangSpec,
+    php: LangSpec,
 }
 
 struct LangSpec {
@@ -254,6 +257,27 @@ impl Extractor {
                 "treesitter/c",
                 "c",
             )?,
+            cpp: LangSpec::new(
+                tree_sitter_cpp::LANGUAGE.into(),
+                CPP_QUERY,
+                CPP_SPANS,
+                "treesitter/cpp",
+                "cpp",
+            )?,
+            csharp: LangSpec::new(
+                tree_sitter_c_sharp::LANGUAGE.into(),
+                CSHARP_QUERY,
+                CSHARP_SPANS,
+                "treesitter/csharp",
+                "csharp",
+            )?,
+            php: LangSpec::new(
+                tree_sitter_php::LANGUAGE_PHP.into(),
+                PHP_QUERY,
+                PHP_SPANS,
+                "treesitter/php",
+                "php",
+            )?,
         })
     }
 
@@ -270,6 +294,9 @@ impl Extractor {
             "java" => self.java.extract(src),
             "ruby" => self.ruby.extract(src),
             "c" => self.c.extract(src),
+            "cpp" => self.cpp.extract(src),
+            "csharp" => self.csharp.extract(src),
+            "php" => self.php.extract(src),
             _ => (Vec::new(), Vec::new()),
         }
     }
@@ -281,7 +308,18 @@ impl Extractor {
 pub fn has_spans(language: &str) -> bool {
     matches!(
         language,
-        "rust" | "python" | "javascript" | "typescript" | "tsx" | "go" | "java" | "ruby" | "c"
+        "rust"
+            | "python"
+            | "javascript"
+            | "typescript"
+            | "tsx"
+            | "go"
+            | "java"
+            | "ruby"
+            | "c"
+            | "cpp"
+            | "csharp"
+            | "php"
     )
 }
 
@@ -485,6 +523,64 @@ const C_SPANS: &str = r#"
 (comment) @comment
 (string_literal) @string
 (char_literal) @string
+"#;
+
+/// C++ (a superset of C): add classes, namespaces, and member functions.
+const CPP_QUERY: &str = r#"
+(function_definition declarator: (function_declarator declarator: (identifier) @name) body: (compound_statement) @body) @function
+(function_definition declarator: (pointer_declarator declarator: (function_declarator declarator: (identifier) @name)) body: (compound_statement) @body) @function
+(function_definition declarator: (function_declarator declarator: (field_identifier) @name) body: (compound_statement) @body) @method
+(function_definition declarator: (function_declarator declarator: (qualified_identifier) @name) body: (compound_statement) @body) @method
+(class_specifier name: (type_identifier) @name body: (field_declaration_list) @body) @class
+(struct_specifier name: (type_identifier) @name body: (field_declaration_list) @body) @struct
+(enum_specifier name: (type_identifier) @name body: (enumerator_list) @body) @enum
+(namespace_definition name: (namespace_identifier) @name body: (declaration_list) @body) @namespace
+(preproc_include path: (system_lib_string) @name) @import
+(preproc_include path: (string_literal) @name) @import
+"#;
+
+const CPP_SPANS: &str = r#"
+(comment) @comment
+(string_literal) @string
+(char_literal) @string
+(raw_string_literal) @string
+"#;
+
+/// C#.
+const CSHARP_QUERY: &str = r#"
+(class_declaration name: (identifier) @name body: (_) @body) @class
+(interface_declaration name: (identifier) @name body: (_) @body) @interface
+(struct_declaration name: (identifier) @name body: (_) @body) @struct
+(enum_declaration name: (identifier) @name body: (_) @body) @enum
+(record_declaration name: (identifier) @name) @record
+(method_declaration name: (identifier) @name body: (block) @body) @method
+(constructor_declaration name: (identifier) @name body: (block) @body) @method
+(namespace_declaration name: (_) @name body: (_) @body) @namespace
+(using_directive (identifier) @name) @import
+(using_directive (qualified_name) @name) @import
+"#;
+
+const CSHARP_SPANS: &str = r#"
+(comment) @comment
+(string_literal) @string
+(character_literal) @string
+"#;
+
+/// PHP (the `<?php` variant).
+const PHP_QUERY: &str = r#"
+(function_definition name: (name) @name body: (compound_statement) @body) @function
+(method_declaration name: (name) @name body: (compound_statement) @body) @method
+(class_declaration name: (name) @name body: (declaration_list) @body) @class
+(interface_declaration name: (name) @name body: (declaration_list) @body) @interface
+(trait_declaration name: (name) @name body: (declaration_list) @body) @trait
+(enum_declaration name: (name) @name) @enum
+(namespace_use_clause (qualified_name) @name) @import
+"#;
+
+const PHP_SPANS: &str = r#"
+(comment) @comment
+(string) @string
+(encapsed_string) @string
 "#;
 
 /// Syntactic class of a byte position, for `search --in`. Extracted at index

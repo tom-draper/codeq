@@ -555,6 +555,53 @@ fn c_symbols_and_includes() {
     assert!(mods.contains(&"local.h".to_string()), "quoted include stripped: {mods:?}");
 }
 
+#[test]
+fn cpp_symbols_and_includes() {
+    let f = Fixture::new();
+    f.write(
+        "a.cpp",
+        "#include <vector>\nnamespace app {\nclass Widget { public: void render(); };\nvoid Widget::render() {}\nint helper(int x) { return x; }\n}\n",
+    );
+    let names = field_set(&f.run(&["symbols"]), "name");
+    for want in ["Widget", "app", "helper", "Widget::render"] {
+        assert!(names.contains(&want.to_string()), "missing {want}: {names:?}");
+    }
+    assert!(field_set(&f.run(&["imports"]), "module").contains(&"vector".to_string()));
+}
+
+#[test]
+fn csharp_symbols_and_usings() {
+    let f = Fixture::new();
+    f.write(
+        "a.cs",
+        "using System;\nnamespace App {\n  public interface IH { void H(); }\n  public class S : IH { public S() {} public void H() {} }\n}\n",
+    );
+    let syms = f.run(&["symbols"]);
+    let by_kind = |k: &str| -> Vec<String> {
+        syms["data"].as_array().unwrap().iter()
+            .filter(|r| r["kind"] == k)
+            .map(|r| r["name"].as_str().unwrap().to_string()).collect()
+    };
+    assert!(by_kind("interface").contains(&"IH".to_string()));
+    assert!(by_kind("class").contains(&"S".to_string()));
+    assert!(by_kind("namespace").contains(&"App".to_string()));
+    assert!(field_set(&f.run(&["imports"]), "module").contains(&"System".to_string()));
+}
+
+#[test]
+fn php_symbols_and_uses() {
+    let f = Fixture::new();
+    f.write(
+        "a.php",
+        "<?php\nnamespace App;\nuse App\\Models\\User;\ninterface H { public function h(); }\nclass S implements H { public function h() { return 1; } }\nfunction top($x) { return $x; }\n",
+    );
+    let names = field_set(&f.run(&["symbols"]), "name");
+    for want in ["H", "S", "h", "top"] {
+        assert!(names.contains(&want.to_string()), "missing {want}: {names:?}");
+    }
+    assert!(field_set(&f.run(&["imports"]), "module").contains(&"App\\Models\\User".to_string()));
+}
+
 // ---------------------------------------------------------------------------
 // Signatures / docstrings / outline
 // ---------------------------------------------------------------------------

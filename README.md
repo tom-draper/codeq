@@ -15,8 +15,9 @@ transparent. An agent that can trust the output has no reason to fall back to ad
 shell pipelines.
 
 > Status: working prototype. Symbol/import extraction currently covers **Rust**,
-> **Python**, **JavaScript**, **TypeScript/TSX**, **Go**, **Java**, **Ruby**, and **C**;
-> other languages are indexed as files only (still fully searchable). See [DRAFT.md](./DRAFT.md) for
+> **Python**, **JavaScript**, **TypeScript/TSX**, **Go**, **Java**, **Ruby**, **C**, **C++**,
+> **C#**, and **PHP**; other languages are indexed as files only (still fully searchable).
+> See [DRAFT.md](./DRAFT.md) for
 > the design rationale and [GEMINI.md](./GEMINI.md) / [GPT.md](./GPT.md) for the critical
 > reviews that shaped it.
 
