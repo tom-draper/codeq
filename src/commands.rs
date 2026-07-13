@@ -1508,7 +1508,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "imports", "importers", "context", "capabilities",
         ],
         // Languages with symbol + import extraction.
-        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx"],
+        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go"],
         // Languages recognised for file classification (extraction may be absent).
         "classified_languages": [
             "rust", "javascript", "typescript", "tsx", "python", "go", "java",

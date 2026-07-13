@@ -456,6 +456,35 @@ fn javascript_symbols_and_in_filter() {
     assert_eq!(count("strings"), 1);
 }
 
+#[test]
+fn go_symbols_and_imports() {
+    let f = Fixture::new();
+    f.write(
+        "svc.go",
+        "package main\n\n\
+         import \"fmt\"\n\n\
+         type Server struct { addr string }\n\n\
+         type Handler interface { Serve() }\n\n\
+         func New() *Server { return nil }\n\n\
+         func (s *Server) Start() error { fmt.Println(\"x\"); return nil }\n",
+    );
+    let syms = f.run(&["symbols"]);
+    let by_kind = |k: &str| -> Vec<String> {
+        syms["data"]
+            .as_array().unwrap().iter()
+            .filter(|r| r["kind"] == k)
+            .map(|r| r["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(by_kind("struct").contains(&"Server".to_string()));
+    assert!(by_kind("interface").contains(&"Handler".to_string()));
+    assert!(by_kind("function").contains(&"New".to_string()));
+    assert!(by_kind("method").contains(&"Start".to_string()));
+
+    let mods = field_set(&f.run(&["imports"]), "module");
+    assert!(mods.contains(&"fmt".to_string()), "go import quotes stripped: {mods:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Signatures / docstrings / outline
 // ---------------------------------------------------------------------------

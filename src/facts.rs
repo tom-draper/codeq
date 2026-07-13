@@ -62,6 +62,7 @@ pub struct Extractor {
     javascript: LangSpec,
     typescript: LangSpec,
     tsx: LangSpec,
+    go: LangSpec,
 }
 
 struct LangSpec {
@@ -135,6 +136,14 @@ impl LangSpec {
                     }
                 }
                 if let (Some(name), Some(kind), Some(node)) = (name, kind, def) {
+                    // Some grammars capture the whole quoted import path (Go);
+                    // normalise to the bare module string like the others.
+                    let name = if kind == "import" {
+                        name.trim_matches(|c| c == '"' || c == '\'' || c == '`')
+                            .to_string()
+                    } else {
+                        name
+                    };
                     let start = node.start_position();
                     let end = node.end_position();
                     facts.push(Fact {
@@ -214,6 +223,13 @@ impl Extractor {
                 "treesitter/tsx",
                 "tsx",
             )?,
+            go: LangSpec::new(
+                tree_sitter_go::LANGUAGE.into(),
+                GO_QUERY,
+                GO_SPANS,
+                "treesitter/go",
+                "go",
+            )?,
         })
     }
 
@@ -226,6 +242,7 @@ impl Extractor {
             "javascript" => self.javascript.extract(src),
             "typescript" => self.typescript.extract(src),
             "tsx" => self.tsx.extract(src),
+            "go" => self.go.extract(src),
             _ => (Vec::new(), Vec::new()),
         }
     }
@@ -237,7 +254,7 @@ impl Extractor {
 pub fn has_spans(language: &str) -> bool {
     matches!(
         language,
-        "rust" | "python" | "javascript" | "typescript" | "tsx"
+        "rust" | "python" | "javascript" | "typescript" | "tsx" | "go"
     )
 }
 
@@ -373,6 +390,23 @@ const TS_EXTRA: &str = r#"
 (interface_declaration name: (_) @name) @interface
 (type_alias_declaration name: (_) @name) @type
 (enum_declaration name: (_) @name) @enum
+"#;
+
+/// Go definitions and imports.
+const GO_QUERY: &str = r#"
+(function_declaration name: (identifier) @name body: (block) @body) @function
+(method_declaration name: (field_identifier) @name body: (block) @body) @method
+(type_declaration (type_spec name: (type_identifier) @name type: (struct_type)) @struct)
+(type_declaration (type_spec name: (type_identifier) @name type: (interface_type)) @interface)
+(type_declaration (type_spec name: (type_identifier) @name type: (type_identifier)) @type)
+(type_declaration (type_alias name: (type_identifier) @name) @type)
+(import_spec path: (interpreted_string_literal) @name) @import
+"#;
+
+const GO_SPANS: &str = r#"
+(comment) @comment
+(interpreted_string_literal) @string
+(raw_string_literal) @string
 "#;
 
 /// Syntactic class of a byte position, for `search --in`. Extracted at index
