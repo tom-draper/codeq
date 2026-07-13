@@ -1543,8 +1543,13 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     if args.word {
         expr = format!(r"\b(?:{expr})\b");
     }
+    // Match line-by-line semantics like grep/ripgrep: the scan runs over each
+    // whole file body, so `^`/`$` must anchor to line boundaries, not the start
+    // and end of the buffer. Without this, `^use` matches only a file that
+    // begins with `use` (near-zero) instead of every line starting with it.
     let re = regex::RegexBuilder::new(&expr)
         .case_insensitive(args.ignore_case)
+        .multi_line(true)
         .build()
         .map_err(|e| anyhow!("invalid pattern: {e}"))?;
 

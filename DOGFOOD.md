@@ -4,6 +4,35 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 8: differential test vs ripgrep → `^`/`$` anchors were broken
+
+Put the flagship claim ("`search` is a strict superset of grep, never reach for
+rg") under a differential test: ran ~15 patterns through both `codeq search
+--limit 0` and `rg`, comparing match counts. Most matched exactly (literals,
+`\b`, alternation, char classes, `-i`, escaped metachars). Two diverged.
+
+- **CRITICAL, FIXED: `^` and `$` anchors matched the whole file buffer, not each
+  line.** `codeq search '^use'` returned **0** while `rg '^use'` found 52 — the
+  regex was built without multiline mode, so `^`/`$` anchored to the start/end of
+  the entire file body (which `run_search` scans in one pass), not line
+  boundaries. Every line-anchored search — `^import`, `^def `, `^func `,
+  `^pub fn`, `^class ` — silently returned nothing. That's a severe false
+  negative for one of the most common code-search idioms, and it directly breaks
+  the "superset of grep" promise. **Fixed:** build the pattern with
+  `.multi_line(true)`. After the fix, `^use`/`^pub fn`/`^\s*fn `/`^#`/`Result>$`
+  all match rg **exactly**. Regression test added (`^use`, `x;$`).
+- **Known minor divergence (safe direction): `^$` over-counts empty lines by
+  exactly one per file** (1147 vs rg's 1124; diff == the 23 scanned files).
+  codeq counts the zero-width empty "line" after a file's trailing `\n`, which
+  grep omits. It's an *over*-count, so the strict-superset property still holds
+  (codeq finds every match rg does, plus these), and it only affects degenerate
+  empty-line patterns — real content patterns matched rg exactly. Documented
+  rather than special-cased, to keep the hot match loops simple.
+- Technique: **differential testing against the tool we claim to replace.** The
+  first four sessions found bugs by *using* codeq; this one found a worse bug by
+  *comparing* codeq to its baseline across many inputs. Both belong in the kit —
+  differential vs rg should be a standing check, ideally a bench/ harness.
+
 ## 2026-07-13 — session 7: `at`/`outline` are sound — and caught my own stale docs
 
 Stress-tested the location commands. `at <file>:<line>` correctly returns the

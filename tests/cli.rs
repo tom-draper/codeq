@@ -1046,6 +1046,26 @@ fn search_word_matches_whole_words_only() {
 }
 
 #[test]
+fn search_anchors_are_line_oriented_like_grep() {
+    // `^`/`$` must anchor to line boundaries, not the whole file buffer. The
+    // scan runs over each file body, so without multiline mode `^use` would
+    // only match a file that *starts* with `use` — here that's zero.
+    let f = Fixture::new();
+    f.write("a.rs", "mod x;\nuse crate::x;\nuse crate::y;\nfn f() {}\n");
+
+    let start = f.run(&["search", "^use"]);
+    let sm = start["data"]["matches"].as_array().unwrap();
+    assert_eq!(sm.len(), 2, "^use should match both use-lines: {sm:?}");
+    assert_eq!(sm[0]["line"], 2);
+    assert_eq!(sm[1]["line"], 3);
+
+    // End anchor is line-oriented too.
+    let end = f.run(&["search", "x;$"]);
+    let em = end["data"]["matches"].as_array().unwrap();
+    assert_eq!(em.len(), 2, "x;$ should match `mod x;` and `use crate::x;`: {em:?}");
+}
+
+#[test]
 fn search_invalid_regex_fails() {
     let f = Fixture::new();
     f.write("a.rs", "fn f() {}\n");
