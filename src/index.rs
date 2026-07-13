@@ -36,8 +36,23 @@ struct Stored {
 pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     let repo_root = repo.root.as_path();
 
-    // Load our index cache once: the per-file (size, mtime, hash) manifest and
-    // the per-directory mtime cache.
+    // Native, git-free fast path (our own index cache): stream the directory and
+    // file manifests, stat each entry, and bail on the first mismatch — no
+    // HashMap, and without loading the heavy content_hash column. Fresh iff:
+    //   * every cached directory's mtime is unchanged — a file added, removed or
+    //     renamed bumps its parent dir's mtime, so this catches all *structural*
+    //     changes (the untracked-cache trick git uses), and
+    //   * every cached file's (size, mtime) is unchanged — catches content edits.
+    // Only a real change short-circuits it into the full walk below.
+    if is_fresh(db, repo_root)? {
+        return Ok(RefreshStats {
+            reindexed: 0,
+            partial_failures: 0,
+        });
+    }
+
+    // Not fresh: load the full manifest (with hashes, to tell a real content
+    // change from a mere mtime bump) and walk the tree to reconcile.
     let mut existing: HashMap<String, Stored> = HashMap::new();
     {
         let mut stmt = db
@@ -57,36 +72,6 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             let (path, stored) = row?;
             existing.insert(path, stored);
         }
-    }
-    let mut existing_dirs: HashMap<String, i64> = HashMap::new();
-    {
-        let mut stmt = db.conn.prepare("SELECT path, mtime_ns FROM dirs")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-        for row in rows {
-            let (path, mtime) = row?;
-            existing_dirs.insert(path, mtime);
-        }
-    }
-
-    // Native, git-free fast path (our own index cache). The index is fresh iff:
-    //   * every cached directory's mtime is unchanged — a file added, removed or
-    //     renamed bumps its parent dir's mtime, so this catches all *structural*
-    //     changes (the untracked-cache trick git uses), and
-    //   * every cached file's (size, mtime) is unchanged — catches content edits.
-    // If both hold, there is nothing to do: no walk, no .gitignore matching, no
-    // git subprocess. This is only ever short-circuited by a real change.
-    if !existing_dirs.is_empty()
-        && existing_dirs
-            .iter()
-            .all(|(p, &m)| dir_mtime(&repo_root.join(p)) == Some(m))
-        && existing
-            .iter()
-            .all(|(p, s)| file_size_mtime(&repo_root.join(p)) == Some((s.size, s.mtime_ns)))
-    {
-        return Ok(RefreshStats {
-            reindexed: 0,
-            partial_failures: 0,
-        });
     }
 
     let mut seen: HashMap<String, ()> = HashMap::new();
@@ -279,6 +264,43 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
         reindexed,
         partial_failures,
     })
+}
+
+/// Whether the index is fresh, checked against codeq's own cache without a walk:
+/// stream the cached directory and file stats, stat each on disk, and stop at the
+/// first mismatch. Streams (no HashMap) and skips the content_hash column, so the
+/// common "nothing changed" path is just syscalls. An empty dir cache (no index
+/// yet, or a pre-v6 one) is never fresh — the caller must do a full walk.
+fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
+    let mut any_dir = false;
+    {
+        let mut stmt = db.conn.prepare("SELECT path, mtime_ns FROM dirs")?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            any_dir = true;
+            let path: String = r.get(0)?;
+            let mtime: i64 = r.get(1)?;
+            if dir_mtime(&root.join(&path)) != Some(mtime) {
+                return Ok(false);
+            }
+        }
+    }
+    if !any_dir {
+        return Ok(false);
+    }
+    let mut stmt = db
+        .conn
+        .prepare("SELECT path, size_bytes, mtime_ns FROM files")?;
+    let mut rows = stmt.query([])?;
+    while let Some(r) = rows.next()? {
+        let path: String = r.get(0)?;
+        let size: i64 = r.get(1)?;
+        let mtime: i64 = r.get::<_, Option<i64>>(2)?.unwrap_or(0);
+        if file_size_mtime(&root.join(&path)) != Some((size, mtime)) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Nanosecond mtime of a stat result, if representable.

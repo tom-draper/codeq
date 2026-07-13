@@ -43,7 +43,21 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
         let db = Db { conn, dir };
-        db.migrate()?;
+        // The DDL batch (CREATE TABLE/INDEX/VIRTUAL TABLE + best-effort ALTERs)
+        // only needs to run when the schema is missing or out of date. On the
+        // common path it's already current, so skip it — re-parsing ~a dozen
+        // statements on every command is wasted latency.
+        let stored = db
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'schema_version'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok();
+        if stored.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
+            db.migrate()?;
+        }
         Ok(db)
     }
 
