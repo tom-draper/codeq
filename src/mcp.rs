@@ -192,6 +192,13 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push("at".into());
             args.push(s(a, "location")?.into());
         }
+        "codeq_read" => {
+            args.push("read".into());
+            args.push(s(a, "file")?.into());
+            opt(&mut args, a, "lines", "--lines");
+            opt(&mut args, a, "symbol", "--symbol");
+            flag(&mut args, a, "full", "--full");
+        }
         "codeq_imports" => {
             args.push("imports".into());
             if let Some(p) = s(a, "path") {
@@ -283,6 +290,9 @@ fn tools() -> Value {
         tool("codeq_at",
             "Resolve a location (e.g. from a stack trace or compiler error) to the definition(s) enclosing it, innermost first. Location is <path>:<line>.",
             json!({ "location": str_ }), &["location"]),
+        tool("codeq_read",
+            "Read a file — PREFER THIS over a raw file read for large files. By default it folds long function/method bodies to their signature plus a marker with the exact hidden line range, so you see the whole file's structure cheaply; then expand with lines (verbatim slice, e.g. \"40-80\") or symbol (a named definition, verbatim). full returns the unfolded file. Line-numbered text.",
+            json!({ "file": str_, "lines": str_, "symbol": str_, "full": bool_ }), &["file"]),
         tool("codeq_imports",
             "List import statements (raw module strings), optionally scoped to files whose path matches.",
             json!({ "path": str_ }), &[]),

@@ -173,6 +173,30 @@ Assembles the smallest useful slice of code for a task, under a token budget, fr
   request more. `--plan` adds an explanatory query plan (seeds, modes, ordering); it's
   opt-in to keep the default payload lean.
 
+## `read` — a folding file reader
+
+`codeq read <file>` is a file reader built for an agent's token budget. Instead of
+ingesting a whole large file, it returns the file with long function/method **bodies
+folded** to their signature plus a marker giving the exact hidden line range — so you see
+the file's entire structure (imports, every signature, docstrings) for a fraction of the
+tokens, then expand only what you need:
+
+```
+  20  impl Repo {
+  23      pub fn discover(start: &Path) -> Result<Repo> {
+          ⋮  8 lines (24–31)
+  33      pub fn vcs(&self) -> &'static str {
+          ⋮  6 lines (34–39)
+```
+
+- `codeq read <file> --lines 24-31` — verbatim, line-numbered slice (ready for editing)
+- `codeq read <file> --symbol discover` — a named definition, verbatim
+- `codeq read <file> --full` — the whole file, unfolded
+
+Output is line-numbered **text**, not JSON (it's a reader). A 2000-line file's skeleton is a
+few percent of the tokens of reading it whole; you pay for a body only when you open it.
+Non-parsed languages return the file unchanged.
+
 ## MCP server
 
 `codeq mcp` runs a Model Context Protocol server over stdio, so agent hosts (Claude Code,

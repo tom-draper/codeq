@@ -492,6 +492,148 @@ pub fn cmd_outline(cwd: &Path, file: &str, docs: bool, out: Out) -> Result<()> {
     s.emit(data)
 }
 
+/// Bodies of function/method definitions this many lines or longer are folded.
+const MIN_FOLD: usize = 4;
+
+/// `read <file>` — a folding file reader (text output, not JSON). By default it
+/// shows the file with long function/method bodies collapsed to their signature
+/// plus a marker with the exact hidden line range, so an agent grasps a large
+/// file's whole shape cheaply and expands only what it needs. `--lines A-B` and
+/// `--symbol NAME` return verbatim, line-numbered slices to read or edit.
+pub fn cmd_read(
+    cwd: &Path,
+    file: &str,
+    lines: Option<&str>,
+    symbol: Option<&str>,
+    full: bool,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let rel = resolve_file(&s, file)?;
+    let bytes = std::fs::read(s.repo.root.join(&rel))
+        .map_err(|e| anyhow!("cannot read {rel}: {e}"))?;
+    let text = String::from_utf8_lossy(&bytes);
+    let file_lines: Vec<&str> = text.lines().collect();
+    let n = file_lines.len();
+
+    // Verbatim line range.
+    if let Some(spec) = lines {
+        let (a, b) = parse_range(spec)?;
+        print_range(&file_lines, a, b);
+        return Ok(());
+    }
+
+    // Verbatim definition(s) by name.
+    if let Some(name) = symbol {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT start_line, end_line FROM facts
+             WHERE path = ?1 AND name = ?2 AND kind <> 'import' ORDER BY start_line",
+        )?;
+        let ranges: Vec<(i64, i64)> = stmt
+            .query_map((&rel, name), |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        if ranges.is_empty() {
+            return Err(anyhow!("no definition named '{name}' in {rel}"));
+        }
+        for (a, b) in ranges {
+            print_range(&file_lines, a as usize, b as usize);
+            println!();
+        }
+        return Ok(());
+    }
+
+    // Whole file when asked, or when we can't parse it to know what to fold.
+    if full || !crate::facts::has_spans(language_for(&rel).unwrap_or("")) {
+        print_range(&file_lines, 1, n);
+        return Ok(());
+    }
+
+    // Folded view: hide the bodies of function/method definitions.
+    let mut folded = vec![false; n];
+    {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT start_line, end_line FROM facts
+             WHERE path = ?1 AND kind IN ('function', 'method')",
+        )?;
+        let rows = stmt.query_map([&rel], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (sl, el) = row?;
+            let (sl, el) = (sl.max(1) as usize, el.max(1) as usize);
+            if el >= sl && el - sl >= MIN_FOLD {
+                for ln in (sl + 1)..=el {
+                    if ln - 1 < n {
+                        folded[ln - 1] = true;
+                    }
+                }
+            }
+        }
+    }
+    print_folded(&file_lines, &folded);
+    Ok(())
+}
+
+fn parse_range(spec: &str) -> Result<(usize, usize)> {
+    let (a, b) = spec
+        .split_once('-')
+        .ok_or_else(|| anyhow!("--lines must be A-B, e.g. 40-80"))?;
+    let a: usize = a.trim().parse().map_err(|_| anyhow!("invalid line range"))?;
+    let b: usize = b.trim().parse().map_err(|_| anyhow!("invalid line range"))?;
+    Ok((a.max(1), b.max(a)))
+}
+
+fn print_range(lines: &[&str], a: usize, b: usize) {
+    for i in a.max(1)..=b {
+        if let Some(l) = lines.get(i - 1) {
+            println!("{i:6}  {l}");
+        }
+    }
+}
+
+fn print_folded(lines: &[&str], folded: &[bool]) {
+    let n = lines.len();
+    let mut i = 0;
+    while i < n {
+        if folded[i] {
+            let start = i;
+            while i < n && folded[i] {
+                i += 1;
+            }
+            let count = i - start;
+            println!("        ⋮  {count} lines ({}–{})", start + 1, i);
+        } else {
+            println!("{:6}  {}", i + 1, lines[i]);
+            i += 1;
+        }
+    }
+}
+
+/// Resolve a file argument (repo-relative path or basename) to an indexed path.
+fn resolve_file(s: &Session, arg: &str) -> Result<String> {
+    if s
+        .db
+        .conn
+        .query_row("SELECT 1 FROM files WHERE path = ?1", [arg], |_| Ok(()))
+        .is_ok()
+    {
+        return Ok(arg.to_string());
+    }
+    let suffix = format!("%/{arg}");
+    let mut stmt = s
+        .db
+        .conn
+        .prepare("SELECT path FROM files WHERE path LIKE ?1 ORDER BY path")?;
+    let matches: Vec<String> = stmt
+        .query_map([suffix], |r| r.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    match matches.len() {
+        1 => Ok(matches.into_iter().next().unwrap()),
+        0 => Err(anyhow!("file not found: {arg}")),
+        _ => Err(anyhow!("'{arg}' is ambiguous: {}", matches.join(", "))),
+    }
+}
+
 #[derive(Serialize)]
 struct ImportRow {
     /// The file that contains the import.
@@ -1504,7 +1646,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "index_schema": SCHEMA_VERSION,
         "commands": [
             "index", "files", "changed", "stats", "map",
-            "symbols", "definitions", "references", "outline", "at", "search",
+            "symbols", "definitions", "references", "outline", "at", "read", "search",
             "imports", "importers", "context", "capabilities", "mcp",
         ],
         // Languages with symbol + import extraction.

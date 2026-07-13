@@ -126,6 +126,21 @@ enum Command {
         /// Location as <path>:<line>.
         location: String,
     },
+    /// Read a file, folding long function bodies so you expand only what you
+    /// need (text output, not JSON).
+    Read {
+        /// File to read (repo-relative path or basename).
+        file: String,
+        /// Show only these lines, verbatim (e.g. 40-80).
+        #[arg(long)]
+        lines: Option<String>,
+        /// Show only the definition(s) with this name, verbatim.
+        #[arg(long)]
+        symbol: Option<String>,
+        /// Return the whole file without folding.
+        #[arg(long)]
+        full: bool,
+    },
     /// List import statements (raw, unresolved module strings).
     Imports {
         /// Restrict to importing files whose path contains this substring.
@@ -231,7 +246,20 @@ enum Command {
     Mcp,
 }
 
+/// Restore the default SIGPIPE behaviour (Rust sets it to ignore, which turns a
+/// closed pipe — e.g. `codeq read … | head` — into a panic). With the default,
+/// codeq terminates silently like `cat`/`grep`.
+#[cfg(unix)]
+fn reset_sigpipe() {
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+#[cfg(not(unix))]
+fn reset_sigpipe() {}
+
 fn main() -> ExitCode {
+    reset_sigpipe();
     let cli = Cli::parse();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
@@ -298,6 +326,12 @@ fn main() -> ExitCode {
             out,
         ),
         Command::At { location } => commands::cmd_at(&cwd, &location, out),
+        Command::Read {
+            file,
+            lines,
+            symbol,
+            full,
+        } => commands::cmd_read(&cwd, &file, lines.as_deref(), symbol.as_deref(), full, out),
         Command::Imports {
             path,
             limit,

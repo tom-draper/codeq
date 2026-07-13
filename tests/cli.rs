@@ -986,6 +986,33 @@ fn search_invalid_regex_fails() {
 }
 
 // ---------------------------------------------------------------------------
+// read (folding file reader, text output)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn read_folds_bodies_and_expands_verbatim() {
+    let f = Fixture::new();
+    let body: String = (0..10).map(|i| format!("    let v{i} = {i};\n")).collect();
+    f.write("a.rs", &format!("fn small() {{}}\nfn big() {{\n{body}}}\n"));
+
+    // Default: big's body folded, small shown, signatures visible.
+    let out = String::from_utf8(f.raw(&["read", "a.rs"]).stdout).unwrap();
+    assert!(out.contains("fn big()"), "signature shown: {out}");
+    assert!(out.contains('⋮'), "body folded: {out}");
+    assert!(!out.contains("let v5"), "folded body must be hidden: {out}");
+    assert!(out.contains("fn small()"), "short fn stays inline");
+
+    // --lines: verbatim, line-numbered slice.
+    let slice = String::from_utf8(f.raw(&["read", "a.rs", "--lines", "3-4"]).stdout).unwrap();
+    assert!(slice.contains("let v0"), "verbatim slice: {slice}");
+
+    // --symbol: the definition's real body.
+    let sym = String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "big"]).stdout).unwrap();
+    assert!(sym.contains("let v5"), "symbol body verbatim: {sym}");
+    assert!(sym.contains("2  fn big()"), "line-numbered from the def start: {sym}");
+}
+
+// ---------------------------------------------------------------------------
 // MCP server
 // ---------------------------------------------------------------------------
 

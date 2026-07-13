@@ -203,6 +203,7 @@ dependencies = [
  "clap",
  "globset",
  "ignore",
+ "libc",
  "regex",
  "regex-syntax",
  "rusqlite",

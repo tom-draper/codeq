@@ -15,6 +15,7 @@ blake3 = "1"
 clap = { version = "4", features = ["derive"] }
 globset = "0.4.18"
 ignore = "0.4"
+libc = "0.2.186"
 regex = "1.13.0"
 regex-syntax = "0.8.11"
 rusqlite = { version = "0.32", features = ["bundled"] }
