@@ -211,6 +211,9 @@ enum Command {
         /// Omit chunk source text (return provenance only).
         #[arg(long)]
         no_text: bool,
+        /// Include the explanatory query plan (seeds, modes, ordering).
+        #[arg(long)]
+        plan: bool,
     },
     /// Summary counts for the current index.
     Stats {
@@ -345,6 +348,7 @@ fn main() -> ExitCode {
             max_tokens,
             expand,
             no_text,
+            plan,
         } => commands::cmd_context(
             &cwd,
             context::Request {
@@ -355,6 +359,7 @@ fn main() -> ExitCode {
                 max_tokens,
                 expand,
                 include_text: !no_text,
+                plan,
             },
             out,
         ),

@@ -78,7 +78,9 @@ where raw grep output is already minimal.**
   `codeq importers vitest --fields path` is ~half the tokens (20.8k → 10.5k
   bytes), and `references --fields path,line` ~56% smaller. Previously `--fields`
   silently emptied those results.
-- `context`'s `plan`/`budget` metadata could still be opt-out to shave tokens.
+- `context`'s explanatory `plan` is now **opt-in** (`--plan`), and the fixed
+  boilerplate `note` was dropped and empty `omitted` is skipped — a leaner
+  default payload (e.g. a small context: 319 vs 511 bytes with `--plan`).
 
 ## Caveats
 

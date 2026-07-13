@@ -222,6 +222,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             flag(&mut args, a, "changed", "--changed");
             opt(&mut args, a, "compare_to", "--compare-to");
             flag(&mut args, a, "expand", "--expand");
+            flag(&mut args, a, "plan", "--plan");
             optn(&mut args, a, "max_tokens", "--max-tokens");
         }
         "codeq_files" => {
@@ -293,7 +294,7 @@ fn tools() -> Value {
             json!({ "compare_to": str_, "symbols": bool_ }), &[]),
         tool("codeq_context",
             "Assemble token-budgeted code context from explicit seeds: named symbols and/or changed files. Set expand for one deterministic hop to referenced definitions.",
-            json!({ "symbols": { "type": "array", "items": str_ }, "changed": bool_, "compare_to": str_, "expand": bool_, "max_tokens": int_ }), &[]),
+            json!({ "symbols": { "type": "array", "items": str_ }, "changed": bool_, "compare_to": str_, "expand": bool_, "plan": bool_, "max_tokens": int_ }), &[]),
         tool("codeq_files",
             "List indexed files, optionally filtered by path substring or language.",
             json!({ "pattern": str_, "language": str_, "limit": int_ }), &[]),

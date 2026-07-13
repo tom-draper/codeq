@@ -168,8 +168,9 @@ Assembles the smallest useful slice of code for a task, under a token budget, fr
   approximate token estimate (`~4 bytes/token`, labeled as approximate).
 - The default returns exactly the seeds. `--expand` adds one deterministic hop:
   definitions referenced *by name* inside the seed chunks.
-- The result includes a `plan` (what was seeded, how it was ordered) and an `omitted` list
-  when the budget truncates, so an agent knows what was left out and can request more.
+- When the budget truncates, an `omitted` list reports what was left out so the agent can
+  request more. `--plan` adds an explanatory query plan (seeds, modes, ordering); it's
+  opt-in to keep the default payload lean.
 
 ## MCP server
 

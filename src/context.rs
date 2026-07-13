@@ -38,6 +38,9 @@ pub struct Request {
     pub max_tokens: u64,
     pub expand: bool,
     pub include_text: bool,
+    /// Include the explanatory `plan` (seeds, modes, ordering). Off by default
+    /// to keep the payload lean; the chunks and omissions are what an agent acts on.
+    pub plan: bool,
 }
 
 /// A definition loaded from the index.
@@ -54,9 +57,14 @@ struct Def {
 
 #[derive(Serialize)]
 pub struct ContextResult {
-    plan: Plan,
+    /// Present only with `--plan`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan: Option<Plan>,
     budget: Budget,
     chunks: Vec<Chunk>,
+    /// Candidates dropped by the token budget — a trust signal, so omitted only
+    /// when there actually were omissions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     omitted: Vec<Omitted>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     omitted_truncated: bool,
@@ -76,8 +84,9 @@ struct Plan {
 struct Budget {
     max_tokens: u64,
     used_tokens: u64,
+    /// The estimate is approximate (byte-based); labeled so an agent never
+    /// treats it as an exact per-model count.
     tokenizer: &'static str,
-    note: &'static str,
 }
 
 #[derive(Serialize)]
@@ -259,22 +268,23 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         s
     };
 
-    Ok(ContextResult {
-        plan: Plan {
-            modes,
-            seeds,
-            expansion: if req.expand {
-                "one-hop: definitions referenced by name in seed chunks"
-            } else {
-                "disabled"
-            },
-            order: "seeds first, then referenced defs; each group by path+line; a chunk over budget is skipped, not reordered",
+    let plan = req.plan.then(|| Plan {
+        modes,
+        seeds,
+        expansion: if req.expand {
+            "one-hop: definitions referenced by name in seed chunks"
+        } else {
+            "disabled"
         },
+        order: "seeds first, then referenced defs; each group by path+line; a chunk over budget is skipped, not reordered",
+    });
+
+    Ok(ContextResult {
+        plan,
         budget: Budget {
             max_tokens: req.max_tokens,
             used_tokens: used,
             tokenizer: TOKENIZER,
-            note: "token counts are approximate; exact per-model tokenization is future work",
         },
         chunks,
         omitted,

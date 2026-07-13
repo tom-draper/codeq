@@ -1060,7 +1060,8 @@ fn context_respects_token_budget() {
     let used = d["budget"]["used_tokens"].as_u64().unwrap();
     assert_eq!(sum, used);
     assert!(used <= 12000);
-    assert!(d["omitted"].as_array().unwrap().is_empty());
+    // omitted is skipped when empty.
+    assert!(d.get("omitted").map_or(true, |o| o.as_array().unwrap().is_empty()));
 
     // Starve the budget: nothing fits, everything is reported as omitted.
     let v = f.run(&[
@@ -1078,7 +1079,8 @@ fn context_changed_mode_seeds_from_git() {
     f.git_init_commit();
     f.write("a.py", "def old():\n    pass\n\ndef fresh():\n    pass\n");
 
-    let v = f.run(&["context", "--changed", "--compare-to", "HEAD", "--no-text"]);
+    // --plan opts into the explanatory plan (omitted by default to stay lean).
+    let v = f.run(&["context", "--changed", "--compare-to", "HEAD", "--no-text", "--plan"]);
     let d = &v["data"];
     assert!(d["plan"]["modes"]
         .as_array()
@@ -1087,6 +1089,10 @@ fn context_changed_mode_seeds_from_git() {
         .any(|m| m == "changed"));
     let names = chunk_symbols(d);
     assert!(names.contains(&"fresh".to_string()), "changed seed missing: {names:?}");
+
+    // Default (no --plan) omits the plan block.
+    let lean = f.run(&["context", "--changed", "--compare-to", "HEAD", "--no-text"]);
+    assert!(lean["data"].get("plan").is_none(), "plan should be opt-in");
 }
 
 #[test]
