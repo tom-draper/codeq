@@ -177,7 +177,12 @@ fn render_row(row: &Value, out: &mut String) {
             out.push_str(&format!("{pad}{loc}\n{t}\n"));
             return;
         }
-        out.push_str(&format!("{pad}{loc}{}\n", t.trim()));
+        // codeq's differentiator over grep: annotate the match with the symbol
+        // it sits inside, so an agent needn't a follow-up `at` to place it.
+        let enclosing = str_of("symbol")
+            .map(|s| format!("  [{s}]"))
+            .unwrap_or_default();
+        out.push_str(&format!("{pad}{loc}{}{enclosing}\n", t.trim()));
         return;
     }
     if let Some(sig) = str_of("signature") {

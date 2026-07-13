@@ -1142,11 +1142,13 @@ fn text_is_the_default_output_json_is_opt_in() {
     assert!(text.contains("a.rs:1: function alpha"), "grep-style row missing: {text}");
     assert!(text.contains("a.rs:2: function beta"), "grep-style row missing: {text}");
 
-    // Search text is `path:line:col: text`, like ripgrep.
+    // Search text is `path:line:col: text`, like ripgrep, plus codeq's
+    // differentiator: the enclosing symbol annotated as `[name]`.
     let so = f.raw(&["search", "beta"]);
     let s = String::from_utf8_lossy(&so.stdout);
     assert!(s.contains("a.rs:2:"), "search text row missing: {s}");
-    assert!(s.trim_end().ends_with("fn beta() {}"), "search text payload missing: {s}");
+    assert!(s.contains("fn beta() {}"), "search text payload missing: {s}");
+    assert!(s.trim_end().ends_with("[beta]"), "enclosing symbol annotation missing: {s}");
 
     // --json restores the structured envelope.
     let jo = f.raw(&["--json", "symbols"]);
