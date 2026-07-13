@@ -39,15 +39,13 @@ fixtures (Python, JS, TS, Go, Java, Ruby, C, C++, C#, PHP). Most are correct
 (free functions, classes, methods, interfaces, namespaces, structs, and imports
 all extracted as expected). Two real gaps and one re-confirmed limitation:
 
-- **GAP: Ruby imports are entirely missing.** `require`, `require_relative`,
-  `autoload` yield zero import facts, so `imports`/`importers` are dead for every
-  Ruby file. The RUBY_QUERY comment calls this deliberate ("`require` is a method
-  call, not an import statement") — technically true, but `require` *is* Ruby's
-  import mechanism, and every other language captures its imports. Fix is
-  non-trivial: `require "x"` parses as a generic `(call)`, and the extractor does
-  **not** evaluate tree-sitter predicates (`#match?`/`#eq?`) — the capture loop
-  just maps capture names — so matching only `require`-named calls needs either
-  predicate support or Rust-side post-filtering on the method identifier.
+- **RESOLVED: Ruby imports were entirely missing.** `require`/`require_relative`
+  yielded zero import facts, so `imports`/`importers` were dead for every Ruby
+  file. `require "x"` parses as a generic `(call)` and the extractor doesn't
+  evaluate tree-sitter predicates, so the query now captures the call and its
+  method identifier as `@guard`, and `extract` filters to the recognised keywords
+  (`require`/`require_relative`/`load`/`autoload`) in Rust — `puts "x"` etc. are
+  not imports. sinatra 0→85, rack 0→122 imports; regression test added.
 - **GAP: C++ pure method *declarations* aren't captured.** `void m();` inside a
   class yields no symbol; only out-of-line definitions (`Widget::m`) and inline
   ones are. A header-only class shows no methods — bad for C/C++ header

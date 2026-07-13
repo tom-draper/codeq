@@ -390,6 +390,25 @@ fn extracts_rust_symbols_and_imports() {
 }
 
 #[test]
+fn ruby_require_is_an_import() {
+    // Ruby has no import statement — `require`/`require_relative` are method
+    // calls — but they are its import mechanism, so codeq captures them (guarded
+    // by the method name so ordinary calls like `puts "x"` are not imports).
+    let f = Fixture::new();
+    f.write(
+        "a.rb",
+        "require \"set\"\nrequire_relative \"./foo\"\nputs \"nope\"\nraise \"no\"\ndef m; end\n",
+    );
+    let mods = field_set(&f.run(&["imports"]), "module");
+    assert!(mods.contains(&"set".to_string()), "{mods:?}");
+    assert!(mods.contains(&"./foo".to_string()), "{mods:?}");
+    assert!(!mods.iter().any(|m| m == "nope" || m == "no"),
+            "a non-require string leaked as an import: {mods:?}");
+    // Definitions must still be extracted alongside imports.
+    assert!(field_set(&f.run(&["symbols"]), "name").contains(&"m".to_string()));
+}
+
+#[test]
 fn definitions_returns_precise_ranges() {
     let f = Fixture::new();
     f.write("m.py", "def first():\n    pass\n\ndef target():\n    return 1\n");

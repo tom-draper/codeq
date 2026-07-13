@@ -129,16 +129,30 @@ impl LangSpec {
                 let mut kind: Option<&str> = None;
                 let mut def: Option<Node> = None;
                 let mut body: Option<Node> = None;
+                let mut guard: Option<&str> = None;
                 for cap in m.captures {
                     match self.capture_names[cap.index as usize].as_str() {
                         "name" => {
                             name = cap.node.utf8_text(src).ok().map(|s| s.to_string());
                         }
                         "body" => body = Some(cap.node),
+                        // `@guard` marks a token the match is only valid for when
+                        // it equals a known keyword — e.g. Ruby `require`, which
+                        // is a plain method call the grammar can't distinguish.
+                        // (The query engine here doesn't evaluate `#eq?`, so we
+                        // filter in code.)
+                        "guard" => guard = cap.node.utf8_text(src).ok(),
                         other => {
                             kind = Some(other);
                             def = Some(cap.node);
                         }
+                    }
+                }
+                if let Some(g) = guard {
+                    if !matches!(g, "require" | "require_relative"
+                        | "require_dependency" | "load" | "autoload")
+                    {
+                        continue;
                     }
                 }
                 if let (Some(name), Some(kind), Some(node)) = (name, kind, def) {
@@ -493,7 +507,9 @@ const JAVA_SPANS: &str = r#"
 (character_literal) @string
 "#;
 
-/// Ruby definitions (no import statement in Ruby — `require` is a method call).
+/// Ruby definitions and `require`/`require_relative` imports. Ruby has no import
+/// statement — `require "x"` is a plain method call — so imports are captured as
+/// calls guarded by the method name (see the `@guard` handling in `extract`).
 /// Ruby method/class bodies aren't a strippable field here, so signatures are
 /// the whole declaration, capped.
 const RUBY_QUERY: &str = r#"
@@ -501,6 +517,9 @@ const RUBY_QUERY: &str = r#"
 (singleton_method name: (_) @name) @method
 (class name: (_) @name) @class
 (module name: (_) @name) @module
+(call
+  method: (identifier) @guard
+  arguments: (argument_list . (string (string_content) @name))) @import
 "#;
 
 const RUBY_SPANS: &str = r#"
