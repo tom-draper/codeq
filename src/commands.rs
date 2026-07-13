@@ -335,19 +335,30 @@ struct DefinitionRow {
     doc: Option<String>,
 }
 
-fn definitions_of(s: &Session, symbol: &str, limit: usize) -> Result<Vec<DefinitionRow>> {
+fn definitions_of(
+    s: &Session,
+    symbol: &str,
+    path: Option<&str>,
+    limit: usize,
+) -> Result<Vec<DefinitionRow>> {
     let mut sql = String::from(
         "SELECT name, kind, path, language,
                 start_line, start_col, end_line, end_col, start_byte, end_byte,
                 signature, doc
-         FROM facts WHERE name = ?1 AND kind <> 'import'
-         ORDER BY path, start_line",
+         FROM facts WHERE name = ?1 AND kind <> 'import'",
     );
+    let like = path.map(|p| format!("%{p}%"));
+    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&symbol];
+    if let Some(l) = &like {
+        sql.push_str(" AND path LIKE ?2");
+        params.push(l);
+    }
+    sql.push_str(" ORDER BY path, start_line");
     if limit > 0 {
         sql.push_str(&format!(" LIMIT {limit}"));
     }
     let mut stmt = s.db.conn.prepare(&sql)?;
-    let rows = stmt.query_map([symbol], |r| {
+    let rows = stmt.query_map(params.as_slice(), |r| {
         Ok(DefinitionRow {
             name: r.get(0)?,
             kind: r.get(1)?,
@@ -366,9 +377,15 @@ fn definitions_of(s: &Session, symbol: &str, limit: usize) -> Result<Vec<Definit
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
-pub fn cmd_definitions(cwd: &Path, symbol: &str, limit: usize, out: Out) -> Result<()> {
+pub fn cmd_definitions(
+    cwd: &Path,
+    symbol: &str,
+    path: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let data = definitions_of(&s, symbol, limit)?;
+    let data = definitions_of(&s, symbol, path, limit)?;
     s.emit(data)
 }
 
@@ -387,9 +404,10 @@ struct Caller {
 
 /// Distinct definitions that contain a word-boundary reference to `name`,
 /// excluding `name`'s own declaration. Textual (name-based), not type-resolved.
-fn callers_of(s: &Session, name: &str) -> Result<Vec<Caller>> {
+/// `path` restricts to callers *located* in matching files.
+fn callers_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Caller>> {
     let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))?;
-    let candidates = fetch_bodies(s, fts_substring(name).as_deref(), None, None)?;
+    let candidates = fetch_bodies(s, fts_substring(name).as_deref(), path, None)?;
     // Callers means references in *code* — not comments, strings, or prose in
     // unparseable files (which are excluded). Uses the cached comment/string spans.
     let opts = ScanOpts {
@@ -450,13 +468,22 @@ struct Callee {
 }
 
 /// Definitions referenced by name inside `name`'s body — its (textual) callees.
-/// Same one-hop, name-based rule as `context --expand`.
-fn callees_of(s: &Session, name: &str) -> Result<Vec<Callee>> {
+/// Same one-hop, name-based rule as `context --expand`. `path` scopes which
+/// definition(s) of `name` to analyse (so a common name like `build` doesn't
+/// merge unrelated functions).
+fn callees_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Callee>> {
     let targets: Vec<(String, usize, usize)> = {
-        let mut st = s.db.conn.prepare(
+        let mut sql = String::from(
             "SELECT path, start_byte, end_byte FROM facts WHERE name = ?1 AND kind <> 'import'",
-        )?;
-        let rows = st.query_map([name], |r| {
+        );
+        let like = path.map(|p| format!("%{p}%"));
+        let mut params: Vec<&dyn rusqlite::ToSql> = vec![&name];
+        if let Some(l) = &like {
+            sql.push_str(" AND path LIKE ?2");
+            params.push(l);
+        }
+        let mut st = s.db.conn.prepare(&sql)?;
+        let rows = st.query_map(params.as_slice(), |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, i64>(1)? as usize,
@@ -535,16 +562,16 @@ fn collect_idents(text: &str, out: &mut HashSet<String>) {
 }
 
 /// `callers <name>` — who references this symbol (by enclosing definition).
-pub fn cmd_callers(cwd: &Path, name: &str, out: Out) -> Result<()> {
+pub fn cmd_callers(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let data = callers_of(&s, name)?;
+    let data = callers_of(&s, name, path)?;
     s.emit(data)
 }
 
 /// `callees <name>` — what this symbol references (by name).
-pub fn cmd_callees(cwd: &Path, name: &str, out: Out) -> Result<()> {
+pub fn cmd_callees(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let data = callees_of(&s, name)?;
+    let data = callees_of(&s, name, path)?;
     s.emit(data)
 }
 
@@ -556,13 +583,16 @@ struct About {
 }
 
 /// `about <name>` — the pre-edit dossier: definition(s) with signature/doc, who
-/// calls it, and what it calls — in one call instead of five.
-pub fn cmd_about(cwd: &Path, name: &str, out: Out) -> Result<()> {
+/// calls it, and what it calls — in one call instead of five. `path` scopes the
+/// definition and its callees to the matching file(s), so a common name doesn't
+/// merge unrelated symbols. Callers stay repo-wide (textual references to the
+/// name), which is the useful "who uses this".
+pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let data = About {
-        definitions: definitions_of(&s, name, 0)?,
-        callers: callers_of(&s, name)?,
-        callees: callees_of(&s, name)?,
+        definitions: definitions_of(&s, name, path, 0)?,
+        callers: callers_of(&s, name, None)?,
+        callees: callees_of(&s, name, path)?,
     };
     s.emit(data)
 }

@@ -719,6 +719,25 @@ fn callers_callees_and_about() {
 }
 
 #[test]
+fn about_path_scopes_to_one_definition() {
+    // Two same-named `thing`s in different files must not be merged.
+    let f = Fixture::new();
+    f.write("a.rs", "fn thing() { helper_a(); }\nfn helper_a() {}\n");
+    f.write("b.rs", "fn thing() { helper_b(); }\nfn helper_b() {}\n");
+
+    let all = f.run(&["about", "thing"]);
+    assert_eq!(all["data"]["definitions"].as_array().unwrap().len(), 2, "unscoped sees both");
+
+    let scoped = f.run(&["about", "thing", "--path", "a.rs"]);
+    let d = &scoped["data"];
+    assert_eq!(d["definitions"].as_array().unwrap().len(), 1);
+    let callees: Vec<&str> = d["callees"].as_array().unwrap().iter()
+        .map(|c| c["name"].as_str().unwrap()).collect();
+    assert!(callees.contains(&"helper_a"), "{callees:?}");
+    assert!(!callees.contains(&"helper_b"), "scoped callees leaked the other def: {callees:?}");
+}
+
+#[test]
 fn references_uses_word_boundaries() {
     let f = Fixture::new();
     // `find` must not match `finder`.

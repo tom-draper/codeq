@@ -4,7 +4,14 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
-## 2026-07-13 — symbol commands need path scoping (highest priority)
+## 2026-07-13 — RESOLVED: symbol commands need path scoping (highest priority)
+
+**Fixed** the same day: `definitions`/`callees`/`about` now take `--path <substr>`
+to scope the target definition, and `callers` `--path` scopes caller locations.
+`about build --path context` now shows only `context::build` and its callees;
+`--path commands` shows the other one. First dogfood-driven fix — the loop works.
+
+Original report:
 
 `codeq about build` matched **two** `build` functions — `GlobFilter::build`
 (src/commands.rs) and `context::build` (src/context.rs). `about`/`callers`/

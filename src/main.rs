@@ -103,6 +103,9 @@ enum Command {
     Definitions {
         /// Exact symbol name to resolve.
         symbol: String,
+        /// Restrict to definitions in paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
@@ -111,16 +114,26 @@ enum Command {
     Callers {
         /// Exact symbol name.
         name: String,
+        /// Restrict to callers located in paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
     },
     /// Definitions a symbol references (its callees, name-based).
     Callees {
         /// Exact symbol name.
         name: String,
+        /// Scope to the definition(s) of the symbol in matching paths.
+        #[arg(long)]
+        path: Option<String>,
     },
     /// Dossier for a symbol: definition(s) + callers + callees, in one call.
     About {
         /// Exact symbol name.
         name: String,
+        /// Scope the definition and callees to matching paths (disambiguates
+        /// a common name); callers stay repo-wide.
+        #[arg(long)]
+        path: Option<String>,
     },
     /// Word-boundary references to an exact symbol name, with enclosing symbol.
     References {
@@ -325,11 +338,18 @@ fn main() -> ExitCode {
         } => commands::cmd_outline(&cwd, &file, docs, out),
         Command::Definitions {
             symbol,
+            path,
             limit,
-        } => commands::cmd_definitions(&cwd, &symbol, limit, out),
-        Command::Callers { name } => commands::cmd_callers(&cwd, &name, out),
-        Command::Callees { name } => commands::cmd_callees(&cwd, &name, out),
-        Command::About { name } => commands::cmd_about(&cwd, &name, out),
+        } => commands::cmd_definitions(&cwd, &symbol, path.as_deref(), limit, out),
+        Command::Callers { name, path } => {
+            commands::cmd_callers(&cwd, &name, path.as_deref(), out)
+        }
+        Command::Callees { name, path } => {
+            commands::cmd_callees(&cwd, &name, path.as_deref(), out)
+        }
+        Command::About { name, path } => {
+            commands::cmd_about(&cwd, &name, path.as_deref(), out)
+        }
         Command::References {
             name,
             path,

@@ -22,11 +22,11 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
 
 ## Known limitations (found by dogfooding — don't be misled)
 
-- **Symbol commands match by NAME across the whole repo.** `about`/`callers`/
-  `callees`/`definitions` conflate all same-named symbols. For a common name
-  (`new`, `build`, `open`) `about build` mixes every `build` in the repo. Run
-  `codeq definitions NAME` first to see if there are several; there is not yet a
-  `--path` scope for the graph commands.
+- **Symbol commands match by NAME across the whole repo.** For a common name
+  (`new`, `build`, `open`), scope with `--path <substr>`:
+  `codeq about build --path context` targets the `build` in that file. Without a
+  scope, `definitions`/`callees`/`about` cover every same-named symbol. (`about`
+  keeps callers repo-wide even when scoped.)
 - **References/callers are textual (name-based), not type-resolved.**
 
 ## Build / test
