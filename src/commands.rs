@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
+use regex_syntax::hir::literal::{ExtractKind, Extractor as LiteralExtractor};
 use serde::Serialize;
 
 use crate::context::{self, Request};
@@ -944,21 +945,48 @@ fn run_search(
     })
 }
 
-/// Maximal `[alnum_]+` runs — the token units of our FTS tokenizer.
-fn tokens_of(s: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    for ch in s.chars() {
-        if ch == '_' || ch.is_alphanumeric() {
-            cur.push(ch);
-        } else if !cur.is_empty() {
-            out.push(std::mem::take(&mut cur));
+/// Quote a literal as an FTS5 trigram substring MATCH term. Trigram needs >= 3
+/// characters; shorter literals can't be prefiltered (caller must full-scan).
+fn fts_substring(lit: &str) -> Option<String> {
+    if lit.chars().count() < 3 {
+        return None;
+    }
+    Some(format!("\"{}\"", lit.replace('"', "\"\"")))
+}
+
+/// Build a trigram prefilter for a regex: a set of literals such that *every*
+/// match must contain at least one of them (as a substring), OR-ed together.
+/// Uses regex-syntax prefix/suffix literal extraction. Returns `None` when no
+/// safe prefilter exists — the caller then full-scans, which is always correct.
+///
+/// Correctness: a finite prefix (or suffix) literal set means every match
+/// starts (or ends) with one of the literals, so it contains one as a
+/// substring; the trigram OR is a true superset and never drops a match.
+fn regex_prefilter(pattern: &str) -> Option<String> {
+    let hir = regex_syntax::parse(pattern).ok()?;
+    usable_literals(ExtractKind::Prefix, &hir)
+        .or_else(|| usable_literals(ExtractKind::Suffix, &hir))
+}
+
+fn usable_literals(kind: ExtractKind, hir: &regex_syntax::hir::Hir) -> Option<String> {
+    let mut ex = LiteralExtractor::new();
+    ex.kind(kind);
+    let seq = ex.extract(hir);
+    let lits = seq.literals()?;
+    if lits.is_empty() || lits.len() > 64 {
+        return None;
+    }
+    let mut terms = Vec::with_capacity(lits.len());
+    for lit in lits {
+        let s = std::str::from_utf8(lit.as_bytes()).ok()?;
+        // Any alternative shorter than a trigram is unfilterable, which would
+        // make the whole OR unsafe — bail to a full scan instead.
+        if s.chars().count() < 3 {
+            return None;
         }
+        terms.push(format!("\"{}\"", s.replace('"', "\"\"")));
     }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
+    Some(terms.join(" OR "))
 }
 
 /// Include/exclude glob filter over repo-relative paths, ripgrep-style: a `!`
@@ -1022,21 +1050,6 @@ impl GlobFilter {
     }
 }
 
-/// An FTS5 MATCH string requiring every token (implicit AND), each quoted.
-/// Returns `None` when there is no token to prefilter on.
-fn fts_match(tokens: &[String]) -> Option<String> {
-    if tokens.is_empty() {
-        return None;
-    }
-    Some(
-        tokens
-            .iter()
-            .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join(" "),
-    )
-}
-
 /// Options for the `search` command surface, kept in a struct so the CLI can
 /// grow without a huge argument list.
 pub struct SearchArgs<'a> {
@@ -1075,13 +1088,14 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         .build()
         .map_err(|e| anyhow!("invalid pattern: {e}"))?;
 
-    // A literal search must contain all its tokens, so FTS can prefilter safely.
-    // A regex cannot be prefiltered without risking false negatives, so it scans
-    // every text body — still from the index, not the filesystem.
+    // Prefilter candidate files via the trigram index: a fixed search by its
+    // whole literal, a regex by its required literals. Either may be None (no
+    // usable >=3-char literal), in which case we scan every body — still from
+    // the index, never the filesystem, and always correct.
     let match_query = if args.fixed {
-        fts_match(&tokens_of(args.pattern))
+        fts_substring(args.pattern)
     } else {
-        None
+        regex_prefilter(args.pattern)
     };
     let mut candidates = fetch_bodies(&s, match_query.as_deref(), args.path, args.language)?;
 
@@ -1144,8 +1158,9 @@ pub fn cmd_references(
 
     let expr = format!(r"\b{}\b", regex::escape(name));
     let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
-    // The name is a token, so FTS narrows to files that contain it.
-    let match_query = fts_match(&tokens_of(name));
+    // The name is a substring of every reference, so the trigram index narrows
+    // to files that contain it (the \b matcher then confirms word boundaries).
+    let match_query = fts_substring(name);
     let candidates = fetch_bodies(&s, match_query.as_deref(), path, language)?;
     let opts = ScanOpts {
         before: 0,

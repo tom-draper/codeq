@@ -204,6 +204,7 @@ dependencies = [
  "globset",
  "ignore",
  "regex",
+ "regex-syntax",
  "rusqlite",
  "serde",
  "serde_json",

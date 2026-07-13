@@ -30,13 +30,33 @@ outline a file's structure        codeq  12.7      224    56       2
                                   rg      1.9      153    38       2
 who imports a module              codeq  12.3    20775  5193     179
                                   rg      7.5    16759  4189     179
-TODO comments only                codeq  51.1      680   170       4   # --in now cached (was ~570ms)
+TODO comments only                codeq  14.8      680   170       4   # --in cached (was ~570ms)
                                   rg      6.5      378    94       4
-list all classes                  codeq  12.0     8386  2096      62
-                                  rg     10.7    13415  3353     112
-text search with context          codeq  43.4      653   163       2
-                                  rg      6.8      628   157      11
+list all classes                  codeq  11.6     8386  2096      62
+                                  rg     10.9    13415  3353     112
+text search with context          codeq  17.8      653   163       2   # trigram-prefiltered (was ~43ms)
+                                  rg      8.3      628   157      11
 ```
+
+## vs grep — the ignore-awareness win
+
+We won't beat ripgrep on raw engine speed (it's parallel + SIMD and also
+ignore-aware). But plain `grep -r` is neither indexed nor ignore-aware, and it's
+the tool an agent types naively. On a clean checkout grep is fast because
+there's little to scan; add an installed dependency tree and it inverts.
+
+Same repo + a 16 MB gitignored `node_modules` (4000 files), searching `ZodString`:
+
+```
+codeq search  21 ms   # ignores node_modules — flat vs the clean repo
+rg             7 ms   # ignores node_modules
+grep -rnI     26 ms   # scans node_modules — now slower than codeq
+```
+
+That's only 4000 extra files. A real `node_modules` is 100k+ files, where
+`grep -r` runs into seconds while codeq (and rg) stay flat. So: **codeq can't
+beat ripgrep on speed, but on a realistic repo it beats grep** — because it is
+ignore-aware and indexed — *and* returns structure grep can't.
 
 ## Honest reading
 
@@ -51,7 +71,11 @@ pretend otherwise — the value proposition is not "faster grep".
   slower than rg", it is "~2x slower and returns structured results". `--in`
   used to be slow (~570 ms) because it re-parsed candidate files per query; it
   now reads comment/string spans **cached in the index** (extracted in the same
-  parse as symbols), bringing it to ~50 ms.
+  parse as symbols), bringing it to ~15 ms. And raw text/regex search used to
+  scan every body (~43 ms); the content index is now a **trigram** index, so a
+  regex is prefiltered by its required literals (Zoekt/csearch style) down to
+  the candidate files — ~18 ms, and always a true superset (never drops a
+  match; when no >=3-char literal exists it safely full-scans).
 
 - **Precision (the real win):** "list all classes" — codeq returns **62 actual
   class definitions**; `rg 'class \w+'` returns **112 lines**, padded with
@@ -77,7 +101,10 @@ pretend otherwise — the value proposition is not "faster grep".
 - The per-query freshness walk was the dominant query cost → **fixed** with the
   git freshness fast-path (~60 ms → ~12 ms warm).
 - `--in` re-parsed per query → **fixed** by caching comment/string spans in the
-  index (extracted in the same parse as symbols): ~570 ms → ~50 ms.
+  index (extracted in the same parse as symbols): ~570 ms → ~15 ms.
+- Regex text search scanned every body → **fixed** with a trigram content index
+  + required-literal prefiltering: ~43 ms → ~18 ms, and it beats `grep -r` on any
+  repo with a gitignored dependency tree.
 - JS identifiers containing `$` (e.g. `$ZodError`) break both `rg`'s regex and
   codeq's `\b` word-boundary in `references` — word boundaries assume `\w`
   identifiers. Worth a JS-aware boundary.

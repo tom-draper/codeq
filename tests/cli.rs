@@ -162,7 +162,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 3);
+    assert_eq!(v["index"]["schema"], 4);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -749,6 +749,37 @@ fn search_in_excludes_unparseable_languages() {
         0,
         "unparseable file must be excluded from --in, not guessed"
     );
+}
+
+#[test]
+fn search_regex_prefilter_never_drops_matches() {
+    // The trigram prefilter must be a true superset: every one of these regexes
+    // has to find its match, even when the required literal is mid-token, in an
+    // alternation, or reached only via prefix/suffix.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn reauthenticate() {}\n\
+         let widget = 1;\n\
+         const gadget = 2;\n\
+         fn handle_needle_case() {}\n",
+    );
+    let count = |pat: &str| -> usize {
+        f.run(&["search", pat])["data"]["matches"].as_array().unwrap().len()
+    };
+
+    // Literal is mid-token ("authenticate" inside "reauthenticate").
+    assert_eq!(count("authenticate"), 1, "mid-token literal");
+    // Alternation: both literals >=3.
+    assert_eq!(count("widget|gadget"), 2, "alternation");
+    // Prefix literal, then wildcard.
+    assert_eq!(count("reauth\\w*"), 1, "prefix literal");
+    // Suffix only (no usable prefix): matches must still be found.
+    assert_eq!(count(".*needle.*"), 1, "middle/suffix literal");
+    // Short literal (<3): no prefilter possible -> full scan still correct.
+    assert_eq!(count("ge"), 2, "sub-trigram literal falls back to scan");
+    // Dotted pattern where neither prefix nor suffix reaches 3 chars.
+    assert_eq!(count("w.dget"), 1, "dot pattern");
 }
 
 #[test]
