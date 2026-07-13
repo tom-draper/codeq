@@ -966,6 +966,52 @@ fn regex_prefilter(pattern: &str) -> Option<String> {
     let hir = regex_syntax::parse(pattern).ok()?;
     usable_literals(ExtractKind::Prefix, &hir)
         .or_else(|| usable_literals(ExtractKind::Suffix, &hir))
+        .or_else(|| inner_required_literal(&hir))
+}
+
+/// The longest literal that must appear in *every* match, found by walking the
+/// HIR. This catches a literal buried in the middle (e.g. `.*needle.*`) that
+/// prefix/suffix extraction misses. A required literal is a safe single-term
+/// prefilter; when there isn't one >= 3 chars we return None and full-scan.
+fn inner_required_literal(hir: &regex_syntax::hir::Hir) -> Option<String> {
+    fn flush(cur: &mut Vec<u8>, best: &mut Vec<u8>) {
+        if cur.len() > best.len() {
+            *best = cur.clone();
+        }
+        cur.clear();
+    }
+    // Accumulate contiguous literals; anything that isn't an unconditional
+    // literal (a class, an optional/zero repetition, an alternation, a look)
+    // breaks the run. Required containers (concat, capture, min>=1 repetition)
+    // are walked so their literals count too.
+    fn walk(hir: &regex_syntax::hir::Hir, cur: &mut Vec<u8>, best: &mut Vec<u8>) {
+        use regex_syntax::hir::HirKind;
+        match hir.kind() {
+            HirKind::Literal(lit) => cur.extend_from_slice(&lit.0[..]),
+            HirKind::Concat(subs) => {
+                for s in subs {
+                    walk(s, cur, best);
+                }
+            }
+            HirKind::Capture(c) => walk(&c.sub, cur, best),
+            HirKind::Repetition(r) if r.min >= 1 => {
+                flush(cur, best);
+                walk(&r.sub, cur, best);
+                flush(cur, best);
+            }
+            _ => flush(cur, best),
+        }
+    }
+    let mut best = Vec::new();
+    let mut cur = Vec::new();
+    walk(hir, &mut cur, &mut best);
+    flush(&mut cur, &mut best);
+    let s = std::str::from_utf8(&best).ok()?;
+    if s.chars().count() >= 3 {
+        Some(format!("\"{}\"", s.replace('"', "\"\"")))
+    } else {
+        None
+    }
 }
 
 fn usable_literals(kind: ExtractKind, hir: &regex_syntax::hir::Hir) -> Option<String> {

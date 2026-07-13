@@ -783,6 +783,19 @@ fn search_regex_prefilter_never_drops_matches() {
 }
 
 #[test]
+fn search_inner_literal_prefilter() {
+    // The only usable literal is in the middle (no prefix/suffix literal),
+    // so the inner-literal walk must find it — and must not drop the match.
+    let f = Fixture::new();
+    f.write("a.rs", "let x = MARKER_HERE + 1;\n");
+    f.write("b.rs", "let y = 2;\n"); // decoy, no marker
+    let v = f.run(&["search", "=.*MARKER_HERE.*1"]);
+    let m = v["data"]["matches"].as_array().unwrap();
+    assert_eq!(m.len(), 1);
+    assert_eq!(m[0]["path"], "a.rs");
+}
+
+#[test]
 fn search_glob_include_and_exclude() {
     let f = Fixture::new();
     f.write("src/a.rs", "fn hit() {}\n");
