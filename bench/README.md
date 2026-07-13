@@ -11,40 +11,51 @@ Three harnesses, increasing in scope:
 ## Differential harness (multi-repo, correctness + trend)
 
 `differential.py` is the regression net. It clones a fixed corpus of real
-projects (`corpus.py`, pinned tags, spanning codeq's languages) and runs a
-battery of search actions through **both** `codeq search` and an equivalent `rg`,
+projects (`corpus.py`, pinned tags — one per language codeq supports:
+flask/gin/express/ripgrep/zod/sinatra/gson/jq/nlohmann-json/Newtonsoft/guzzle)
+and runs two batteries against each:
+
+**SEARCH** — the same query through `codeq search` and an equivalent `rg`,
 checking the property codeq actually promises:
 
 > codeq's matches must be a **superset** of ripgrep's — never fewer.
 
-Any line rg finds that codeq misses is a correctness **FAIL**; a codeq crash or
-bad flag is an **ERROR** (kept distinct from a miss). This is the check that
-would have caught the `^`/`$` anchor regression and the trigram-`MATCH`
-substring drops — both of which passed the unit suite. It also records wall-time
-and output bytes per tool, so speed and token cost ride along. Each run writes a
-timestamped JSON to `bench/results/` (committed — the history lives in git);
-`trend.py` prints movement across runs.
+Any line rg finds that codeq misses is a **FAIL**; a codeq crash or bad flag is an
+**ERROR** (kept distinct from a miss). This is the check that would have caught
+the `^`/`$` anchor regression and the trigram-`MATCH` substring drops — both of
+which passed the unit suite.
+
+**NAV** — the realistic navigation an agent actually does (find definition, find
+references, who-calls, read one symbol, outline, imports), each against the
+grep/`cat` pipeline it would otherwise chain. These aren't a clean single-tool
+superset, so they're scored on speed + output bytes (a token proxy), not
+PASS/FAIL. `read-symbol` vs `cat file` is the headline token comparison.
+
+Each run writes a timestamped JSON to `bench/results/` (committed — history lives
+in git); `trend.py` prints movement across runs.
 
 ```bash
 cargo build --release
 python3 bench/corpus.py sync        # clone the corpus (once; cached, gitignored)
-python3 bench/differential.py       # run the battery; writes results/<ts>.json
+python3 bench/differential.py       # run both batteries; writes results/<ts>.json
 python3 bench/trend.py              # correctness + ratios across all runs
 ```
 
-First baseline (flask, gin, express, ripgrep — Python/Go/JS/Rust):
+Baseline across all 11 language repos:
 
 ```
-correctness: 40/40 PASS (0 FAIL, 0 ERROR)   # codeq is a superset of rg everywhere
-codeq/rg time  (median): ~3.0x              # rg is faster at raw grep; codeq carries an index
-codeq/rg bytes (median): ~1.85x             # codeq's JSON + enclosing-symbol is richer, not free
+SEARCH correctness: 110/110 PASS (0 FAIL, 0 ERROR)   # superset of rg everywhere
+search   codeq/rg  time ~3.1x   bytes ~1.7x           # rg wins raw grep; codeq carries an index + JSON
+nav      codeq/base time ~3.1x   bytes ~2.2x          # structured results cost bytes...
+read-symbol vs `cat` bytes: ~0.02x                    # ...except the one that matters: ~50x FEWER tokens
 ```
 
-The honest read: on *plain search in isolation* codeq is slower and more verbose
-than rg — its wins are correctness (one tool, right answers), navigation
-(`about`/`callers`/`read`), and fewer follow-up reads on real tasks (see
-`tasks.py`). The differential harness exists to guarantee we never regress the
-correctness half while chasing the speed half.
+The honest read: on *plain search/grep in isolation* codeq is slower and more
+verbose than rg. Its wins are (1) **correctness** — one tool, right answers,
+never fewer than rg; and (2) **tokens on real navigation** — reading a single
+symbol costs ~2% of `cat`-ing the file, which is the operation agents do
+constantly. The harness guards the correctness half while we chase the speed
+half, and tracks both over time.
 
 ## Single-command harness
 

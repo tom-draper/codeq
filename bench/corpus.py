@@ -25,10 +25,17 @@ LOCK = os.path.join(CACHE, "LOCK.json")
 # full run is minutes, not hours; add rows to widen coverage. Pinned tags are
 # immutable references, so the corpus stays fixed across syncs.
 REPOS = [
-    ("flask",   "https://github.com/pallets/flask",      "3.0.3",   "python"),
-    ("gin",     "https://github.com/gin-gonic/gin",       "v1.9.1",  "go"),
-    ("express", "https://github.com/expressjs/express",   "4.19.2",  "javascript"),
-    ("ripgrep", "https://github.com/BurntSushi/ripgrep",  "14.1.0",  "rust"),
+    ("flask",    "https://github.com/pallets/flask",           "3.0.3",               "python"),
+    ("gin",      "https://github.com/gin-gonic/gin",            "v1.9.1",              "go"),
+    ("express",  "https://github.com/expressjs/express",        "4.19.2",              "javascript"),
+    ("ripgrep",  "https://github.com/BurntSushi/ripgrep",       "14.1.0",              "rust"),
+    ("zod",      "https://github.com/colinhacks/zod",           "v3.23.8",             "typescript"),
+    ("sinatra",  "https://github.com/sinatra/sinatra",          "v4.0.0",              "ruby"),
+    ("gson",     "https://github.com/google/gson",              "gson-parent-2.11.0",  "java"),
+    ("jq",       "https://github.com/jqlang/jq",                "jq-1.7.1",            "c"),
+    ("json",     "https://github.com/nlohmann/json",            "v3.11.3",             "cpp"),
+    ("newtonsoft", "https://github.com/JamesNK/Newtonsoft.Json", "13.0.3",             "csharp"),
+    ("guzzle",   "https://github.com/guzzle/guzzle",            "7.8.1",               "php"),
 ]
 
 
