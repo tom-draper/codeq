@@ -12,15 +12,14 @@ The tooling shone: `search` returned every no-param query **with its enclosing
 function** (grep gives only file:line), and alternation regex + `--path`
 prefiltering worked. Findings:
 
-- **Open (perf, needs a real refactor): `context::load_defs` full-scans all
-  defs on every `context` call** — same pattern as the callees_of smell
-  (`SELECT … FROM facts WHERE kind<>'import' AND name IS NOT NULL`, `query_map([])`).
-  But `context::build` is organized around *indices into the all-defs Vec*
-  (`seed_idx`/`neighbor_idx`/`defs[i]`), so it can't be fixed with a one-line
-  `WHERE name IN (…)` like callees. It needs a two-phase restructure (load seed
-  defs by name/path, then load expansion neighbours by referenced ident).
-  Deliberately NOT rushed here — context is the marquee, well-tested command.
-  Logged as a dedicated follow-up.
+- **RESOLVED (perf): `context::load_defs` full-scanned all defs on every
+  `context` call** — same pattern as the callees_of smell. Because
+  `context::build` is index-based over the all-defs Vec, the fix was a proper
+  two-phase restructure (done as a dedicated task, not rushed): seeds loaded via
+  `defs_by_names`/`defs_by_paths` (facts name/path indexes), then expansion
+  neighbours via `defs_by_names` over the referenced idents. `defs` now holds
+  only seeds + neighbours, not the whole repo. All 6 context tests still green;
+  `EXPLAIN QUERY PLAN` shows `SEARCH facts USING INDEX facts_name`.
 - The other no-param scans (`cmd_stats`, `cmd_map`, `refresh`) are legitimate:
   they are whole-repo aggregations or the refresh file-comparison, which need
   every row. `fetch_bodies`'s no-MATCH scan is the intended regex fallback.

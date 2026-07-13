@@ -122,102 +122,85 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         ));
     }
 
-    // Load all definitions once; we need them both as seed candidates and as
-    // the target set for name-based expansion.
-    let defs = load_defs(db)?;
-    let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (i, d) in defs.iter().enumerate() {
-        by_name.entry(d.name.as_str()).or_default().push(i);
-    }
-
+    // Load only the definitions we actually need, via the facts(name)/facts(path)
+    // indexes — never a full scan of every definition. `defs` holds the seeds
+    // first (indices 0..seed_count), then any expansion neighbours appended.
     let mut modes: Vec<&'static str> = Vec::new();
-    let mut seed_idx: Vec<usize> = Vec::new();
-    let mut seen: HashSet<usize> = HashSet::new();
+    let mut defs: Vec<Def> = Vec::new();
+    let mut seen: HashSet<(String, usize)> = HashSet::new(); // (path, start_byte)
 
     if !req.symbols.is_empty() {
         modes.push("symbols");
-        for name in &req.symbols {
-            if let Some(ixs) = by_name.get(name.as_str()) {
-                for &i in ixs {
-                    if seen.insert(i) {
-                        seed_idx.push(i);
-                    }
-                }
+        for d in defs_by_names(db, &req.symbols)? {
+            if seen.insert((d.path.clone(), d.start_byte)) {
+                defs.push(d);
             }
         }
     }
     if req.changed {
         modes.push("changed");
-        let changed: HashSet<String> =
-            repo.changed_since(&req.compare_to)?.into_iter().collect();
-        for (i, d) in defs.iter().enumerate() {
-            if changed.contains(&d.path) && seen.insert(i) {
-                seed_idx.push(i);
+        let changed = repo.changed_since(&req.compare_to)?;
+        for d in defs_by_paths(db, &changed)? {
+            if seen.insert((d.path.clone(), d.start_byte)) {
+                defs.push(d);
             }
         }
     }
 
     // Optional path filter narrows the seed set.
     if let Some(prefix) = &req.path {
-        seed_idx.retain(|&i| defs[i].path.contains(prefix.as_str()));
+        defs.retain(|d| d.path.contains(prefix.as_str()));
     }
 
-    // Deterministic seed order.
-    seed_idx.sort_by(|&a, &b| {
-        (defs[a].path.as_str(), defs[a].start_line)
-            .cmp(&(defs[b].path.as_str(), defs[b].start_line))
-    });
+    // Everything loaded so far is a seed. Deterministic order.
+    defs.sort_by(|a, b| (a.path.as_str(), a.start_line).cmp(&(b.path.as_str(), b.start_line)));
+    let seed_count = defs.len();
 
     let mut file_cache: HashMap<String, Option<Vec<u8>>> = HashMap::new();
 
     // Read seed chunk texts (needed for expansion regardless of include_text).
     let mut seed_text: HashMap<usize, String> = HashMap::new();
-    for &i in &seed_idx {
+    for i in 0..seed_count {
         if let Some(t) = chunk_text(&repo.root, &defs[i], &mut file_cache) {
             seed_text.insert(i, t);
         }
     }
 
-    // One-hop expansion: identifiers referenced inside seed chunks that name a
-    // definition we hold and that is not already a seed.
-    let mut neighbor_idx: Vec<usize> = Vec::new();
+    // One-hop expansion: definitions referenced by name inside the seed chunks,
+    // that are not already seeds. Looked up by name (indexed), never a full scan.
     if req.expand {
         let mut refs: HashSet<String> = HashSet::new();
         for t in seed_text.values() {
             collect_identifiers(t, &mut refs);
         }
-        let seed_names: HashSet<&str> =
-            seed_idx.iter().map(|&i| defs[i].name.as_str()).collect();
-        let mut added: HashSet<usize> = HashSet::new();
-        let mut names: Vec<&String> = refs.iter().collect();
-        names.sort();
-        for name in names {
-            if seed_names.contains(name.as_str()) {
-                continue;
-            }
-            if let Some(ixs) = by_name.get(name.as_str()) {
-                for &i in ixs {
-                    if !seen.contains(&i) && added.insert(i) {
-                        neighbor_idx.push(i);
-                    }
-                }
+        let seed_names: HashSet<&str> = defs[..seed_count].iter().map(|d| d.name.as_str()).collect();
+        refs.retain(|r| !seed_names.contains(r.as_str()));
+        let seed_keys: HashSet<(String, usize)> = defs[..seed_count]
+            .iter()
+            .map(|d| (d.path.clone(), d.start_byte))
+            .collect();
+
+        let names: Vec<String> = refs.into_iter().collect();
+        let mut neighbors: Vec<Def> = Vec::new();
+        let mut added: HashSet<(String, usize)> = HashSet::new();
+        for d in defs_by_names(db, &names)? {
+            let key = (d.path.clone(), d.start_byte);
+            if !seed_keys.contains(&key) && added.insert(key) {
+                neighbors.push(d);
             }
         }
-        neighbor_idx.sort_by(|&a, &b| {
-            (defs[a].name.as_str(), defs[a].path.as_str(), defs[a].start_line).cmp(&(
-                defs[b].name.as_str(),
-                defs[b].path.as_str(),
-                defs[b].start_line,
-            ))
+        neighbors.sort_by(|a, b| {
+            (a.name.as_str(), a.path.as_str(), a.start_line)
+                .cmp(&(b.name.as_str(), b.path.as_str(), b.start_line))
         });
-        neighbor_idx.truncate(MAX_NEIGHBORS);
+        neighbors.truncate(MAX_NEIGHBORS);
+        defs.extend(neighbors);
     }
 
     // Candidate list in rank order: seeds, then referenced neighbours.
-    let candidates: Vec<(usize, &'static str)> = seed_idx
-        .iter()
-        .map(|&i| (i, "seed"))
-        .chain(neighbor_idx.iter().map(|&i| (i, "referenced")))
+    let candidates: Vec<(usize, &'static str)> = (0..seed_count)
+        .map(|i| (i, "seed"))
+        .chain((seed_count..defs.len()).map(|i| (i, "referenced")))
         .collect();
 
     // Budget fill: include in rank order while it fits; a chunk that overflows
@@ -262,7 +245,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
 
     let omitted_truncated = omitted.len() >= MAX_OMITTED;
     let seeds: Vec<String> = {
-        let mut s: Vec<String> = seed_idx.iter().map(|&i| defs[i].name.clone()).collect();
+        let mut s: Vec<String> = defs[..seed_count].iter().map(|d| d.name.clone()).collect();
         s.sort();
         s.dedup();
         s
@@ -292,24 +275,65 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
     })
 }
 
-fn load_defs(db: &Db) -> Result<Vec<Def>> {
-    let mut stmt = db.conn.prepare(
-        "SELECT name, kind, path, language, start_byte, end_byte, start_line, end_line
-         FROM facts WHERE kind <> 'import' AND name IS NOT NULL",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(Def {
-            name: r.get(0)?,
-            kind: r.get(1)?,
-            path: r.get(2)?,
-            language: r.get(3)?,
-            start_byte: r.get::<_, i64>(4)? as usize,
-            end_byte: r.get::<_, i64>(5)? as usize,
-            start_line: r.get(6)?,
-            end_line: r.get(7)?,
-        })
-    })?;
-    Ok(rows.collect::<std::result::Result<_, _>>()?)
+fn row_to_def(r: &rusqlite::Row) -> rusqlite::Result<Def> {
+    Ok(Def {
+        name: r.get(0)?,
+        kind: r.get(1)?,
+        path: r.get(2)?,
+        language: r.get(3)?,
+        start_byte: r.get::<_, i64>(4)? as usize,
+        end_byte: r.get::<_, i64>(5)? as usize,
+        start_line: r.get(6)?,
+        end_line: r.get(7)?,
+    })
+}
+
+const DEF_COLUMNS: &str =
+    "name, kind, path, language, start_byte, end_byte, start_line, end_line";
+
+/// Load definitions whose name is in `names`, via the facts(name) index, in
+/// chunks to stay under SQLite's bound-parameter limit.
+fn defs_by_names(db: &Db, names: &[String]) -> Result<Vec<Def>> {
+    let mut out = Vec::new();
+    for chunk in names.chunks(500) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let ph = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            "SELECT {DEF_COLUMNS} FROM facts WHERE kind <> 'import' AND name IN ({ph})"
+        );
+        let mut stmt = db.conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|n| n as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(params.as_slice(), row_to_def)?;
+        for r in rows {
+            out.push(r?);
+        }
+    }
+    Ok(out)
+}
+
+/// Load definitions in files whose path is in `paths`, via the facts(path) index.
+fn defs_by_paths(db: &Db, paths: &[String]) -> Result<Vec<Def>> {
+    let mut out = Vec::new();
+    for chunk in paths.chunks(500) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let ph = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            "SELECT {DEF_COLUMNS} FROM facts WHERE kind <> 'import' AND path IN ({ph})"
+        );
+        let mut stmt = db.conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(params.as_slice(), row_to_def)?;
+        for r in rows {
+            out.push(r?);
+        }
+    }
+    Ok(out)
 }
 
 /// Slice a definition's source out of its file, caching file reads.
