@@ -4,6 +4,31 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 13: git-free freshness via codeq's own index cache
+
+Profiling showed ~58% of every command's latency was the git freshness check
+(`rev-parse HEAD` + `git status --porcelain`, ~5.5ms, two process spawns). First
+attempt — just remove git and always walk — regressed *badly* (8→218ms on redis):
+the git "fast-path" existed for a reason, because codeq's native `ignore`-crate
+walk with .gitignore matching is slow, and `git status` is fast thanks to git's
+index cache. The honest fix was to **maintain our own index cache** (git's actual
+trick):
+
+- codeq already stored a per-file `(size, mtime, hash)` manifest. Added a per-
+  **directory** mtime cache (`dirs` table, schema v6) — git's untracked-cache
+  idea. Freshness is now native: a file added/removed/renamed bumps its parent
+  dir's mtime (caught by the dir cache); a content edit changes the file's mtime
+  (caught by the manifest). If both are unchanged → fresh, no walk, no gitignore,
+  no git. Only a real change falls back to the full walk.
+- Result: **git removed from the freshness hot path**; ~8.5→7.7ms on redis (no
+  regression, and no `git` binary needed). Correctness verified — edit / add /
+  delete / add-in-new-subdir all detected (3 new unit tests), 630/630 differential
+  assertions PASS. Git remains only for the inherently-git `changed` command and
+  optional `--meta` HEAD/dirty.
+- Lesson: the naive "remove the dependency" regressed 27x; the dependency was
+  hiding a real optimization. Reimplementing that optimization natively (the
+  dir-mtime cache) was the right move — measure before ripping things out.
+
 ## 2026-07-13 — session 12: token-to-completion showed JSON was tax → text default
 
 Built `bench/completion.py` (task-level token-to-completion: tokens + tool calls

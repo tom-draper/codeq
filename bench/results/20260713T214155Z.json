@@ -1,0 +1,100 @@
+{
+  "timestamp": "2026-07-13T21:41:55+00:00",
+  "codeq_commit": "f5b485a031a9",
+  "per_command": {
+    "search": {
+      "pass": 270,
+      "total": 270,
+      "time_x": 2.901,
+      "bytes_x": 1.678
+    },
+    "imports": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 3.809,
+      "bytes_x": 4.374
+    },
+    "outline": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 3.586,
+      "bytes_x": 3.727
+    },
+    "definitions": {
+      "pass": 60,
+      "total": 60,
+      "time_x": 1.223,
+      "bytes_x": 5.682
+    },
+    "callers": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 1.736,
+      "bytes_x": 0.792
+    },
+    "at": {
+      "pass": 120,
+      "total": 120,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "read": {
+      "pass": 60,
+      "total": 60,
+      "time_x": 6.424,
+      "bytes_x": 0.014
+    },
+    "references": {
+      "pass": 120,
+      "total": 120,
+      "time_x": 1.715,
+      "bytes_x": 2.101
+    }
+  },
+  "summary": {
+    "repos": 3,
+    "total_correctness_tests": 630,
+    "correctness_pass": 630,
+    "correctness_fail": 0,
+    "search_total": 90,
+    "search_fail": 0,
+    "errors": 0,
+    "invariant_total": 360,
+    "invariant_fail": 0,
+    "fuzz_total": 180,
+    "fuzz_fail": 0,
+    "actions_total": 90,
+    "median_codeq_over_rg_time": 2.901,
+    "median_codeq_over_rg_bytes": 1.678
+  },
+  "per_repo": {
+    "flask": {
+      "lang": "python",
+      "index_ms": 626.29,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "gson": {
+      "lang": "java",
+      "index_ms": 1239.75,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "redis": {
+      "lang": "c",
+      "index_ms": 11842.33,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    }
+  },
+  "failures": []
+}

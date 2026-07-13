@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 5);
+    assert_eq!(v["index"]["schema"], 6);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -1433,6 +1433,50 @@ fn freshness_reflects_untracked_edits() {
     let names = field_set(&f.run(&["symbols"]), "name");
     assert!(names.contains(&"second".to_string()), "untracked edit missed: {names:?}");
     assert!(!names.contains(&"first".to_string()));
+}
+
+#[test]
+fn freshness_detects_added_file() {
+    // The git-free freshness cache detects a new file via its parent directory's
+    // bumped mtime — no manual reindex, no git.
+    let f = Fixture::new();
+    f.write("a.rs", "fn first() {}\n");
+    f.git_init_commit();
+    assert!(field_set(&f.run(&["symbols"]), "name").contains(&"first".to_string()));
+
+    f.write("b.rs", "fn added() {}\n"); // new file bumps the dir mtime
+    let names = field_set(&f.run(&["symbols"]), "name");
+    assert!(names.contains(&"added".to_string()), "added file not indexed: {names:?}");
+    assert!(names.contains(&"first".to_string()));
+}
+
+#[test]
+fn freshness_detects_deleted_file() {
+    let f = Fixture::new();
+    f.write("keep.rs", "fn keep() {}\n");
+    f.write("gone.rs", "fn vanishing() {}\n");
+    f.git_init_commit();
+    assert!(field_set(&f.run(&["symbols"]), "name").contains(&"vanishing".to_string()));
+
+    f.remove("gone.rs"); // deletion also bumps the parent dir mtime
+    let names = field_set(&f.run(&["symbols"]), "name");
+    assert!(!names.contains(&"vanishing".to_string()), "deleted symbol still present: {names:?}");
+    assert!(names.contains(&"keep".to_string()));
+}
+
+#[test]
+fn freshness_detects_added_file_in_new_subdir() {
+    // A file in a brand-new subdirectory: the *root* dir's mtime bumps when the
+    // subdir is created, so the change is caught even though the subdir wasn't
+    // in the cache.
+    let f = Fixture::new();
+    f.write("a.rs", "fn root_fn() {}\n");
+    f.git_init_commit();
+    assert!(field_set(&f.run(&["symbols"]), "name").contains(&"root_fn".to_string()));
+
+    f.write("sub/deep.rs", "fn deep_fn() {}\n"); // new subdir + file
+    let names = field_set(&f.run(&["symbols"]), "name");
+    assert!(names.contains(&"deep_fn".to_string()), "file in new subdir missed: {names:?}");
 }
 
 #[test]

@@ -11,7 +11,9 @@ use rusqlite::Connection;
 
 // v5: index strips a leading UTF-8 BOM, changing stored bodies/offsets for
 // BOM-prefixed files — bump so pre-fix indexes rebuild on upgrade.
-pub const SCHEMA_VERSION: i64 = 5;
+// v6: git-free freshness via a native dir-mtime cache (the `dirs` table); old
+// indexes lack it, so rebuild to populate it.
+pub const SCHEMA_VERSION: i64 = 6;
 
 pub struct Db {
     pub conn: Connection,
@@ -87,6 +89,14 @@ impl Db {
                 end_byte   INTEGER NOT NULL,
                 kind       INTEGER NOT NULL,
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
+            );
+
+            -- Directory mtimes: codeq's own index cache for cheap, git-free
+            -- freshness. A file added/removed/renamed bumps its parent dir's
+            -- mtime, so checking these detects structural changes without a walk.
+            CREATE TABLE IF NOT EXISTS dirs (
+                path     TEXT PRIMARY KEY,
+                mtime_ns INTEGER NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS files_language ON files(language);

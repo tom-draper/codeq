@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::UNIX_EPOCH;
 
 use anyhow::{anyhow, Result};
 
@@ -61,50 +60,9 @@ impl Repo {
         Some(!out.trim().is_empty())
     }
 
-    /// A cheap fingerprint of the working-tree state, for git repos: HEAD plus
-    /// the porcelain status plus untracked-file stats. If two fingerprints are
-    /// equal the tree is byte-identical, so the index can be trusted without a
-    /// full walk. Covers commits and checkouts (HEAD), staged/unstaged edits and
-    /// untracked add/remove (status), and in-place edits to untracked files
-    /// (their stats). Returns `None` for non-git repos, which have no cheap
-    /// signal — the caller must then walk.
-    pub fn freshness_token(&self) -> Result<Option<String>> {
-        if !self.is_git {
-            return Ok(None);
-        }
-        // These two git queries are independent and together are the bulk of
-        // every command's latency (~5ms). Run them concurrently so the smaller
-        // (rev-parse) overlaps the larger (status) instead of adding to it.
-        let root = self.root.clone();
-        let head_handle =
-            std::thread::spawn(move || git(&root, &["rev-parse", "HEAD"]).unwrap_or_default());
-        let status = git(
-            &self.root,
-            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        )?;
-        let head = head_handle.join().unwrap_or_default();
-
-        let mut h = blake3::Hasher::new();
-        h.update(head.trim().as_bytes());
-        h.update(&[0]);
-        h.update(status.as_bytes());
-        // Status only lists untracked files by path; include their stats so an
-        // in-place edit to one changes the fingerprint.
-        for entry in status.split('\0') {
-            if let Some(path) = entry.strip_prefix("?? ") {
-                if let Ok(meta) = std::fs::metadata(self.root.join(path)) {
-                    h.update(path.as_bytes());
-                    h.update(&meta.len().to_le_bytes());
-                    if let Ok(mt) = meta.modified() {
-                        if let Ok(d) = mt.duration_since(UNIX_EPOCH) {
-                            h.update(&(d.as_nanos() as u64).to_le_bytes());
-                        }
-                    }
-                }
-            }
-        }
-        Ok(Some(h.finalize().to_hex().to_string()))
-    }
+    // Freshness no longer shells out to git: `index::refresh` maintains codeq's
+    // own index cache (per-file size/mtime + per-directory mtime) and checks it
+    // natively — git-free, and faster on a clean tree than spawning git.
 
     /// Paths changed relative to `reference` (a ref, or the working tree vs a
     /// ref). Returns repo-relative paths.

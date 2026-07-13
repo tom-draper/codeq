@@ -36,19 +36,8 @@ struct Stored {
 pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     let repo_root = repo.root.as_path();
 
-    // Fast path: if the git freshness token matches the last full index, the
-    // working tree is unchanged and no walk is needed.
-    let token = repo.freshness_token()?;
-    if let Some(t) = &token {
-        if db.get_meta("fresh_token")?.as_deref() == Some(t.as_str()) {
-            return Ok(RefreshStats {
-                reindexed: 0,
-                partial_failures: 0,
-            });
-        }
-    }
-
-    // Load the current index state once.
+    // Load our index cache once: the per-file (size, mtime, hash) manifest and
+    // the per-directory mtime cache.
     let mut existing: HashMap<String, Stored> = HashMap::new();
     {
         let mut stmt = db
@@ -69,8 +58,39 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             existing.insert(path, stored);
         }
     }
+    let mut existing_dirs: HashMap<String, i64> = HashMap::new();
+    {
+        let mut stmt = db.conn.prepare("SELECT path, mtime_ns FROM dirs")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (path, mtime) = row?;
+            existing_dirs.insert(path, mtime);
+        }
+    }
+
+    // Native, git-free fast path (our own index cache). The index is fresh iff:
+    //   * every cached directory's mtime is unchanged — a file added, removed or
+    //     renamed bumps its parent dir's mtime, so this catches all *structural*
+    //     changes (the untracked-cache trick git uses), and
+    //   * every cached file's (size, mtime) is unchanged — catches content edits.
+    // If both hold, there is nothing to do: no walk, no .gitignore matching, no
+    // git subprocess. This is only ever short-circuited by a real change.
+    if !existing_dirs.is_empty()
+        && existing_dirs
+            .iter()
+            .all(|(p, &m)| dir_mtime(&repo_root.join(p)) == Some(m))
+        && existing
+            .iter()
+            .all(|(p, s)| file_size_mtime(&repo_root.join(p)) == Some((s.size, s.mtime_ns)))
+    {
+        return Ok(RefreshStats {
+            reindexed: 0,
+            partial_failures: 0,
+        });
+    }
 
     let mut seen: HashMap<String, ()> = HashMap::new();
+    let mut dirs_seen: HashMap<String, i64> = HashMap::new();
     let mut reindexed: u64 = 0;
     let mut partial_failures: u64 = 0;
     let mut extractor = Extractor::new()?;
@@ -116,14 +136,25 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 Ok(d) => d,
                 Err(_) => continue, // unreadable entry: skip, don't crash
             };
-            if !dent.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                continue;
-            }
+            let ftype = match dent.file_type() {
+                Some(t) => t,
+                None => continue,
+            };
             let abs = dent.path();
             let rel = match abs.strip_prefix(repo_root) {
                 Ok(r) => r.to_string_lossy().replace('\\', "/"),
                 Err(_) => continue,
             };
+            // Cache every walked directory's mtime for the freshness fast path.
+            if ftype.is_dir() {
+                if let Some(m) = dent.metadata().ok().as_ref().and_then(mtime_ns_of) {
+                    dirs_seen.insert(rel, m);
+                }
+                continue;
+            }
+            if !ftype.is_file() {
+                continue;
+            }
 
             let meta = match dent.metadata() {
                 Ok(m) => m,
@@ -233,16 +264,44 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
         }
     }
 
+    // Replace the directory-mtime cache with the tree we just walked.
+    {
+        tx.execute("DELETE FROM dirs", [])?;
+        let mut ins_dir = tx.prepare("INSERT INTO dirs(path, mtime_ns) VALUES(?1, ?2)")?;
+        for (p, m) in &dirs_seen {
+            ins_dir.execute((p, m))?;
+        }
+    }
+
     tx.commit()?;
     db.set_meta("last_indexed_at", &now_ns().to_string())?;
-    // Record the state we just indexed so the next query can skip the walk.
-    if let Some(t) = token {
-        db.set_meta("fresh_token", &t)?;
-    }
     Ok(RefreshStats {
         reindexed,
         partial_failures,
     })
+}
+
+/// Nanosecond mtime of a stat result, if representable.
+fn mtime_ns_of(md: &std::fs::Metadata) -> Option<i64> {
+    md.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as i64)
+}
+
+/// Directory mtime for the freshness check, or `None` if it isn't a directory.
+fn dir_mtime(path: &std::path::Path) -> Option<i64> {
+    let md = std::fs::metadata(path).ok()?;
+    md.is_dir().then(|| mtime_ns_of(&md)).flatten()
+}
+
+/// File `(size, mtime_ns)` for the freshness check, or `None` if not a file.
+fn file_size_mtime(path: &std::path::Path) -> Option<(i64, i64)> {
+    let md = std::fs::metadata(path).ok()?;
+    if !md.is_file() {
+        return None;
+    }
+    Some((md.len() as i64, mtime_ns_of(&md).unwrap_or(0)))
 }
 
 fn looks_binary(bytes: &[u8]) -> bool {
