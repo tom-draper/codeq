@@ -107,6 +107,9 @@ Run inside a repository. Output is compact JSON on stdout.
 | `codeq symbols [pattern] [--kind K] [--language L] [--path P] [--signatures]` | Defined symbols. |
 | `codeq definitions <name>` | Exact-name definition(s) with signature, doc, and precise ranges. |
 | `codeq references <name> [--path P] [--language L]` | Word-boundary uses of a symbol, each with its enclosing definition; definition sites flagged. |
+| `codeq callers <name>` | Distinct definitions that reference a symbol (in code), test sites flagged — what could break if you change it. |
+| `codeq callees <name>` | Definitions referenced by name inside a symbol's body — what it depends on. |
+| `codeq about <name>` | One-call dossier: definition(s) + signature/doc + callers + callees. |
 | `codeq at <path>:<line>` | The definition(s) enclosing a location (e.g. from a stack trace), innermost first. |
 | `codeq outline <file> [--docs]` | A file's definitions top to bottom, with signatures and nesting depth. |
 | `codeq search <pattern> [-i] [-w] [--fixed] [-g GLOB] [-A/-B/-C N] [-l] [-c] [--in code\|comments\|strings]` | Content search, each match annotated with its enclosing definition. A strict superset of grep (see below). |

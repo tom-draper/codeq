@@ -107,6 +107,21 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// Definitions that reference a symbol (its callers), test sites flagged.
+    Callers {
+        /// Exact symbol name.
+        name: String,
+    },
+    /// Definitions a symbol references (its callees, name-based).
+    Callees {
+        /// Exact symbol name.
+        name: String,
+    },
+    /// Dossier for a symbol: definition(s) + callers + callees, in one call.
+    About {
+        /// Exact symbol name.
+        name: String,
+    },
     /// Word-boundary references to an exact symbol name, with enclosing symbol.
     References {
         /// Exact symbol name to find references to.
@@ -312,6 +327,9 @@ fn main() -> ExitCode {
             symbol,
             limit,
         } => commands::cmd_definitions(&cwd, &symbol, limit, out),
+        Command::Callers { name } => commands::cmd_callers(&cwd, &name, out),
+        Command::Callees { name } => commands::cmd_callees(&cwd, &name, out),
+        Command::About { name } => commands::cmd_about(&cwd, &name, out),
         Command::References {
             name,
             path,

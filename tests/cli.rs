@@ -688,6 +688,37 @@ fn references_flags_definition_vs_use_with_enclosing_symbol() {
 }
 
 #[test]
+fn callers_callees_and_about() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn helper() {}\n\
+         fn caller() { helper(); }\n\
+         fn other() { helper(); }\n\
+         // helper mentioned in a comment\n",
+    );
+
+    // callers = distinct code callers, excluding the definition and comments.
+    let callers = f.run(&["callers", "helper"]);
+    let syms: Vec<String> = callers["data"].as_array().unwrap().iter()
+        .filter_map(|r| r["symbol"].as_str().map(String::from)).collect();
+    assert!(syms.contains(&"caller".to_string()) && syms.contains(&"other".to_string()), "{syms:?}");
+    assert!(!syms.contains(&"helper".to_string()), "own definition is not a caller");
+    // The comment mention must not appear (code-only).
+    assert_eq!(callers["data"].as_array().unwrap().len(), 2, "comment mention leaked");
+
+    // callees = definitions referenced inside the body.
+    let callees = field_set(&f.run(&["callees", "caller"]), "name");
+    assert!(callees.contains(&"helper".to_string()), "{callees:?}");
+
+    // about = one-call dossier.
+    let about = f.run(&["about", "helper"]);
+    let d = &about["data"];
+    assert_eq!(d["definitions"][0]["name"], "helper");
+    assert_eq!(d["callers"].as_array().unwrap().len(), 2);
+}
+
+#[test]
 fn references_uses_word_boundaries() {
     let f = Fixture::new();
     // `find` must not match `finder`.

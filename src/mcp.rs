@@ -183,6 +183,18 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "language", "--language");
             optn(&mut args, a, "limit", "--limit");
         }
+        "codeq_callers" => {
+            args.push("callers".into());
+            args.push(s(a, "name")?.into());
+        }
+        "codeq_callees" => {
+            args.push("callees".into());
+            args.push(s(a, "name")?.into());
+        }
+        "codeq_about" => {
+            args.push("about".into());
+            args.push(s(a, "name")?.into());
+        }
         "codeq_outline" => {
             args.push("outline".into());
             args.push(s(a, "file")?.into());
@@ -284,6 +296,15 @@ fn tools() -> Value {
         tool("codeq_references",
             "Word-boundary uses of a symbol name across the repo, each annotated with its enclosing definition; definition sites are flagged. Textual (not type-resolved).",
             json!({ "name": str_, "path": str_, "language": str_, "limit": int_ }), &["name"]),
+        tool("codeq_callers",
+            "The distinct definitions that reference a symbol (its callers), with test sites flagged — what could break if you change it. Textual, not type-resolved.",
+            json!({ "name": str_ }), &["name"]),
+        tool("codeq_callees",
+            "The definitions referenced by name inside a symbol's body (its callees) — what it depends on.",
+            json!({ "name": str_ }), &["name"]),
+        tool("codeq_about",
+            "One-call dossier before editing a symbol: its definition(s) with signature and doc, its callers (who breaks), and its callees (what it depends on). Replaces several separate lookups.",
+            json!({ "name": str_ }), &["name"]),
         tool("codeq_outline",
             "The structure of a file top to bottom: its definitions with signatures and nesting depth.",
             json!({ "file": str_, "docs": bool_ }), &["file"]),

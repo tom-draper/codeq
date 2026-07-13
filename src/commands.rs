@@ -335,9 +335,7 @@ struct DefinitionRow {
     doc: Option<String>,
 }
 
-pub fn cmd_definitions(cwd: &Path, symbol: &str, limit: usize, out: Out) -> Result<()> {
-    let s = Session::open(cwd, false, out)?;
-
+fn definitions_of(s: &Session, symbol: &str, limit: usize) -> Result<Vec<DefinitionRow>> {
     let mut sql = String::from(
         "SELECT name, kind, path, language,
                 start_line, start_col, end_line, end_col, start_byte, end_byte,
@@ -348,7 +346,6 @@ pub fn cmd_definitions(cwd: &Path, symbol: &str, limit: usize, out: Out) -> Resu
     if limit > 0 {
         sql.push_str(&format!(" LIMIT {limit}"));
     }
-
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map([symbol], |r| {
         Ok(DefinitionRow {
@@ -366,7 +363,207 @@ pub fn cmd_definitions(cwd: &Path, symbol: &str, limit: usize, out: Out) -> Resu
             doc: r.get(11)?,
         })
     })?;
-    let data: Vec<DefinitionRow> = rows.collect::<std::result::Result<_, _>>()?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+pub fn cmd_definitions(cwd: &Path, symbol: &str, limit: usize, out: Out) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let data = definitions_of(&s, symbol, limit)?;
+    s.emit(data)
+}
+
+#[derive(Serialize)]
+struct Caller {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    path: String,
+    line: usize,
+    /// Best-effort: the caller looks like a test (path or symbol name).
+    #[serde(skip_serializing_if = "is_false")]
+    test: bool,
+}
+
+/// Distinct definitions that contain a word-boundary reference to `name`,
+/// excluding `name`'s own declaration. Textual (name-based), not type-resolved.
+fn callers_of(s: &Session, name: &str) -> Result<Vec<Caller>> {
+    let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))?;
+    let candidates = fetch_bodies(s, fts_substring(name).as_deref(), None, None)?;
+    // Callers means references in *code* — not comments, strings, or prose in
+    // unparseable files (which are excluded). Uses the cached comment/string spans.
+    let opts = ScanOpts {
+        before: 0,
+        after: 0,
+        out: OutMode::Matches,
+        in_filter: InFilter::Code,
+        limit: 0,
+    };
+    let hits = match run_search(s, &re, candidates, &opts)? {
+        SearchData::Matches { matches, .. } => matches,
+        _ => unreachable!(),
+    };
+
+    // Declaration lines of `name` — a reference on one of these is the def, not a call.
+    let mut defsites: HashSet<(String, i64)> = HashSet::new();
+    {
+        let mut st = s.db.conn.prepare(
+            "SELECT path, start_line FROM facts WHERE name = ?1 AND kind <> 'import'",
+        )?;
+        for row in st.query_map([name], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
+            defsites.insert(row?);
+        }
+    }
+
+    let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
+    let mut out = Vec::new();
+    for h in hits {
+        if defsites.contains(&(h.path.clone(), h.line as i64)) {
+            continue; // the declaration itself
+        }
+        if !seen.insert((h.path.clone(), h.symbol.clone())) {
+            continue; // one row per (file, enclosing symbol)
+        }
+        let test = h.path.contains("test")
+            || h.path.contains("spec")
+            || h.symbol
+                .as_deref()
+                .map(|s| s.starts_with("test") || s.starts_with("Test"))
+                .unwrap_or(false);
+        out.push(Caller {
+            symbol: h.symbol,
+            kind: h.kind,
+            path: h.path,
+            line: h.line,
+            test,
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+struct Callee {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+}
+
+/// Definitions referenced by name inside `name`'s body — its (textual) callees.
+/// Same one-hop, name-based rule as `context --expand`.
+fn callees_of(s: &Session, name: &str) -> Result<Vec<Callee>> {
+    let targets: Vec<(String, usize, usize)> = {
+        let mut st = s.db.conn.prepare(
+            "SELECT path, start_byte, end_byte FROM facts WHERE name = ?1 AND kind <> 'import'",
+        )?;
+        let rows = st.query_map([name], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)? as usize,
+                r.get::<_, i64>(2)? as usize,
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut idents: HashSet<String> = HashSet::new();
+    {
+        let mut body_stmt = s.db.conn.prepare("SELECT body FROM content_fts WHERE path = ?1")?;
+        for (path, sb, eb) in &targets {
+            let body: Option<String> = body_stmt.query_row([path], |r| r.get(0)).ok();
+            if let Some(b) = body {
+                if let Some(slice) = b.get(*sb..(*eb).min(b.len())) {
+                    collect_idents(slice, &mut idents);
+                }
+            }
+        }
+    }
+    idents.remove(name);
+
+    let mut seen: HashSet<(String, String, i64)> = HashSet::new();
+    let mut out = Vec::new();
+    {
+        let mut all = s.db.conn.prepare(
+            "SELECT name, kind, path, start_line FROM facts
+             WHERE kind <> 'import' AND name IS NOT NULL",
+        )?;
+        let rows = all.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (n, k, p, l) = row?;
+            if n != name && idents.contains(&n) && seen.insert((n.clone(), p.clone(), l)) {
+                out.push(Callee {
+                    name: n,
+                    kind: k,
+                    path: p,
+                    line: l,
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        (a.name.as_str(), a.path.as_str(), a.line).cmp(&(b.name.as_str(), b.path.as_str(), b.line))
+    });
+    Ok(out)
+}
+
+fn collect_idents(text: &str, out: &mut HashSet<String>) {
+    let mut cur = String::new();
+    for ch in text.chars() {
+        if ch == '_' || ch.is_alphanumeric() {
+            cur.push(ch);
+        } else if !cur.is_empty() {
+            if cur.len() >= 2 {
+                out.insert(std::mem::take(&mut cur));
+            } else {
+                cur.clear();
+            }
+        }
+    }
+    if cur.len() >= 2 {
+        out.insert(cur);
+    }
+}
+
+/// `callers <name>` — who references this symbol (by enclosing definition).
+pub fn cmd_callers(cwd: &Path, name: &str, out: Out) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let data = callers_of(&s, name)?;
+    s.emit(data)
+}
+
+/// `callees <name>` — what this symbol references (by name).
+pub fn cmd_callees(cwd: &Path, name: &str, out: Out) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let data = callees_of(&s, name)?;
+    s.emit(data)
+}
+
+#[derive(Serialize)]
+struct About {
+    definitions: Vec<DefinitionRow>,
+    callers: Vec<Caller>,
+    callees: Vec<Callee>,
+}
+
+/// `about <name>` — the pre-edit dossier: definition(s) with signature/doc, who
+/// calls it, and what it calls — in one call instead of five.
+pub fn cmd_about(cwd: &Path, name: &str, out: Out) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let data = About {
+        definitions: definitions_of(&s, name, 0)?,
+        callers: callers_of(&s, name)?,
+        callees: callees_of(&s, name)?,
+    };
     s.emit(data)
 }
 
@@ -1646,7 +1843,8 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "index_schema": SCHEMA_VERSION,
         "commands": [
             "index", "files", "changed", "stats", "map",
-            "symbols", "definitions", "references", "outline", "at", "read", "search",
+            "symbols", "definitions", "callers", "callees", "about",
+            "references", "outline", "at", "read", "search",
             "imports", "importers", "context", "capabilities", "mcp",
         ],
         // Languages with symbol + import extraction.
