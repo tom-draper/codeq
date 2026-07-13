@@ -32,9 +32,10 @@ persistent model of the code**. That difference buys five things shell tools can
 
 - **`search` is a strict superset of grep.** Same regex engine as ripgrep's default (the
   Rust `regex` crate), plus the ergonomics you'd fall back to `rg` for (`-A`/`-B`/`-C`
-  context, `-l` files-with-matches, `-c` counts) *and* things grep cannot do at all:
-  `--in code|comments|strings` restricts matches by syntactic class (find `TODO` only in
-  comments; find a literal only in real code). There is no query where grep wins.
+  context, `-l` files-with-matches, `-c` counts, `-w` whole-word, `-g` include/exclude
+  globs) *and* things grep cannot do at all: `--in code|comments|strings` restricts matches
+  by syntactic class (find `TODO` only in comments; find a literal only in real code).
+  There is no query where grep wins.
 
 - **Relationships.** `importers` answers "who imports this?", `outline` gives a file's
   structure and nesting, `map` aggregates imports and definitions across the whole repo.
@@ -106,7 +107,7 @@ Run inside a repository. Output is compact JSON on stdout.
 | `codeq references <name> [--path P] [--language L]` | Word-boundary uses of a symbol, each with its enclosing definition; definition sites flagged. |
 | `codeq at <path>:<line>` | The definition(s) enclosing a location (e.g. from a stack trace), innermost first. |
 | `codeq outline <file> [--docs]` | A file's definitions top to bottom, with signatures and nesting depth. |
-| `codeq search <pattern> [-i] [--fixed] [-A/-B/-C N] [-l] [-c] [--in code\|comments\|strings]` | Content search, each match annotated with its enclosing definition. A strict superset of grep (see below). |
+| `codeq search <pattern> [-i] [-w] [--fixed] [-g GLOB] [-A/-B/-C N] [-l] [-c] [--in code\|comments\|strings]` | Content search, each match annotated with its enclosing definition. A strict superset of grep (see below). |
 | `codeq imports [path]` | Import statements (raw module strings). |
 | `codeq importers <query>` | Files whose imports match `query` (raw string match). |
 | `codeq context --symbols a,b \| --changed [--expand]` | Token-budgeted context assembly (see below). |

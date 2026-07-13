@@ -151,12 +151,18 @@ enum Command {
         /// Case-insensitive matching.
         #[arg(long, short = 'i')]
         ignore_case: bool,
+        /// Match whole words only.
+        #[arg(long, short = 'w')]
+        word: bool,
         /// Restrict to paths containing this substring.
         #[arg(long)]
         path: Option<String>,
         /// Restrict to a language.
         #[arg(long)]
         language: Option<String>,
+        /// Include/exclude glob (repeatable); prefix ! to exclude, e.g. -g '*.rs' -g '!tests/'.
+        #[arg(long, short = 'g')]
+        glob: Vec<String>,
         /// Restrict matches to code, comments, or strings (parsed languages only).
         #[arg(long = "in", value_name = "code|comments|strings")]
         in_kind: Option<String>,
@@ -298,8 +304,10 @@ fn main() -> ExitCode {
             pattern,
             fixed,
             ignore_case,
+            word,
             path,
             language,
+            glob,
             in_kind,
             context,
             before,
@@ -313,8 +321,10 @@ fn main() -> ExitCode {
                 pattern: &pattern,
                 fixed,
                 ignore_case,
+                word,
                 path: path.as_deref(),
                 language: language.as_deref(),
+                globs: &glob,
                 in_kind: in_kind.as_deref(),
                 before: before.max(context),
                 after: after.max(context),

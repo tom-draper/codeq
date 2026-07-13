@@ -951,6 +951,67 @@ fn tokens_of(s: &str) -> Vec<String> {
     out
 }
 
+/// Include/exclude glob filter over repo-relative paths, ripgrep-style: a `!`
+/// prefix excludes; a pattern with no `/` matches by basename in any directory;
+/// a trailing `/` matches a whole directory.
+struct GlobFilter {
+    includes: globset::GlobSet,
+    excludes: globset::GlobSet,
+    has_includes: bool,
+}
+
+impl GlobFilter {
+    fn build(globs: &[String]) -> Result<GlobFilter> {
+        let mut inc = globset::GlobSetBuilder::new();
+        let mut exc = globset::GlobSetBuilder::new();
+        let mut has_includes = false;
+        for g in globs {
+            let (neg, pat) = match g.strip_prefix('!') {
+                Some(rest) => (true, rest),
+                None => (false, g.as_str()),
+            };
+            let normalized = Self::normalize(pat);
+            let glob = globset::GlobBuilder::new(&normalized)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| anyhow!("invalid glob '{g}': {e}"))?;
+            if neg {
+                exc.add(glob);
+            } else {
+                inc.add(glob);
+                has_includes = true;
+            }
+        }
+        Ok(GlobFilter {
+            includes: inc.build()?,
+            excludes: exc.build()?,
+            has_includes,
+        })
+    }
+
+    /// A bare name (no `/`) matches in any directory; a trailing `/` means a
+    /// whole directory subtree.
+    fn normalize(pat: &str) -> String {
+        let base = if let Some(dir) = pat.strip_suffix('/') {
+            format!("{dir}/**")
+        } else {
+            pat.to_string()
+        };
+        if base.contains('/') {
+            base
+        } else {
+            format!("**/{base}")
+        }
+    }
+
+    fn accepts(&self, path: &str) -> bool {
+        if self.excludes.is_match(path) {
+            return false;
+        }
+        !self.has_includes || self.includes.is_match(path)
+    }
+}
+
 /// An FTS5 MATCH string requiring every token (implicit AND), each quoted.
 /// Returns `None` when there is no token to prefilter on.
 fn fts_match(tokens: &[String]) -> Option<String> {
@@ -972,8 +1033,10 @@ pub struct SearchArgs<'a> {
     pub pattern: &'a str,
     pub fixed: bool,
     pub ignore_case: bool,
+    pub word: bool,
     pub path: Option<&'a str>,
     pub language: Option<&'a str>,
+    pub globs: &'a [String],
     pub in_kind: Option<&'a str>,
     pub before: usize,
     pub after: usize,
@@ -989,11 +1052,14 @@ pub struct SearchArgs<'a> {
 pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
-    let expr = if args.fixed {
+    let mut expr = if args.fixed {
         regex::escape(args.pattern)
     } else {
         args.pattern.to_string()
     };
+    if args.word {
+        expr = format!(r"\b(?:{expr})\b");
+    }
     let re = regex::RegexBuilder::new(&expr)
         .case_insensitive(args.ignore_case)
         .build()
@@ -1007,7 +1073,12 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     } else {
         None
     };
-    let candidates = fetch_bodies(&s, match_query.as_deref(), args.path, args.language)?;
+    let mut candidates = fetch_bodies(&s, match_query.as_deref(), args.path, args.language)?;
+
+    if !args.globs.is_empty() {
+        let gf = GlobFilter::build(args.globs)?;
+        candidates.retain(|(path, _, _)| gf.accepts(path));
+    }
 
     let out_mode = if args.files_with_matches {
         OutMode::Files

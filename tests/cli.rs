@@ -693,6 +693,41 @@ fn search_in_excludes_unparseable_languages() {
 }
 
 #[test]
+fn search_glob_include_and_exclude() {
+    let f = Fixture::new();
+    f.write("src/a.rs", "fn hit() {}\n");
+    f.write("src/b.py", "def hit():\n    pass\n");
+    f.write("tests/c.rs", "fn hit() {}\n");
+
+    // Include only .rs, by basename across directories.
+    let rs = f.run(&["search", "hit", "-g", "*.rs", "-l"]);
+    let mut files = field_names(&rs["data"]["files"]);
+    files.sort();
+    assert_eq!(files, vec!["src/a.rs".to_string(), "tests/c.rs".to_string()]);
+
+    // Exclude a subtree.
+    let no_tests = f.run(&["search", "hit", "-g", "!tests/", "-l"]);
+    let files = field_names(&no_tests["data"]["files"]);
+    assert!(!files.iter().any(|p| p.starts_with("tests/")), "{files:?}");
+    assert!(files.contains(&"src/a.rs".to_string()));
+}
+
+#[test]
+fn search_word_matches_whole_words_only() {
+    let f = Fixture::new();
+    f.write("a.rs", "let count = 1;\nlet counter = 2;\n");
+    // Plain matches both lines (substring); -w only the exact word.
+    assert_eq!(
+        f.run(&["search", "count"])["data"]["matches"].as_array().unwrap().len(),
+        2
+    );
+    let w = f.run(&["search", "count", "-w"]);
+    let m = w["data"]["matches"].as_array().unwrap();
+    assert_eq!(m.len(), 1);
+    assert_eq!(m[0]["line"], 1);
+}
+
+#[test]
 fn search_invalid_regex_fails() {
     let f = Fixture::new();
     f.write("a.rs", "fn f() {}\n");

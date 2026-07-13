@@ -201,6 +201,7 @@ dependencies = [
  "assert_cmd",
  "blake3",
  "clap",
+ "globset",
  "ignore",
  "regex",
  "rusqlite",
