@@ -503,6 +503,58 @@ fn go_symbols_and_imports() {
     assert!(mods.contains(&"fmt".to_string()), "go import quotes stripped: {mods:?}");
 }
 
+#[test]
+fn java_symbols_and_imports() {
+    let f = Fixture::new();
+    f.write(
+        "S.java",
+        "package p;\n\
+         import java.util.List;\n\
+         public interface H { void go(); }\n\
+         public class S implements H {\n  public S() {}\n  public void go() {}\n}\n",
+    );
+    let syms = f.run(&["symbols"]);
+    let by_kind = |k: &str| -> Vec<String> {
+        syms["data"].as_array().unwrap().iter()
+            .filter(|r| r["kind"] == k)
+            .map(|r| r["name"].as_str().unwrap().to_string()).collect()
+    };
+    assert!(by_kind("interface").contains(&"H".to_string()));
+    assert!(by_kind("class").contains(&"S".to_string()));
+    assert!(by_kind("method").contains(&"go".to_string()));
+    assert!(field_set(&f.run(&["imports"]), "module").contains(&"java.util.List".to_string()));
+}
+
+#[test]
+fn ruby_symbols_and_nesting() {
+    let f = Fixture::new();
+    f.write("s.rb", "module A\n  class B\n    def m\n    end\n  end\nend\n\ndef top\nend\n");
+    let syms = field_set(&f.run(&["symbols"]), "name");
+    for want in ["A", "B", "m", "top"] {
+        assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
+    }
+    // Method m nests under class B under module A.
+    let out = f.run(&["outline", "s.rb"]);
+    let m = out["data"].as_array().unwrap().iter().find(|r| r["name"] == "m").unwrap();
+    assert_eq!(m["depth"], 2);
+}
+
+#[test]
+fn c_symbols_and_includes() {
+    let f = Fixture::new();
+    f.write(
+        "s.c",
+        "#include <stdio.h>\n#include \"local.h\"\nstruct S { int x; };\nint f(void) { return 0; }\nchar *g(void) { return 0; }\n",
+    );
+    let syms = f.run(&["symbols"]);
+    let names = field_set(&syms, "name");
+    assert!(names.contains(&"S".to_string()) && names.contains(&"f".to_string()));
+    assert!(names.contains(&"g".to_string()), "pointer-returning fn: {names:?}");
+    let mods = field_set(&f.run(&["imports"]), "module");
+    assert!(mods.contains(&"stdio.h".to_string()), "angle include stripped: {mods:?}");
+    assert!(mods.contains(&"local.h".to_string()), "quoted include stripped: {mods:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Signatures / docstrings / outline
 // ---------------------------------------------------------------------------

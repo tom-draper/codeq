@@ -63,6 +63,9 @@ pub struct Extractor {
     typescript: LangSpec,
     tsx: LangSpec,
     go: LangSpec,
+    java: LangSpec,
+    ruby: LangSpec,
+    c: LangSpec,
 }
 
 struct LangSpec {
@@ -139,7 +142,7 @@ impl LangSpec {
                     // Some grammars capture the whole quoted import path (Go);
                     // normalise to the bare module string like the others.
                     let name = if kind == "import" {
-                        name.trim_matches(|c| c == '"' || c == '\'' || c == '`')
+                        name.trim_matches(|c: char| "\"'`<>".contains(c))
                             .to_string()
                     } else {
                         name
@@ -230,6 +233,27 @@ impl Extractor {
                 "treesitter/go",
                 "go",
             )?,
+            java: LangSpec::new(
+                tree_sitter_java::LANGUAGE.into(),
+                JAVA_QUERY,
+                JAVA_SPANS,
+                "treesitter/java",
+                "java",
+            )?,
+            ruby: LangSpec::new(
+                tree_sitter_ruby::LANGUAGE.into(),
+                RUBY_QUERY,
+                RUBY_SPANS,
+                "treesitter/ruby",
+                "ruby",
+            )?,
+            c: LangSpec::new(
+                tree_sitter_c::LANGUAGE.into(),
+                C_QUERY,
+                C_SPANS,
+                "treesitter/c",
+                "c",
+            )?,
         })
     }
 
@@ -243,6 +267,9 @@ impl Extractor {
             "typescript" => self.typescript.extract(src),
             "tsx" => self.tsx.extract(src),
             "go" => self.go.extract(src),
+            "java" => self.java.extract(src),
+            "ruby" => self.ruby.extract(src),
+            "c" => self.c.extract(src),
             _ => (Vec::new(), Vec::new()),
         }
     }
@@ -254,7 +281,7 @@ impl Extractor {
 pub fn has_spans(language: &str) -> bool {
     matches!(
         language,
-        "rust" | "python" | "javascript" | "typescript" | "tsx" | "go"
+        "rust" | "python" | "javascript" | "typescript" | "tsx" | "go" | "java" | "ruby" | "c"
     )
 }
 
@@ -407,6 +434,57 @@ const GO_SPANS: &str = r#"
 (comment) @comment
 (interpreted_string_literal) @string
 (raw_string_literal) @string
+"#;
+
+/// Java definitions and imports.
+const JAVA_QUERY: &str = r#"
+(class_declaration name: (identifier) @name body: (class_body) @body) @class
+(interface_declaration name: (identifier) @name body: (interface_body) @body) @interface
+(enum_declaration name: (identifier) @name body: (enum_body) @body) @enum
+(record_declaration name: (identifier) @name) @record
+(method_declaration name: (identifier) @name body: (block) @body) @method
+(method_declaration name: (identifier) @name !body) @method
+(constructor_declaration name: (identifier) @name body: (constructor_body) @body) @method
+(import_declaration (scoped_identifier) @name) @import
+"#;
+
+const JAVA_SPANS: &str = r#"
+(line_comment) @comment
+(block_comment) @comment
+(string_literal) @string
+(character_literal) @string
+"#;
+
+/// Ruby definitions (no import statement in Ruby — `require` is a method call).
+/// Ruby method/class bodies aren't a strippable field here, so signatures are
+/// the whole declaration, capped.
+const RUBY_QUERY: &str = r#"
+(method name: (_) @name) @method
+(singleton_method name: (_) @name) @method
+(class name: (_) @name) @class
+(module name: (_) @name) @module
+"#;
+
+const RUBY_SPANS: &str = r#"
+(comment) @comment
+(string) @string
+"#;
+
+/// C definitions and #include directives. Declarator nesting means some forms
+/// (e.g. pointer-returning functions) need their own pattern.
+const C_QUERY: &str = r#"
+(function_definition declarator: (function_declarator declarator: (identifier) @name) body: (compound_statement) @body) @function
+(function_definition declarator: (pointer_declarator declarator: (function_declarator declarator: (identifier) @name)) body: (compound_statement) @body) @function
+(struct_specifier name: (type_identifier) @name body: (field_declaration_list) @body) @struct
+(enum_specifier name: (type_identifier) @name body: (enumerator_list) @body) @enum
+(preproc_include path: (system_lib_string) @name) @import
+(preproc_include path: (string_literal) @name) @import
+"#;
+
+const C_SPANS: &str = r#"
+(comment) @comment
+(string_literal) @string
+(char_literal) @string
 "#;
 
 /// Syntactic class of a byte position, for `search --in`. Extracted at index
