@@ -139,9 +139,19 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
     }
     if req.changed {
         modes.push("changed");
-        let changed = repo.changed_since(&req.compare_to)?;
-        for d in defs_by_paths(db, &changed)? {
-            if seen.insert((d.path.clone(), d.start_byte)) {
+        // Seed only the definitions the change actually *touched* (hunk overlap),
+        // not every definition in a changed file — the same granularity as
+        // `changed --symbols`. Otherwise a one-line edit to a big file would
+        // seed the whole file.
+        let ranges = repo.changed_line_ranges(&req.compare_to)?;
+        let paths: Vec<String> = ranges.keys().cloned().collect();
+        for d in defs_by_paths(db, &paths)? {
+            let touched = ranges.get(&d.path).is_some_and(|hunks| {
+                let ds = d.start_line.max(0) as usize;
+                let de = d.end_line.max(0) as usize;
+                hunks.iter().any(|&(hs, he)| he >= ds && hs <= de)
+            });
+            if touched && seen.insert((d.path.clone(), d.start_byte)) {
                 defs.push(d);
             }
         }

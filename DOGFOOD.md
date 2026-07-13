@@ -4,6 +4,30 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 5: reviewing my own diff → `context --changed` was too coarse
+
+Used codeq to review what my recent commit touched: `changed --symbols
+--compare-to HEAD~1` correctly listed the 12 functions I edited (hunk∩def
+ranges — spot-on). But cross-checking against `context --changed` exposed an
+inconsistency.
+
+- **FIXED (relevance/tokens): `context --changed` seeded every def in a changed
+  *file*, not the defs the change *touched*.** For the same HEAD~1 diff it
+  seeded **86** defs (≈ all of commands.rs's 89) when only **12** were actually
+  changed. That's the opposite of what `context` is for — it bloats the window
+  with untouched code and dilutes relevance. `changed --symbols` already had the
+  right logic (`changed_line_ranges` hunk overlap); `context`'s changed-mode was
+  still using `changed_since` (file granularity). **Fixed:** changed-mode now
+  seeds via hunk∩def overlap, matching `changed --symbols`. Result: 86 → 13
+  seeds, exactly equal to the ground-truth touched-def count. `--expand` still
+  pulls in referenced neighbours, so you get *touched defs + their dependencies*
+  — the right context for reviewing or modifying a change. Regression test
+  strengthened to assert an untouched def in a changed file is not seeded.
+- Note: this was found purely by *using* the review workflow (diff → symbols →
+  context) and noticing the two commands disagreed on scope. The tool was never
+  wrong per se, just wasteful — the kind of thing a test suite won't flag but a
+  real "gather context for my change" task makes obvious.
+
 ## 2026-07-13 — session 4: MCP-coverage audit → found a CRITICAL search bug
 
 Set out to audit whether every command has an MCP tool. The audit query

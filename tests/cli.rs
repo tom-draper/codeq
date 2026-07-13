@@ -1278,6 +1278,9 @@ fn context_changed_mode_seeds_from_git() {
         .any(|m| m == "changed"));
     let names = chunk_symbols(d);
     assert!(names.contains(&"fresh".to_string()), "changed seed missing: {names:?}");
+    // Seed granularity is the touched *hunk*, not the changed *file*: `old()` is
+    // in the same file but untouched, so it must not be seeded.
+    assert!(!names.contains(&"old".to_string()), "untouched def leaked as seed: {names:?}");
 
     // Default (no --plan) omits the plan block.
     let lean = f.run(&["context", "--changed", "--compare-to", "HEAD", "--no-text"]);
