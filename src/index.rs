@@ -6,7 +6,6 @@
 //! nothing.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
@@ -14,6 +13,7 @@ use ignore::WalkBuilder;
 
 use crate::db::Db;
 use crate::facts::Extractor;
+use crate::repo::Repo;
 
 /// Result of a refresh pass.
 pub struct RefreshStats {
@@ -31,8 +31,23 @@ struct Stored {
 
 /// Bring the index in line with the working tree. Returns how many files were
 /// (re)parsed. Incremental: unchanged files (same size + mtime) are skipped
-/// without hashing.
-pub fn refresh(db: &Db, repo_root: &Path) -> Result<RefreshStats> {
+/// without hashing. For git repos, a matching freshness token skips the walk
+/// entirely.
+pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
+    let repo_root = repo.root.as_path();
+
+    // Fast path: if the git freshness token matches the last full index, the
+    // working tree is unchanged and no walk is needed.
+    let token = repo.freshness_token()?;
+    if let Some(t) = &token {
+        if db.get_meta("fresh_token")?.as_deref() == Some(t.as_str()) {
+            return Ok(RefreshStats {
+                reindexed: 0,
+                partial_failures: 0,
+            });
+        }
+    }
+
     // Load the current index state once.
     let mut existing: HashMap<String, Stored> = HashMap::new();
     {
@@ -204,6 +219,10 @@ pub fn refresh(db: &Db, repo_root: &Path) -> Result<RefreshStats> {
 
     tx.commit()?;
     db.set_meta("last_indexed_at", &now_ns().to_string())?;
+    // Record the state we just indexed so the next query can skip the walk.
+    if let Some(t) = token {
+        db.set_meta("fresh_token", &t)?;
+    }
     Ok(RefreshStats {
         reindexed,
         partial_failures,

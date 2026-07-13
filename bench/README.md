@@ -14,24 +14,28 @@ python3 bench/bench.py /tmp/zod
 
 ## Results (zod, 374 TS/JS files)
 
+With the git freshness fast-path (queries skip the full tree walk when a
+HEAD+status+untracked fingerprint is unchanged), warm queries dropped from
+~60 ms to ~12 ms — within ~2x of ripgrep:
+
 ```
-codeq index (rebuild, cold): ~1.5 s   # one-time; queries below reuse it
+codeq index (rebuild, cold): ~1.4 s   # one-time; queries below reuse it
 
 task                              tool     ms    bytes  ~tok  results
-find definition of a symbol       codeq  60.0      279    69       1
+find definition of a symbol       codeq  11.4      279    69       1
                                   rg      6.7      154    38       2
-find all references to a symbol   codeq  59.8      391    97       2
+find all references to a symbol   codeq  11.8      391    97       2
                                   rg      6.6      154    38       2
-outline a file's structure        codeq  60.3      224    56       2
-                                  rg      2.0      153    38       2
-who imports a module              codeq  60.3    20775  5193     179
-                                  rg      7.7    16759  4189     179
-TODO comments only                codeq 604.9      680   170       4
+outline a file's structure        codeq  12.7      224    56       2
+                                  rg      1.9      153    38       2
+who imports a module              codeq  12.3    20775  5193     179
+                                  rg      7.5    16759  4189     179
+TODO comments only                codeq 567.8      680   170       4   # --in re-parses (slow)
                                   rg      6.7      378    94       4
-list all classes                  codeq  59.6     8386  2096      62
+list all classes                  codeq  12.0     8386  2096      62
                                   rg     10.7    13415  3353     112
-text search with context          codeq  88.3      653   163       2
-                                  rg      6.7      628   157      11
+text search with context          codeq  43.4      653   163       2
+                                  rg      6.8      628   157      11
 ```
 
 ## Honest reading
@@ -39,12 +43,14 @@ text search with context          codeq  88.3      653   163       2
 **rg wins raw speed. codeq wins precision and structure.** We should not
 pretend otherwise — the value proposition is not "faster grep".
 
-- **Speed:** rg answers a single query in ~7 ms; codeq in ~60 ms. codeq's cost
-  is dominated by the per-query **freshness re-walk** of the tree (it re-checks
-  every file so the answer reflects the current workspace). This is the single
-  biggest thing to optimise — a git/mtime-based freshness shortcut would cut it
-  sharply. `--in` is far slower (~600 ms) because it re-parses candidate files
-  with tree-sitter.
+- **Speed:** rg answers a single query in ~7 ms; codeq in ~12 ms. codeq used to
+  be ~60 ms — dominated by a per-query freshness re-walk of the tree — until the
+  **git freshness fast-path** landed: an unchanged working tree (same
+  HEAD + `git status` + untracked stats) skips the walk entirely, so a warm
+  query is now git-status (~3 ms) plus an indexed lookup. It is no longer "10x
+  slower than rg", it is "~2x slower and returns structured results". `--in`
+  remains slow (~570 ms) because it re-parses candidate files with tree-sitter
+  per query — that wants the comment/string spans cached in the index.
 
 - **Precision (the real win):** "list all classes" — codeq returns **62 actual
   class definitions**; `rg 'class \w+'` returns **112 lines**, padded with
@@ -67,10 +73,10 @@ pretend otherwise — the value proposition is not "faster grep".
 
 ## Findings fed back into the tool
 
-- The per-query freshness walk is the dominant query cost → motivates the
-  git/mtime freshness optimisation.
+- The per-query freshness walk was the dominant query cost → **fixed** with the
+  git freshness fast-path (~60 ms → ~12 ms warm).
 - `--in` needs the comment/string spans cached in the index rather than
-  re-parsed per query.
+  re-parsed per query (still ~570 ms).
 - JS identifiers containing `$` (e.g. `$ZodError`) break both `rg`'s regex and
   codeq's `\b` word-boundary in `references` — word boundaries assume `\w`
   identifiers. Worth a JS-aware boundary.

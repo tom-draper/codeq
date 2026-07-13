@@ -42,8 +42,10 @@ impl Session {
         if rebuild {
             db.conn.execute("DELETE FROM files", [])?; // cascades to facts
             db.conn.execute("DELETE FROM content_fts", [])?;
+            // Force the next refresh to do a full walk, not hit the fast path.
+            db.conn.execute("DELETE FROM meta WHERE key = 'fresh_token'", [])?;
         }
-        let stats = refresh(&db, &repo.root)?;
+        let stats = refresh(&db, &repo)?;
         Ok(Session {
             repo,
             db,

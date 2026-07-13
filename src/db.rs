@@ -24,6 +24,12 @@ impl Db {
         let dir = repo_root.join(".codeq");
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("creating {}", dir.display()))?;
+        // Make git ignore our whole index dir, so it never shows up as untracked
+        // (which would also destabilise the freshness token).
+        let gitignore = dir.join(".gitignore");
+        if !gitignore.exists() {
+            let _ = std::fs::write(&gitignore, "*\n");
+        }
         let path = dir.join("index.db");
         let conn = Connection::open(&path)
             .with_context(|| format!("opening {}", path.display()))?;
@@ -102,6 +108,7 @@ impl Db {
         if prev.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
             self.conn.execute("DELETE FROM files", [])?; // cascades to facts
             let _ = self.conn.execute("DELETE FROM content_fts", []);
+            let _ = self.conn.execute("DELETE FROM meta WHERE key = 'fresh_token'", []);
             let _ = self.set_meta("last_indexed_at", "0");
         }
         self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
@@ -117,8 +124,6 @@ impl Db {
         Ok(())
     }
 
-    // Reserved for the forthcoming `status` command.
-    #[allow(dead_code)]
     pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
         let v = self
             .conn

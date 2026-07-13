@@ -944,6 +944,37 @@ fn context_changed_mode_seeds_from_git() {
 }
 
 #[test]
+fn freshness_reflects_tracked_edits() {
+    // The git fast-path must not report stale results after a tracked-file edit.
+    let f = Fixture::new();
+    f.write("a.rs", "fn original() {}\n");
+    f.git_init_commit();
+    assert!(field_set(&f.run(&["symbols"]), "name").contains(&"original".to_string()));
+
+    f.write("a.rs", "fn renamed() {}\n"); // working-tree edit; git status sees it
+    let names = field_set(&f.run(&["symbols"]), "name");
+    assert!(names.contains(&"renamed".to_string()), "edit not picked up: {names:?}");
+    assert!(!names.contains(&"original".to_string()));
+}
+
+#[test]
+fn freshness_reflects_untracked_edits() {
+    // In-place edits to an untracked file must also invalidate the fast-path
+    // (the token folds in untracked-file stats).
+    let f = Fixture::new();
+    f.write("tracked.rs", "fn t() {}\n");
+    f.git_init_commit();
+
+    f.write("note.rs", "fn first() {}\n"); // untracked
+    assert!(field_set(&f.run(&["symbols"]), "name").contains(&"first".to_string()));
+
+    f.write("note.rs", "fn second() {}\n"); // edit in place
+    let names = field_set(&f.run(&["symbols"]), "name");
+    assert!(names.contains(&"second".to_string()), "untracked edit missed: {names:?}");
+    assert!(!names.contains(&"first".to_string()));
+}
+
+#[test]
 fn changed_without_git_fails_with_nonzero_exit() {
     let f = Fixture::new();
     f.write("a.py", "def x():\n    pass\n");
