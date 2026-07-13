@@ -21,18 +21,17 @@ def main():
     if not files:
         print("no results yet — run: python3 bench/differential.py")
         return
-    print(f"{'timestamp':20} {'commit':8} {'correct':>10} {'fail':>5} {'err':>4} "
-          f"{'time x':>8} {'bytes x':>8}")
-    print("-" * 70)
+    print(f"{'timestamp':20} {'commit':8} {'correctness':>14} {'srch t':>7} {'srch b':>7}")
+    print("-" * 62)
     for fp in files:
         with open(fp) as f:
             r = json.load(f)
         s = r["summary"]
-        correct = f"{s['correctness_pass']}/{s['actions_total']}"
-        print(f"{r['timestamp']:20} {r.get('codeq_commit',''):8} {correct:>10} "
-              f"{s['correctness_fail']:>5} {s.get('errors',0):>4} "
-              f"{str(s['median_codeq_over_rg_time']):>8} "
-              f"{str(s['median_codeq_over_rg_bytes']):>8}")
+        total = s.get("total_correctness_tests", s.get("actions_total", 0))
+        correct = f"{s['correctness_pass']}/{total}"
+        print(f"{r['timestamp']:20} {r.get('codeq_commit',''):8} {correct:>14} "
+              f"{str(s.get('median_codeq_over_rg_time')):>7} "
+              f"{str(s.get('median_codeq_over_rg_bytes')):>7}")
 
 
 if __name__ == "__main__":

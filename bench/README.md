@@ -25,37 +25,59 @@ Any line rg finds that codeq misses is a **FAIL**; a codeq crash or bad flag is 
 the `^`/`$` anchor regression and the trigram-`MATCH` substring drops — both of
 which passed the unit suite.
 
-**NAV** — the realistic navigation an agent actually does (find definition, find
-references, who-calls, read one symbol, outline, imports), each against the
-grep/`cat` pipeline it would otherwise chain. These aren't a clean single-tool
-superset, so they're scored on speed + output bytes (a token proxy), not
-PASS/FAIL. `read-symbol` vs `cat file` is the headline token comparison.
+**FUZZ** — 60 real identifiers auto-sampled from each repo's symbol table,
+superset-checked against `rg -F`. Auto-scales the assertion count with the corpus
+and is where a substring/prefilter regression lights up.
 
-Each run writes a timestamped JSON to `bench/results/` (committed — history lives
-in git); `trend.py` prints movement across runs.
+**INVARIANT** — ~6 checks per sampled symbol verifying `definitions`,
+`references`, `at`, and `read` against ground truth (not against a grep baseline):
+the returned def actually sits at that line; `at` round-trips and its body-line
+resolves to an enclosing def; `references` includes the def site and is a superset
+of `rg -nw`; `read --symbol` returns that symbol's source, bounded by the file.
+
+**NAV** — the realistic navigation an agent does (definitions, references,
+who-calls, read one symbol, outline, imports), each against the grep/`cat`
+pipeline it would otherwise chain. These aren't a clean single-tool superset (the
+grep pipeline is a lossy approximation, not ground truth), so they're scored on
+speed + output bytes, not PASS/FAIL. `read --symbol` vs `cat file` is the headline
+token comparison.
+
+Each run force-rebuilds every index with the current binary, writes a timestamped
+JSON to `bench/results/` (committed — history lives in git), and prints a
+**per-command report** (correctness pass-rate + median codeq/alt time and byte
+ratios) so it's obvious where codeq wins and where to improve. `trend.py` shows
+movement across runs.
 
 ```bash
 cargo build --release
-python3 bench/corpus.py sync        # clone the corpus (once; cached, gitignored)
-python3 bench/differential.py       # run both batteries; writes results/<ts>.json
+python3 bench/corpus.py sync        # clone the 25-repo corpus (once; cached, gitignored)
+python3 bench/differential.py       # ~5,000 assertions; writes results/<ts>.json
 python3 bench/trend.py              # correctness + ratios across all runs
 ```
 
-Baseline across all 11 language repos:
+Baseline — 25 repos, all 11 languages, ~200 assertions each:
 
 ```
-SEARCH correctness: 110/110 PASS (0 FAIL, 0 ERROR)   # superset of rg everywhere
-search   codeq/rg  time ~3.1x   bytes ~1.7x           # rg wins raw grep; codeq carries an index + JSON
-nav      codeq/base time ~3.1x   bytes ~2.2x          # structured results cost bytes...
-read-symbol vs `cat` bytes: ~0.02x                    # ...except the one that matters: ~50x FEWER tokens
+5015 / 5015 correctness assertions PASS   (search 750, fuzz 1456, invariant 2809; 0 FAIL/ERROR)
+
+per-command    correctness   time x   bytes x   (<1 = codeq wins)
+search          2206/2206      3.3      1.69     raw grep: rg wins on speed & bytes
+definitions      475/475       1.6      5.46     structured defs cost bytes vs a grep heuristic
+references       950/950       2.4      2.08
+at               909/909        —         —
+read             475/475      10.0      0.012    ~80x FEWER tokens than `cat`... but 10x slower
+callers             —          2.5      1.12
+outline             —          3.4      3.48
+imports             —          3.6      4.36
 ```
 
 The honest read: on *plain search/grep in isolation* codeq is slower and more
-verbose than rg. Its wins are (1) **correctness** — one tool, right answers,
-never fewer than rg; and (2) **tokens on real navigation** — reading a single
-symbol costs ~2% of `cat`-ing the file, which is the operation agents do
-constantly. The harness guards the correctness half while we chase the speed
-half, and tracks both over time.
+verbose than rg. Its wins are (1) **correctness** — one tool, right answers, never
+fewer than rg, verified across ~5,000 assertions; and (2) **tokens on real
+navigation** — reading a single symbol costs ~1% of `cat`-ing the file, the
+operation agents do constantly. The per-command byte/time columns are the
+where-to-improve list: `read` is a huge token win but ~10x slower than `cat`;
+`definitions`/`imports`/`outline` emit several× the bytes of the grep heuristic.
 
 ## Single-command harness
 

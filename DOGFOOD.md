@@ -4,6 +4,34 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 11: differential harness at scale → found the UTF-8 BOM bug
+
+Built out the multi-repo differential harness into a verification suite: 25 real
+repos (one+ per language), ~200 high-quality assertions each (~5,000/run) across
+SEARCH (superset vs rg), FUZZ (60 real identifiers vs `rg -F`), INVARIANT (~6
+per-symbol checks of definitions/references/at/read vs ground truth), and NAV
+(benefit vs the grep/cat pipeline), plus a per-command report of correctness +
+speed/token ratios so it's obvious where to improve.
+
+- **REAL BUG, FIXED (schema v5): index kept a leading UTF-8 BOM.** The first big
+  run flagged `newtonsoft/anchor-hash` (`^#`) missing **549** lines rg found — all
+  on line 1 of BOM-prefixed C# files (`EF BB BF` before `#region`/`#nullable`).
+  The BOM sat before the first char, so `^#` couldn't match line 1 and byte
+  offsets were shifted. Fixed by stripping a leading BOM at index time (and in
+  `read`), like ripgrep/editors do; schema bumped 4→5 so stale indexes rebuild.
+  Invisible to the unit suite; only a BOM-heavy real repo surfaced it.
+- **Harness-quality lesson: triage every FAIL.** The expanded run threw 15 FAILs;
+  all 15 were *harness-assertion* bugs, not codeq bugs — `ref-includes-def` was
+  too strict about annotation/attribute `start_line`s (fixed to span membership),
+  and `read` sampled a vendored *minified* JS blob (now excluded via a VENDORED
+  path filter). Also learned: `references` (like `search`) default-caps at 100, so
+  invariants must pass `--limit 0`. Distinguishing harness bugs from real bugs is
+  the discipline that keeps a 5,000-assertion suite trustworthy.
+- **Where-to-improve signal, quantified:** `read --symbol` is ~1% of `cat`'s bytes
+  (the ~80x token win) but ~10x slower than `cat`; `definitions`/`imports`/
+  `outline` emit several× the bytes of the equivalent grep heuristic. These are
+  now tracked per-command, per-run, over time.
+
 ## 2026-07-13 — session 10: multi-language extraction sweep → Ruby/C++ gaps
 
 Differentially tested symbol/import extraction across all 12 languages with
