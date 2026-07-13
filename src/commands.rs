@@ -509,15 +509,25 @@ fn callees_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Callee>
         }
     }
     idents.remove(name);
+    if idents.is_empty() {
+        return Ok(Vec::new());
+    }
 
+    // Look up only the referenced names via the facts(name) index, in chunks to
+    // stay under SQLite's bound-parameter limit — instead of scanning every fact.
+    let ident_list: Vec<&String> = idents.iter().collect();
     let mut seen: HashSet<(String, String, i64)> = HashSet::new();
     let mut out = Vec::new();
-    {
-        let mut all = s.db.conn.prepare(
+    for chunk in ident_list.chunks(500) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
             "SELECT name, kind, path, start_line FROM facts
-             WHERE kind <> 'import' AND name IS NOT NULL",
-        )?;
-        let rows = all.query_map([], |r| {
+             WHERE kind <> 'import' AND name IN ({placeholders})"
+        );
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|n| *n as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(params.as_slice(), |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
@@ -527,7 +537,7 @@ fn callees_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Callee>
         })?;
         for row in rows {
             let (n, k, p, l) = row?;
-            if n != name && idents.contains(&n) && seen.insert((n.clone(), p.clone(), l)) {
+            if n != name && seen.insert((n.clone(), p.clone(), l)) {
                 out.push(Callee {
                     name: n,
                     kind: k,

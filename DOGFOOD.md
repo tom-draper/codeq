@@ -4,6 +4,28 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 2: investigating callees_of (found via `about`/`read`)
+
+Used `codeq about callees_of --path commands` then `codeq read src/commands.rs
+--symbol callees_of` to study the function without loading the 1900-line file —
+that flow worked well (orient → read one symbol). Two findings:
+
+- **RESOLVED (perf): `callees_of` full-scanned every fact.** It ran
+  `SELECT … FROM facts WHERE kind<>'import' AND name IS NOT NULL` and filtered in
+  Rust — O(all facts) per `about`/`callees` call, ignoring the `facts_name`
+  index. Fixed: query `WHERE name IN (<referenced idents>)` in chunks;
+  `EXPLAIN QUERY PLAN` now shows `SEARCH facts USING INDEX facts_name`.
+
+- **Known limitation (noise): callees over-matches.** The callees list included
+  `db`, `path`, `remove`, `new` — these are field accesses (`s.db`, `.path`),
+  std method calls (`.remove`), and a name that collides with an unrelated def
+  (`Fixture::remove` in tests). Name-based analysis can't tell `x.remove()`
+  (std) from a call to a defined `remove`. Skipping `.`-preceded identifiers
+  would drop the field/std noise but also lose real method-call callees
+  (`s.emit`, `extractor.extract`). Left as-is and documented; a proper fix needs
+  resolution, which is deliberately out of scope. Reader beware: callees is a
+  superset.
+
 ## 2026-07-13 — RESOLVED: symbol commands need path scoping (highest priority)
 
 **Fixed** the same day: `definitions`/`callees`/`about` now take `--path <substr>`
