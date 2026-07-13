@@ -125,7 +125,9 @@ TASKS = [
 
 
 def pick_target(path):
-    p = subprocess.run([CODEQ, "symbols", "--fields", "name,kind,path,start_line", "--limit", "0"],
+    # --json here: we parse the symbol table. The task commands below measure the
+    # default (text) output — the real agent cost we're comparing.
+    p = subprocess.run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,start_line", "--limit", "0"],
                        cwd=path, capture_output=True).stdout
     try:
         data = json.loads(p)["data"]

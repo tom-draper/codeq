@@ -84,7 +84,9 @@ fn call_tool(params: Option<&Value>, exe: &Path, cwd: &Path) -> Value {
         None => return tool_error(format!("unknown tool: {name}")),
     };
 
-    match Command::new(exe).args(&cli_args).current_dir(cwd).output() {
+    // MCP is a programmatic consumer, so request structured JSON (the CLI now
+    // defaults to compact text for direct/agent use).
+    match Command::new(exe).arg("--json").args(&cli_args).current_dir(cwd).output() {
         Ok(o) if o.status.success() => {
             json!({ "content": [{ "type": "text", "text": String::from_utf8_lossy(&o.stdout) }] })
         }

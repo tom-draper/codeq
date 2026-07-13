@@ -4,6 +4,32 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 12: token-to-completion showed JSON was tax → text default
+
+Built `bench/completion.py` (task-level token-to-completion: tokens + tool calls
+to finish realistic tasks, codeq vs chained rg/sed/cat). It showed codeq *losing*
+to rg on `references` (0.7x) and `imports` (0.5x) — the JSON envelope is pure
+token tax where the answer is essentially `path:line: text`. Also measured that
+compact text is 2–6x smaller than JSON per command (definitions 5.9x, symbols
+2.7x).
+
+- **CHANGE: default output is now compact grep-style text; `--json` is opt-in.**
+  One central renderer in `envelope.rs` (`path:line:col: payload` — `signature`
+  for defs, `kind name` for symbols, sectioned for `about`/`map`, `key: value`
+  for `stats`), so zero per-command churn. `--meta`/`--pretty` imply `--json`;
+  noteworthy meta goes to stderr so stdout stays parseable. MCP passes `--json`
+  (structured, as programmatic consumers expect). Tests kept green by injecting
+  `--json` in the harness; added a text-default test. Payoff (completion, 25
+  repos): total token saving **3.1x → 6.2x**, and the two losing tasks flipped to
+  wins (references 0.7→1.1x, imports 0.5→1.0x). Differential still 5224/5224.
+- **Also found (harness scaling): `symbols` default-caps at 200 and returns
+  alphabetically**, so samplers that forgot `--limit 0` saw a biased slice — it
+  silently skipped 5 repos in completion until fixed. Same class as search/
+  references capping at 100.
+- **Resolved earlier this session: Ruby `require`/`require_relative` now captured
+  as imports** (guarded call match + Rust-side keyword filter, since the query
+  engine doesn't evaluate `#eq?`). sinatra 0→85, rack 0→122.
+
 ## 2026-07-13 — session 11: differential harness at scale → found the UTF-8 BOM bug
 
 Built out the multi-repo differential harness into a verification suite: 25 real

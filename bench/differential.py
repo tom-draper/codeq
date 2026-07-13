@@ -125,7 +125,7 @@ def rg_lines(out):
 def search_battery(path):
     out = []
     for aname, cargs, rargs in SEARCH_ACTIONS:
-        cq_ms, cq_out, cq_rc = _timed([CODEQ, "search", *cargs, "--limit", "0"], path)
+        cq_ms, cq_out, cq_rc = _timed([CODEQ, "--json", "search", *cargs, "--limit", "0"], path)
         rg_ms, rg_out, rg_rc = _timed(["rg", "-n", "--no-heading", "--no-messages", *rargs], path)
         cq, cq_ok = codeq_lines(cq_out)
         rg = rg_lines(rg_out)
@@ -149,7 +149,7 @@ def search_battery(path):
 
 # ---------------------------------------------------------------- FUZZ
 def fuzz_battery(path):
-    p = _run([CODEQ, "symbols", "--fields", "name", "--limit", "0"], path)
+    p = _run([CODEQ, "--json", "symbols", "--fields", "name", "--limit", "0"], path)
     try:
         data = json.loads(p)["data"]
     except (ValueError, KeyError):
@@ -162,7 +162,7 @@ def fuzz_battery(path):
     sample = names[::step][:FUZZ_K]
     npass, failures = 0, []
     for lit in sample:
-        cq_out = _run([CODEQ, "search", "--fixed", lit, "--limit", "0"], path)
+        cq_out = _run([CODEQ, "--json", "search", "--fixed", lit, "--limit", "0"], path)
         rg_out = _run(["rg", "-F", "-n", "--no-heading", "--no-messages", lit], path)
         cq, ok = codeq_lines(cq_out)
         missing = rg_lines(rg_out) - cq
@@ -184,7 +184,7 @@ VENDORED = ("/vendor/", "/dist/", "/node_modules/", "/_static/", "/third_party/"
 
 
 def sample_symbols(path):
-    p = _run([CODEQ, "symbols", "--fields", "name,kind,path,start_line,end_line", "--limit", "0"], path)
+    p = _run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,start_line,end_line", "--limit", "0"], path)
     try:
         data = json.loads(p)["data"]
     except (ValueError, KeyError):
@@ -213,13 +213,13 @@ def invariant_battery(path):
                          "verdict": "PASS" if ok else "FAIL", "symbol": S, "path": F})
 
         # definitions agrees with the symbol table
-        defs, _ = _cq([CODEQ, "definitions", S], path)
+        defs, _ = _cq([CODEQ, "--json", "definitions", S], path)
         rec("definitions", "def-matches-symbol",
             bool(defs) and any(d.get("path") == F and d.get("start_line") == L0 for d in defs))
 
         # references includes the def site and is a superset of `rg -nw`
         # (--limit 0: the default caps results at 100, which isn't a miss).
-        rd, _ = _cq([CODEQ, "references", S, "--limit", "0"], path)
+        rd, _ = _cq([CODEQ, "--json", "references", S, "--limit", "0"], path)
         refset = {(r["path"], r["line"]) for r in rd.get("references", [])} if isinstance(rd, dict) else set()
         # The name may sit anywhere in the def's span (start_line can be a
         # leading annotation/attribute/decorator line), so check span membership.
@@ -229,20 +229,20 @@ def invariant_battery(path):
         rec("references", "ref-superset-rg", not (rg_lines(rg_out) - refset))
 
         # `at` the def line resolves back to the symbol
-        at0, _ = _cq([CODEQ, "at", f"{F}:{L0}"], path)
+        at0, _ = _cq([CODEQ, "--json", "at", f"{F}:{L0}"], path)
         rec("at", "at-def-roundtrip", bool(at0) and any(d.get("name") == S for d in at0))
 
         # `at` a line inside the body is enclosed by a def covering it
         if L1 > L0:
             mid = (L0 + L1) // 2
-            atm, _ = _cq([CODEQ, "at", f"{F}:{mid}"], path)
+            atm, _ = _cq([CODEQ, "--json", "at", f"{F}:{mid}"], path)
             rec("at", "at-body-encloses",
                 bool(atm) and any(d.get("start_line", 1 << 30) <= mid <= d.get("end_line", -1) for d in atm))
 
         # read --symbol returns the symbol's source: non-empty, contains the
         # name, and never more lines than the whole file (it may print several
         # defs when a name recurs, e.g. __init__, but never a super-file dump).
-        rout = _run([CODEQ, "read", F, "--symbol", S], path)
+        rout = _run([CODEQ, "--json", "read", F, "--symbol", S], path)
         try:
             with open(os.path.join(path, F), "rb") as fh:
                 file_lines = fh.read().count(b"\n") + 1
@@ -262,18 +262,18 @@ def nav_battery(path):
     s = syms[len(syms) // 2]         # one representative symbol for timing
     name, f = s["name"], s["path"]
     specs = [
-        ("definitions", [CODEQ, "definitions", name],
+        ("definitions", [CODEQ, "--json", "definitions", name],
                         ["rg", "-n", "--no-heading", "--no-messages",
                          rf"(fn|def|func|function|class|type|struct|interface)\s+{name}\b"]),
-        ("references",  [CODEQ, "references", name, "--limit", "0"],
+        ("references",  [CODEQ, "--json", "references", name, "--limit", "0"],
                         ["rg", "-nw", "--no-heading", "--no-messages", name]),
-        ("callers",     [CODEQ, "callers", name],
+        ("callers",     [CODEQ, "--json", "callers", name],
                         ["rg", "-n", "--no-heading", "--no-messages", rf"{name}\("]),
-        ("read",        [CODEQ, "read", f, "--symbol", name], ["cat", f]),
-        ("outline",     [CODEQ, "outline", f],
+        ("read",        [CODEQ, "--json", "read", f, "--symbol", name], ["cat", f]),
+        ("outline",     [CODEQ, "--json", "outline", f],
                         ["rg", "-n", "--no-heading", "--no-messages",
                          r"^\s*(fn|def|func|function|class|type|struct|interface|public|private|const)\b", f]),
-        ("imports",     [CODEQ, "imports", f],
+        ("imports",     [CODEQ, "--json", "imports", f],
                         ["rg", "-n", "--no-heading", "--no-messages",
                          r"^\s*(import|from|use|require|include|using)\b", f]),
     ]
@@ -293,7 +293,7 @@ def nav_battery(path):
 def run_repo(name, lang, path):
     shutil.rmtree(os.path.join(path, ".codeq"), ignore_errors=True)  # always test current binary
     t0 = time.perf_counter()
-    _run([CODEQ, "index"], path)
+    _run([CODEQ, "--json", "index"], path)
     index_ms = (time.perf_counter() - t0) * 1000
     actions = search_battery(path) + nav_battery(path)
     invariants = invariant_battery(path)

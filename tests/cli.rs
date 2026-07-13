@@ -84,9 +84,12 @@ impl Fixture {
             .expect("run codeq")
     }
 
-    /// Run codeq, assert success, and parse stdout as JSON.
+    /// Run codeq with `--json` (default output is now text), assert success, and
+    /// parse stdout as JSON. Text-mode output is covered by dedicated tests.
     fn run(&self, args: &[&str]) -> Value {
-        let out = self.raw(args);
+        let mut with_json = vec!["--json"];
+        with_json.extend_from_slice(args);
+        let out = self.raw(&with_json);
         assert!(
             out.status.success(),
             "codeq {:?} exited {}: {}",
@@ -1124,6 +1127,31 @@ fn search_strips_leading_utf8_bom() {
     // The BOM must not leak into the matched line text either.
     assert!(m[0]["text"].as_str().unwrap().starts_with("#region"),
             "BOM leaked into text: {:?}", m[0]["text"]);
+}
+
+#[test]
+fn text_is_the_default_output_json_is_opt_in() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn alpha() {}\nfn beta() {}\n");
+
+    // Default: compact grep-style text, no JSON envelope.
+    let out = f.raw(&["symbols"]);
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!text.contains("\"schema\""), "default output must not be JSON: {text}");
+    assert!(text.contains("a.rs:1: function alpha"), "grep-style row missing: {text}");
+    assert!(text.contains("a.rs:2: function beta"), "grep-style row missing: {text}");
+
+    // Search text is `path:line:col: text`, like ripgrep.
+    let so = f.raw(&["search", "beta"]);
+    let s = String::from_utf8_lossy(&so.stdout);
+    assert!(s.contains("a.rs:2:"), "search text row missing: {s}");
+    assert!(s.trim_end().ends_with("fn beta() {}"), "search text payload missing: {s}");
+
+    // --json restores the structured envelope.
+    let jo = f.raw(&["--json", "symbols"]);
+    let j = String::from_utf8_lossy(&jo.stdout);
+    assert!(j.contains("\"schema\""), "--json must emit the envelope: {j}");
 }
 
 #[test]

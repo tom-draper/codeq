@@ -5,7 +5,9 @@ codeq is a deterministic repository index for AI agents (this repo builds it).
 reads and grep, and log any friction in [DOGFOOD.md](./DOGFOOD.md).
 
 Build with `cargo build` → run `./target/debug/codeq` from the repo root
-(`--release` for benchmarking). Output is JSON unless noted.
+(`--release` for benchmarking). Output defaults to compact grep-style text
+(`path:line:col: payload`); pass `--json` for the `codeq.result.v1` envelope
+(what the MCP server and programmatic consumers use).
 
 ## Prefer codeq for navigation
 

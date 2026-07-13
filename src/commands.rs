@@ -19,6 +19,7 @@ use crate::repo::Repo;
 /// Output rendering options parsed from global CLI flags.
 #[derive(Clone, Default)]
 pub struct Out {
+    pub json: bool,
     pub meta: bool,
     pub pretty: bool,
     pub fields: Option<Vec<String>>,
@@ -73,6 +74,7 @@ impl Session {
             elapsed_ms: self.started.elapsed().as_millis() as u64,
         };
         Envelope::new(repo, index, data).print(Render {
+            json: self.out.json,
             meta: self.out.meta,
             pretty: self.out.pretty,
             fields: self.out.fields.as_deref(),

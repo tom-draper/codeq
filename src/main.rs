@@ -27,6 +27,11 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 
+    /// Emit JSON (the `codeq.result.v1` envelope). Default is compact grep-style
+    /// text — fewer tokens. Use this for programmatic consumers.
+    #[arg(long, global = true)]
+    json: bool,
+
     /// Include the full repo/index metadata envelope on every result.
     #[arg(long, global = true)]
     meta: bool,
@@ -293,6 +298,7 @@ fn main() -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     let out = commands::Out {
+        json: cli.json,
         meta: cli.meta,
         pretty: cli.pretty,
         fields: cli.fields,
