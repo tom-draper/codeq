@@ -935,6 +935,32 @@ fn search_in_filters_by_syntactic_class() {
 }
 
 #[test]
+fn search_reports_one_row_per_line_and_in_partitions_it() {
+    // A line with a code hit AND a string hit: unfiltered reports the line once
+    // (grep default: one row per line, at the FIRST match's column), while `--in`
+    // reports the same line at the first *in-class* match's column. So `--in`
+    // can change the reported column, but the set of matching lines partitions
+    // exactly — this guards the accept()-before-per-line-dedup interaction.
+    let f = Fixture::new();
+    f.write("a.rs", "let msg = value; // value comment\n");
+    let matches = |v: &serde_json::Value| v["data"]["matches"].as_array().unwrap().clone();
+
+    let any = matches(&f.run(&["search", "value"]));
+    assert_eq!(any.len(), 1, "one row per line");
+    let any_col = any[0]["col"].as_u64().unwrap();
+
+    let code = matches(&f.run(&["search", "value", "--in", "code"]));
+    assert_eq!(code.len(), 1);
+    assert_eq!(code[0]["line"], 1);
+    assert_eq!(code[0]["col"].as_u64().unwrap(), any_col, "unfiltered col == first (code) hit");
+
+    let com = matches(&f.run(&["search", "value", "--in", "comments"]));
+    assert_eq!(com.len(), 1);
+    assert_eq!(com[0]["line"], 1);
+    assert!(com[0]["col"].as_u64().unwrap() > any_col, "comment hit is later on the line");
+}
+
+#[test]
 fn search_in_excludes_unparseable_languages() {
     let f = Fixture::new();
     f.write("notes.md", "needle in markdown\n"); // markdown: no parser

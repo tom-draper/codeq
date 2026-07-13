@@ -4,6 +4,31 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 9: hardened differential vs rg → no bug, `search` validated
+
+Widened the ripgrep differential to ~20 patterns plus the separate output modes
+(`-l`, `-c`) and the `--in` partition. **No new bug** — after sessions 4 and 8,
+`search` now matches rg exactly at line granularity across literals, anchors,
+`\b`, alternation with a shared required literal (`(Db|Repo)::new`), char
+classes, optional/repetition, unicode (`→`, `—`), `-i`, short sub-3-char
+literals (full-scan path), `-l` (set-equal), and `-c` (per-file counts equal).
+
+One **false alarm worth recording**: a `--in` cross-check summed by *column* gave
+code+comments+strings = 239 vs unfiltered 237. Chased it to two lines each
+containing the word `other` twice (which embeds "the"), with the two hits in
+different syntactic classes. Root cause: `search` emits **one row per matching
+line** (grep default), and the `--in` accept() filter runs *before* that
+per-line dedup — so unfiltered reports a line at its first hit's column, while
+`--in strings` reports the same line at the first *string* hit's column. At line
+granularity everything partitions exactly (any == code∪comments∪strings == rg,
+237 = 237). Not a bug; the column is legitimately filter-dependent. Documented
+the subtlety and added a regression test locking the accept-before-dedup order.
+
+Takeaway: differential testing also produces valuable *negative* results — a
+clean diff after a fix is evidence the fix holds, and a surprising diff is worth
+chasing even when it turns out correct (it surfaced a real, subtle, previously
+untested behaviour). Worth promoting to a standing `bench/` rg-diff harness.
+
 ## 2026-07-13 — session 8: differential test vs ripgrep → `^`/`$` anchors were broken
 
 Put the flagship claim ("`search` is a strict superset of grep, never reach for
