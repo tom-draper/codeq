@@ -1,12 +1,34 @@
 # Benchmark: codeq vs grep/rg/find
 
-Three harnesses, increasing in scope:
+Four harnesses, increasing in scope:
 
 | script | scope | measures |
 | --- | --- | --- |
 | `bench.py` | single commands, one repo | speed, bytes, result count |
 | `tasks.py` | multi-step agent tasks, one repo | total tool calls, bytes, time |
-| `differential.py` | **many repos, correctness-first** | superset-of-rg correctness + speed + bytes, tracked over time |
+| `differential.py` | **many repos, correctness-first** | ~5,000 correctness assertions (superset-of-rg + per-symbol invariants) + per-command speed/bytes, over time |
+| `completion.py` | **many repos, token-to-completion** | tokens + tool calls an agent burns to finish realistic tasks, codeq vs chained rg/sed/cat |
+
+## Token-to-completion harness (`completion.py`)
+
+The metric that matters most: an agent pays for every byte it reads into context
+(~4 B/tok). For each realistic task, `completion.py` runs the tool sequence a
+competent agent would actually use to reach the *same answer* — with codeq, and
+with generic tools (rg to locate, `sed` to read a window, `cat` to learn a file)
+— and sums the tokens ingested + tool calls, across the corpus. Baselines are
+deliberately fair (a ~60-line read window, not the whole file), and tasks where
+codeq is near-parity (references, imports) are reported honestly.
+
+```bash
+python3 bench/completion.py            # writes results/completion_<ts>.json
+```
+
+Baseline (25 repos): completing 6 common tasks costs an agent ~3.1x the tokens and
+~1.9x the tool calls with generic tools vs codeq. Big wins on `read` a function
+body (4.6x), who-`callers` (9.5x), `outline`/read a file (4.3x), `about` a symbol
+(2.2x); but codeq currently *loses* on `references` (0.7x) and `imports` (0.5x) —
+the JSON envelope is pure token tax where the answer is essentially `path:line:
+text`. (This motivated the compact-text default output; see the main design.)
 
 ## Differential harness (multi-repo, correctness + trend)
 

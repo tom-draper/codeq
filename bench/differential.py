@@ -149,7 +149,7 @@ def search_battery(path):
 
 # ---------------------------------------------------------------- FUZZ
 def fuzz_battery(path):
-    p = _run([CODEQ, "symbols", "--fields", "name"], path)
+    p = _run([CODEQ, "symbols", "--fields", "name", "--limit", "0"], path)
     try:
         data = json.loads(p)["data"]
     except (ValueError, KeyError):
@@ -184,7 +184,7 @@ VENDORED = ("/vendor/", "/dist/", "/node_modules/", "/_static/", "/third_party/"
 
 
 def sample_symbols(path):
-    p = _run([CODEQ, "symbols", "--fields", "name,kind,path,start_line,end_line"], path)
+    p = _run([CODEQ, "symbols", "--fields", "name,kind,path,start_line,end_line", "--limit", "0"], path)
     try:
         data = json.loads(p)["data"]
     except (ValueError, KeyError):

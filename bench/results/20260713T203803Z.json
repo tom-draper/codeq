@@ -1,76 +1,76 @@
 {
-  "timestamp": "2026-07-13T16:33:22+00:00",
-  "codeq_commit": "75a73858b878",
+  "timestamp": "2026-07-13T20:38:03+00:00",
+  "codeq_commit": "628c996911d7",
   "per_command": {
+    "read": {
+      "pass": 500,
+      "total": 500,
+      "time_x": 10.438,
+      "bytes_x": 0.011
+    },
+    "at": {
+      "pass": 974,
+      "total": 974,
+      "time_x": null,
+      "bytes_x": null
+    },
     "outline": {
       "pass": 0,
       "total": 0,
-      "time_x": 3.408,
-      "bytes_x": 3.477
-    },
-    "read": {
-      "pass": 475,
-      "total": 475,
-      "time_x": 9.992,
-      "bytes_x": 0.012
-    },
-    "imports": {
-      "pass": 0,
-      "total": 0,
-      "time_x": 3.631,
-      "bytes_x": 4.357
-    },
-    "search": {
-      "pass": 2206,
-      "total": 2206,
-      "time_x": 3.316,
-      "bytes_x": 1.687
-    },
-    "references": {
-      "pass": 950,
-      "total": 950,
-      "time_x": 2.421,
-      "bytes_x": 2.084
+      "time_x": 3.477,
+      "bytes_x": 3.214
     },
     "callers": {
       "pass": 0,
       "total": 0,
-      "time_x": 2.472,
-      "bytes_x": 1.116
+      "time_x": 2.602,
+      "bytes_x": 0.75
     },
-    "at": {
-      "pass": 909,
-      "total": 909,
-      "time_x": null,
-      "bytes_x": null
+    "search": {
+      "pass": 2250,
+      "total": 2250,
+      "time_x": 3.225,
+      "bytes_x": 1.687
     },
     "definitions": {
-      "pass": 475,
-      "total": 475,
-      "time_x": 1.649,
-      "bytes_x": 5.463
+      "pass": 500,
+      "total": 500,
+      "time_x": 1.674,
+      "bytes_x": 5.019
+    },
+    "imports": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 3.535,
+      "bytes_x": 3.209
+    },
+    "references": {
+      "pass": 1000,
+      "total": 1000,
+      "time_x": 2.394,
+      "bytes_x": 2.273
     }
   },
   "summary": {
     "repos": 25,
-    "total_correctness_tests": 5015,
-    "correctness_pass": 5015,
+    "total_correctness_tests": 5224,
+    "correctness_pass": 5224,
     "correctness_fail": 0,
     "search_total": 750,
     "search_fail": 0,
     "errors": 0,
-    "invariant_total": 2809,
+    "invariant_total": 2974,
     "invariant_fail": 0,
-    "fuzz_total": 1456,
+    "fuzz_total": 1500,
     "fuzz_fail": 0,
     "actions_total": 750,
-    "median_codeq_over_rg_time": 3.316,
+    "median_codeq_over_rg_time": 3.225,
     "median_codeq_over_rg_bytes": 1.687
   },
   "per_repo": {
     "flask": {
       "lang": "python",
-      "index_ms": 621.23,
+      "index_ms": 606.08,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -79,7 +79,7 @@
     },
     "requests": {
       "lang": "python",
-      "index_ms": 754.47,
+      "index_ms": 755.26,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -88,7 +88,7 @@
     },
     "rich": {
       "lang": "python",
-      "index_ms": 2635.11,
+      "index_ms": 2509.31,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -97,7 +97,7 @@
     },
     "httpie": {
       "lang": "python",
-      "index_ms": 662.48,
+      "index_ms": 620.3,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -106,7 +106,7 @@
     },
     "gin": {
       "lang": "go",
-      "index_ms": 586.47,
+      "index_ms": 534.71,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -115,7 +115,7 @@
     },
     "cobra": {
       "lang": "go",
-      "index_ms": 432.74,
+      "index_ms": 423.76,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -124,7 +124,7 @@
     },
     "mux": {
       "lang": "go",
-      "index_ms": 326.65,
+      "index_ms": 313.2,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -133,7 +133,7 @@
     },
     "express": {
       "lang": "javascript",
-      "index_ms": 596.6,
+      "index_ms": 590.89,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -142,16 +142,16 @@
     },
     "lodash": {
       "lang": "javascript",
-      "index_ms": 2007.96,
+      "index_ms": 1897.98,
       "fuzz": {
-        "total": 16,
-        "pass": 16,
+        "total": 60,
+        "pass": 60,
         "fail": 0
       }
     },
     "zod": {
       "lang": "typescript",
-      "index_ms": 970.85,
+      "index_ms": 937.69,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -160,7 +160,7 @@
     },
     "dayjs": {
       "lang": "typescript",
-      "index_ms": 924.89,
+      "index_ms": 905.36,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -169,7 +169,7 @@
     },
     "ripgrep": {
       "lang": "rust",
-      "index_ms": 1208.32,
+      "index_ms": 1228.09,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -178,7 +178,7 @@
     },
     "serde": {
       "lang": "rust",
-      "index_ms": 751.04,
+      "index_ms": 773.14,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -187,7 +187,7 @@
     },
     "clap": {
       "lang": "rust",
-      "index_ms": 1762.93,
+      "index_ms": 1760.02,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -196,7 +196,7 @@
     },
     "sinatra": {
       "lang": "ruby",
-      "index_ms": 704.04,
+      "index_ms": 692.87,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -205,7 +205,7 @@
     },
     "rack": {
       "lang": "ruby",
-      "index_ms": 686.75,
+      "index_ms": 675.77,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -214,7 +214,7 @@
     },
     "gson": {
       "lang": "java",
-      "index_ms": 1193.53,
+      "index_ms": 1187.83,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -223,7 +223,7 @@
     },
     "jq": {
       "lang": "c",
-      "index_ms": 1960.04,
+      "index_ms": 1632.05,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -232,7 +232,7 @@
     },
     "redis": {
       "lang": "c",
-      "index_ms": 11435.97,
+      "index_ms": 11807.05,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -241,7 +241,7 @@
     },
     "json": {
       "lang": "cpp",
-      "index_ms": 5018.89,
+      "index_ms": 5155.09,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -250,7 +250,7 @@
     },
     "fmt": {
       "lang": "cpp",
-      "index_ms": 2680.91,
+      "index_ms": 2687.7,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -259,7 +259,7 @@
     },
     "spdlog": {
       "lang": "cpp",
-      "index_ms": 1533.21,
+      "index_ms": 1543.7,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -268,7 +268,7 @@
     },
     "newtonsoft": {
       "lang": "csharp",
-      "index_ms": 9721.19,
+      "index_ms": 9966.98,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -277,7 +277,7 @@
     },
     "guzzle": {
       "lang": "php",
-      "index_ms": 479.71,
+      "index_ms": 469.89,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -286,7 +286,7 @@
     },
     "monolog": {
       "lang": "php",
-      "index_ms": 704.13,
+      "index_ms": 700.35,
       "fuzz": {
         "total": 60,
         "pass": 60,
