@@ -68,6 +68,8 @@ struct LangSpec {
     parser: Parser,
     query: Query,
     capture_names: Vec<String>,
+    span_query: Query,
+    span_capture_names: Vec<String>,
     source: String,
     lang: &'static str,
 }
@@ -76,6 +78,7 @@ impl LangSpec {
     fn new(
         language: tree_sitter::Language,
         query_src: &str,
+        span_src: &str,
         source: &str,
         lang: &'static str,
     ) -> Result<LangSpec> {
@@ -84,7 +87,9 @@ impl LangSpec {
             .set_language(&language)
             .context("setting tree-sitter language")?;
         let query = Query::new(&language, query_src).context("compiling query")?;
-        let capture_names = query
+        let capture_names = query.capture_names().iter().map(|s| s.to_string()).collect();
+        let span_query = Query::new(&language, span_src).context("compiling span query")?;
+        let span_capture_names = span_query
             .capture_names()
             .iter()
             .map(|s| s.to_string())
@@ -93,56 +98,81 @@ impl LangSpec {
             parser,
             query,
             capture_names,
+            span_query,
+            span_capture_names,
             source: source.to_string(),
             lang,
         })
     }
 
-    fn extract(&mut self, src: &[u8]) -> Vec<Fact> {
+    /// One parse yields both definition facts and comment/string spans.
+    fn extract(&mut self, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>) {
         let tree = match self.parser.parse(src, None) {
             Some(t) => t,
-            None => return Vec::new(),
+            None => return (Vec::new(), Vec::new()),
         };
-        let mut cursor = QueryCursor::new();
+        let root = tree.root_node();
+
         let mut facts = Vec::new();
-        let mut it = cursor.matches(&self.query, tree.root_node(), src);
-        while let Some(m) = it.next() {
-            let mut name: Option<String> = None;
-            let mut kind: Option<&str> = None;
-            let mut def: Option<Node> = None;
-            let mut body: Option<Node> = None;
-            for cap in m.captures {
-                match self.capture_names[cap.index as usize].as_str() {
-                    "name" => {
-                        name = cap.node.utf8_text(src).ok().map(|s| s.to_string());
-                    }
-                    "body" => body = Some(cap.node),
-                    other => {
-                        kind = Some(other);
-                        def = Some(cap.node);
+        {
+            let mut cursor = QueryCursor::new();
+            let mut it = cursor.matches(&self.query, root, src);
+            while let Some(m) = it.next() {
+                let mut name: Option<String> = None;
+                let mut kind: Option<&str> = None;
+                let mut def: Option<Node> = None;
+                let mut body: Option<Node> = None;
+                for cap in m.captures {
+                    match self.capture_names[cap.index as usize].as_str() {
+                        "name" => {
+                            name = cap.node.utf8_text(src).ok().map(|s| s.to_string());
+                        }
+                        "body" => body = Some(cap.node),
+                        other => {
+                            kind = Some(other);
+                            def = Some(cap.node);
+                        }
                     }
                 }
-            }
-            if let (Some(name), Some(kind), Some(node)) = (name, kind, def) {
-                let start = node.start_position();
-                let end = node.end_position();
-                facts.push(Fact {
-                    kind: kind.to_string(),
-                    name,
-                    start_byte: node.start_byte(),
-                    end_byte: node.end_byte(),
-                    start_line: start.row + 1, // 1-based lines for humans/agents
-                    start_col: start.column,
-                    end_line: end.row + 1,
-                    end_col: end.column,
-                    signature: signature_of(src, node, body),
-                    doc: doc_of(src, self.lang, node, body),
-                    source: self.source.clone(),
-                    confidence: 1.0,
-                });
+                if let (Some(name), Some(kind), Some(node)) = (name, kind, def) {
+                    let start = node.start_position();
+                    let end = node.end_position();
+                    facts.push(Fact {
+                        kind: kind.to_string(),
+                        name,
+                        start_byte: node.start_byte(),
+                        end_byte: node.end_byte(),
+                        start_line: start.row + 1, // 1-based lines for humans/agents
+                        start_col: start.column,
+                        end_line: end.row + 1,
+                        end_col: end.column,
+                        signature: signature_of(src, node, body),
+                        doc: doc_of(src, self.lang, node, body),
+                        source: self.source.clone(),
+                        confidence: 1.0,
+                    });
+                }
             }
         }
-        facts
+
+        let mut spans = Vec::new();
+        {
+            let mut cursor = QueryCursor::new();
+            let mut it = cursor.matches(&self.span_query, root, src);
+            while let Some(m) = it.next() {
+                for cap in m.captures {
+                    let span = match self.span_capture_names[cap.index as usize].as_str() {
+                        "comment" => Span::Comment,
+                        "string" => Span::Str,
+                        _ => continue,
+                    };
+                    spans.push((cap.node.start_byte(), cap.node.end_byte(), span));
+                }
+            }
+            spans.sort_by_key(|(s, _, _)| *s);
+        }
+
+        (facts, spans)
     }
 }
 
@@ -152,48 +182,63 @@ impl Extractor {
             rust: LangSpec::new(
                 tree_sitter_rust::LANGUAGE.into(),
                 RUST_QUERY,
+                RUST_SPANS,
                 "treesitter/rust",
                 "rust",
             )?,
             python: LangSpec::new(
                 tree_sitter_python::LANGUAGE.into(),
                 PYTHON_QUERY,
+                PYTHON_SPANS,
                 "treesitter/python",
                 "python",
             )?,
             javascript: LangSpec::new(
                 tree_sitter_javascript::LANGUAGE.into(),
                 JS_QUERY,
+                JS_SPANS,
                 "treesitter/javascript",
                 "javascript",
             )?,
             typescript: LangSpec::new(
                 tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
                 &format!("{JS_QUERY}\n{TS_EXTRA}"),
+                JS_SPANS,
                 "treesitter/typescript",
                 "typescript",
             )?,
             tsx: LangSpec::new(
                 tree_sitter_typescript::LANGUAGE_TSX.into(),
                 &format!("{JS_QUERY}\n{TS_EXTRA}"),
+                JS_SPANS,
                 "treesitter/tsx",
                 "tsx",
             )?,
         })
     }
 
-    /// Extract definition facts for a file's `src`. Unsupported languages yield
-    /// no facts (not an error).
-    pub fn extract(&mut self, language: &str, src: &[u8]) -> Vec<Fact> {
+    /// One parse per file yields definition facts and comment/string spans.
+    /// Unsupported languages yield nothing (not an error).
+    pub fn extract(&mut self, language: &str, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>) {
         match language {
             "rust" => self.rust.extract(src),
             "python" => self.python.extract(src),
             "javascript" => self.javascript.extract(src),
             "typescript" => self.typescript.extract(src),
             "tsx" => self.tsx.extract(src),
-            _ => Vec::new(),
+            _ => (Vec::new(), Vec::new()),
         }
     }
+}
+
+/// Whether codeq can classify comment/string spans for this language (i.e. it
+/// has a parser). `search --in` excludes files in other languages rather than
+/// guess.
+pub fn has_spans(language: &str) -> bool {
+    matches!(
+        language,
+        "rust" | "python" | "javascript" | "typescript" | "tsx"
+    )
 }
 
 /// The declaration text with any body stripped, collapsed to one line and
@@ -330,89 +375,27 @@ const TS_EXTRA: &str = r#"
 (enum_declaration name: (_) @name) @enum
 "#;
 
-/// Syntactic class of a byte position, for `search --in`.
+/// Syntactic class of a byte position, for `search --in`. Extracted at index
+/// time and stored in the `spans` table, so `search --in` is a lookup, not a
+/// re-parse.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Span {
     Comment,
     Str,
 }
 
-/// Classifies byte offsets as inside a comment or string literal. Built once
-/// per search; supports the languages we have parsers for.
-pub struct Classifier {
-    rust: ClsSpec,
-    python: ClsSpec,
-    javascript: ClsSpec,
-    typescript: ClsSpec,
-    tsx: ClsSpec,
-}
-
-struct ClsSpec {
-    parser: Parser,
-    query: Query,
-    names: Vec<String>,
-}
-
-impl ClsSpec {
-    fn new(language: tree_sitter::Language, query_src: &str) -> Result<ClsSpec> {
-        let mut parser = Parser::new();
-        parser.set_language(&language)?;
-        let query = Query::new(&language, query_src)?;
-        let names = query.capture_names().iter().map(|s| s.to_string()).collect();
-        Ok(ClsSpec {
-            parser,
-            query,
-            names,
-        })
-    }
-
-    /// Comment/string byte spans, sorted by start. Non-overlapping in practice.
-    fn spans(&mut self, src: &[u8]) -> Vec<(usize, usize, Span)> {
-        let tree = match self.parser.parse(src, None) {
-            Some(t) => t,
-            None => return Vec::new(),
-        };
-        let mut cursor = QueryCursor::new();
-        let mut out = Vec::new();
-        let mut it = cursor.matches(&self.query, tree.root_node(), src);
-        while let Some(m) = it.next() {
-            for cap in m.captures {
-                let span = match self.names[cap.index as usize].as_str() {
-                    "comment" => Span::Comment,
-                    "string" => Span::Str,
-                    _ => continue,
-                };
-                out.push((cap.node.start_byte(), cap.node.end_byte(), span));
-            }
+impl Span {
+    pub fn as_i64(self) -> i64 {
+        match self {
+            Span::Comment => 0,
+            Span::Str => 1,
         }
-        out.sort_by_key(|(s, _, _)| *s);
-        out
-    }
-}
-
-impl Classifier {
-    pub fn new() -> Result<Classifier> {
-        Ok(Classifier {
-            rust: ClsSpec::new(tree_sitter_rust::LANGUAGE.into(), RUST_SPANS)?,
-            python: ClsSpec::new(tree_sitter_python::LANGUAGE.into(), PYTHON_SPANS)?,
-            javascript: ClsSpec::new(tree_sitter_javascript::LANGUAGE.into(), JS_SPANS)?,
-            typescript: ClsSpec::new(
-                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                JS_SPANS,
-            )?,
-            tsx: ClsSpec::new(tree_sitter_typescript::LANGUAGE_TSX.into(), JS_SPANS)?,
-        })
     }
 
-    /// Spans for a file, or `None` when the language has no parser (caller must
-    /// then exclude the file rather than guess).
-    pub fn spans(&mut self, language: &str, src: &[u8]) -> Option<Vec<(usize, usize, Span)>> {
-        match language {
-            "rust" => Some(self.rust.spans(src)),
-            "python" => Some(self.python.spans(src)),
-            "javascript" => Some(self.javascript.spans(src)),
-            "typescript" => Some(self.typescript.spans(src)),
-            "tsx" => Some(self.tsx.spans(src)),
+    pub fn from_i64(n: i64) -> Option<Span> {
+        match n {
+            0 => Some(Span::Comment),
+            1 => Some(Span::Str),
             _ => None,
         }
     }

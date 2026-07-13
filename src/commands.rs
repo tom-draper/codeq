@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::context::{self, Request};
 use crate::db::{Db, SCHEMA_VERSION};
 use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
-use crate::facts::{Classifier, Span};
+use crate::facts::{has_spans, Span};
 use crate::index::{language_for, refresh};
 use crate::repo::Repo;
 
@@ -818,7 +818,6 @@ fn run_search(
     re: &regex::Regex,
     candidates: Vec<(String, Option<String>, String)>,
     opts: &ScanOpts,
-    mut classifier: Option<&mut Classifier>,
 ) -> Result<SearchData> {
     let cap = if opts.limit == 0 { usize::MAX } else { opts.limit };
     let filtering = opts.in_filter != InFilter::Any;
@@ -827,6 +826,11 @@ fn run_search(
         "SELECT name, kind, start_byte, end_byte FROM facts
          WHERE path = ?1 AND kind <> 'import'",
     )?;
+    // Comment/string spans are cached in the index (extracted once), so --in is
+    // a lookup, not a per-query re-parse.
+    let mut span_stmt = s.db.conn.prepare(
+        "SELECT start_byte, end_byte, kind FROM spans WHERE path = ?1 ORDER BY start_byte",
+    )?;
 
     let mut files: Vec<String> = Vec::new();
     let mut counts: Vec<FileCount> = Vec::new();
@@ -834,15 +838,19 @@ fn run_search(
     let mut truncated = false;
 
     'outer: for (rel, lang, body) in &candidates {
-        // Classify positions if filtering; skip files we can't parse.
+        // Load cached spans if filtering; skip files in a language we can't parse.
         let spans = if filtering {
-            match classifier
-                .as_deref_mut()
-                .and_then(|c| c.spans(lang.as_deref().unwrap_or(""), body.as_bytes()))
-            {
-                Some(sp) => sp,
-                None => continue,
+            if !has_spans(lang.as_deref().unwrap_or("")) {
+                continue;
             }
+            let rows = span_stmt.query_map([rel], |r| {
+                Ok((
+                    r.get::<_, i64>(0)? as usize,
+                    r.get::<_, i64>(1)? as usize,
+                    Span::from_i64(r.get::<_, i64>(2)?).unwrap_or(Span::Str),
+                ))
+            })?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
         } else {
             Vec::new()
         };
@@ -1093,12 +1101,6 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         Some(k) => InFilter::parse(k)?,
         None => InFilter::Any,
     };
-    // The classifier (re-parses candidates) is only built when --in is used.
-    let mut classifier = if in_filter == InFilter::Any {
-        None
-    } else {
-        Some(Classifier::new()?)
-    };
 
     let opts = ScanOpts {
         before: args.before,
@@ -1107,7 +1109,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         in_filter,
         limit: args.limit,
     };
-    let data = run_search(&s, &re, candidates, &opts, classifier.as_mut())?;
+    let data = run_search(&s, &re, candidates, &opts)?;
     s.emit(data)
 }
 
@@ -1152,7 +1154,7 @@ pub fn cmd_references(
         in_filter: InFilter::Any,
         limit,
     };
-    let (hits, truncated) = match run_search(&s, &re, candidates, &opts, None)? {
+    let (hits, truncated) = match run_search(&s, &re, candidates, &opts)? {
         SearchData::Matches { matches, truncated } => (matches, truncated),
         _ => unreachable!("references always uses Matches mode"),
     };

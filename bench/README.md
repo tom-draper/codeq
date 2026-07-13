@@ -30,8 +30,8 @@ outline a file's structure        codeq  12.7      224    56       2
                                   rg      1.9      153    38       2
 who imports a module              codeq  12.3    20775  5193     179
                                   rg      7.5    16759  4189     179
-TODO comments only                codeq 567.8      680   170       4   # --in re-parses (slow)
-                                  rg      6.7      378    94       4
+TODO comments only                codeq  51.1      680   170       4   # --in now cached (was ~570ms)
+                                  rg      6.5      378    94       4
 list all classes                  codeq  12.0     8386  2096      62
                                   rg     10.7    13415  3353     112
 text search with context          codeq  43.4      653   163       2
@@ -49,8 +49,9 @@ pretend otherwise — the value proposition is not "faster grep".
   HEAD + `git status` + untracked stats) skips the walk entirely, so a warm
   query is now git-status (~3 ms) plus an indexed lookup. It is no longer "10x
   slower than rg", it is "~2x slower and returns structured results". `--in`
-  remains slow (~570 ms) because it re-parses candidate files with tree-sitter
-  per query — that wants the comment/string spans cached in the index.
+  used to be slow (~570 ms) because it re-parsed candidate files per query; it
+  now reads comment/string spans **cached in the index** (extracted in the same
+  parse as symbols), bringing it to ~50 ms.
 
 - **Precision (the real win):** "list all classes" — codeq returns **62 actual
   class definitions**; `rg 'class \w+'` returns **112 lines**, padded with
@@ -75,8 +76,8 @@ pretend otherwise — the value proposition is not "faster grep".
 
 - The per-query freshness walk was the dominant query cost → **fixed** with the
   git freshness fast-path (~60 ms → ~12 ms warm).
-- `--in` needs the comment/string spans cached in the index rather than
-  re-parsed per query (still ~570 ms).
+- `--in` re-parsed per query → **fixed** by caching comment/string spans in the
+  index (extracted in the same parse as symbols): ~570 ms → ~50 ms.
 - JS identifiers containing `$` (e.g. `$ZodError`) break both `rg`'s regex and
   codeq's `\b` word-boundary in `references` — word boundaries assume `\w`
   identifiers. Worth a JS-aware boundary.

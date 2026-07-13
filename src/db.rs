@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub struct Db {
     pub conn: Connection,
@@ -79,10 +79,19 @@ impl Db {
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS spans (
+                path       TEXT NOT NULL,
+                start_byte INTEGER NOT NULL,
+                end_byte   INTEGER NOT NULL,
+                kind       INTEGER NOT NULL,
+                FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
+            );
+
             CREATE INDEX IF NOT EXISTS files_language ON files(language);
             CREATE INDEX IF NOT EXISTS facts_kind_name ON facts(kind, name);
             CREATE INDEX IF NOT EXISTS facts_name ON facts(name);
             CREATE INDEX IF NOT EXISTS facts_path ON facts(path);
+            CREATE INDEX IF NOT EXISTS spans_path ON spans(path);
             "#,
         )?;
 

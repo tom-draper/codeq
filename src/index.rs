@@ -100,6 +100,10 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
         let mut ins_fts = tx.prepare(
             "INSERT INTO content_fts(path, language, body) VALUES(?1, ?2, ?3)",
         )?;
+        let mut del_spans = tx.prepare("DELETE FROM spans WHERE path = ?1")?;
+        let mut ins_span = tx.prepare(
+            "INSERT INTO spans(path, start_byte, end_byte, kind) VALUES(?1, ?2, ?3, ?4)",
+        )?;
 
         let now = now_ns();
 
@@ -174,10 +178,12 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                     let body = String::from_utf8_lossy(&bytes);
                     ins_fts.execute((&rel, language, body.as_ref()))?;
                 }
-                // Facts are derived from content: drop stale ones, re-extract.
+                // Facts + spans are derived from content: drop stale, re-extract.
                 del_facts.execute([&rel])?;
+                del_spans.execute([&rel])?;
                 if let Some(lang) = language {
-                    for f in extractor.extract(lang, &bytes) {
+                    let (facts, spans) = extractor.extract(lang, &bytes);
+                    for f in facts {
                         ins_fact.execute((
                             f.id(&rel),
                             &f.kind,
@@ -195,6 +201,9 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                             &f.source,
                             f.confidence,
                         ))?;
+                    }
+                    for (sb, eb, sp) in spans {
+                        ins_span.execute((&rel, sb as i64, eb as i64, sp.as_i64()))?;
                     }
                 }
             }
