@@ -14,8 +14,9 @@ Where a list is ordered by a count, the count is in every row so the ordering is
 transparent. An agent that can trust the output has no reason to fall back to ad-hoc
 shell pipelines.
 
-> Status: working prototype. Symbol/import extraction currently covers **Rust** and
-> **Python**; other languages are indexed as files only. See [DRAFT.md](./DRAFT.md) for
+> Status: working prototype. Symbol/import extraction currently covers **Rust**,
+> **Python**, **JavaScript**, and **TypeScript/TSX**; other languages are indexed as
+> files only (still fully searchable). See [DRAFT.md](./DRAFT.md) for
 > the design rationale and [GEMINI.md](./GEMINI.md) / [GPT.md](./GPT.md) for the critical
 > reviews that shaped it.
 

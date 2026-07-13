@@ -59,6 +59,9 @@ impl Fact {
 pub struct Extractor {
     rust: LangSpec,
     python: LangSpec,
+    javascript: LangSpec,
+    typescript: LangSpec,
+    tsx: LangSpec,
 }
 
 struct LangSpec {
@@ -158,6 +161,24 @@ impl Extractor {
                 "treesitter/python",
                 "python",
             )?,
+            javascript: LangSpec::new(
+                tree_sitter_javascript::LANGUAGE.into(),
+                JS_QUERY,
+                "treesitter/javascript",
+                "javascript",
+            )?,
+            typescript: LangSpec::new(
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+                &format!("{JS_QUERY}\n{TS_EXTRA}"),
+                "treesitter/typescript",
+                "typescript",
+            )?,
+            tsx: LangSpec::new(
+                tree_sitter_typescript::LANGUAGE_TSX.into(),
+                &format!("{JS_QUERY}\n{TS_EXTRA}"),
+                "treesitter/tsx",
+                "tsx",
+            )?,
         })
     }
 
@@ -167,6 +188,9 @@ impl Extractor {
         match language {
             "rust" => self.rust.extract(src),
             "python" => self.python.extract(src),
+            "javascript" => self.javascript.extract(src),
+            "typescript" => self.typescript.extract(src),
+            "tsx" => self.tsx.extract(src),
             _ => Vec::new(),
         }
     }
@@ -283,6 +307,29 @@ const PYTHON_QUERY: &str = r#"
 (import_from_statement module_name: (relative_import) @name) @import
 "#;
 
+/// JavaScript definitions and ES imports. Node types here also exist in the
+/// TypeScript grammar, so this compiles against JS, TS, and TSX. `name: (_)`
+/// avoids depending on grammar-specific identifier node types.
+const JS_QUERY: &str = r#"
+(function_declaration name: (_) @name body: (statement_block) @body) @function
+(generator_function_declaration name: (_) @name body: (statement_block) @body) @function
+(class_declaration name: (_) @name body: (class_body) @body) @class
+(method_definition name: (_) @name body: (statement_block) @body) @method
+(variable_declarator name: (_) @name value: (arrow_function body: (_) @body)) @function
+(variable_declarator name: (_) @name value: (function_expression body: (_) @body)) @function
+
+; ES module imports and re-exports (raw module string, quotes stripped).
+(import_statement source: (string (string_fragment) @name)) @import
+(export_statement source: (string (string_fragment) @name)) @import
+"#;
+
+/// TypeScript-only definitions, appended to `JS_QUERY` for TS and TSX.
+const TS_EXTRA: &str = r#"
+(interface_declaration name: (_) @name) @interface
+(type_alias_declaration name: (_) @name) @type
+(enum_declaration name: (_) @name) @enum
+"#;
+
 /// Syntactic class of a byte position, for `search --in`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Span {
@@ -295,6 +342,9 @@ pub enum Span {
 pub struct Classifier {
     rust: ClsSpec,
     python: ClsSpec,
+    javascript: ClsSpec,
+    typescript: ClsSpec,
+    tsx: ClsSpec,
 }
 
 struct ClsSpec {
@@ -345,6 +395,12 @@ impl Classifier {
         Ok(Classifier {
             rust: ClsSpec::new(tree_sitter_rust::LANGUAGE.into(), RUST_SPANS)?,
             python: ClsSpec::new(tree_sitter_python::LANGUAGE.into(), PYTHON_SPANS)?,
+            javascript: ClsSpec::new(tree_sitter_javascript::LANGUAGE.into(), JS_SPANS)?,
+            typescript: ClsSpec::new(
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+                JS_SPANS,
+            )?,
+            tsx: ClsSpec::new(tree_sitter_typescript::LANGUAGE_TSX.into(), JS_SPANS)?,
         })
     }
 
@@ -354,6 +410,9 @@ impl Classifier {
         match language {
             "rust" => Some(self.rust.spans(src)),
             "python" => Some(self.python.spans(src)),
+            "javascript" => Some(self.javascript.spans(src)),
+            "typescript" => Some(self.typescript.spans(src)),
+            "tsx" => Some(self.tsx.spans(src)),
             _ => None,
         }
     }
@@ -370,4 +429,10 @@ const RUST_SPANS: &str = r#"
 const PYTHON_SPANS: &str = r#"
 (comment) @comment
 (string) @string
+"#;
+
+const JS_SPANS: &str = r#"
+(comment) @comment
+(string) @string
+(template_string) @string
 "#;

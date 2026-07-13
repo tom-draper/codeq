@@ -398,6 +398,65 @@ fn changed_reports_modified_and_untracked() {
 }
 
 // ---------------------------------------------------------------------------
+// TypeScript / JavaScript
+// ---------------------------------------------------------------------------
+
+#[test]
+fn typescript_symbols_and_imports() {
+    let f = Fixture::new();
+    f.write(
+        "svc.ts",
+        "import { Client } from \"./client\";\n\
+         interface User { id: number; }\n\
+         type UserId = number;\n\
+         enum Role { Admin }\n\
+         export class Service {\n  find(id: UserId): User { return null as any; }\n}\n\
+         export const auth = (t: string): boolean => t.length > 0;\n",
+    );
+
+    let syms = f.run(&["symbols"]);
+    let by_kind = |k: &str| -> Vec<String> {
+        syms["data"]
+            .as_array().unwrap().iter()
+            .filter(|r| r["kind"] == k)
+            .map(|r| r["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(by_kind("interface").contains(&"User".to_string()));
+    assert!(by_kind("type").contains(&"UserId".to_string()));
+    assert!(by_kind("enum").contains(&"Role".to_string()));
+    assert!(by_kind("class").contains(&"Service".to_string()));
+    assert!(by_kind("method").contains(&"find".to_string()), "method under class");
+    assert!(by_kind("function").contains(&"auth".to_string()), "arrow-const fn");
+
+    let mods = field_set(&f.run(&["imports"]), "module");
+    assert!(mods.contains(&"./client".to_string()), "quotes stripped: {mods:?}");
+}
+
+#[test]
+fn javascript_symbols_and_in_filter() {
+    let f = Fixture::new();
+    f.write(
+        "app.js",
+        "const helper = (x) => x + 1;\n\
+         function run() {\n  // process here\n  return helper(\"process\");\n}\n",
+    );
+    let syms = field_set(&f.run(&["symbols"]), "name");
+    assert!(syms.contains(&"helper".to_string()) && syms.contains(&"run".to_string()));
+
+    // 'process' appears in a comment and a string, never as code.
+    let count = |kind: &str| -> i64 {
+        f.run(&["search", "process", "--in", kind, "-c"])["data"]["counts"]
+            .as_array().unwrap().iter()
+            .map(|c| c["count"].as_i64().unwrap())
+            .sum()
+    };
+    assert_eq!(count("code"), 0);
+    assert_eq!(count("comments"), 1);
+    assert_eq!(count("strings"), 1);
+}
+
+// ---------------------------------------------------------------------------
 // Signatures / docstrings / outline
 // ---------------------------------------------------------------------------
 
