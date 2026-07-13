@@ -1,5 +1,53 @@
 # Benchmark: codeq vs grep/rg/find
 
+Three harnesses, increasing in scope:
+
+| script | scope | measures |
+| --- | --- | --- |
+| `bench.py` | single commands, one repo | speed, bytes, result count |
+| `tasks.py` | multi-step agent tasks, one repo | total tool calls, bytes, time |
+| `differential.py` | **many repos, correctness-first** | superset-of-rg correctness + speed + bytes, tracked over time |
+
+## Differential harness (multi-repo, correctness + trend)
+
+`differential.py` is the regression net. It clones a fixed corpus of real
+projects (`corpus.py`, pinned tags, spanning codeq's languages) and runs a
+battery of search actions through **both** `codeq search` and an equivalent `rg`,
+checking the property codeq actually promises:
+
+> codeq's matches must be a **superset** of ripgrep's — never fewer.
+
+Any line rg finds that codeq misses is a correctness **FAIL**; a codeq crash or
+bad flag is an **ERROR** (kept distinct from a miss). This is the check that
+would have caught the `^`/`$` anchor regression and the trigram-`MATCH`
+substring drops — both of which passed the unit suite. It also records wall-time
+and output bytes per tool, so speed and token cost ride along. Each run writes a
+timestamped JSON to `bench/results/` (committed — the history lives in git);
+`trend.py` prints movement across runs.
+
+```bash
+cargo build --release
+python3 bench/corpus.py sync        # clone the corpus (once; cached, gitignored)
+python3 bench/differential.py       # run the battery; writes results/<ts>.json
+python3 bench/trend.py              # correctness + ratios across all runs
+```
+
+First baseline (flask, gin, express, ripgrep — Python/Go/JS/Rust):
+
+```
+correctness: 40/40 PASS (0 FAIL, 0 ERROR)   # codeq is a superset of rg everywhere
+codeq/rg time  (median): ~3.0x              # rg is faster at raw grep; codeq carries an index
+codeq/rg bytes (median): ~1.85x             # codeq's JSON + enclosing-symbol is richer, not free
+```
+
+The honest read: on *plain search in isolation* codeq is slower and more verbose
+than rg — its wins are correctness (one tool, right answers), navigation
+(`about`/`callers`/`read`), and fewer follow-up reads on real tasks (see
+`tasks.py`). The differential harness exists to guarantee we never regress the
+correctness half while chasing the speed half.
+
+## Single-command harness
+
 `bench.py` runs agent-style exploration tasks with codeq and with the tool an
 agent would otherwise reach for (`rg`), measuring **wall time** (best of 5),
 **output bytes** (a token proxy at ~4 bytes/token), and **result count** (how
