@@ -620,13 +620,42 @@ struct Hit {
     kind: Option<String>,
     /// The matched line, trailing whitespace trimmed and capped.
     text: String,
+    /// Context lines before the match (with -B/-C), nearest last.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    before: Vec<String>,
+    /// Context lines after the match (with -A/-C).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    after: Vec<String>,
 }
 
 #[derive(Serialize)]
-struct SearchResult {
-    matches: Vec<Hit>,
-    /// True when `--limit` cut the results off — the agent knows to narrow the query.
-    truncated: bool,
+struct FileCount {
+    path: String,
+    count: usize,
+}
+
+/// Output shape depends on the mode: full matches, matching file paths, or
+/// per-file counts. `truncated` is true when `--limit` cut it off.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum SearchData {
+    Matches { matches: Vec<Hit>, truncated: bool },
+    Files { files: Vec<String>, truncated: bool },
+    Counts { counts: Vec<FileCount>, truncated: bool },
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum OutMode {
+    Matches,
+    Files,
+    Count,
+}
+
+struct ScanOpts {
+    before: usize,
+    after: usize,
+    out: OutMode,
+    limit: usize,
 }
 
 struct FileDef {
@@ -648,7 +677,7 @@ fn fetch_bodies(
     match_query: Option<&str>,
     path: Option<&str>,
     language: Option<&str>,
-) -> Result<Vec<(String, String)>> {
+) -> Result<Vec<(String, Option<String>, String)>> {
     let sql = if match_query.is_some() {
         "SELECT path, language, body FROM content_fts WHERE body MATCH ?1 ORDER BY path"
     } else {
@@ -679,7 +708,7 @@ fn fetch_bodies(
                 continue;
             }
         }
-        out.push((p, body));
+        out.push((p, lang, body));
     }
     Ok(out)
 }
@@ -688,78 +717,158 @@ fn row_to_body(r: &rusqlite::Row) -> rusqlite::Result<(String, Option<String>, S
     Ok((r.get(0)?, r.get(1)?, r.get(2)?))
 }
 
-/// Run `re` over candidate bodies, one hit per matching line, each annotated
-/// with its enclosing definition. Deterministic order (path, then line).
-fn scan_bodies(
-    s: &Session,
-    re: &regex::Regex,
-    candidates: Vec<(String, String)>,
-    limit: usize,
-) -> Result<(Vec<Hit>, bool)> {
-    let cap = if limit == 0 { usize::MAX } else { limit };
-    let mut hits: Vec<Hit> = Vec::new();
-    let mut truncated = false;
-
-    let mut def_stmt = s.db.conn.prepare(
-        "SELECT name, kind, start_byte, end_byte FROM facts
-         WHERE path = ?1 AND kind <> 'import'",
-    )?;
-
-    'outer: for (rel, text) in candidates {
-        // Line-start offsets for O(log n) line lookup.
-        let mut line_starts = vec![0usize];
-        for (i, b) in text.as_bytes().iter().enumerate() {
-            if *b == b'\n' {
-                line_starts.push(i + 1);
-            }
-        }
-
-        // Definitions in this file, for enclosing-symbol resolution.
-        let defs: Vec<FileDef> = def_stmt
-            .query_map([&rel], |r| {
-                Ok(FileDef {
-                    name: r.get(0)?,
-                    kind: r.get(1)?,
-                    start_byte: r.get::<_, i64>(2)? as usize,
-                    end_byte: r.get::<_, i64>(3)? as usize,
-                })
-            })?
-            .collect::<std::result::Result<_, _>>()?;
-
-        let mut last_line = usize::MAX;
-        for m in re.find_iter(&text) {
-            let off = m.start();
-            let line_idx = line_starts.partition_point(|&s| s <= off) - 1;
-            if line_idx == last_line {
-                continue; // one row per line
-            }
-            last_line = line_idx;
-
-            let line_start = line_starts[line_idx];
-            let line_end = line_starts
-                .get(line_idx + 1)
-                .map(|&s| s - 1)
-                .unwrap_or(text.len());
-            let raw = &text[line_start..line_end.min(text.len())];
-            let enclosing = innermost(&defs, off);
-
-            hits.push(Hit {
-                path: rel.clone(),
-                line: line_idx + 1,
-                col: off - line_start,
-                symbol: enclosing.map(|d| d.name.clone()),
-                kind: enclosing.map(|d| d.kind.clone()),
-                text: cap_str(raw.trim_end(), MAX_LINE),
-            });
-
-            if hits.len() >= cap {
-                truncated = true;
-                break 'outer;
-            }
+/// Byte offset of the start of each line.
+fn line_starts_of(text: &str) -> Vec<usize> {
+    let mut v = vec![0usize];
+    for (i, b) in text.as_bytes().iter().enumerate() {
+        if *b == b'\n' {
+            v.push(i + 1);
         }
     }
+    v
+}
 
-    Ok((hits, truncated))
+/// The text of line `idx` (0-based), trailing whitespace trimmed and capped.
+fn line_text(text: &str, line_starts: &[usize], idx: usize) -> String {
+    let start = line_starts[idx];
+    let end = line_starts.get(idx + 1).map(|&s| s - 1).unwrap_or(text.len());
+    cap_str(text[start..end.min(text.len())].trim_end(), MAX_LINE)
+}
+
+/// Context lines for the indices in `range` that exist.
+fn context_lines(
+    text: &str,
+    line_starts: &[usize],
+    range: std::ops::Range<usize>,
+) -> Vec<String> {
+    range
+        .filter(|&i| i < line_starts.len())
+        .map(|i| line_text(text, line_starts, i))
+        .collect()
+}
+
+fn load_file_defs(stmt: &mut rusqlite::Statement, path: &str) -> Result<Vec<FileDef>> {
+    let defs = stmt
+        .query_map([path], |r| {
+            Ok(FileDef {
+                name: r.get(0)?,
+                kind: r.get(1)?,
+                start_byte: r.get::<_, i64>(2)? as usize,
+                end_byte: r.get::<_, i64>(3)? as usize,
+            })
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(defs)
+}
+
+/// Run `re` over candidate bodies and shape the output per `opts.out`.
+/// Deterministic order (path, then line).
+fn run_search(
+    s: &Session,
+    re: &regex::Regex,
+    candidates: Vec<(String, Option<String>, String)>,
+    opts: &ScanOpts,
+) -> Result<SearchData> {
+    let cap = if opts.limit == 0 { usize::MAX } else { opts.limit };
+
+    match opts.out {
+        OutMode::Files => {
+            let mut files = Vec::new();
+            let mut truncated = false;
+            for (path, _lang, body) in &candidates {
+                if re.is_match(body) {
+                    files.push(path.clone());
+                    if files.len() >= cap {
+                        truncated = true;
+                        break;
+                    }
+                }
+            }
+            Ok(SearchData::Files { files, truncated })
+        }
+        OutMode::Count => {
+            let mut counts = Vec::new();
+            let mut truncated = false;
+            for (path, _lang, body) in &candidates {
+                let starts = line_starts_of(body);
+                let mut last = usize::MAX;
+                let mut n = 0usize;
+                for m in re.find_iter(body) {
+                    let li = starts.partition_point(|&s| s <= m.start()) - 1;
+                    if li != last {
+                        last = li;
+                        n += 1;
+                    }
+                }
+                if n > 0 {
+                    counts.push(FileCount {
+                        path: path.clone(),
+                        count: n,
+                    });
+                    if counts.len() >= cap {
+                        truncated = true;
+                        break;
+                    }
+                }
+            }
+            Ok(SearchData::Counts { counts, truncated })
+        }
+        OutMode::Matches => {
+            let mut hits: Vec<Hit> = Vec::new();
+            let mut truncated = false;
+            let mut def_stmt = s.db.conn.prepare(
+                "SELECT name, kind, start_byte, end_byte FROM facts
+                 WHERE path = ?1 AND kind <> 'import'",
+            )?;
+
+            'outer: for (rel, _lang, body) in &candidates {
+                let starts = line_starts_of(body);
+                let defs = load_file_defs(&mut def_stmt, rel)?;
+
+                let mut last_line = usize::MAX;
+                for m in re.find_iter(body) {
+                    let off = m.start();
+                    let line_idx = starts.partition_point(|&s| s <= off) - 1;
+                    if line_idx == last_line {
+                        continue; // one row per line
+                    }
+                    last_line = line_idx;
+
+                    let line_start = starts[line_idx];
+                    let enclosing = innermost(&defs, off);
+
+                    hits.push(Hit {
+                        path: rel.clone(),
+                        line: line_idx + 1,
+                        col: off - line_start,
+                        symbol: enclosing.map(|d| d.name.clone()),
+                        kind: enclosing.map(|d| d.kind.clone()),
+                        text: line_text(body, &starts, line_idx),
+                        before: context_lines(
+                            body,
+                            &starts,
+                            line_idx.saturating_sub(opts.before)..line_idx,
+                        ),
+                        after: context_lines(
+                            body,
+                            &starts,
+                            (line_idx + 1)..(line_idx + 1 + opts.after),
+                        ),
+                    });
+
+                    if hits.len() >= cap {
+                        truncated = true;
+                        break 'outer;
+                    }
+                }
+            }
+
+            Ok(SearchData::Matches {
+                matches: hits,
+                truncated,
+            })
+        }
+    }
 }
 
 /// Maximal `[alnum_]+` runs — the token units of our FTS tokenizer.
@@ -794,44 +903,63 @@ fn fts_match(tokens: &[String]) -> Option<String> {
     )
 }
 
+/// Options for the `search` command surface, kept in a struct so the CLI can
+/// grow without a huge argument list.
+pub struct SearchArgs<'a> {
+    pub pattern: &'a str,
+    pub fixed: bool,
+    pub ignore_case: bool,
+    pub path: Option<&'a str>,
+    pub language: Option<&'a str>,
+    pub before: usize,
+    pub after: usize,
+    pub files_with_matches: bool,
+    pub count: bool,
+    pub limit: usize,
+}
+
 /// `search <pattern>` — content search over indexed, non-binary files, with each
 /// match annotated by its enclosing definition. Regex by default (linear-time,
-/// no catastrophic backtracking); `--fixed` for a literal string. This is the
-/// factual answer to "where does this text appear, and what is it inside".
-#[allow(clippy::too_many_arguments)]
-pub fn cmd_search(
-    cwd: &Path,
-    pattern: &str,
-    fixed: bool,
-    ignore_case: bool,
-    path: Option<&str>,
-    language: Option<&str>,
-    limit: usize,
-    out: Out,
-) -> Result<()> {
+/// no catastrophic backtracking); `--fixed` for a literal string. A strict
+/// superset of grep: same regex engine, plus structure grep cannot see.
+pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
-    let expr = if fixed {
-        regex::escape(pattern)
+    let expr = if args.fixed {
+        regex::escape(args.pattern)
     } else {
-        pattern.to_string()
+        args.pattern.to_string()
     };
     let re = regex::RegexBuilder::new(&expr)
-        .case_insensitive(ignore_case)
+        .case_insensitive(args.ignore_case)
         .build()
         .map_err(|e| anyhow!("invalid pattern: {e}"))?;
 
     // A literal search must contain all its tokens, so FTS can prefilter safely.
     // A regex cannot be prefiltered without risking false negatives, so it scans
     // every text body — still from the index, not the filesystem.
-    let match_query = if fixed {
-        fts_match(&tokens_of(pattern))
+    let match_query = if args.fixed {
+        fts_match(&tokens_of(args.pattern))
     } else {
         None
     };
-    let candidates = fetch_bodies(&s, match_query.as_deref(), path, language)?;
-    let (matches, truncated) = scan_bodies(&s, &re, candidates, limit)?;
-    s.emit(SearchResult { matches, truncated })
+    let candidates = fetch_bodies(&s, match_query.as_deref(), args.path, args.language)?;
+
+    let out_mode = if args.files_with_matches {
+        OutMode::Files
+    } else if args.count {
+        OutMode::Count
+    } else {
+        OutMode::Matches
+    };
+    let opts = ScanOpts {
+        before: args.before,
+        after: args.after,
+        out: out_mode,
+        limit: args.limit,
+    };
+    let data = run_search(&s, &re, candidates, &opts)?;
+    s.emit(data)
 }
 
 #[derive(Serialize)]
@@ -868,7 +996,16 @@ pub fn cmd_references(
     // The name is a token, so FTS narrows to files that contain it.
     let match_query = fts_match(&tokens_of(name));
     let candidates = fetch_bodies(&s, match_query.as_deref(), path, language)?;
-    let (hits, truncated) = scan_bodies(&s, &re, candidates, limit)?;
+    let opts = ScanOpts {
+        before: 0,
+        after: 0,
+        out: OutMode::Matches,
+        limit,
+    };
+    let (hits, truncated) = match run_search(&s, &re, candidates, &opts)? {
+        SearchData::Matches { matches, truncated } => (matches, truncated),
+        _ => unreachable!("references always uses Matches mode"),
+    };
 
     // Definition sites of this exact name: (path, start_line).
     let mut defsites: HashSet<(String, i64)> = HashSet::new();

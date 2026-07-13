@@ -157,7 +157,22 @@ enum Command {
         /// Restrict to a language.
         #[arg(long)]
         language: Option<String>,
-        /// Maximum matches to return (0 = unlimited).
+        /// Show N lines of context before and after each match.
+        #[arg(long, short = 'C', default_value_t = 0)]
+        context: usize,
+        /// Show N lines before each match.
+        #[arg(long, short = 'B', default_value_t = 0)]
+        before: usize,
+        /// Show N lines after each match.
+        #[arg(long, short = 'A', default_value_t = 0)]
+        after: usize,
+        /// Output only the paths of files containing a match.
+        #[arg(long = "files-with-matches", short = 'l')]
+        files_with_matches: bool,
+        /// Output the count of matching lines per file.
+        #[arg(long, short = 'c')]
+        count: bool,
+        /// Maximum results to return (0 = unlimited).
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
@@ -282,15 +297,26 @@ fn main() -> ExitCode {
             ignore_case,
             path,
             language,
+            context,
+            before,
+            after,
+            files_with_matches,
+            count,
             limit,
         } => commands::cmd_search(
             &cwd,
-            &pattern,
-            fixed,
-            ignore_case,
-            path.as_deref(),
-            language.as_deref(),
-            limit,
+            commands::SearchArgs {
+                pattern: &pattern,
+                fixed,
+                ignore_case,
+                path: path.as_deref(),
+                language: language.as_deref(),
+                before: before.max(context),
+                after: after.max(context),
+                files_with_matches,
+                count,
+                limit,
+            },
             out,
         ),
         Command::Context {

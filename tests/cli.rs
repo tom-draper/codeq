@@ -616,6 +616,39 @@ fn search_reflects_deleted_files() {
 }
 
 #[test]
+fn search_context_lines() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn a() {}\nlet target = 1;\nfn b() {}\n");
+    let v = f.run(&["search", "target", "-C", "1"]);
+    let m = &v["data"]["matches"][0];
+    assert_eq!(m["before"].as_array().unwrap().len(), 1);
+    assert_eq!(m["after"].as_array().unwrap().len(), 1);
+    assert!(m["before"][0].as_str().unwrap().contains("fn a"));
+    assert!(m["after"][0].as_str().unwrap().contains("fn b"));
+}
+
+#[test]
+fn search_files_with_matches() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn needle() {}\n");
+    f.write("b.rs", "fn other() {}\n");
+    let v = f.run(&["search", "needle", "-l"]);
+    let files = field_names(&v["data"]["files"]);
+    assert_eq!(files, vec!["a.rs".to_string()]);
+    assert!(v["data"].get("matches").is_none(), "-l returns paths, not matches");
+}
+
+#[test]
+fn search_count_per_file() {
+    let f = Fixture::new();
+    f.write("a.rs", "x x\nx\n"); // two lines contain x
+    let v = f.run(&["search", "x", "-c"]);
+    let c = &v["data"]["counts"][0];
+    assert_eq!(c["path"], "a.rs");
+    assert_eq!(c["count"], 2, "counts matching lines, not occurrences");
+}
+
+#[test]
 fn search_invalid_regex_fails() {
     let f = Fixture::new();
     f.write("a.rs", "fn f() {}\n");
