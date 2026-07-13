@@ -72,11 +72,17 @@ impl Repo {
         if !self.is_git {
             return Ok(None);
         }
-        let head = git(&self.root, &["rev-parse", "HEAD"]).unwrap_or_default();
+        // These two git queries are independent and together are the bulk of
+        // every command's latency (~5ms). Run them concurrently so the smaller
+        // (rev-parse) overlaps the larger (status) instead of adding to it.
+        let root = self.root.clone();
+        let head_handle =
+            std::thread::spawn(move || git(&root, &["rev-parse", "HEAD"]).unwrap_or_default());
         let status = git(
             &self.root,
             &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         )?;
+        let head = head_handle.join().unwrap_or_default();
 
         let mut h = blake3::Hasher::new();
         h.update(head.trim().as_bytes());
