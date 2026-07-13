@@ -4,6 +4,34 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 10: multi-language extraction sweep → Ruby/C++ gaps
+
+Differentially tested symbol/import extraction across all 12 languages with
+fixtures (Python, JS, TS, Go, Java, Ruby, C, C++, C#, PHP). Most are correct
+(free functions, classes, methods, interfaces, namespaces, structs, and imports
+all extracted as expected). Two real gaps and one re-confirmed limitation:
+
+- **GAP: Ruby imports are entirely missing.** `require`, `require_relative`,
+  `autoload` yield zero import facts, so `imports`/`importers` are dead for every
+  Ruby file. The RUBY_QUERY comment calls this deliberate ("`require` is a method
+  call, not an import statement") — technically true, but `require` *is* Ruby's
+  import mechanism, and every other language captures its imports. Fix is
+  non-trivial: `require "x"` parses as a generic `(call)`, and the extractor does
+  **not** evaluate tree-sitter predicates (`#match?`/`#eq?`) — the capture loop
+  just maps capture names — so matching only `require`-named calls needs either
+  predicate support or Rust-side post-filtering on the method identifier.
+- **GAP: C++ pure method *declarations* aren't captured.** `void m();` inside a
+  class yields no symbol; only out-of-line definitions (`Widget::m`) and inline
+  ones are. A header-only class shows no methods — bad for C/C++ header
+  navigation. Also `typedef struct {…} Named;` (anonymous struct typedef) isn't
+  captured.
+- **Re-confirmed (`--path` substring): `symbols --path s.c` returned symbols from
+  `s.cpp` and `S.cs`** — `s.c` is a substring of both (and matching is
+  case-insensitive). Documented behaviour, but for a query that looks like a full
+  filename it's surprising; an exact-path mode (or `--file`) would help.
+
+These are natural test cases for the multi-repo differential harness (below).
+
 ## 2026-07-13 — session 9: hardened differential vs rg → no bug, `search` validated
 
 Widened the ripgrep differential to ~20 patterns plus the separate output modes
