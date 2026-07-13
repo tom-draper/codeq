@@ -18,6 +18,8 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   callers + callees, one call)
 - **Who uses it / what breaks:** `codeq callers NAME` · `codeq references NAME`
 - **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
+  - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
+    templates. codeq's own SQL lives in string literals, so `--in code` finds none.
 - **Trim tokens on list output:** append `--fields a,b`
 
 ## Known limitations (found by dogfooding — don't be misled)

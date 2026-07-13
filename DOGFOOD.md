@@ -4,6 +4,33 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 3: perf-smell audit (via `search` + `read`)
+
+Audited for other full-scan queries like the callees_of one, using
+`codeq search 'query_map\(\[\]'` and `codeq search 'FROM facts' --in strings`.
+The tooling shone: `search` returned every no-param query **with its enclosing
+function** (grep gives only file:line), and alternation regex + `--path`
+prefiltering worked. Findings:
+
+- **Open (perf, needs a real refactor): `context::load_defs` full-scans all
+  defs on every `context` call** — same pattern as the callees_of smell
+  (`SELECT … FROM facts WHERE kind<>'import' AND name IS NOT NULL`, `query_map([])`).
+  But `context::build` is organized around *indices into the all-defs Vec*
+  (`seed_idx`/`neighbor_idx`/`defs[i]`), so it can't be fixed with a one-line
+  `WHERE name IN (…)` like callees. It needs a two-phase restructure (load seed
+  defs by name/path, then load expansion neighbours by referenced ident).
+  Deliberately NOT rushed here — context is the marquee, well-tested command.
+  Logged as a dedicated follow-up.
+- The other no-param scans (`cmd_stats`, `cmd_map`, `refresh`) are legitimate:
+  they are whole-repo aggregations or the refresh file-comparison, which need
+  every row. `fetch_bodies`'s no-MATCH scan is the intended regex fallback.
+
+- **Usage insight (not a bug): `--in code` vs `--in strings` matters and can
+  mislead.** codeq's SQL lives in string literals, so `search 'FROM facts'
+  --in code` returns **0** and `--in strings` returns **22**. An agent auditing
+  string-embedded content (SQL, config, templates) must pick `--in strings`;
+  the wrong choice silently finds nothing. Added a note to CLAUDE.md.
+
 ## 2026-07-13 — session 2: investigating callees_of (found via `about`/`read`)
 
 Used `codeq about callees_of --path commands` then `codeq read src/commands.rs
