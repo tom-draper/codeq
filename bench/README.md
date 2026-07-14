@@ -1,6 +1,6 @@
 # Benchmark: codeq vs grep/rg/find
 
-Four harnesses, increasing in scope:
+Five harnesses, increasing in scope:
 
 | script | scope | measures |
 | --- | --- | --- |
@@ -8,6 +8,25 @@ Four harnesses, increasing in scope:
 | `tasks.py` | multi-step agent tasks, one repo | total tool calls, bytes, time |
 | `differential.py` | **many repos, correctness-first** | ~5,000 correctness assertions (superset-of-rg + per-symbol invariants) + per-command speed/bytes, over time |
 | `completion.py` | **many repos, token-to-completion** | tokens + tool calls an agent burns to finish realistic tasks, codeq vs chained rg/sed/cat |
+| `textmode.py` | **default (text) output faithfulness** | text output carries the same facts as `--json` (locators, counts, `-C` context, no raw-JSON dumps) |
+
+## Text-mode faithfulness (`textmode.py`)
+
+`differential.py`/`completion.py` only exercise `--json`, so the *text renderer* —
+the surface an agent actually reads by default — went untested, and a run of bugs
+slipped through it: `-C` context lines silently dropped, `map`'s counts vanishing,
+`capabilities` dumping raw JSON. `textmode.py` runs each command in **both** modes
+and asserts the text output represents the same facts as the JSON: every result
+row's `path:line` locator appears, metric counts appear, `-C` context lines
+appear, and no command emits raw JSON in text mode. It's a rendering-layer check,
+so one repo suffices — it defaults to the codeq repo itself (fast, no corpus).
+
+```bash
+python3 bench/textmode.py            # -> "ALL PASS" or lists FAILs, non-zero exit
+```
+
+This closes the structural gap that let the text-rendering bugs through: the other
+harnesses guard correctness-at-scale, this one guards the default output surface.
 
 ## Token-to-completion harness (`completion.py`)
 
