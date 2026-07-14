@@ -102,6 +102,18 @@ def base_rg_word(path, S, F, m):
     return measure([["rg", "-nw", "--no-heading", "--no-messages", S]], path)
 
 
+def base_public_api(path, S, F, m):
+    """A file's public API the generic way: grep declaration lines (their
+    single-line signatures come with the hit) and eyeball which are exported —
+    there's no cross-language grep for *visibility*, so this over-returns
+    (privates included) and the agent still filters. codeq `api` returns just the
+    public surface. A distinct baseline from file-structure (which reads the whole
+    file), so the two tasks don't double-count the same action."""
+    return measure([["rg", "-n", "--no-heading", "--no-messages",
+                     r"^\s*(pub |export |public |private |protected |func |def |class |struct |interface |fn |impl |type )",
+                     F]], path)
+
+
 def base_rg_imports(path, S, F, m):
     """The file's imports the generic way. A line grep for import keywords finds
     single-line imports, but a block/grouped import (`import (` in Go, `use a::{`
@@ -178,6 +190,8 @@ TASKS = [
      base_which_tests,  "tests exercising S vs grep-in-tests + read"),
     ("file-structure",  lambda S, F, m: [CODEQ, "outline", F],
      base_read_file,    "learn a file's API/shape"),
+    ("public-api",      lambda S, F, m: [CODEQ, "api", F],
+     base_public_api,   "a file's exported API vs grepping decls and filtering"),
     ("usages",          lambda S, F, m: [CODEQ, "references", S, "--limit", "0"],
      base_rg_word,      "all references (near-parity with rg)"),
     ("file-imports",    lambda S, F, m: [CODEQ, "imports", F],

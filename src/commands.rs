@@ -444,11 +444,22 @@ pub fn cmd_api(
             kind: r.get(1)?,
             path: r.get(2)?,
             line: r.get(3)?,
-            signature: r.get(4)?,
+            signature: r.get::<_, Option<String>>(4)?.map(|s| api_signature(&s)),
         })
     })?;
     let data: Vec<ApiRow> = rows.collect::<std::result::Result<_, _>>()?;
     s.emit(data)
+}
+
+/// The declaration header for an API listing: a struct/enum/class signature is
+/// stored as the whole body (every field), but the surface only needs the header
+/// — cut at the body opener so `pub struct Edge { … }` becomes `pub struct Edge`.
+/// Function signatures already stop before their body, so they're unaffected.
+fn api_signature(sig: &str) -> String {
+    sig.split_once('{')
+        .map(|(head, _)| head.trim_end())
+        .unwrap_or(sig)
+        .to_string()
 }
 
 #[derive(Serialize)]

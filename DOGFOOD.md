@@ -653,3 +653,23 @@ section markers this doesn't track (all reported public); Go test functions are
 capitalized so they count as public and show up (scope with a path or `--kind`).
 Dogfooded immediately: `api src/deps.rs` cleanly listed the pub structs + methods
 and excluded every private helper — the intended replacement for reading the file.
+
+## 2026-07-14 — benchmarking `api` exposed (and fixed) a signature-bloat defect
+
+Added a `public-api` task to the completion harness (`api F` vs grepping
+declaration lines and filtering public by eye). It immediately showed codeq
+*losing* — 0.3x tokens. Two honest findings:
+
+1. **Real defect, fixed:** `api` printed struct/enum/class *bodies* (every field),
+   because the stored signature is the whole node for those kinds. For an API
+   *surface* you want the header — truncated the signature at the body opener
+   (`pub struct Edge { … }` -> `pub struct Edge`). Functions were already headers.
+2. **Honest non-win, kept:** even after the fix `api` is ~3x heavier than a decl
+   grep on a single file — same shape as file-imports. codeq returns *complete,
+   visibility-filtered* signatures; the grep is cheaper because it returns
+   incomplete first-lines and can't tell public from private. api's value is the
+   accurate cross-language public filter and the *package-scale* surface (`api
+   src/` = a whole package's API vs reading N files), not single-file tokens.
+
+Left the 0.3x in the suite rather than tuning the baseline until codeq won — two
+non-wins (file-imports, public-api) are what makes the other seven credible.
