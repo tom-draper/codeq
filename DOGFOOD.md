@@ -708,3 +708,15 @@ which collapsed the codeq repo's output from 121 rows to the 1 that matters.
 Fast enough to not need optimizing: ~0.4s over the whole codeq repo (each name's
 scan is trigram-narrowed to files containing the substring; results cached per
 name so a name defined N times is scanned once).
+
+## 2026-07-14 — `unused` benchmark: 64x, the suite's sharpest win
+
+Added a `dead-code` task: `unused <file>` (one call) vs the generic hunt — list
+the file's definitions, then grep each name across the repo to see if anything
+uses it. Result across 25 repos: 64.2x fewer tokens (17.8k vs 1.14M) and 436 vs
+25 tool calls. It's the biggest win in the suite because it's a whole-repo
+aggregate generic tools can only approximate with a per-symbol grep loop (each
+grep dumps every occurrence of a used name). Baseline capped at 20 symbols/file,
+so it *under*-charges. First acted on the feature's own finding — removed the
+dead `has_been_indexed` it flagged — then benchmarked it. Totals: 11 tasks, 5.8x
+tokens, 4.6x tool calls.

@@ -192,6 +192,39 @@ def base_blast_radius(path, S, F, m):
     return calls, nbytes, ms
 
 
+def file_def_names(path, F):
+    """The distinct definition names in F (codeq's ground truth) — the symbols an
+    agent would enumerate to check each for usage."""
+    p = subprocess.run([CODEQ, "--json", "outline", F], cwd=path, capture_output=True).stdout
+    try:
+        rows = json.loads(p)["data"]
+    except (ValueError, KeyError):
+        return []
+    out, seen = [], set()
+    for r in rows:
+        n = r.get("name")
+        if n and n.isidentifier() and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def base_dead_code(path, S, F, m):
+    """Find a file's dead code the generic way: list its definitions, then grep
+    each name across the repo to see if anything uses it — the loop codeq's one
+    `unused <file>` call replaces. Capped at 20 symbols, which under-charges the
+    baseline (a real hunt checks them all)."""
+    ms, r = run(["rg", "-n", "--no-heading", "--no-messages",
+                 r"^\s*(pub |export |public |func |def |class |struct |fn |type )", F], path)
+    calls, nbytes, tms = 1, len(r), ms  # locate the file's definitions
+    for name in file_def_names(path, F)[:20]:
+        dt, hits = run(["rg", "-nw", "--no-heading", "--no-messages", name], path)
+        calls += 1
+        nbytes += len(hits)
+        tms += dt
+    return calls, nbytes, tms
+
+
 def base_which_tests(path, S, F, m):
     """Which tests exercise S: grep S within test-looking files, then read a window
     at each hit to confirm it's a test. codeq does it in one `tests` call."""
@@ -213,6 +246,8 @@ TASKS = [
      base_blast_radius, "2-hop caller tree vs iterative grep rounds"),
     ("which-tests",     lambda S, F, m: [CODEQ, "tests", S],
      base_which_tests,  "tests exercising S vs grep-in-tests + read"),
+    ("dead-code",       lambda S, F, m: [CODEQ, "unused", F, "--include-tests"],
+     base_dead_code,    "a file's dead code vs grepping each symbol for uses"),
     ("file-structure",  lambda S, F, m: [CODEQ, "outline", F],
      base_read_file,    "learn a file's API/shape"),
     ("public-api",      lambda S, F, m: [CODEQ, "api", F],
