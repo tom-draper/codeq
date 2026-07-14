@@ -234,6 +234,11 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push(s(a, "language")?.into());
             opt(&mut args, a, "path", "--path");
         }
+        "codeq_tests" => {
+            args.push("tests".into());
+            args.push(s(a, "name")?.into());
+            opt(&mut args, a, "path", "--path");
+        }
         "codeq_changed" => {
             args.push("changed".into());
             opt(&mut args, a, "compare_to", "--compare-to");
@@ -335,8 +340,11 @@ fn tools() -> Value {
             "Files whose imports match a module string.",
             json!({ "query": str_ }), &["query"]),
         tool("codeq_astgrep",
-            "Structural (AST) search: match a code pattern with $NAME / $_ metavariables, parsed with the language's own grammar so it matches syntax not text — e.g. '$X.unwrap()' finds every .unwrap() call whatever the receiver. Deterministic; a repeated $NAME must bind identically. Cannot see inside macro invocations (their bodies aren't parsed into an AST). language is required.",
+            "Structural (AST) search: match a code pattern with $NAME / $_ metavariables (and $$$ for any run of siblings, e.g. foo($$$)), parsed with the language's own grammar so it matches syntax not text — e.g. '$X.unwrap()' finds every .unwrap() call whatever the receiver. Deterministic; a repeated $NAME must bind identically. Cannot see inside macro invocations. language is required.",
             json!({ "pattern": str_, "language": str_, "path": str_ }), &["pattern", "language"]),
+        tool("codeq_tests",
+            "Which tests exercise a symbol: the test functions that reference the given name (heuristic — a test-file path or test-like function name). Great for the edit-then-find-the-test loop.",
+            json!({ "name": str_, "path": str_ }), &["name"]),
         tool("codeq_changed",
             "Files changed vs a git ref (default main); set symbols to get the definitions the change touched instead.",
             json!({ "compare_to": str_, "symbols": bool_ }), &[]),

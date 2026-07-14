@@ -1772,6 +1772,142 @@ pub fn cmd_references(
     s.emit(ReferencesResult { references, truncated })
 }
 
+/// Whether a path looks like a test file, across common frameworks. Heuristic —
+/// codeq can't see `#[test]`/`@Test` attributes, so it leans on path and name.
+fn is_test_path(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
+    for seg in ["/test/", "/tests/", "/__tests__/", "/spec/", "/specs/"] {
+        if p.contains(seg) {
+            return true;
+        }
+    }
+    if p.starts_with("test/") || p.starts_with("tests/") || p.starts_with("spec/") {
+        return true;
+    }
+    let fname = p.rsplit('/').next().unwrap_or(&p);
+    fname.starts_with("test_")
+        || fname.ends_with("_test.rs")
+        || fname.ends_with("_test.py")
+        || fname.ends_with("_test.go")
+        || fname.ends_with("_test.rb")
+        || fname.ends_with("_spec.rb")
+        || fname.contains(".test.")
+        || fname.contains(".spec.")
+        || fname.ends_with("test.java")
+        || fname.ends_with("tests.java")
+        || fname.ends_with("test.cs")
+        || fname.ends_with("tests.cs")
+}
+
+/// Whether a definition name looks like a test (test_foo, TestBar, fooTest, …).
+fn is_test_name(name: &str) -> bool {
+    name.starts_with("test")
+        || name.starts_with("Test")
+        || name.ends_with("Test")
+        || name.ends_with("Tests")
+        || name.ends_with("Spec")
+        || name.ends_with("_spec")
+}
+
+/// `tests <name>` — the test functions that reference `name`. A reference counts
+/// as a test when its file looks like a test file or its enclosing function name
+/// looks like a test. Name-based, like `references`; can't see attribute-only
+/// tests (Rust `#[cfg(test)]` unit fns in a non-test path may be missed).
+pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: Out) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    let expr = format!(r"\b{}\b", regex::escape(name));
+    let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
+    let candidates = fetch_bodies(&s, like_of(name).as_deref(), path, None)?;
+    let opts = ScanOpts {
+        before: 0,
+        after: 0,
+        out: OutMode::Matches,
+        in_filter: InFilter::Any,
+        limit: 0,
+    };
+    let hits = match run_search(&s, &re, candidates, &opts)? {
+        SearchData::Matches { matches, .. } => matches,
+        _ => unreachable!("tests always uses Matches mode"),
+    };
+
+    // Unique enclosing tests (path, test-name) that reference `name` — excluding
+    // `name`'s own definition (enclosing == name).
+    let mut tests: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
+    for h in &hits {
+        let sym = match &h.symbol {
+            Some(s) if s != name => s,
+            _ => continue,
+        };
+        let is_fn = matches!(h.kind.as_deref(), Some("function") | Some("method"));
+        if is_fn && (is_test_path(&h.path) || is_test_name(sym)) {
+            tests.insert((h.path.clone(), sym.clone()));
+        }
+    }
+
+    // Resolve each test's definition line/kind via the facts(name) index.
+    #[derive(Serialize)]
+    struct TestRow {
+        path: String,
+        line: i64,
+        name: String,
+        kind: String,
+    }
+    let mut rows: Vec<TestRow> = Vec::new();
+    let names: Vec<String> = tests
+        .iter()
+        .map(|(_, n)| n.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    for chunk in names.chunks(500) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            "SELECT path, name, start_line, kind FROM facts
+             WHERE kind <> 'import' AND name IN ({placeholders})"
+        );
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|n| n as &dyn rusqlite::ToSql).collect();
+        let frows = stmt.query_map(params.as_slice(), |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+        for fr in frows {
+            let (p, n, ln, k) = fr?;
+            if tests.contains(&(p.clone(), n.clone())) {
+                rows.push(TestRow {
+                    path: p,
+                    line: ln,
+                    name: n,
+                    kind: k,
+                });
+            }
+        }
+    }
+    rows.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+    rows.dedup_by(|a, b| a.path == b.path && a.name == b.name && a.line == b.line);
+    let truncated = limit > 0 && rows.len() > limit;
+    if truncated {
+        rows.truncate(limit);
+    }
+
+    #[derive(Serialize)]
+    struct TestsData {
+        tests: Vec<TestRow>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
+    }
+    s.emit(TestsData {
+        tests: rows,
+        truncated,
+    })
+}
+
 /// The innermost definition whose byte range contains `off`.
 fn innermost(defs: &[FileDef], off: usize) -> Option<&FileDef> {
     defs.iter()
@@ -2034,7 +2170,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "index", "files", "changed", "stats", "map",
             "symbols", "definitions", "callers", "callees", "about",
             "references", "outline", "at", "read", "search",
-            "imports", "importers", "astgrep", "context", "capabilities", "mcp",
+            "imports", "importers", "astgrep", "tests", "context", "capabilities", "mcp",
         ],
         // Languages with symbol + import extraction.
         "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php"],

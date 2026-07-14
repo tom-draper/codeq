@@ -4,6 +4,20 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-14 — session 19: tests-linkage (`codeq tests NAME`)
+
+The 3rd capability wish: "which tests exercise X". New `codeq tests <name>` reuses
+the `references` machinery (word-boundary matches carry their enclosing symbol),
+keeps the hits whose enclosing function is a test — by test-file path
+(`tests/`, `*_test.*`, `*.spec.*`, `src/test/`, …) or a test-like name
+(`test_*`, `Test*`, `*Test`) — and reports the unique test defs. For the
+edit→find-the-test→run-it loop. Wired into capabilities + MCP (`codeq_tests`).
+- Works well where tests call the symbol by name: flask `Blueprint` → 54 tests,
+  the `field_set` helper → 36. Name-based like references, so codeq's *own* tests
+  (which drive the CLI via `f.run([...])` rather than referencing internal fn
+  names) return little for internal symbols — expected, and honest about the
+  heuristic. Can't see attribute-only tests in non-test paths (`#[cfg(test)]`).
+
 ## 2026-07-14 — session 18: built structural (AST) search + registered the MCP server
 
 Acted on the top capability wish from the "what do you wish codeq had" reflection:

@@ -155,6 +155,18 @@ enum Command {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
+    /// Test functions that reference a symbol — "which tests exercise X".
+    /// Heuristic (test-file path or test-like function name), name-based.
+    Tests {
+        /// Exact symbol name the tests should reference.
+        name: String,
+        /// Restrict to paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Maximum tests to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// The definition(s) enclosing a location, e.g. src/foo.rs:412.
     At {
         /// Location as <path>:<line>.
@@ -388,6 +400,11 @@ fn main() -> ExitCode {
             limit,
             out,
         ),
+        Command::Tests {
+            name,
+            path,
+            limit,
+        } => commands::cmd_tests(&cwd, &name, path.as_deref(), limit, out),
         Command::At { location } => commands::cmd_at(&cwd, &location, out),
         Command::Read {
             file,

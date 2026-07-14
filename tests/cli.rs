@@ -1851,6 +1851,42 @@ fn javascript_require_and_es_import_both_captured() {
 }
 
 #[test]
+fn tests_linkage_finds_tests_in_test_files() {
+    let f = Fixture::new();
+    f.write("src/lib.rs", "pub fn widget() -> i32 { 1 }\npub fn other() {}\n");
+    f.write(
+        "tests/w.rs",
+        "fn test_widget_works() {\n    assert_eq!(widget(), 1);\n}\nfn test_other_only() {\n    other();\n}\n",
+    );
+    let names: Vec<String> = f.run(&["tests", "widget"])["data"]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(names.contains(&"test_widget_works".to_string()), "{names:?}");
+    assert!(!names.contains(&"test_other_only".to_string()), "doesn't reference widget: {names:?}");
+}
+
+#[test]
+fn tests_linkage_uses_test_name_heuristic() {
+    // A test in a non-test-path file is still found via its test-like name.
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "def target():\n    pass\ndef test_target():\n    target()\ndef helper():\n    target()\n",
+    );
+    let names: Vec<String> = f.run(&["tests", "target"])["data"]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(names.contains(&"test_target".to_string()), "{names:?}");
+    assert!(!names.contains(&"helper".to_string()), "helper is not a test: {names:?}");
+}
+
+#[test]
 fn astgrep_matches_method_calls_structurally() {
     // `$X.unwrap()` matches actual `.unwrap()` call nodes (any receiver), not the
     // field access that merely shares the name, and not text in strings/comments.

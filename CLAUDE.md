@@ -19,6 +19,8 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
 - **Understand a symbol before editing:** `codeq about NAME` (definition +
   callers + callees, one call)
 - **Who uses it / what breaks:** `codeq callers NAME` · `codeq references NAME`
+- **Which tests exercise it:** `codeq tests NAME` — the test functions that
+  reference NAME (by test-file path or test-like name). For the edit→find-the-test loop.
 - **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
   - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
     templates. codeq's own SQL lives in string literals, so `--in code` finds none.
