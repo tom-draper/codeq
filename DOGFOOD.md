@@ -4,6 +4,19 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## Process note — the "index-timing ghost" was NOT a codeq bug (false alarm)
+
+For a stretch, dogfood scripts intermittently saw an empty `--json` result on the
+first query after a fresh index, and it looked like a cold-query race. It wasn't
+codeq at all: the scripts set `CQ=./target/release/codeq` (a **relative** path)
+then `cd`'d into a `/tmp` fixture dir, so the shell couldn't find the binary and
+exited 127 — and the commands' `2>/dev/null` swallowed the "no such file" error,
+leaving only empty stdout. Deterministic, not a race; "worked on retry" only
+because retries used the absolute path. Verified: with an absolute path, cold
+first-query never fails (20/20, 8/8 large-repo, 30/30 fresh-repo, 3/3
+build+query). **Lessons: don't blanket-`2>/dev/null` while dogfooding — stderr is
+the diagnosis; use absolute binary paths in scripts that `cd`.**
+
 ## 2026-07-14 — session 16: writing tests surfaced a JS/TS `require()` import gap
 
 While adding extraction-depth unit tests, a fixture check showed `imports a.js`
