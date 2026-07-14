@@ -103,8 +103,24 @@ def base_rg_word(path, S, F, m):
 
 
 def base_rg_imports(path, S, F, m):
-    return measure([["rg", "-n", "--no-heading", "--no-messages",
-                     r"^\s*(import|from|require|use|include|using)\b", F]], path)
+    """The file's imports the generic way. A line grep for import keywords finds
+    single-line imports, but a block/grouped import (`import (` in Go, `use a::{`
+    in Rust) matches only the opener line — its members are on following lines. To
+    reach the SAME module list codeq returns, the agent must read each opened
+    block, so we charge that read (and only that — single-line imports add nothing,
+    keeping the comparison honest near-parity where codeq has no structural edge)."""
+    ms, r = run(["rg", "-n", "--no-heading", "--no-messages",
+                 r"^\s*(import|from|require|use|include|using)\b", F], path)
+    calls, nbytes, tms = 1, len(r), ms
+    for line in r.decode("utf-8", "replace").splitlines():
+        num, _, text = line.partition(":")
+        if num.isdigit() and text.rstrip().endswith(("(", "{")):  # a block opener
+            ln = int(num)
+            dt, w = run(["sed", "-n", f"{ln},{ln + 20}p", F], path)  # read its members
+            calls += 1
+            nbytes += len(w)
+            tms += dt
+    return calls, nbytes, tms
 
 
 def codeq_caller_syms(path, S):

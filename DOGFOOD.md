@@ -608,3 +608,28 @@ Kept the one task codeq *loses* (file-imports, 0.8x — annotated output is heav
 than raw `rg` on import lines) rather than cherry-pick it out; a benchmark you
 only run to win isn't a benchmark. New totals: 8 tasks, 5.7x tokens, 2.6x tool
 calls across 25 repos.
+
+## 2026-07-14 — the file-imports "loss" was an unfair baseline, not a weakness
+
+Chasing the one task codeq lost (file-imports, 0.8x) turned up a flaw in the
+baseline, not in codeq. `rg '^\s*(import|from|use|...)'` is line-anchored, so on a
+Go block import
+
+    import (
+        "fmt"
+        "strings"
+    )
+
+it matches only `import (` and misses every member. Measured directly: codeq
+finds 4-5x more import modules than the rg grep on Go (cobra 188 vs 35, mux 66 vs
+17), because it parses the block; Rust grouped `use a::{...}` a smaller edge;
+Python near-parity (rg sometimes higher — textual matches in comments/strings).
+So codeq isn't a blanket superset, but on multi-line/block imports it's decisively
+more complete.
+
+The benchmark was charging codeq *for being complete* — comparing its full answer
+to rg's partial one. Fixed the baseline to reach the SAME module list: when a
+keyword line is a block opener (`(`/`{`), read the block. file-imports moved 0.8x
+-> 1.0x (true parity on bytes) and 25 vs 39 tool calls — codeq's one call still
+wins, honestly now. Lesson: when codeq "loses" a bench task, check the baseline is
+solving the same problem before believing it.
