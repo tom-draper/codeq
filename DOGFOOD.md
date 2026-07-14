@@ -20,9 +20,26 @@ incomplete for those languages.
   static module string, correctly skipped); `console.log(...)` is not an import.
   Fixes JS, TS, and TSX in one query (they share JS_QUERY). Regression test added.
 - Meta-note: this is the *fourth* finding of the "a construct that's a plain call,
-  not a keyword, is missed" class (Ruby require, now JS require). Worth auditing
-  the other languages' call-style imports (e.g. Python `importlib.import_module`,
-  though that's rarer).
+  not a keyword, is missed" class (Ruby require, now JS require). Ran the audit
+  across all languages (below).
+
+**Call-style-import audit (all 12 languages):**
+
+- **FIXED: PHP `require`/`require_once`/`include`/`include_once`** were missed —
+  only `use` (namespace) was captured. These are PHP's file-inclusion mechanism,
+  used throughout legacy code and entry points. Added patterns for all four (they
+  are dedicated node types in tree-sitter-php), capturing the static string path
+  in *both* quote styles — single-quoted `(string)` and double-quoted
+  `(encapsed_string)` (the double-quoted form was a second, easy-to-miss gap).
+  Dynamic paths (`require_once __DIR__ . '/x.php'`) are correctly skipped — no
+  static module. Regression test added.
+- **Complete (no gap): Java** (`import` + `import static`), **C#** (`using`),
+  **Go** (`import ( … )` blocks), **C/C++** (`#include`) — all keyword/preprocessor
+  based and fully captured.
+- **Skipped (rare/dynamic): Python `importlib.import_module`/`__import__`,
+  Ruby `autoload` (symbol-first arg, so the string isn't the first child).** These
+  are uncommon and genuinely dynamic; capturing them risks noise for little gain.
+  Documented rather than chased.
 
 ## 2026-07-14 — session 15: git-free freshness missed `.gitignore` edits (staleness)
 

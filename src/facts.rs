@@ -599,6 +599,13 @@ const PHP_QUERY: &str = r#"
 (trait_declaration name: (name) @name body: (declaration_list) @body) @trait
 (enum_declaration name: (name) @name) @enum
 (namespace_use_clause (qualified_name) @name) @import
+; File inclusion (require/include and their _once variants) with a static string
+; path — PHP's other import mechanism. Both single-quoted (string) and
+; double-quoted (encapsed_string) forms; quotes stripped like other imports.
+(require_expression [(string) (encapsed_string)] @name) @import
+(require_once_expression [(string) (encapsed_string)] @name) @import
+(include_expression [(string) (encapsed_string)] @name) @import
+(include_once_expression [(string) (encapsed_string)] @name) @import
 "#;
 
 const PHP_SPANS: &str = r#"

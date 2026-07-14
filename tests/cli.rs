@@ -1851,6 +1851,23 @@ fn javascript_require_and_es_import_both_captured() {
 }
 
 #[test]
+fn php_require_and_include_are_imports() {
+    // PHP's file-inclusion constructs (require/require_once/include/include_once)
+    // are its other import mechanism alongside `use`; capture static string paths
+    // in both quote styles.
+    let f = Fixture::new();
+    f.write(
+        "a.php",
+        "<?php\nuse App\\Thing;\nrequire 'bootstrap.php';\ninclude_once \"vendor/autoload.php\";\nfunction f() { echo \"hi\"; }\n",
+    );
+    let mods = field_set(&f.run(&["imports", "a.php"]), "module");
+    assert!(mods.iter().any(|m| m == "App\\Thing"), "use statement missing: {mods:?}");
+    assert!(mods.iter().any(|m| m == "bootstrap.php"), "single-quoted require missing: {mods:?}");
+    assert!(mods.iter().any(|m| m == "vendor/autoload.php"), "double-quoted include_once missing: {mods:?}");
+    assert!(!mods.iter().any(|m| m == "hi"), "an echoed string leaked as an import: {mods:?}");
+}
+
+#[test]
 fn go_import_block_captures_each_module() {
     let f = Fixture::new();
     f.write("a.go", "package main\nimport (\n\t\"fmt\"\n\t\"os\"\n)\nfunc F() { fmt.Println(os.Args) }\n");
