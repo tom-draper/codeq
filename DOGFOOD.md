@@ -25,6 +25,23 @@ path — `codeq read --lines` then showed the whole block.
   The `[enclosing-symbol]` annotation restored earlier this day is what made the
   stray statement legible at a glance.
 
+Kept dogfooding the *text output* (the harness only exercises `--json`), which
+found two more:
+
+- **FIXED: `codeq map` dropped its counts in text mode.** The generic text
+  renderer only understood path/line/name-style fields, so map's rows
+  (`definitions_by_file`, `directories`, `imports_by_module`, `languages`)
+  rendered with empty payloads — `src/commands.rs: ` with the count gone. Added a
+  `key=value` fallback for unrecognised scalar fields; tabular commands stay lean.
+- **FIXED: `codeq capabilities` ignored the text default and always dumped JSON.**
+  It's session-less, so it hand-rolled its envelope and printed JSON directly,
+  never touching the text renderer. Exposed `envelope::render_data_text` and made
+  it honor `--json`/`--meta`/`--pretty` like everything else.
+- Checked (no bug): empty results print nothing at exit 0; `read`/`about` of a
+  missing symbol/file error to stderr with a non-zero exit. Error/empty paths are
+  sound. Three text/command paths the automated suite structurally can't reach,
+  all found by *using* the tool.
+
 ## 2026-07-13 — session 13: git-free freshness via codeq's own index cache
 
 Profiling showed ~58% of every command's latency was the git freshness check
