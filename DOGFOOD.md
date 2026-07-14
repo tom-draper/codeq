@@ -4,6 +4,28 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-14 — session 18: built structural (AST) search + registered the MCP server
+
+Acted on the top capability wish from the "what do you wish codeq had" reflection:
+structural search. New `codeq astgrep '<pattern>' --language <lang>` — an ast-grep
+-style matcher: the pattern (with `$NAME`/`$_` metavariables) is parsed with the
+language's own grammar and matched on the syntax tree, so `$X.unwrap()` finds every
+`.unwrap()` call whatever the receiver, `$X == $X` finds only self-comparisons
+(metavariables bind consistently), and `return Ok($X)` stays anchored to `return`.
+Deterministic, all 12 languages (reuses the tree-sitter grammars). 5 tests; wired
+into `capabilities` and the MCP server (`codeq_astgrep`).
+- **Honest limitations (documented):** (1) it can't match inside macro invocations
+  — tree-sitter parses macro bodies as opaque token-trees, so `.unwrap()` inside
+  `assert_eq!(…)` isn't an AST call node (this explained a 92-vs-132 count gap vs rg,
+  and is inherent to all AST tools); (2) `$$$` variadic metavariables aren't
+  supported yet.
+- **Process win — codeq is now a native tool for future sessions.** The recurring
+  reason I kept slipping back to grep/Read: codeq was invoked via **Bash**
+  (second-class), while Read/Grep are native tools with reflex-level gravity. Added
+  `.mcp.json` registering `codeq mcp`, so next session `codeq_search`/`codeq_read`/…
+  are first-class tools that compete on equal footing — and win for navigation
+  because they're better. This was flagged back in session 1; finally done.
+
 ## Process note — the "index-timing ghost" was NOT a codeq bug (false alarm)
 
 For a stretch, dogfood scripts intermittently saw an empty `--json` result on the

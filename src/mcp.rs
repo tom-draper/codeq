@@ -227,6 +227,13 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push("importers".into());
             args.push(s(a, "query")?.into());
         }
+        "codeq_astgrep" => {
+            args.push("astgrep".into());
+            args.push(s(a, "pattern")?.into());
+            args.push("--language".into());
+            args.push(s(a, "language")?.into());
+            opt(&mut args, a, "path", "--path");
+        }
         "codeq_changed" => {
             args.push("changed".into());
             opt(&mut args, a, "compare_to", "--compare-to");
@@ -327,6 +334,9 @@ fn tools() -> Value {
         tool("codeq_importers",
             "Files whose imports match a module string.",
             json!({ "query": str_ }), &["query"]),
+        tool("codeq_astgrep",
+            "Structural (AST) search: match a code pattern with $NAME / $_ metavariables, parsed with the language's own grammar so it matches syntax not text — e.g. '$X.unwrap()' finds every .unwrap() call whatever the receiver. Deterministic; a repeated $NAME must bind identically. Cannot see inside macro invocations (their bodies aren't parsed into an AST). language is required.",
+            json!({ "pattern": str_, "language": str_, "path": str_ }), &["pattern", "language"]),
         tool("codeq_changed",
             "Files changed vs a git ref (default main); set symbols to get the definitions the change touched instead.",
             json!({ "compare_to": str_, "symbols": bool_ }), &[]),

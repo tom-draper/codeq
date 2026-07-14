@@ -1851,6 +1851,67 @@ fn javascript_require_and_es_import_both_captured() {
 }
 
 #[test]
+fn astgrep_matches_method_calls_structurally() {
+    // `$X.unwrap()` matches actual `.unwrap()` call nodes (any receiver), not the
+    // field access that merely shares the name, and not text in strings/comments.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn f() {\n    let x = foo().unwrap();\n    let y = self.unwrap;\n    bar.unwrap();\n    // z.unwrap() in a comment\n}\n",
+    );
+    let v = f.run(&["astgrep", "$X.unwrap()", "--language", "rust"]);
+    let texts: Vec<String> = v["data"]["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["text"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(texts.len(), 2, "expected 2 real unwrap calls: {texts:?}");
+    assert!(texts.iter().any(|t| t == "foo().unwrap()"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "bar.unwrap()"), "{texts:?}");
+}
+
+#[test]
+fn astgrep_metavariable_binds_consistently() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn f(a: i32, b: i32) -> bool {\n    let _ = a == a;\n    a == b\n}\n");
+    let m = f.run(&["astgrep", "$X == $X", "--language", "rust"]);
+    let rows = m["data"]["matches"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "only a==a matches a consistent metavar");
+    assert_eq!(rows[0]["text"], "a == a");
+    assert_eq!(rows[0]["binds"]["X"], "a");
+}
+
+#[test]
+fn astgrep_keeps_literals_and_keywords_exact() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn g() -> Result<i32> {\n    return Ok(1);\n}\nfn h() {\n    let _x = Ok(2);\n}\n",
+    );
+    let rows = f.run(&["astgrep", "return Ok($X)", "--language", "rust"]);
+    let m = rows["data"]["matches"].as_array().unwrap();
+    assert_eq!(m.len(), 1, "must stay anchored to `return`, not match `let _x = Ok(2)`");
+    assert_eq!(m[0]["text"], "return Ok(1)");
+}
+
+#[test]
+fn astgrep_works_across_languages() {
+    let f = Fixture::new();
+    f.write("a.py", "def f():\n    print(x)\n    print(y)\n    log(z)\n");
+    let rows = f.run(&["astgrep", "print($X)", "--language", "python"]);
+    assert_eq!(rows["data"]["matches"].as_array().unwrap().len(), 2, "two print() calls");
+}
+
+#[test]
+fn astgrep_rejects_variadic_pattern() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn f() {}\n");
+    let out = f.raw(&["astgrep", "foo($$$)", "--language", "rust"]);
+    assert!(!out.status.success(), "variadic $$$ is not supported yet — should error");
+}
+
+#[test]
 fn callees_are_calls_not_field_or_type_references() {
     // callees is call-aware: a name counts only when it's actually called
     // (followed by `(`), so field accesses and type/variable references that

@@ -7,6 +7,7 @@
 //! Results are deterministic and reproducible; codeq reports facts, it does not
 //! guess intent or rank by opinion.
 
+mod astgrep;
 mod commands;
 mod context;
 mod db;
@@ -189,6 +190,23 @@ enum Command {
         query: String,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
+    /// Structural (AST) search: match a code pattern with `$VAR` metavariables.
+    /// Parsed with the language's grammar, so it matches syntax, not text —
+    /// e.g. `codeq astgrep '$X.unwrap()' --language rust`.
+    Astgrep {
+        /// The code pattern, e.g. `$X.unwrap()` or `if $C { $$ }`. `$NAME`/`$_`
+        /// stand for any node; a repeated `$NAME` must match identically.
+        pattern: String,
+        /// Language the pattern is written in (required).
+        #[arg(long)]
+        language: String,
+        /// Restrict to paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Maximum matches to return (0 = unlimited).
+        #[arg(long, default_value_t = 100)]
         limit: usize,
     },
     /// Content search; each match annotated with its enclosing definition.
@@ -385,6 +403,12 @@ fn main() -> ExitCode {
             query,
             limit,
         } => commands::cmd_importers(&cwd, &query, limit, out),
+        Command::Astgrep {
+            pattern,
+            language,
+            path,
+            limit,
+        } => commands::cmd_astgrep(&cwd, &pattern, &language, path, limit, out),
         Command::Search {
             pattern,
             fixed,

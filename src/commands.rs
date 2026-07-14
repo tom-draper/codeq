@@ -989,6 +989,80 @@ fn importer_needle(query: &str) -> &str {
     }
 }
 
+pub fn cmd_astgrep(
+    cwd: &Path,
+    pattern: &str,
+    language: &str,
+    path: Option<String>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    // Gather the indexed source of every file in the requested language (the
+    // stored FTS body is the whole file). Structural search re-parses each.
+    let mut sql = String::from("SELECT path, body FROM content_fts WHERE language = ?1");
+    let like = path.map(|p| format!("%{p}%"));
+    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&language];
+    if let Some(l) = &like {
+        sql.push_str(" AND path LIKE ?2");
+        params.push(l);
+    }
+    sql.push_str(" ORDER BY path");
+    let files: Vec<(String, String)> = {
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params.as_slice(), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+
+    let mut matches = crate::astgrep::search(language, pattern, files)?;
+    let truncated = limit > 0 && matches.len() > limit;
+    if truncated {
+        matches.truncate(limit);
+    }
+
+    #[derive(Serialize)]
+    struct AstRow {
+        path: String,
+        line: usize,
+        col: usize,
+        end_line: usize,
+        text: String,
+        #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
+        binds: serde_json::Map<String, serde_json::Value>,
+    }
+    #[derive(Serialize)]
+    struct AstData {
+        matches: Vec<AstRow>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
+    }
+    let rows: Vec<AstRow> = matches
+        .into_iter()
+        .map(|m| {
+            let binds = m
+                .binds
+                .into_iter()
+                .map(|(k, v)| (k, serde_json::Value::from(v)))
+                .collect();
+            AstRow {
+                path: m.path,
+                line: m.start_line,
+                col: m.start_col,
+                end_line: m.end_line,
+                text: m.text,
+                binds,
+            }
+        })
+        .collect();
+    s.emit(AstData {
+        matches: rows,
+        truncated,
+    })
+}
+
 pub fn cmd_context(cwd: &Path, req: Request, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let result = context::build(&s.db, &s.repo, &req)?;
@@ -1944,7 +2018,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "index", "files", "changed", "stats", "map",
             "symbols", "definitions", "callers", "callees", "about",
             "references", "outline", "at", "read", "search",
-            "imports", "importers", "context", "capabilities", "mcp",
+            "imports", "importers", "astgrep", "context", "capabilities", "mcp",
         ],
         // Languages with symbol + import extraction.
         "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php"],
