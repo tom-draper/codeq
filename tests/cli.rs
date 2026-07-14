@@ -1548,3 +1548,223 @@ fn changed_without_git_fails_with_nonzero_exit() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("Git"), "stderr should mention Git: {stderr}");
 }
+
+// ---------------------------------------------------------------------------
+// Cross-command invariants (fast, deterministic versions of the properties the
+// differential harness checks across the corpus), extraction depth, and edges.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn definition_site_appears_in_its_references() {
+    // A symbol's own definition line must be among its references.
+    let f = Fixture::new();
+    f.write("a.rs", "fn helper() {}\nfn caller() { helper(); }\n");
+    let d0 = f.run(&["definitions", "helper"])["data"][0].clone();
+    let dp = d0["path"].as_str().unwrap().to_string();
+    let dl = d0["start_line"].as_u64().unwrap();
+    let refs = f.run(&["references", "helper", "--limit", "0"]);
+    let present = refs["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["path"] == dp.as_str() && r["line"].as_u64() == Some(dl));
+    assert!(present, "definition site {dp}:{dl} missing from references");
+}
+
+#[test]
+fn at_roundtrips_a_definition_and_encloses_its_body() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn outer() {\n    let x = 1;\n    let y = 2;\n}\n");
+    let d0 = f.run(&["definitions", "outer"])["data"][0].clone();
+    let p = d0["path"].as_str().unwrap().to_string();
+    let (s, e) = (d0["start_line"].as_u64().unwrap(), d0["end_line"].as_u64().unwrap());
+
+    let at_def = f.run(&["at", &format!("{p}:{s}")]);
+    assert_eq!(at_def["data"][0]["name"], "outer", "at the def line must resolve to it");
+
+    let mid = (s + e) / 2;
+    let d = f.run(&["at", &format!("{p}:{mid}")])["data"][0].clone();
+    assert_eq!(d["name"], "outer");
+    assert!(
+        d["start_line"].as_u64().unwrap() <= mid && mid <= d["end_line"].as_u64().unwrap(),
+        "at a body line must be enclosed by the def"
+    );
+}
+
+#[test]
+fn outline_names_are_a_subset_of_symbols() {
+    let f = Fixture::new();
+    f.write("a.rs", "struct S;\nfn f() {}\nimpl S { fn m(&self) {} }\n");
+    let symbols: std::collections::HashSet<String> =
+        field_set(&f.run(&["symbols", "--path", "a.rs", "--limit", "0"]), "name")
+            .into_iter()
+            .collect();
+    for n in field_set(&f.run(&["outline", "a.rs"]), "name") {
+        assert!(symbols.contains(&n), "outline name {n} absent from symbols {symbols:?}");
+    }
+}
+
+#[test]
+fn read_line_range_clamps_past_eof() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn a() {}\nfn b() {}\nfn c() {}\n");
+    f.run(&["index"]);
+    let out = f.raw(&["read", "a.rs", "--lines", "2-999"]);
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("fn b") && text.contains("fn c"), "range content missing: {text}");
+    assert!(!text.contains("fn a"), "range must start at line 2: {text}");
+}
+
+#[test]
+fn at_beyond_eof_resolves_to_nothing() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn a() {}\n");
+    let v = f.run(&["at", "a.rs:9999"]);
+    assert!(v["data"].as_array().unwrap().is_empty(), "line past EOF should enclose nothing");
+}
+
+#[test]
+fn fields_ignores_unknown_columns() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn f() {}\n");
+    let row = f.run(&["symbols", "--fields", "name,not_a_real_field"])["data"][0].clone();
+    let keys: Vec<&str> = row.as_object().unwrap().keys().map(|s| s.as_str()).collect();
+    assert_eq!(keys, ["name"], "only the known requested field survives: {keys:?}");
+}
+
+#[test]
+fn rust_impl_method_extracted_with_signature() {
+    let f = Fixture::new();
+    f.write("a.rs", "struct S;\nimpl S {\n    pub fn method(&self, x: i32) -> i32 { x }\n}\n");
+    assert!(field_set(&f.run(&["symbols", "--path", "a.rs"]), "name").contains(&"method".to_string()));
+    let sig = f.run(&["definitions", "method"])["data"][0]["signature"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(sig.contains("fn method") && sig.contains("i32"), "signature: {sig}");
+}
+
+#[test]
+fn python_class_method_nests_in_outline() {
+    let f = Fixture::new();
+    f.write("a.py", "class Widget:\n    def method(self):\n        pass\n");
+    let v = f.run(&["outline", "a.py"]);
+    let rows = v["data"].as_array().unwrap();
+    let cls = rows.iter().find(|r| r["name"] == "Widget").unwrap();
+    let meth = rows.iter().find(|r| r["name"] == "method").unwrap();
+    assert_eq!(cls["depth"], 0);
+    assert!(meth["depth"].as_u64().unwrap() >= 1, "method must nest under its class");
+}
+
+#[test]
+fn python_import_forms_all_capture_the_module() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "import os\nfrom sys import path\nfrom collections import OrderedDict, defaultdict\nimport json as j\n",
+    );
+    let mods = field_set(&f.run(&["imports", "a.py"]), "module");
+    for m in ["os", "sys", "collections", "json"] {
+        assert!(mods.iter().any(|x| x == m), "module '{m}' not captured: {mods:?}");
+    }
+}
+
+#[test]
+fn search_composes_word_language_and_path_filters() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn value() {}\nlet value = 1;\n");
+    f.write("b.py", "value = 2\n");
+    let v = f.run(&["search", "value", "-w", "--language", "rust", "--path", "a.rs", "--limit", "0"]);
+    let matches = v["data"]["matches"].as_array().unwrap();
+    assert!(!matches.is_empty(), "expected matches in a.rs");
+    assert!(matches.iter().all(|m| m["path"] == "a.rs"), "path/language filter leaked: {matches:?}");
+}
+
+#[test]
+fn context_changed_mode_can_expand_to_referenced_defs() {
+    let f = Fixture::new();
+    f.write("a.py", "def helper():\n    pass\n");
+    f.git_init_commit();
+    f.write("a.py", "def helper():\n    pass\n\ndef changed():\n    helper()\n");
+    let names = chunk_symbols(
+        &f.run(&["context", "--changed", "--compare-to", "HEAD", "--expand", "--no-text"])["data"],
+    );
+    assert!(names.contains(&"changed".to_string()), "touched seed missing: {names:?}");
+    assert!(names.contains(&"helper".to_string()), "expansion to referenced def missing: {names:?}");
+}
+
+#[test]
+fn map_totals_agree_with_stats_and_symbols() {
+    // The aggregate counts must reconcile: map.totals == stats == actual symbols.
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() {}\nfn two() {}\n");
+    f.write("b.py", "def three():\n    pass\n");
+    f.run(&["index"]);
+    let files_stats = f.run(&["stats"])["data"]["files"].as_u64().unwrap();
+    let map = f.run(&["map"]);
+    assert_eq!(files_stats, 2);
+    assert_eq!(map["data"]["totals"]["files"].as_u64().unwrap(), files_stats,
+               "map totals.files must match stats.files");
+    let nsym = f.run(&["symbols", "--limit", "0"])["data"].as_array().unwrap().len() as u64;
+    assert_eq!(nsym, 3);
+    assert_eq!(map["data"]["totals"]["symbols"].as_u64().unwrap(), nsym,
+               "map totals.symbols must match the actual symbol count");
+}
+
+#[test]
+fn references_span_multiple_files() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub fn shared() {}\n");
+    f.write("b.rs", "fn use_it() { shared(); }\n");
+    f.write("c.rs", "fn use_more() { shared(); shared(); }\n");
+    let refs = f.run(&["references", "shared", "--limit", "0"]);
+    let paths: std::collections::HashSet<String> = refs["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["path"].as_str().map(str::to_string))
+        .collect();
+    for p in ["a.rs", "b.rs", "c.rs"] {
+        assert!(paths.contains(p), "references should span {p}: {paths:?}");
+    }
+}
+
+#[test]
+fn go_struct_method_and_free_func_extracted() {
+    let f = Fixture::new();
+    f.write(
+        "a.go",
+        "package main\ntype T struct{ X int }\nfunc (t T) Method() int { return t.X }\nfunc Free() {}\n",
+    );
+    let names = field_set(&f.run(&["symbols", "--path", "a.go"]), "name");
+    for n in ["T", "Method", "Free"] {
+        assert!(names.iter().any(|x| x == n), "go symbol {n} missing: {names:?}");
+    }
+}
+
+#[test]
+fn typescript_interface_class_and_method_extracted() {
+    let f = Fixture::new();
+    f.write(
+        "a.ts",
+        "interface Shape { area(): number; }\nclass Circle implements Shape {\n  area(): number { return 1; }\n}\n",
+    );
+    let names = field_set(&f.run(&["symbols", "--path", "a.ts"]), "name");
+    for n in ["Shape", "Circle", "area"] {
+        assert!(names.iter().any(|x| x == n), "ts symbol {n} missing: {names:?}");
+    }
+}
+
+#[test]
+fn search_output_is_reproducible() {
+    // Determinism is a core promise: identical inputs, byte-identical output.
+    // Warm the index first so neither query reindexes (which would legitimately
+    // add an index meta block to only the first response).
+    let f = Fixture::new();
+    f.write("a.rs", "fn alpha() {}\nfn beta() {}\nfn alpha_two() {}\n");
+    f.run(&["index"]);
+    let v1 = f.run(&["search", "alpha", "--limit", "0"]);
+    let v2 = f.run(&["search", "alpha", "--limit", "0"]);
+    assert_eq!(v1, v2, "search must be byte-for-byte reproducible");
+}
