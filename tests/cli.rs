@@ -1388,13 +1388,15 @@ fn context_respects_token_budget() {
     // omitted is skipped when empty.
     assert!(d.get("omitted").map_or(true, |o| o.as_array().unwrap().is_empty()));
 
-    // Starve the budget: nothing fits, everything is reported as omitted.
+    // Starve the budget: the explicitly-requested seeds are still returned — you
+    // asked for them, and dropping the very symbol you named is worse than
+    // overshooting. The budget caps automatic --expand growth, not the seeds.
     let v = f.run(&[
         "context", "--symbols", "aa,bb", "--no-text", "--max-tokens", "1",
     ]);
-    let d = &v["data"];
-    assert!(d["budget"]["used_tokens"].as_u64().unwrap() <= 1);
-    assert!(!d["omitted"].as_array().unwrap().is_empty(), "omissions must be visible");
+    let names = chunk_symbols(&v["data"]);
+    assert!(names.contains(&"aa".to_string()) && names.contains(&"bb".to_string()),
+            "seeds dropped by a starved budget: {names:?}");
 }
 
 #[test]

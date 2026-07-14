@@ -26,6 +26,17 @@ found a real staleness bug.
 - **Validated (no bug): rename / touch / edit-revert** all handled correctly (from
   the prior round). The dir-mtime + manifest cache is robust once ignore files are
   tracked.
+- **Validated (no bug): weird files.** Empty, binary (null bytes), invalid-UTF-8,
+  a 200 KB single line, and a symlink — index without crashing; binary files are
+  excluded from search; the symlink is skipped (ignore-crate default).
+
+- **FIXED (context UX/correctness): a starved budget dropped the requested seed.**
+  `context --symbols refresh --max-tokens 10` returned **zero** chunks — the very
+  symbol you asked for, silently gone, because the seed exceeded the budget. Worse,
+  with `--expand` a tiny budget would return the seed's *neighbours* but not the
+  seed itself. Fixed so explicitly-requested seeds are always included; the budget
+  caps only automatic `--expand` growth. An agent asking for a big function with a
+  modest budget now gets the function. Test updated to the new contract.
 
 ## 2026-07-13 — session 14: dogfooding caught `index --rebuild` leaving an empty index
 

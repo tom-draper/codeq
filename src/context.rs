@@ -226,7 +226,10 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         let bytes = d.end_byte.saturating_sub(d.start_byte) as u64;
         let est = bytes.div_ceil(4).max(1);
 
-        if used + est > req.max_tokens {
+        // Explicitly-requested seeds are always included, even if they exceed the
+        // budget — you asked for them, and returning nothing (or dropping the very
+        // symbol you named) is worse than overshooting. The budget caps expansion.
+        if reason != "seed" && used + est > req.max_tokens {
             if omitted.len() < MAX_OMITTED {
                 omitted.push(Omitted {
                     path: d.path.clone(),
