@@ -111,6 +111,68 @@ struct FileRow {
     size_bytes: i64,
 }
 
+/// Optional `AND …` filter clauses shared by the list commands, built with
+/// positional `?` params (bound in append order, after any base params the query
+/// already has). Centralizes the repeated path-substring / exact-column-match
+/// pattern so a new filtered command can't misthread its parameters.
+#[derive(Default)]
+struct Filters {
+    sql: String,
+    args: Vec<String>,
+}
+
+impl Filters {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// `AND {col} LIKE '%needle%'` when `needle` is Some.
+    fn like(mut self, col: &str, needle: Option<&str>) -> Self {
+        if let Some(n) = needle {
+            self.sql.push_str(&format!(" AND {col} LIKE ?"));
+            self.args.push(format!("%{n}%"));
+        }
+        self
+    }
+
+    /// `AND {col} = value` when `value` is Some.
+    fn eq(mut self, col: &str, value: Option<&str>) -> Self {
+        if let Some(v) = value {
+            self.sql.push_str(&format!(" AND {col} = ?"));
+            self.args.push(v.to_string());
+        }
+        self
+    }
+
+    fn sql(&self) -> &str {
+        &self.sql
+    }
+
+    fn args(&self) -> &[String] {
+        &self.args
+    }
+}
+
+/// A `LIMIT n` clause, or empty when `limit` is 0 (unlimited).
+fn limit_clause(limit: usize) -> String {
+    if limit > 0 {
+        format!(" LIMIT {limit}")
+    } else {
+        String::new()
+    }
+}
+
+/// Filter args as `ToSql` refs, appended after any `base` params the query binds
+/// before its optional filters.
+fn params_with<'a>(
+    base: &[&'a dyn rusqlite::ToSql],
+    filters: &'a Filters,
+) -> Vec<&'a dyn rusqlite::ToSql> {
+    let mut p: Vec<&dyn rusqlite::ToSql> = base.to_vec();
+    p.extend(filters.args().iter().map(|a| a as &dyn rusqlite::ToSql));
+    p
+}
+
 pub fn cmd_files(
     cwd: &Path,
     pattern: Option<&str>,
@@ -120,27 +182,14 @@ pub fn cmd_files(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
-    let mut sql = String::from(
-        "SELECT path, language, size_bytes FROM files WHERE 1=1",
+    let filters = Filters::new().like("path", pattern).eq("language", language);
+    let sql = format!(
+        "SELECT path, language, size_bytes FROM files WHERE 1=1{} ORDER BY path{}",
+        filters.sql(),
+        limit_clause(limit),
     );
-    let mut args: Vec<String> = Vec::new();
-    if let Some(pat) = pattern {
-        sql.push_str(" AND path LIKE ?");
-        args.push(format!("%{pat}%"));
-    }
-    if let Some(lang) = language {
-        sql.push_str(" AND language = ?");
-        args.push(lang.to_string());
-    }
-    sql.push_str(" ORDER BY path");
-    if limit > 0 {
-        sql.push_str(&format!(" LIMIT {limit}"));
-    }
-
     let mut stmt = s.db.conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::ToSql> =
-        args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
-    let rows = stmt.query_map(param_refs.as_slice(), |r| {
+    let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
         Ok(FileRow {
             path: r.get(0)?,
             language: r.get(1)?,
@@ -348,24 +397,17 @@ fn definitions_of(
     path: Option<&str>,
     limit: usize,
 ) -> Result<Vec<DefinitionRow>> {
-    let mut sql = String::from(
+    let filters = Filters::new().like("path", path);
+    let sql = format!(
         "SELECT name, kind, path, language,
                 start_line, start_col, end_line, end_col, start_byte, end_byte,
                 signature, doc
-         FROM facts WHERE name = ?1 AND kind <> 'import'",
+         FROM facts WHERE name = ? AND kind <> 'import'{} ORDER BY path, start_line{}",
+        filters.sql(),
+        limit_clause(limit),
     );
-    let like = path.map(|p| format!("%{p}%"));
-    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&symbol];
-    if let Some(l) = &like {
-        sql.push_str(" AND path LIKE ?2");
-        params.push(l);
-    }
-    sql.push_str(" ORDER BY path, start_line");
-    if limit > 0 {
-        sql.push_str(&format!(" LIMIT {limit}"));
-    }
     let mut stmt = s.db.conn.prepare(&sql)?;
-    let rows = stmt.query_map(params.as_slice(), |r| {
+    let rows = stmt.query_map(params_with(&[&symbol], &filters).as_slice(), |r| {
         Ok(DefinitionRow {
             name: r.get(0)?,
             kind: r.get(1)?,
@@ -420,27 +462,15 @@ pub fn cmd_api(
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let mut sql = String::from(
+    let filters = Filters::new().like("path", path).eq("kind", kind);
+    let sql = format!(
         "SELECT name, kind, path, start_line, signature
-         FROM facts WHERE visibility = 'public' AND kind <> 'import'",
+         FROM facts WHERE visibility = 'public' AND kind <> 'import'{} ORDER BY path, start_line{}",
+        filters.sql(),
+        limit_clause(limit),
     );
-    let mut args: Vec<String> = Vec::new();
-    if let Some(p) = path {
-        sql.push_str(&format!(" AND path LIKE ?{}", args.len() + 1));
-        args.push(format!("%{p}%"));
-    }
-    if let Some(k) = kind {
-        sql.push_str(&format!(" AND kind = ?{}", args.len() + 1));
-        args.push(k.to_string());
-    }
-    sql.push_str(" ORDER BY path, start_line");
-    if limit > 0 {
-        sql.push_str(&format!(" LIMIT {limit}"));
-    }
     let mut stmt = s.db.conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::ToSql> =
-        args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
-    let rows = stmt.query_map(param_refs.as_slice(), |r| {
+    let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
         Ok(ApiRow {
             name: r.get(0)?,
             kind: r.get(1)?,
@@ -1645,27 +1675,15 @@ pub fn cmd_implementors(
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let mut sql = String::from(
+    let filters = Filters::new().eq("relation", relation).like("path", path);
+    let sql = format!(
         "SELECT subtype, relation, path, line, language
-         FROM impls WHERE supertype = ?1",
+         FROM impls WHERE supertype = ?{} ORDER BY path, line{}",
+        filters.sql(),
+        limit_clause(limit),
     );
-    let mut args: Vec<String> = vec![name.to_string()];
-    if let Some(r) = relation {
-        sql.push_str(&format!(" AND relation = ?{}", args.len() + 1));
-        args.push(r.to_string());
-    }
-    if let Some(p) = path {
-        sql.push_str(&format!(" AND path LIKE ?{}", args.len() + 1));
-        args.push(format!("%{p}%"));
-    }
-    sql.push_str(" ORDER BY path, line");
-    if limit > 0 {
-        sql.push_str(&format!(" LIMIT {limit}"));
-    }
     let mut stmt = s.db.conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::ToSql> =
-        args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
-    let rows = stmt.query_map(param_refs.as_slice(), |r| {
+    let rows = stmt.query_map(params_with(&[&name], &filters).as_slice(), |r| {
         Ok(ImplementorRow {
             subtype: r.get(0)?,
             relation: r.get(1)?,
@@ -1755,25 +1773,15 @@ pub fn cmd_unused(
     }
 
     // The definitions eligible to be reported (scoped by path/kind).
-    let mut sql = String::from(
+    let filters = Filters::new().like("path", path).eq("kind", kind);
+    let sql = format!(
         "SELECT name, kind, path, start_line, visibility FROM facts
-         WHERE kind <> 'import' AND name IS NOT NULL",
+         WHERE kind <> 'import' AND name IS NOT NULL{} ORDER BY path, start_line",
+        filters.sql(),
     );
-    let mut args: Vec<String> = Vec::new();
-    if let Some(p) = path {
-        sql.push_str(&format!(" AND path LIKE ?{}", args.len() + 1));
-        args.push(format!("%{p}%"));
-    }
-    if let Some(k) = kind {
-        sql.push_str(&format!(" AND kind = ?{}", args.len() + 1));
-        args.push(k.to_string());
-    }
-    sql.push_str(" ORDER BY path, start_line");
     let candidates: Vec<UnusedRow> = {
         let mut stmt = s.db.conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::ToSql> =
-            args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
-        let rows = stmt.query_map(param_refs.as_slice(), |r| {
+        let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
             Ok(UnusedRow {
                 name: r.get(0)?,
                 kind: r.get(1)?,
