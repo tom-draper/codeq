@@ -180,10 +180,13 @@ fn render_row(row: &Value, out: &mut String) {
     let pad = "  ".repeat(int_of("depth").unwrap_or(0).max(0) as usize);
 
     // A multi-line body (context chunks) prints verbatim under a locator header
-    // (drop the trailing ": " so the header reads cleanly above the block).
+    // (drop the trailing ": " so the header reads cleanly above the block). For
+    // `context` chunks the `reason` (seed vs referenced/changed) is the point of
+    // --expand, so surface it in the header.
     if let Some(t) = str_of("text") {
         if t.contains('\n') {
-            out.push_str(&format!("{pad}{}\n{t}\n", loc.trim_end_matches([':', ' '])));
+            let reason = str_of("reason").map(|r| format!(" ({r})")).unwrap_or_default();
+            out.push_str(&format!("{pad}{}{reason}\n{t}\n", loc.trim_end_matches([':', ' '])));
             return;
         }
         // codeq's differentiator over grep: annotate the match with the symbol

@@ -39,8 +39,28 @@ found two more:
   it honor `--json`/`--meta`/`--pretty` like everything else.
 - Checked (no bug): empty results print nothing at exit 0; `read`/`about` of a
   missing symbol/file error to stderr with a non-zero exit. Error/empty paths are
-  sound. Three text/command paths the automated suite structurally can't reach,
-  all found by *using* the tool.
+  sound.
+
+Kept going — two more from the text layer, plus a freshness stress-test:
+
+- **FIXED: `search -A/-B/-C` context lines were silently dropped in text mode.**
+  The renderer only printed the match line, so the context flags (present in the
+  JSON as `before`/`after`) were a no-op in the default output. Now rendered
+  grep-style (`path-line- content`) with computed line numbers. Regression test
+  added.
+- **IMPROVED: `context --expand` text now labels chunks `(seed)`/`(referenced)`**
+  — the whole point of `--expand` (which chunk you asked for vs its neighbours)
+  was invisible in text mode. Surfaced the `reason` in the chunk header.
+- **Validated (no bug): git-free freshness handles rename / touch / edit-revert.**
+  Renaming `a.rs`→`renamed.rs` moves the symbol and drops the stale path; a bare
+  `touch` (mtime bump, same content) doesn't spuriously reindex; edit-then-revert
+  restores cleanly. The dir-mtime + file-manifest cache is robust across the hard
+  cases, not just add/delete.
+
+Tally: five text/command-path fixes this day, none of which the `--json`-only
+harness could reach. Standing lesson — a new command or output mode needs a
+dogfood pass; the harness guards correctness-at-scale, not the surface an agent
+actually reads.
 
 ## 2026-07-13 — session 13: git-free freshness via codeq's own index cache
 
