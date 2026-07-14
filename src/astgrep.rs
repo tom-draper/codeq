@@ -1,14 +1,20 @@
 //! Structural (AST) search — ast-grep-style pattern matching.
 //!
-//! A *pattern* is a snippet of code with `$NAME` / `$_` metavariables, parsed
-//! with the target language's own grammar, so matching is structural (on the
-//! syntax tree), not textual: `$X.unwrap()` finds every `.unwrap()` call whatever
-//! the receiver, spacing, or line breaks. It is deterministic and exact — a node
-//! matches iff its kind and named-child structure match, with a metavariable
-//! standing for any single node (and binding consistently when it repeats, so
-//! `$X == $X` only matches when both sides are identical).
+//! A *pattern* is a snippet of code with metavariables, parsed with the target
+//! language's own grammar, so matching is structural (on the syntax tree), not
+//! textual: `$X.unwrap()` finds every `.unwrap()` call whatever the receiver,
+//! spacing, or line breaks. It is deterministic and exact — a node matches iff
+//! its kind and named-child structure match.
 //!
-//! Not (yet) supported: variadic `$$$` metavariables.
+//! - `$NAME` / `$_` — one node (any). A repeated `$NAME` must bind identically,
+//!   so `$X == $X` matches only self-comparisons.
+//! - `$$$NAME` / `$$$` — a run of zero-or-more sibling nodes in a list position,
+//!   so `foo($$$)` matches any argument count and `fn $N($$$)` any parameters.
+//!
+//! Limits: matching is exact about structure, so a pattern must include optional
+//! syntax that the code has (e.g. `fn $N($$$) { $$$ }` won't match a fn *with* a
+//! return type); and it can't see inside macro invocations, whose bodies the
+//! grammar leaves as opaque token trees.
 
 use std::collections::HashMap;
 
@@ -18,9 +24,13 @@ use tree_sitter::{Node, Parser};
 /// A `$VAR` is rewritten to this prefix + the name so the pattern parses as
 /// ordinary code; long enough to never collide with a real identifier.
 const SENTINEL: &str = "Cq9Metavar_";
+/// A `$$$VAR` (variadic) is rewritten to this prefix — it matches a run of zero
+/// or more sibling nodes in a list position (arguments, parameters, a block, …).
+const VARIADIC: &str = "Cq9Variadic_";
 
 pub struct Match {
     pub path: String,
+    pub start_byte: usize,
     pub start_line: usize,
     pub start_col: usize,
     pub end_line: usize,
@@ -48,17 +58,18 @@ pub fn ts_language(name: &str) -> Option<tree_sitter::Language> {
     })
 }
 
-/// Rewrite `$NAME` / `$_` to sentinel identifiers so the pattern parses.
+/// Rewrite `$NAME` / `$_` / `$$$NAME` to sentinel identifiers so the pattern
+/// parses as ordinary code.
 fn substitute_metavars(pattern: &str) -> Result<String> {
-    if pattern.contains("$$$") {
-        return Err(anyhow!(
-            "variadic metavariables ($$$) are not supported yet — use a single $NAME"
-        ));
-    }
     let mut out = String::with_capacity(pattern.len() + 16);
     let mut chars = pattern.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '$' {
+            let mut dollars = 1;
+            while chars.peek() == Some(&'$') {
+                chars.next();
+                dollars += 1;
+            }
             let mut name = String::new();
             while let Some(&n) = chars.peek() {
                 if n == '_' || n.is_ascii_alphanumeric() {
@@ -68,11 +79,20 @@ fn substitute_metavars(pattern: &str) -> Result<String> {
                     break;
                 }
             }
-            if !name.is_empty() {
-                out.push_str(SENTINEL);
+            if dollars >= 3 {
+                out.push_str(VARIADIC); // $$$ or $$$NAME
+                out.push_str(&name);
+                continue;
+            } else if dollars == 1 && !name.is_empty() {
+                out.push_str(SENTINEL); // $NAME or $_
                 out.push_str(&name);
                 continue;
             }
+            for _ in 0..dollars {
+                out.push('$');
+            }
+            out.push_str(&name);
+            continue;
         }
         out.push(c);
     }
@@ -103,12 +123,37 @@ fn significant(root: Node) -> Node {
     }
 }
 
-/// If `pat` is a metavariable leaf, return its name (`_` for anonymous).
+/// If `pat` is a single-node metavariable leaf, return its name (`_` = anonymous).
 fn metavar_name<'a>(pat: Node, psrc: &'a [u8]) -> Option<&'a str> {
     if pat.named_child_count() != 0 {
         return None; // metavars are leaf identifiers, never an ancestor
     }
     pat.utf8_text(psrc).ok().and_then(|t| t.strip_prefix(SENTINEL))
+}
+
+/// If `pat` is a variadic metavariable — a `$$$` leaf, or one wrapped in a
+/// single-child node (a `$$$` in statement position parses as an
+/// `expression_statement` around the sentinel) — return its name (empty =
+/// anonymous).
+fn variadic_name<'a>(pat: Node, psrc: &'a [u8]) -> Option<&'a str> {
+    let mut n = pat;
+    loop {
+        match n.named_child_count() {
+            0 => return n.utf8_text(psrc).ok().and_then(|t| t.strip_prefix(VARIADIC)),
+            1 => n = n.named_child(0).unwrap(),
+            _ => return None,
+        }
+    }
+}
+
+fn bind(binds: &mut HashMap<String, String>, name: &str, val: String) -> bool {
+    match binds.get(name) {
+        Some(prev) => prev == &val, // repeated metavar must bind identically
+        None => {
+            binds.insert(name.to_string(), val);
+            true
+        }
+    }
 }
 
 fn node_matches(
@@ -126,13 +171,7 @@ fn node_matches(
             Ok(t) => t.to_string(),
             Err(_) => return false,
         };
-        return match binds.get(name) {
-            Some(prev) => prev == &ctext, // repeated metavar must bind identically
-            None => {
-                binds.insert(name.to_string(), ctext);
-                true
-            }
-        };
+        return bind(binds, name, ctext);
     }
     if pat.kind_id() != code.kind_id() {
         return false;
@@ -145,13 +184,66 @@ fn node_matches(
         // Leaf (identifier, literal, operator): match text exactly.
         return pat.utf8_text(psrc).ok() == code.utf8_text(csrc).ok();
     }
-    if pkids.len() != ckids.len() {
+    match_children(&pkids, &ckids, psrc, csrc, binds)
+}
+
+/// Match a pattern child list against a code child list, where the pattern may
+/// contain one variadic (`$$$`) that absorbs a run of zero or more code nodes.
+fn match_children(
+    pkids: &[Node],
+    ckids: &[Node],
+    psrc: &[u8],
+    csrc: &[u8],
+    binds: &mut HashMap<String, String>,
+) -> bool {
+    let vpos: Vec<usize> = pkids
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| variadic_name(**n, psrc).is_some())
+        .map(|(i, _)| i)
+        .collect();
+
+    if vpos.is_empty() {
+        return pkids.len() == ckids.len()
+            && pkids
+                .iter()
+                .zip(ckids)
+                .all(|(p, c)| node_matches(*p, *c, psrc, csrc, binds));
+    }
+    // A single variadic per list is supported (the common case); more would need
+    // backtracking, so treat it as no match rather than guess.
+    if vpos.len() > 1 {
         return false;
     }
-    pkids
-        .iter()
-        .zip(&ckids)
-        .all(|(p, c)| node_matches(*p, *c, psrc, csrc, binds))
+    let vi = vpos[0];
+    let before = &pkids[..vi];
+    let after = &pkids[vi + 1..];
+    if ckids.len() < before.len() + after.len() {
+        return false;
+    }
+    for (p, c) in before.iter().zip(&ckids[..before.len()]) {
+        if !node_matches(*p, *c, psrc, csrc, binds) {
+            return false;
+        }
+    }
+    let a_start = ckids.len() - after.len();
+    for (p, c) in after.iter().zip(&ckids[a_start..]) {
+        if !node_matches(*p, *c, psrc, csrc, binds) {
+            return false;
+        }
+    }
+    // Bind the absorbed run (named variadic only), for consistency across repeats.
+    if let Some(name) = variadic_name(pkids[vi], psrc) {
+        if !name.is_empty() {
+            let joined = ckids[before.len()..a_start]
+                .iter()
+                .map(|n| n.utf8_text(csrc).unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\u{0}");
+            return bind(binds, name, joined);
+        }
+    }
+    true
 }
 
 /// Compile `pattern` for `lang_name` and return every structural match across
@@ -177,7 +269,7 @@ where
             "pattern did not parse as valid {lang_name}; write it as a complete construct"
         ));
     }
-    if metavar_name(pat_node, psrc).is_some() {
+    if metavar_name(pat_node, psrc).is_some() || variadic_name(pat_node, psrc).is_some() {
         return Err(anyhow!("pattern is a bare metavariable — it would match everything"));
     }
     let pat_kind = pat_node.kind_id();
@@ -202,6 +294,7 @@ where
                     b.sort();
                     out.push(Match {
                         path: path.clone(),
+                        start_byte: node.start_byte(),
                         start_line: sp.row + 1,
                         start_col: sp.column,
                         end_line: ep.row + 1,

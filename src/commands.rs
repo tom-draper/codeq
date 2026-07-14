@@ -1023,6 +1023,16 @@ pub fn cmd_astgrep(
         matches.truncate(limit);
     }
 
+    // Annotate each match with the definition it sits inside (like `search`), so
+    // the reader needn't a follow-up `at`. Matches are already sorted by path, so
+    // load each file's defs once.
+    let mut def_stmt = s.db.conn.prepare(
+        "SELECT name, kind, start_byte, end_byte FROM facts
+         WHERE path = ?1 AND kind <> 'import'",
+    )?;
+    let mut cur_path: Option<String> = None;
+    let mut defs: Vec<FileDef> = Vec::new();
+
     #[derive(Serialize)]
     struct AstRow {
         path: String,
@@ -1030,6 +1040,8 @@ pub fn cmd_astgrep(
         col: usize,
         end_line: usize,
         text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        symbol: Option<String>,
         #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
         binds: serde_json::Map<String, serde_json::Value>,
     }
@@ -1039,24 +1051,28 @@ pub fn cmd_astgrep(
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         truncated: bool,
     }
-    let rows: Vec<AstRow> = matches
-        .into_iter()
-        .map(|m| {
-            let binds = m
-                .binds
-                .into_iter()
-                .map(|(k, v)| (k, serde_json::Value::from(v)))
-                .collect();
-            AstRow {
-                path: m.path,
-                line: m.start_line,
-                col: m.start_col,
-                end_line: m.end_line,
-                text: m.text,
-                binds,
-            }
-        })
-        .collect();
+    let mut rows: Vec<AstRow> = Vec::with_capacity(matches.len());
+    for m in matches {
+        if cur_path.as_deref() != Some(m.path.as_str()) {
+            defs = load_file_defs(&mut def_stmt, &m.path)?;
+            cur_path = Some(m.path.clone());
+        }
+        let symbol = innermost(&defs, m.start_byte).map(|d| d.name.clone());
+        let binds = m
+            .binds
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::Value::from(v)))
+            .collect();
+        rows.push(AstRow {
+            path: m.path,
+            line: m.start_line,
+            col: m.start_col,
+            end_line: m.end_line,
+            text: m.text,
+            symbol,
+            binds,
+        });
+    }
     s.emit(AstData {
         matches: rows,
         truncated,

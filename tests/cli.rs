@@ -1904,11 +1904,22 @@ fn astgrep_works_across_languages() {
 }
 
 #[test]
-fn astgrep_rejects_variadic_pattern() {
+fn astgrep_variadic_matches_any_arguments() {
+    // `$$$` absorbs a run of zero-or-more siblings in a list position.
     let f = Fixture::new();
-    f.write("a.rs", "fn f() {}\n");
-    let out = f.raw(&["astgrep", "foo($$$)", "--language", "rust"]);
-    assert!(!out.status.success(), "variadic $$$ is not supported yet — should error");
+    f.write("a.rs", "fn f() {\n    foo();\n    foo(1);\n    foo(1, 2, 3);\n    bar(9);\n}\n");
+    let all = f.run(&["astgrep", "foo($$$)", "--language", "rust"]);
+    assert_eq!(all["data"]["matches"].as_array().unwrap().len(), 3, "foo() with 0/1/3 args, not bar");
+    // A fixed leading arg plus a variadic requires at least that arg.
+    let some = f.run(&["astgrep", "foo($A, $$$)", "--language", "rust"]);
+    let texts: Vec<String> = some["data"]["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["text"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(texts.len(), 2, "foo(1) and foo(1,2,3), not the no-arg call: {texts:?}");
+    assert!(!texts.iter().any(|t| t == "foo()"), "{texts:?}");
 }
 
 #[test]

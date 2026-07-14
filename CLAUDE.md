@@ -23,9 +23,11 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
     templates. codeq's own SQL lives in string literals, so `--in code` finds none.
 - **Structural (AST) search:** `codeq astgrep '$X.unwrap()' --language rust` — match
-  syntax, not text, with `$VAR` metavariables (repeated `$VAR` must bind the same).
-  For "all calls to X", "all `Ok($X)` returns", etc. Note: it can't see inside macro
-  invocations (their bodies aren't parsed into an AST).
+  syntax, not text. `$VAR`/`$_` = one node (repeated `$VAR` binds the same);
+  `$$$` = any run of siblings, so `foo($$$)` matches any arg count. For "all calls
+  to X", "all `Ok($X)` returns", etc. Each match is annotated with its enclosing
+  `[symbol]`. Limits: it's structurally exact (include optional syntax the code
+  has) and can't see inside macro invocations.
 - **Trim tokens on list output:** append `--fields a,b`
 
 ## Known limitations (found by dogfooding — don't be misled)

@@ -14,11 +14,19 @@ language's own grammar and matched on the syntax tree, so `$X.unwrap()` finds ev
 (metavariables bind consistently), and `return Ok($X)` stays anchored to `return`.
 Deterministic, all 12 languages (reuses the tree-sitter grammars). 5 tests; wired
 into `capabilities` and the MCP server (`codeq_astgrep`).
+- **`$$$` variadic metavariables** (follow-up): `foo($$$)` matches any argument
+  count, `fn $N($$$)` any parameters — a run of zero-or-more siblings in a list
+  position. Also detects a variadic wrapped in a statement node. Reliable in
+  argument/parameter lists; block/statement-body variadics are grammar-sensitive
+  (Rust tail-expr works; Python one-line-vs-indented body differs) — documented.
+- **Enclosing-`[symbol]` annotation** (follow-up): each astgrep match now shows the
+  definition it sits inside, like `search`.
 - **Honest limitations (documented):** (1) it can't match inside macro invocations
   — tree-sitter parses macro bodies as opaque token-trees, so `.unwrap()` inside
   `assert_eq!(…)` isn't an AST call node (this explained a 92-vs-132 count gap vs rg,
-  and is inherent to all AST tools); (2) `$$$` variadic metavariables aren't
-  supported yet.
+  and is inherent to all AST tools); (2) matching is structurally exact, so a
+  pattern must include optional syntax the code has (a no-return-type `fn` pattern
+  won't match a fn *with* one).
 - **Process win — codeq is now a native tool for future sessions.** The recurring
   reason I kept slipping back to grep/Read: codeq was invoked via **Bash**
   (second-class), while Read/Grep are native tools with reflex-level gravity. Added
