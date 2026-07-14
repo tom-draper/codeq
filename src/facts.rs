@@ -462,6 +462,11 @@ const JS_QUERY: &str = r#"
 ; ES module imports and re-exports (raw module string, quotes stripped).
 (import_statement source: (string (string_fragment) @name)) @import
 (export_statement source: (string (string_fragment) @name)) @import
+; CommonJS require("x") — a call, not a syntactic import, so it's guarded by the
+; callee name (`require`) via the @guard handling in `extract`.
+(call_expression
+  function: (identifier) @guard
+  arguments: (arguments . (string (string_fragment) @name))) @import
 "#;
 
 /// TypeScript-only definitions, appended to `JS_QUERY` for TS and TSX.

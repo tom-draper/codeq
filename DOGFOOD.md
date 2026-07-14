@@ -4,6 +4,26 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-14 — session 16: writing tests surfaced a JS/TS `require()` import gap
+
+While adding extraction-depth unit tests, a fixture check showed `imports a.js`
+captured the ES `import` but *not* `const p = require("path")`. CommonJS
+`require()` is a huge share of real JS/TS imports, so `imports`/`importers` were
+incomplete for those languages.
+
+- **FIXED: JS/TS/TSX `require("x")` now captured as an import.** Same shape as the
+  earlier Ruby `require` fix — it's a call, not a syntactic import, so the shared
+  `JS_QUERY` now matches `(call_expression function: (identifier) @guard
+  arguments: (arguments . (string ...)))` and the existing `@guard` keyword filter
+  (`require`/…) accepts it. Verified on express: 16 static `require()` imports
+  captured from one file (the remaining `require(expr)` dynamic forms have no
+  static module string, correctly skipped); `console.log(...)` is not an import.
+  Fixes JS, TS, and TSX in one query (they share JS_QUERY). Regression test added.
+- Meta-note: this is the *fourth* finding of the "a construct that's a plain call,
+  not a keyword, is missed" class (Ruby require, now JS require). Worth auditing
+  the other languages' call-style imports (e.g. Python `importlib.import_module`,
+  though that's rarer).
+
 ## 2026-07-14 — session 15: git-free freshness missed `.gitignore` edits (staleness)
 
 With the text renderer now guarded by `bench/textmode.py`, moved to correctness

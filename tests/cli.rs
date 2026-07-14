@@ -1768,3 +1768,115 @@ fn search_output_is_reproducible() {
     let v2 = f.run(&["search", "alpha", "--limit", "0"]);
     assert_eq!(v1, v2, "search must be byte-for-byte reproducible");
 }
+
+#[test]
+fn search_case_insensitive_matches_mixed_case() {
+    let f = Fixture::new();
+    f.write("a.rs", "let Value = 1;\nlet value = 2;\nlet VALUE = 3;\n");
+    let ci = f.run(&["search", "value", "-i", "--limit", "0"]);
+    assert_eq!(ci["data"]["matches"].as_array().unwrap().len(), 3, "-i must match all three cases");
+    let cs = f.run(&["search", "value", "--limit", "0"]);
+    assert_eq!(cs["data"]["matches"].as_array().unwrap().len(), 1, "case-sensitive matches only 'value'");
+}
+
+#[test]
+fn search_regex_features_match_expected_lines() {
+    let f = Fixture::new();
+    f.write("a.rs", "let n = 42;\nlet name = bar;\nlet x = foo;\n");
+    let lines = |v: &Value| -> Vec<u64> {
+        let mut l: Vec<u64> = v["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["line"].as_u64().unwrap())
+            .collect();
+        l.sort();
+        l.dedup();
+        l
+    };
+    assert_eq!(lines(&f.run(&["search", "[0-9]+", "--limit", "0"])), vec![1], "char class + quantifier");
+    assert_eq!(lines(&f.run(&["search", "foo|bar", "--limit", "0"])), vec![2, 3], "alternation");
+    assert_eq!(lines(&f.run(&["search", "names?", "--limit", "0"])), vec![2], "optional quantifier");
+}
+
+#[test]
+fn read_symbol_returns_only_that_definition() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn first() {\n    let a = 1;\n}\nfn second() {\n    let b = 2;\n}\n");
+    f.run(&["index"]);
+    let out = String::from_utf8_lossy(&f.raw(&["read", "a.rs", "--symbol", "second"]).stdout).into_owned();
+    assert!(out.contains("fn second") && out.contains("let b = 2"), "second not returned: {out}");
+    assert!(!out.contains("fn first") && !out.contains("let a = 1"), "sibling leaked into --symbol read: {out}");
+}
+
+#[test]
+fn callees_report_the_functions_a_symbol_calls() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn caller() {\n    helper();\n    other();\n}\nfn helper() {}\nfn other() {}\nfn unrelated() {}\n",
+    );
+    let names = field_set(&f.run(&["callees", "caller"]), "name");
+    assert!(names.contains(&"helper".to_string()), "helper missing: {names:?}");
+    assert!(names.contains(&"other".to_string()), "other missing: {names:?}");
+    assert!(!names.contains(&"unrelated".to_string()), "uncalled sibling listed as callee: {names:?}");
+}
+
+#[test]
+fn path_scopes_definitions_to_one_file() {
+    // --path disambiguates a common name across files (the first dogfood fix).
+    let f = Fixture::new();
+    f.write("a.rs", "fn build() {}\n");
+    f.write("b.rs", "fn build() {}\n");
+    assert_eq!(f.run(&["definitions", "build"])["data"].as_array().unwrap().len(), 2, "both defs unscoped");
+    let scoped = f.run(&["definitions", "build", "--path", "a.rs"]);
+    let rows = scoped["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "scoped to one file");
+    assert_eq!(rows[0]["path"], "a.rs");
+}
+
+#[test]
+fn javascript_require_and_es_import_both_captured() {
+    // CommonJS require("x") is a call, not a syntactic import, but it IS the
+    // import mechanism for a huge amount of JS/TS — capture it alongside ES import.
+    let f = Fixture::new();
+    f.write(
+        "a.js",
+        "import fs from \"fs\";\nconst p = require(\"path\");\nfunction f() { console.log(\"hi\"); }\n",
+    );
+    let mods = field_set(&f.run(&["imports", "a.js"]), "module");
+    assert!(mods.iter().any(|m| m == "fs"), "ES import missing: {mods:?}");
+    assert!(mods.iter().any(|m| m == "path"), "require() import missing: {mods:?}");
+    assert!(!mods.iter().any(|m| m == "hi" || m == "console"), "a non-require call leaked: {mods:?}");
+}
+
+#[test]
+fn go_import_block_captures_each_module() {
+    let f = Fixture::new();
+    f.write("a.go", "package main\nimport (\n\t\"fmt\"\n\t\"os\"\n)\nfunc F() { fmt.Println(os.Args) }\n");
+    let mods = field_set(&f.run(&["imports", "a.go"]), "module");
+    assert!(mods.iter().any(|m| m == "fmt"), "fmt missing from import block: {mods:?}");
+    assert!(mods.iter().any(|m| m == "os"), "os missing from import block: {mods:?}");
+}
+
+#[test]
+fn stats_reports_per_language_file_counts() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn a() {}\n");
+    f.write("b.rs", "fn b() {}\n");
+    f.write("c.py", "def c():\n    pass\n");
+    f.run(&["index"]);
+    let bylang = &f.run(&["stats"])["data"]["by_language"];
+    assert_eq!(bylang["rust"], 2, "rust file count wrong: {bylang}");
+    assert_eq!(bylang["python"], 1, "python file count wrong: {bylang}");
+}
+
+#[test]
+fn context_accepts_multiple_seed_symbols() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn aa() {}\nfn bb() {}\nfn cc() {}\n");
+    let names = chunk_symbols(&f.run(&["context", "--symbols", "aa,bb", "--no-text"])["data"]);
+    assert!(names.contains(&"aa".to_string()) && names.contains(&"bb".to_string()),
+            "both seeds should be returned: {names:?}");
+    assert!(!names.contains(&"cc".to_string()), "unrequested symbol leaked: {names:?}");
+}
