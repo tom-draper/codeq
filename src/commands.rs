@@ -6,16 +6,18 @@ use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
-use regex_syntax::hir::literal::{ExtractKind, Extractor as LiteralExtractor};
 use serde::Serialize;
 
 use crate::context::{self, Request};
 use crate::db::{Db, SCHEMA_VERSION};
 use crate::deps;
 use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
-use crate::facts::{has_spans, Span};
 use crate::index::{language_for, refresh};
 use crate::repo::Repo;
+use crate::search::{
+    fetch_bodies, innermost, like_of, load_file_defs, regex_prefilter, run_search, FileDef, Hit,
+    InFilter, OutMode, ScanOpts, SearchData,
+};
 
 /// Output rendering options parsed from global CLI flags.
 #[derive(Clone, Default)]
@@ -480,7 +482,7 @@ struct Caller {
 /// `path` restricts to callers *located* in matching files.
 fn callers_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Caller>> {
     let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))?;
-    let candidates = fetch_bodies(s, like_of(name).as_deref(), path, None)?;
+    let candidates = fetch_bodies(&s.db.conn, like_of(name).as_deref(), path, None)?;
     // Callers means references in *code* — not comments, strings, or prose in
     // unparseable files (which are excluded). Uses the cached comment/string spans.
     let opts = ScanOpts {
@@ -490,7 +492,7 @@ fn callers_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Caller>
         in_filter: InFilter::Code,
         limit: 0,
     };
-    let hits = match run_search(s, &re, candidates, &opts)? {
+    let hits = match run_search(&s.db.conn, &re, candidates, &opts)? {
         SearchData::Matches { matches, .. } => matches,
         _ => unreachable!(),
     };
@@ -1402,441 +1404,6 @@ pub fn cmd_stats(cwd: &Path, out: Out) -> Result<()> {
     s.emit(data)
 }
 
-/// One matched line, shared by `search` and `references`.
-#[derive(Serialize, Clone)]
-struct Hit {
-    path: String,
-    line: usize,
-    col: usize,
-    /// The innermost definition enclosing this match, if any.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    symbol: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    kind: Option<String>,
-    /// The matched line, trailing whitespace trimmed and capped.
-    text: String,
-    /// Context lines before the match (with -B/-C), nearest last.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    before: Vec<String>,
-    /// Context lines after the match (with -A/-C).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    after: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct FileCount {
-    path: String,
-    count: usize,
-}
-
-/// Output shape depends on the mode: full matches, matching file paths, or
-/// per-file counts. `truncated` is true when `--limit` cut it off.
-#[derive(Serialize)]
-#[serde(untagged)]
-enum SearchData {
-    Matches { matches: Vec<Hit>, truncated: bool },
-    Files { files: Vec<String>, truncated: bool },
-    Counts { counts: Vec<FileCount>, truncated: bool },
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum OutMode {
-    Matches,
-    Files,
-    Count,
-}
-
-/// Restrict matches by the syntactic class of their position.
-#[derive(Clone, Copy, PartialEq)]
-enum InFilter {
-    Any,
-    Code,
-    Comments,
-    Strings,
-}
-
-impl InFilter {
-    fn parse(s: &str) -> Result<InFilter> {
-        Ok(match s {
-            "any" => InFilter::Any,
-            "code" => InFilter::Code,
-            "comment" | "comments" => InFilter::Comments,
-            "string" | "strings" => InFilter::Strings,
-            other => return Err(anyhow!("--in must be code|comments|strings, got '{other}'")),
-        })
-    }
-
-    fn accepts(self, cls: Option<Span>) -> bool {
-        match self {
-            InFilter::Any => true,
-            InFilter::Code => cls.is_none(),
-            InFilter::Comments => cls == Some(Span::Comment),
-            InFilter::Strings => cls == Some(Span::Str),
-        }
-    }
-}
-
-/// The class of byte offset `off` given sorted, non-overlapping `spans`.
-fn class_at(spans: &[(usize, usize, Span)], off: usize) -> Option<Span> {
-    let idx = spans.partition_point(|(s, _, _)| *s <= off);
-    if idx == 0 {
-        return None;
-    }
-    let (s, e, c) = spans[idx - 1];
-    if s <= off && off < e {
-        Some(c)
-    } else {
-        None
-    }
-}
-
-struct ScanOpts {
-    before: usize,
-    after: usize,
-    out: OutMode,
-    in_filter: InFilter,
-    limit: usize,
-}
-
-struct FileDef {
-    name: String,
-    kind: String,
-    start_byte: usize,
-    end_byte: usize,
-}
-
-const MAX_LINE: usize = 240;
-
-/// Candidate file bodies pulled from the FTS index — no filesystem reads.
-/// When `like` holds one or more `%literal%` patterns, the content index (a
-/// trigram FTS5 table) narrows to files whose body matches ANY of them, via
-/// trigram-accelerated `LIKE` — a safe superset (`_`/`%` in the literal act as
-/// wildcards, only broadening; the precise regex confirms). `LIKE` is used
-/// rather than FTS `MATCH`, which silently drops substring matches for many
-/// short/underscore terms. With no patterns, every text file is a candidate
-/// (regex with no extractable literal). `path`/`language` filters apply after.
-fn fetch_bodies(
-    s: &Session,
-    like: Option<&[String]>,
-    path: Option<&str>,
-    language: Option<&str>,
-) -> Result<Vec<(String, Option<String>, String)>> {
-    let patterns = like.filter(|l| !l.is_empty());
-
-    let mut sql = String::from("SELECT path, language, body FROM content_fts");
-    if let Some(pats) = patterns {
-        let clause = (1..=pats.len())
-            .map(|i| format!("body LIKE ?{i}"))
-            .collect::<Vec<_>>()
-            .join(" OR ");
-        sql.push_str(&format!(" WHERE {clause}"));
-    }
-    sql.push_str(" ORDER BY path");
-
-    let raw: Vec<(String, Option<String>, String)> = {
-        let mut stmt = s.db.conn.prepare(&sql)?;
-        if let Some(pats) = patterns {
-            let params: Vec<&dyn rusqlite::ToSql> =
-                pats.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
-            let rows = stmt.query_map(params.as_slice(), row_to_body)?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
-        } else {
-            let rows = stmt.query_map([], row_to_body)?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
-        }
-    };
-
-    let mut out = Vec::new();
-    for (p, lang, body) in raw {
-        if let Some(pf) = path {
-            if !p.contains(pf) {
-                continue;
-            }
-        }
-        if let Some(lf) = language {
-            if lang.as_deref() != Some(lf) {
-                continue;
-            }
-        }
-        out.push((p, lang, body));
-    }
-    Ok(out)
-}
-
-fn row_to_body(r: &rusqlite::Row) -> rusqlite::Result<(String, Option<String>, String)> {
-    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-}
-
-/// Byte offset of the start of each line.
-fn line_starts_of(text: &str) -> Vec<usize> {
-    let mut v = vec![0usize];
-    for (i, b) in text.as_bytes().iter().enumerate() {
-        if *b == b'\n' {
-            v.push(i + 1);
-        }
-    }
-    v
-}
-
-/// The text of line `idx` (0-based), trailing whitespace trimmed and capped.
-fn line_text(text: &str, line_starts: &[usize], idx: usize) -> String {
-    let start = line_starts[idx];
-    let end = line_starts.get(idx + 1).map(|&s| s - 1).unwrap_or(text.len());
-    cap_str(text[start..end.min(text.len())].trim_end(), MAX_LINE)
-}
-
-/// Context lines for the indices in `range` that exist.
-fn context_lines(
-    text: &str,
-    line_starts: &[usize],
-    range: std::ops::Range<usize>,
-) -> Vec<String> {
-    range
-        .filter(|&i| i < line_starts.len())
-        .map(|i| line_text(text, line_starts, i))
-        .collect()
-}
-
-fn load_file_defs(stmt: &mut rusqlite::Statement, path: &str) -> Result<Vec<FileDef>> {
-    let defs = stmt
-        .query_map([path], |r| {
-            Ok(FileDef {
-                name: r.get(0)?,
-                kind: r.get(1)?,
-                start_byte: r.get::<_, i64>(2)? as usize,
-                end_byte: r.get::<_, i64>(3)? as usize,
-            })
-        })?
-        .collect::<std::result::Result<_, _>>()?;
-    Ok(defs)
-}
-
-/// Run `re` over candidate bodies and shape the output per `opts.out`.
-/// Deterministic order (path, then line). When `opts.in_filter` is not `Any`,
-/// matches are classified via `classifier`; files in a language we cannot parse
-/// are excluded (never guessed).
-fn run_search(
-    s: &Session,
-    re: &regex::Regex,
-    candidates: Vec<(String, Option<String>, String)>,
-    opts: &ScanOpts,
-) -> Result<SearchData> {
-    let cap = if opts.limit == 0 { usize::MAX } else { opts.limit };
-    let filtering = opts.in_filter != InFilter::Any;
-
-    let mut def_stmt = s.db.conn.prepare(
-        "SELECT name, kind, start_byte, end_byte FROM facts
-         WHERE path = ?1 AND kind <> 'import'",
-    )?;
-    // Comment/string spans are cached in the index (extracted once), so --in is
-    // a lookup, not a per-query re-parse.
-    let mut span_stmt = s.db.conn.prepare(
-        "SELECT start_byte, end_byte, kind FROM spans WHERE path = ?1 ORDER BY start_byte",
-    )?;
-
-    let mut files: Vec<String> = Vec::new();
-    let mut counts: Vec<FileCount> = Vec::new();
-    let mut hits: Vec<Hit> = Vec::new();
-    let mut truncated = false;
-
-    'outer: for (rel, lang, body) in &candidates {
-        // Load cached spans if filtering; skip files in a language we can't parse.
-        let spans = if filtering {
-            if !has_spans(lang.as_deref().unwrap_or("")) {
-                continue;
-            }
-            let rows = span_stmt.query_map([rel], |r| {
-                Ok((
-                    r.get::<_, i64>(0)? as usize,
-                    r.get::<_, i64>(1)? as usize,
-                    Span::from_i64(r.get::<_, i64>(2)?).unwrap_or(Span::Str),
-                ))
-            })?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
-        } else {
-            Vec::new()
-        };
-        let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(&spans, off));
-
-        let starts = line_starts_of(body);
-
-        match opts.out {
-            OutMode::Files => {
-                if re.find_iter(body).any(|m| accept(m.start())) {
-                    files.push(rel.clone());
-                    if files.len() >= cap {
-                        truncated = true;
-                        break 'outer;
-                    }
-                }
-            }
-            OutMode::Count => {
-                let mut last = usize::MAX;
-                let mut n = 0usize;
-                for m in re.find_iter(body) {
-                    if !accept(m.start()) {
-                        continue;
-                    }
-                    let li = starts.partition_point(|&s| s <= m.start()) - 1;
-                    if li != last {
-                        last = li;
-                        n += 1;
-                    }
-                }
-                if n > 0 {
-                    counts.push(FileCount {
-                        path: rel.clone(),
-                        count: n,
-                    });
-                    if counts.len() >= cap {
-                        truncated = true;
-                        break 'outer;
-                    }
-                }
-            }
-            OutMode::Matches => {
-                let defs = load_file_defs(&mut def_stmt, rel)?;
-                let mut last_line = usize::MAX;
-                for m in re.find_iter(body) {
-                    let off = m.start();
-                    if !accept(off) {
-                        continue;
-                    }
-                    let line_idx = starts.partition_point(|&s| s <= off) - 1;
-                    if line_idx == last_line {
-                        continue; // one row per line
-                    }
-                    last_line = line_idx;
-
-                    let enclosing = innermost(&defs, off);
-                    hits.push(Hit {
-                        path: rel.clone(),
-                        line: line_idx + 1,
-                        col: off - starts[line_idx],
-                        symbol: enclosing.map(|d| d.name.clone()),
-                        kind: enclosing.map(|d| d.kind.clone()),
-                        text: line_text(body, &starts, line_idx),
-                        before: context_lines(
-                            body,
-                            &starts,
-                            line_idx.saturating_sub(opts.before)..line_idx,
-                        ),
-                        after: context_lines(
-                            body,
-                            &starts,
-                            (line_idx + 1)..(line_idx + 1 + opts.after),
-                        ),
-                    });
-                    if hits.len() >= cap {
-                        truncated = true;
-                        break 'outer;
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(match opts.out {
-        OutMode::Files => SearchData::Files { files, truncated },
-        OutMode::Count => SearchData::Counts { counts, truncated },
-        OutMode::Matches => SearchData::Matches {
-            matches: hits,
-            truncated,
-        },
-    })
-}
-
-/// A `%literal%` LIKE pattern for the content index — trigram needs >= 3 chars,
-/// so shorter literals can't be prefiltered (caller full-scans). `_`/`%` in the
-/// literal are left as LIKE wildcards: only broadens the candidate set (a safe
-/// superset), and the precise regex confirms.
-fn like_pattern(lit: &str) -> Option<String> {
-    if lit.chars().count() < 3 {
-        return None;
-    }
-    Some(format!("%{lit}%"))
-}
-
-/// A single-literal prefilter (for `--fixed` search and `references`).
-fn like_of(lit: &str) -> Option<Vec<String>> {
-    like_pattern(lit).map(|p| vec![p])
-}
-
-/// Build a prefilter for a regex: a set of literals such that *every* match must
-/// contain at least one of them (as a substring), OR-ed as LIKE patterns. Uses
-/// regex-syntax prefix/suffix literal extraction, then an inner-literal fallback.
-/// Returns `None` when no safe prefilter exists — the caller then full-scans,
-/// which is always correct.
-///
-/// Correctness: a finite prefix (or suffix) literal set means every match starts
-/// (or ends) with one of the literals, so it contains one as a substring; the
-/// LIKE OR is a true superset and never drops a match.
-fn regex_prefilter(pattern: &str) -> Option<Vec<String>> {
-    let hir = regex_syntax::parse(pattern).ok()?;
-    usable_literals(ExtractKind::Prefix, &hir)
-        .or_else(|| usable_literals(ExtractKind::Suffix, &hir))
-        .or_else(|| inner_required_literal(&hir))
-}
-
-/// The longest literal that must appear in *every* match, found by walking the
-/// HIR. This catches a literal buried in the middle (e.g. `.*needle.*`) that
-/// prefix/suffix extraction misses. A required literal is a safe single-term
-/// prefilter; when there isn't one >= 3 chars we return None and full-scan.
-fn inner_required_literal(hir: &regex_syntax::hir::Hir) -> Option<Vec<String>> {
-    fn flush(cur: &mut Vec<u8>, best: &mut Vec<u8>) {
-        if cur.len() > best.len() {
-            *best = cur.clone();
-        }
-        cur.clear();
-    }
-    // Accumulate contiguous literals; anything that isn't an unconditional
-    // literal (a class, an optional/zero repetition, an alternation, a look)
-    // breaks the run. Required containers (concat, capture, min>=1 repetition)
-    // are walked so their literals count too.
-    fn walk(hir: &regex_syntax::hir::Hir, cur: &mut Vec<u8>, best: &mut Vec<u8>) {
-        use regex_syntax::hir::HirKind;
-        match hir.kind() {
-            HirKind::Literal(lit) => cur.extend_from_slice(&lit.0[..]),
-            HirKind::Concat(subs) => {
-                for s in subs {
-                    walk(s, cur, best);
-                }
-            }
-            HirKind::Capture(c) => walk(&c.sub, cur, best),
-            HirKind::Repetition(r) if r.min >= 1 => {
-                flush(cur, best);
-                walk(&r.sub, cur, best);
-                flush(cur, best);
-            }
-            _ => flush(cur, best),
-        }
-    }
-    let mut best = Vec::new();
-    let mut cur = Vec::new();
-    walk(hir, &mut cur, &mut best);
-    flush(&mut cur, &mut best);
-    let s = std::str::from_utf8(&best).ok()?;
-    like_pattern(s).map(|p| vec![p])
-}
-
-fn usable_literals(kind: ExtractKind, hir: &regex_syntax::hir::Hir) -> Option<Vec<String>> {
-    let mut ex = LiteralExtractor::new();
-    ex.kind(kind);
-    let seq = ex.extract(hir);
-    let lits = seq.literals()?;
-    if lits.is_empty() || lits.len() > 64 {
-        return None;
-    }
-    let mut terms = Vec::with_capacity(lits.len());
-    for lit in lits {
-        let s = std::str::from_utf8(lit.as_bytes()).ok()?;
-        // Any alternative shorter than a trigram is unfilterable, which would
-        // make the whole OR unsafe — bail to a full scan instead.
-        terms.push(like_pattern(s)?);
-    }
-    Some(terms)
-}
-
 /// Include/exclude glob filter over repo-relative paths, ripgrep-style: a `!`
 /// prefix excludes; a pattern with no `/` matches by basename in any directory;
 /// a trailing `/` matches a whole directory.
@@ -1950,7 +1517,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     } else {
         regex_prefilter(args.pattern)
     };
-    let mut candidates = fetch_bodies(&s, match_query.as_deref(), args.path, args.language)?;
+    let mut candidates = fetch_bodies(&s.db.conn, match_query.as_deref(), args.path, args.language)?;
 
     if !args.globs.is_empty() {
         let gf = GlobFilter::build(args.globs)?;
@@ -1976,7 +1543,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         in_filter,
         limit: args.limit,
     };
-    let data = run_search(&s, &re, candidates, &opts)?;
+    let data = run_search(&s.db.conn, &re, candidates, &opts)?;
     s.emit(data)
 }
 
@@ -2014,7 +1581,7 @@ pub fn cmd_references(
     // The name is a substring of every reference, so the trigram index narrows
     // to files that contain it (the \b matcher then confirms word boundaries).
     let match_query = like_of(name);
-    let candidates = fetch_bodies(&s, match_query.as_deref(), path, language)?;
+    let candidates = fetch_bodies(&s.db.conn, match_query.as_deref(), path, language)?;
     let opts = ScanOpts {
         before: 0,
         after: 0,
@@ -2022,7 +1589,7 @@ pub fn cmd_references(
         in_filter: InFilter::Any,
         limit,
     };
-    let (hits, truncated) = match run_search(&s, &re, candidates, &opts)? {
+    let (hits, truncated) = match run_search(&s.db.conn, &re, candidates, &opts)? {
         SearchData::Matches { matches, truncated } => (matches, truncated),
         _ => unreachable!("references always uses Matches mode"),
     };
@@ -2133,7 +1700,7 @@ fn name_is_used(
     let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))
         .map_err(|e| anyhow!("invalid name: {e}"))?;
     let like = like_of(name);
-    let candidates = fetch_bodies(s, like.as_deref(), None, None)?;
+    let candidates = fetch_bodies(&s.db.conn, like.as_deref(), None, None)?;
     let opts = ScanOpts {
         before: 0,
         after: 0,
@@ -2141,7 +1708,7 @@ fn name_is_used(
         in_filter: InFilter::Any,
         limit: 0,
     };
-    let hits = match run_search(s, &re, candidates, &opts)? {
+    let hits = match run_search(&s.db.conn, &re, candidates, &opts)? {
         SearchData::Matches { matches, .. } => matches,
         _ => unreachable!("unused always uses Matches mode"),
     };
@@ -2292,7 +1859,7 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
 
     let expr = format!(r"\b{}\b", regex::escape(name));
     let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
-    let candidates = fetch_bodies(&s, like_of(name).as_deref(), path, None)?;
+    let candidates = fetch_bodies(&s.db.conn, like_of(name).as_deref(), path, None)?;
     let opts = ScanOpts {
         before: 0,
         after: 0,
@@ -2300,7 +1867,7 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
         in_filter: InFilter::Any,
         limit: 0,
     };
-    let hits = match run_search(&s, &re, candidates, &opts)? {
+    let hits = match run_search(&s.db.conn, &re, candidates, &opts)? {
         SearchData::Matches { matches, .. } => matches,
         _ => unreachable!("tests always uses Matches mode"),
     };
@@ -2382,24 +1949,8 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
     })
 }
 
-/// The innermost definition whose byte range contains `off`.
-fn innermost(defs: &[FileDef], off: usize) -> Option<&FileDef> {
-    defs.iter()
-        .filter(|d| d.start_byte <= off && off < d.end_byte)
-        .max_by_key(|d| d.start_byte)
-}
-
 fn is_false(b: &bool) -> bool {
     !*b
-}
-
-fn cap_str(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max).collect();
-        format!("{t}…")
-    }
 }
 
 // `map` is a factual aggregation of the index — grouped counts, nothing more.

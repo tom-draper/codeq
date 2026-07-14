@@ -17,6 +17,7 @@ mod facts;
 mod index;
 mod mcp;
 mod repo;
+mod search;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
