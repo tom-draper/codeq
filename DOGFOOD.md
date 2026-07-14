@@ -4,6 +4,29 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-14 — session 15: git-free freshness missed `.gitignore` edits (staleness)
+
+With the text renderer now guarded by `bench/textmode.py`, moved to correctness
+edge cases of the git-free freshness cache. Stress-testing ignore-rule changes
+found a real staleness bug.
+
+- **REAL BUG, FIXED: editing `.gitignore` didn't invalidate freshness.** Adding
+  `build/` to `.gitignore` should drop `build/gen.rs` from the index, but its
+  symbols stayed searchable. Cause: `.gitignore`/`.ignore` are *hidden* files —
+  never indexed (so not in the file manifest) and never walked — and an in-place
+  edit bumps no *directory* mtime, so neither half of the freshness cache noticed.
+  Ignore-rule changes were silently missed until some unrelated change forced a
+  walk. Fixed: the walk now records the mtime of each directory's
+  `.gitignore`/`.ignore` alongside the dir mtimes (generalised `dir_mtime` →
+  `path_mtime`), so an ignore edit invalidates freshness and re-evaluates. Verified
+  ignore→drop and un-ignore→restore; regression test added.
+  - Known residual: changes to `.git/info/exclude` or the global excludesFile
+    aren't auto-detected (they're outside the tree) — `index --rebuild` picks them
+    up. Acceptable; git's own fsmonitor has similar caveats.
+- **Validated (no bug): rename / touch / edit-revert** all handled correctly (from
+  the prior round). The dir-mtime + manifest cache is robust once ignore files are
+  tracked.
+
 ## 2026-07-13 — session 14: dogfooding caught `index --rebuild` leaving an empty index
 
 Prompted to actually dogfood (I'd drifted to grep/rg/sed), used `codeq search

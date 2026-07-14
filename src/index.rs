@@ -133,7 +133,16 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             // Cache every walked directory's mtime for the freshness fast path.
             if ftype.is_dir() {
                 if let Some(m) = dent.metadata().ok().as_ref().and_then(mtime_ns_of) {
-                    dirs_seen.insert(rel, m);
+                    dirs_seen.insert(rel.clone(), m);
+                }
+                // Ignore files change which paths get indexed, but they're hidden
+                // (never walked), so an in-place `.gitignore`/`.ignore` edit bumps
+                // no cached mtime — track them here or freshness would miss it.
+                for ig in [".gitignore", ".ignore"] {
+                    if let Some(m) = std::fs::metadata(abs.join(ig)).ok().as_ref().and_then(mtime_ns_of) {
+                        let key = if rel.is_empty() { ig.to_string() } else { format!("{rel}/{ig}") };
+                        dirs_seen.insert(key, m);
+                    }
                 }
                 continue;
             }
@@ -280,7 +289,7 @@ fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
             any_dir = true;
             let path: String = r.get(0)?;
             let mtime: i64 = r.get(1)?;
-            if dir_mtime(&root.join(&path)) != Some(mtime) {
+            if path_mtime(&root.join(&path)) != Some(mtime) {
                 return Ok(false);
             }
         }
@@ -311,10 +320,10 @@ fn mtime_ns_of(md: &std::fs::Metadata) -> Option<i64> {
         .map(|d| d.as_nanos() as i64)
 }
 
-/// Directory mtime for the freshness check, or `None` if it isn't a directory.
-fn dir_mtime(path: &std::path::Path) -> Option<i64> {
-    let md = std::fs::metadata(path).ok()?;
-    md.is_dir().then(|| mtime_ns_of(&md)).flatten()
+/// Mtime of a watched path for the freshness check: a directory (structural
+/// changes bump it) or an ignore file (edits change what gets indexed).
+fn path_mtime(path: &std::path::Path) -> Option<i64> {
+    mtime_ns_of(&std::fs::metadata(path).ok()?)
 }
 
 /// File `(size, mtime_ns)` for the freshness check, or `None` if not a file.

@@ -1471,6 +1471,29 @@ fn rebuild_repopulates_the_index() {
 }
 
 #[test]
+fn freshness_reflects_gitignore_edits() {
+    // Editing .gitignore changes which files are indexed. Ignore files are hidden
+    // (never walked, never in the manifest) and an in-place edit bumps no
+    // directory mtime, so the git-free cache tracks their mtimes explicitly —
+    // without that, an ignore-rule change is missed until some unrelated change.
+    let f = Fixture::new();
+    f.write("keep.rs", "fn keep() {}\n");
+    f.write("gen/out.rs", "fn generated() {}\n");
+    f.write(".gitignore", "\n");
+    f.git_init_commit();
+    assert!(field_set(&f.run(&["symbols"]), "name").contains(&"generated".to_string()));
+
+    f.write(".gitignore", "gen/\n"); // now ignore the gen/ directory
+    let names = field_set(&f.run(&["symbols"]), "name");
+    assert!(!names.contains(&"generated".to_string()), "gitignored file still indexed: {names:?}");
+    assert!(names.contains(&"keep".to_string()));
+
+    f.write(".gitignore", "\n"); // un-ignore
+    assert!(field_set(&f.run(&["symbols"]), "name").contains(&"generated".to_string()),
+            "un-ignored file not re-indexed");
+}
+
+#[test]
 fn freshness_detects_added_file() {
     // The git-free freshness cache detects a new file via its parent directory's
     // bumped mtime — no manual reindex, no git.
