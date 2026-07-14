@@ -555,6 +555,12 @@ const CPP_QUERY: &str = r#"
 (function_definition declarator: (pointer_declarator declarator: (function_declarator declarator: (identifier) @name)) body: (compound_statement) @body) @function
 (function_definition declarator: (function_declarator declarator: (field_identifier) @name) body: (compound_statement) @body) @method
 (function_definition declarator: (function_declarator declarator: (qualified_identifier) @name) body: (compound_statement) @body) @method
+; Declaration-only members (the norm in headers): method/constructor prototypes
+; with no body. Without these, a header-only class exposes none of its methods.
+(field_declaration declarator: (function_declarator declarator: (field_identifier) @name)) @method
+(field_declaration declarator: (function_declarator declarator: (identifier) @name)) @method
+; Free-function prototypes at file scope (also headers).
+(declaration declarator: (function_declarator declarator: (identifier) @name)) @function
 (class_specifier name: (type_identifier) @name body: (field_declaration_list) @body) @class
 (struct_specifier name: (type_identifier) @name body: (field_declaration_list) @body) @struct
 (enum_specifier name: (type_identifier) @name body: (enumerator_list) @body) @enum

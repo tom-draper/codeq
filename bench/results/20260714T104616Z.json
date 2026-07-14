@@ -1,0 +1,100 @@
+{
+  "timestamp": "2026-07-14T10:46:16+00:00",
+  "codeq_commit": "79a96e4573e1",
+  "per_command": {
+    "at": {
+      "pass": 107,
+      "total": 107,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "outline": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.964,
+      "bytes_x": 3.336
+    },
+    "imports": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.434,
+      "bytes_x": 0.888
+    },
+    "callers": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.623,
+      "bytes_x": 0.279
+    },
+    "definitions": {
+      "pass": 60,
+      "total": 60,
+      "time_x": 1.141,
+      "bytes_x": null
+    },
+    "references": {
+      "pass": 120,
+      "total": 120,
+      "time_x": 2.175,
+      "bytes_x": 2.126
+    },
+    "search": {
+      "pass": 270,
+      "total": 270,
+      "time_x": 3.794,
+      "bytes_x": 1.487
+    },
+    "read": {
+      "pass": 60,
+      "total": 60,
+      "time_x": 6.276,
+      "bytes_x": 0.001
+    }
+  },
+  "summary": {
+    "repos": 3,
+    "total_correctness_tests": 617,
+    "correctness_pass": 617,
+    "correctness_fail": 0,
+    "search_total": 90,
+    "search_fail": 0,
+    "errors": 0,
+    "invariant_total": 347,
+    "invariant_fail": 0,
+    "fuzz_total": 180,
+    "fuzz_fail": 0,
+    "actions_total": 90,
+    "median_codeq_over_rg_time": 3.794,
+    "median_codeq_over_rg_bytes": 1.487
+  },
+  "per_repo": {
+    "json": {
+      "lang": "cpp",
+      "index_ms": 5743.63,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "fmt": {
+      "lang": "cpp",
+      "index_ms": 2722.54,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "spdlog": {
+      "lang": "cpp",
+      "index_ms": 1779.81,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    }
+  },
+  "failures": []
+}

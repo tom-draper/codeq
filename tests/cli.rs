@@ -1851,6 +1851,30 @@ fn javascript_require_and_es_import_both_captured() {
 }
 
 #[test]
+fn cpp_header_method_declarations_are_extracted() {
+    // Declaration-only members (the norm in .hpp headers) must be findable, not
+    // just inline or out-of-line definitions — otherwise a header-only class
+    // exposes none of its API.
+    let f = Fixture::new();
+    f.write(
+        "w.hpp",
+        "class Widget {\npublic:\n    void declared_only();\n    int compute(int x) const;\n    void inline_def() {}\n};\nint free_prototype(int a);\n",
+    );
+    let names = field_set(&f.run(&["symbols", "--path", "w.hpp"]), "name");
+    for n in ["Widget", "declared_only", "compute", "inline_def", "free_prototype"] {
+        assert!(names.iter().any(|x| x == n), "cpp symbol {n} missing: {names:?}");
+    }
+    // The inline definition is not double-counted.
+    assert_eq!(names.iter().filter(|x| *x == "inline_def").count(), 1, "inline method duplicated");
+    // A declaration-only method still resolves via `definitions`, with a signature.
+    let sig = f.run(&["definitions", "declared_only"])["data"][0]["signature"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(sig.contains("declared_only"), "declaration signature missing: {sig}");
+}
+
+#[test]
 fn php_require_and_include_are_imports() {
     // PHP's file-inclusion constructs (require/require_once/include/include_once)
     // are its other import mechanism alongside `use`; capture static string paths

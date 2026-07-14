@@ -226,11 +226,19 @@ all extracted as expected). Two real gaps and one re-confirmed limitation:
   method identifier as `@guard`, and `extract` filters to the recognised keywords
   (`require`/`require_relative`/`load`/`autoload`) in Rust — `puts "x"` etc. are
   not imports. sinatra 0→85, rack 0→122 imports; regression test added.
-- **GAP: C++ pure method *declarations* aren't captured.** `void m();` inside a
-  class yields no symbol; only out-of-line definitions (`Widget::m`) and inline
-  ones are. A header-only class shows no methods — bad for C/C++ header
-  navigation. Also `typedef struct {…} Named;` (anonymous struct typedef) isn't
-  captured.
+- **RESOLVED (session 17): C++ pure method *declarations* now captured.** `void
+  m();` inside a class was yielding no symbol (only definitions/inline methods
+  were), so a header-only class exposed none of its API. The query matched only
+  `function_definition` (which requires a body); added patterns for
+  `field_declaration`/`declaration` with a `function_declarator` — class-member
+  prototypes (methods, constructors) and free-function prototypes. Verified on a
+  header fixture (declared_only/compute/pure_virtual/free_prototype now found, no
+  double-count of inline methods) and on real repos (fmt/json/spdlog: 617/617
+  differential assertions still PASS). Minor known residual: an all-caps macro
+  invocation at declaration scope (e.g. `FMT_ENUM_UNDERLYING_TYPE(...)`) can be
+  mislabeled a function — tree-sitter can't expand macros; ~3% of a header, and
+  the alternative (dropping declarations) loses far more. `typedef struct {…}
+  Named;` anonymous-struct-typedef is still not captured (separate, minor).
 - **Re-confirmed (`--path` substring): `symbols --path s.c` returned symbols from
   `s.cpp` and `S.cs`** — `s.c` is a substring of both (and matching is
   case-insensitive). Documented behaviour, but for a query that looks like a full
