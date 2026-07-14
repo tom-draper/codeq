@@ -171,10 +171,11 @@ fn render_row(row: &Value, out: &mut String) {
 
     let pad = "  ".repeat(int_of("depth").unwrap_or(0).max(0) as usize);
 
-    // A multi-line body (context chunks) prints verbatim under a locator header.
+    // A multi-line body (context chunks) prints verbatim under a locator header
+    // (drop the trailing ": " so the header reads cleanly above the block).
     if let Some(t) = str_of("text") {
         if t.contains('\n') {
-            out.push_str(&format!("{pad}{loc}\n{t}\n"));
+            out.push_str(&format!("{pad}{}\n{t}\n", loc.trim_end_matches([':', ' '])));
             return;
         }
         // codeq's differentiator over grep: annotate the match with the symbol
@@ -189,15 +190,31 @@ fn render_row(row: &Value, out: &mut String) {
         out.push_str(&format!("{pad}{loc}{sig}\n"));
         return;
     }
+    // Bare identifiers (symbols, callers, imports, map groupings), then any other
+    // scalar fields as `key=value` — so metric rows like map's `definitions`/
+    // `files`/`importers` counts render instead of vanishing.
     let mut parts: Vec<String> = Vec::new();
-    for key in ["kind", "name", "module", "symbol"] {
+    for key in ["kind", "name", "module", "symbol", "dir"] {
         if let Some(v) = str_of(key) {
             parts.push(v.to_string());
         }
     }
     if parts.is_empty() {
-        if let Some(c) = int_of("count") {
-            parts.push(c.to_string());
+        if let Some(l) = str_of("language") {
+            parts.push(l.to_string()); // language identifies a row only when nothing else does
+        }
+    }
+    const CONSUMED: &[&str] = &[
+        "path", "line", "col", "start_line", "end_line", "start_col", "end_col",
+        "start_byte", "end_byte", "depth", "text", "signature", "doc", "source",
+        "id", "confidence", "language", "kind", "name", "module", "symbol", "dir",
+    ];
+    for (k, v) in o {
+        if CONSUMED.contains(&k.as_str()) {
+            continue;
+        }
+        if v.is_number() || v.is_boolean() || v.is_string() {
+            parts.push(format!("{k}={}", inline(v)));
         }
     }
     out.push_str(&format!("{pad}{loc}{}\n", parts.join(" ")));

@@ -1286,6 +1286,13 @@ fn map_is_factual_and_reproducible() {
     // Same inputs, identical output — no hidden state, no ranking drift.
     let v2 = f.run(&["map"]);
     assert_eq!(v, v2, "map must be byte-for-byte reproducible");
+
+    // Default (text) output must render the per-row metric counts, not drop them
+    // into empty payloads (the generic renderer's key=value fallback).
+    let text = String::from_utf8_lossy(&f.raw(&["map"]).stdout).into_owned();
+    assert!(text.contains("src/a.rs: ") && text.contains("definitions=2"),
+            "map text output lost its counts: {text}");
+    assert!(text.contains("importers=2"), "import counts missing from map text: {text}");
 }
 
 // ---------------------------------------------------------------------------
