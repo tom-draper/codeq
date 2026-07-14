@@ -829,6 +829,51 @@ fn callers_depth_walks_transitively() {
 }
 
 #[test]
+fn unused_reports_only_definitions_with_no_use() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn used() {}\n\
+         fn dead() {}\n\
+         fn caller() { used(); }\n",
+    );
+    let names = field_set(&f.run(&["unused"]), "name");
+    assert!(names.contains(&"dead".to_string()), "dead fn not reported: {names:?}");
+    assert!(!names.contains(&"used".to_string()), "used fn wrongly reported: {names:?}");
+    // `caller` references `used` but nothing references `caller` → also unused.
+    assert!(names.contains(&"caller".to_string()), "{names:?}");
+}
+
+#[test]
+fn unused_is_conservative_about_comment_mentions() {
+    // A symbol mentioned only in a comment is NOT dead-code-flagged: `unused`
+    // counts any mention (code/comment/string) as a use, so it under-reports
+    // rather than risk flagging something an agent might delete.
+    let f = Fixture::new();
+    f.write("a.rs", "fn ghost() {}\n// ghost is referenced here in prose\n");
+    let names = field_set(&f.run(&["unused"]), "name");
+    assert!(!names.contains(&"ghost".to_string()),
+            "a comment mention should count as a use: {names:?}");
+}
+
+#[test]
+fn unused_excludes_test_files_by_default() {
+    let f = Fixture::new();
+    f.write("src/lib.rs", "fn dead() {}\n");
+    f.write("tests/it.rs", "fn a_test_case() {}\n");
+
+    // Default: the test-file definition is not reported.
+    let def = field_set(&f.run(&["unused"]), "name");
+    assert!(def.contains(&"dead".to_string()), "real dead code missing: {def:?}");
+    assert!(!def.contains(&"a_test_case".to_string()),
+            "test-file def leaked by default: {def:?}");
+
+    // --include-tests brings it in.
+    let inc = field_set(&f.run(&["unused", "--include-tests"]), "name");
+    assert!(inc.contains(&"a_test_case".to_string()), "{inc:?}");
+}
+
+#[test]
 fn callees_depth_walks_transitively() {
     let f = Fixture::new();
     f.write(

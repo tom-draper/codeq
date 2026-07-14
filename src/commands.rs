@@ -1,7 +1,7 @@
 //! Command implementations for the v1 proving spine:
 //! `index`, `files`, `changed`, `stats`.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
@@ -2049,6 +2049,141 @@ pub fn cmd_references(
         .collect();
 
     s.emit(ReferencesResult { references, truncated })
+}
+
+#[derive(Serialize)]
+struct UnusedRow {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    visibility: Option<String>,
+}
+
+/// Whether `name` occurs anywhere in the repo outside its own definition
+/// site(s). Conservative: a word-boundary mention in code, a comment, or a
+/// string all count as a use, so `unused` only ever flags a name with *zero*
+/// occurrences elsewhere. Name-based (not type-resolved), like `references`.
+fn name_is_used(
+    s: &Session,
+    name: &str,
+    defsites: Option<&HashSet<(String, i64)>>,
+) -> Result<bool> {
+    let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))
+        .map_err(|e| anyhow!("invalid name: {e}"))?;
+    let like = like_of(name);
+    let candidates = fetch_bodies(s, like.as_deref(), None, None)?;
+    let opts = ScanOpts {
+        before: 0,
+        after: 0,
+        out: OutMode::Matches,
+        in_filter: InFilter::Any,
+        limit: 0,
+    };
+    let hits = match run_search(s, &re, candidates, &opts)? {
+        SearchData::Matches { matches, .. } => matches,
+        _ => unreachable!("unused always uses Matches mode"),
+    };
+    let empty = HashSet::new();
+    let ds = defsites.unwrap_or(&empty);
+    Ok(hits
+        .iter()
+        .any(|h| !ds.contains(&(h.path.clone(), h.line as i64))))
+}
+
+/// `unused [<path>]` — definitions with no reference anywhere outside their own
+/// definition site (candidate dead code). Reports `visibility` so a public
+/// symbol (possibly part of an external API, not dead) is distinguishable from a
+/// private one (safe to remove). Name-based and conservative: a mention in a
+/// comment or string counts as a use, and a same-named symbol elsewhere masks
+/// it, so this under-reports rather than misleads. `--path`/`--kind` scope what
+/// is *reported*; the usage check is always repo-wide. Test-file definitions are
+/// excluded by default (framework entry points look unused) unless `include_tests`.
+pub fn cmd_unused(
+    cwd: &Path,
+    path: Option<&str>,
+    kind: Option<&str>,
+    include_tests: bool,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    // Every definition site keyed by name (repo-wide) so a use can be told from
+    // a definition, and a name defined in >1 place is handled.
+    let mut defsites: HashMap<String, HashSet<(String, i64)>> = HashMap::new();
+    {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT name, path, start_line FROM facts
+             WHERE kind <> 'import' AND name IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+        })?;
+        for row in rows {
+            let (n, p, l) = row?;
+            defsites.entry(n).or_default().insert((p, l));
+        }
+    }
+
+    // The definitions eligible to be reported (scoped by path/kind).
+    let mut sql = String::from(
+        "SELECT name, kind, path, start_line, visibility FROM facts
+         WHERE kind <> 'import' AND name IS NOT NULL",
+    );
+    let mut args: Vec<String> = Vec::new();
+    if let Some(p) = path {
+        sql.push_str(&format!(" AND path LIKE ?{}", args.len() + 1));
+        args.push(format!("%{p}%"));
+    }
+    if let Some(k) = kind {
+        sql.push_str(&format!(" AND kind = ?{}", args.len() + 1));
+        args.push(k.to_string());
+    }
+    sql.push_str(" ORDER BY path, start_line");
+    let candidates: Vec<UnusedRow> = {
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |r| {
+            Ok(UnusedRow {
+                name: r.get(0)?,
+                kind: r.get(1)?,
+                path: r.get(2)?,
+                line: r.get(3)?,
+                visibility: r.get(4)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+
+    // Scan each distinct name once; keep the defs whose name is never used.
+    let mut used: HashMap<String, bool> = HashMap::new();
+    let mut data: Vec<UnusedRow> = Vec::new();
+    for cand in candidates {
+        // Test functions are invoked by the test runner (by discovery/attribute),
+        // not referenced by name, so they always look unused — exclude them by
+        // default so real dead code isn't buried under every test.
+        if !include_tests && is_test_path(&cand.path) {
+            continue;
+        }
+        let is_used = match used.get(&cand.name) {
+            Some(&u) => u,
+            None => {
+                let u = name_is_used(&s, &cand.name, defsites.get(&cand.name))?;
+                used.insert(cand.name.clone(), u);
+                u
+            }
+        };
+        if !is_used {
+            data.push(cand);
+            if limit > 0 && data.len() >= limit {
+                break;
+            }
+        }
+    }
+    s.emit(data)
 }
 
 /// Whether a path looks like a test file, across common frameworks. Heuristic —

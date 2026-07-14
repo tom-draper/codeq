@@ -687,3 +687,24 @@ single-file `public-api` *loses* 0.3x (its complete signatures outweigh a decl
 grep on one file), package-scale `package-api` *wins* 4.2x (the alternative is
 reading N files). api's value is the package surface, exactly as predicted — the
 benchmark now shows both the ceiling and the floor.
+
+## 2026-07-14 — wishlist: `unused` (dead-code candidates), and it found some
+
+Built `codeq unused` — definitions with no reference anywhere outside their own
+definition site. No git (an agent uses git itself for history); this is a pure
+aggregate over the reference machinery: for each distinct definition name, scan
+the repo for `\b name \b` and keep the ones whose only occurrences are their def
+sites. Conservative by design (precision > recall for a command that might drive
+deletion): a mention in a *comment or string* counts as a use (`InFilter::Any`),
+and it's name-based, so it under-reports rather than flag live code.
+
+Dogfooded immediately and it found real dead code in codeq itself: `pub fn
+has_been_indexed` in src/db.rs — nothing calls it. Also surfaced the expected
+signal problem: every `#[test] fn` looks unused (the runner invokes them by
+discovery, not by name), flooding the output. Fixed by excluding test-file defs
+by default (`is_test_path`, reused from `tests`), `--include-tests` to opt in —
+which collapsed the codeq repo's output from 121 rows to the 1 that matters.
+
+Fast enough to not need optimizing: ~0.4s over the whole codeq repo (each name's
+scan is trigram-narrowed to files containing the substring; results cached per
+name so a name defined N times is scanned once).

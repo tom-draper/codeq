@@ -177,6 +177,26 @@ enum Command {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
+    /// Definitions with no reference anywhere outside their own definition site
+    /// — candidate dead code. Conservative and name-based: a mention in a comment
+    /// or string counts as a use, and a same-named symbol elsewhere masks it, so
+    /// it under-reports. `visibility` is shown so a public symbol (maybe external
+    /// API, not dead) is distinguishable from a private one (safe to remove).
+    Unused {
+        /// Restrict the reported definitions to paths containing this substring
+        /// (the usage check stays repo-wide).
+        path: Option<String>,
+        /// Only this kind (e.g. function, struct, class).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Also report definitions in test files (excluded by default, since
+        /// test entry points are invoked by the runner, not referenced by name).
+        #[arg(long)]
+        include_tests: bool,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// Test functions that reference a symbol — "which tests exercise X".
     /// Heuristic (test-file path or test-like function name), name-based.
     Tests {
@@ -435,6 +455,19 @@ fn main() -> ExitCode {
             &name,
             path.as_deref(),
             language.as_deref(),
+            limit,
+            out,
+        ),
+        Command::Unused {
+            path,
+            kind,
+            include_tests,
+            limit,
+        } => commands::cmd_unused(
+            &cwd,
+            path.as_deref(),
+            kind.as_deref(),
+            include_tests,
             limit,
             out,
         ),

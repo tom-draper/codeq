@@ -29,6 +29,11 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
     with its `depth`; text output indents by hop. For blast-radius / reachability.
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
   reference NAME (by test-file path or test-like name). For the edit→find-the-test loop.
+- **Find dead code:** `codeq unused [<path>]` — definitions with no reference
+  anywhere outside their own definition site. Conservative (a comment/string
+  mention counts as a use; name-based, so a same-named symbol elsewhere masks it)
+  so it under-reports rather than mislead. Shows `visibility` (a `public` hit may
+  be external API, not dead); test-file defs excluded unless `--include-tests`.
 - **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
   - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
     templates. codeq's own SQL lives in string literals, so `--in code` finds none.

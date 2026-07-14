@@ -229,6 +229,15 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push("importers".into());
             args.push(s(a, "query")?.into());
         }
+        "codeq_unused" => {
+            args.push("unused".into());
+            if let Some(p) = s(a, "path") {
+                args.push(p.into());
+            }
+            opt(&mut args, a, "kind", "--kind");
+            flag(&mut args, a, "include_tests", "--include-tests");
+            optn(&mut args, a, "limit", "--limit");
+        }
         "codeq_api" => {
             args.push("api".into());
             if let Some(p) = s(a, "path") {
@@ -358,6 +367,9 @@ fn tools() -> Value {
         tool("codeq_importers",
             "Files whose imports match a module string.",
             json!({ "query": str_ }), &["query"]),
+        tool("codeq_unused",
+            "Definitions with no reference anywhere outside their own definition site — candidate dead code. Conservative and name-based: a mention in a comment or string counts as a use, and a same-named symbol elsewhere masks it, so it under-reports rather than misleads. visibility is shown so a public symbol (maybe external API, not dead) is distinguishable from a private one. Test-file definitions are excluded by default (framework entry points look unused); set include_tests to include them. path/kind scope what is reported; the usage check is always repo-wide.",
+            json!({ "path": str_, "kind": str_, "include_tests": bool_, "limit": num_ }), &[]),
         tool("codeq_api",
             "The public API surface of a file or directory: the definitions it exports for outside use, with signatures. \"Public\" is each language's own notion (Rust pub, JS/TS export, Go capitalization, Python non-underscore, a public modifier in Java/C#/PHP, non-static in C/C++); pub(crate)/protected are excluded. Use it to learn how to call an unfamiliar module without reading whole files. path scopes to a file/dir substring; kind filters to one kind (function, struct, class, …).",
             json!({ "path": str_, "kind": str_, "limit": num_ }), &[]),
