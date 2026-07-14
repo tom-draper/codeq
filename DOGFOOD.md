@@ -544,3 +544,20 @@ In this session codeq is called through Bash (`./target/debug/codeq …`), not a
 a first-class tool, so its output arrives as shell stdout. Registering the MCP
 server (`.mcp.json` → `codeq mcp`) would make `codeq_*` native tools in future
 sessions — worth doing to make codeq the default reach.
+
+## 2026-07-14 — multi-hop navigation: callers/callees --depth
+
+Added transitive walking to `callers`/`callees` via `--depth N` (default 1 =
+today's direct-only behavior). A BFS up (callers) or down (callees) the call
+tree, each result tagged with its hop `depth`; text output indents by hop, so
+`callers is_fresh --depth 3` reads as a reachability tree at a glance. Capped at
+`HOP_CAP=2000` results so a hot symbol can't explode. Because the graph is
+name-based (not type-resolved), a hop can over-reach on common names — scope with
+`--path` when needed, same caveat as depth-1.
+
+**Consistency bug caught by a test:** the shared `Hop` struct serialized the
+callee name under `symbol`, but depth-1 callees use `name` — so `callees X` and
+`callees X --depth 2` disagreed on field name. Split out a `CalleeHop` mirroring
+`Callee` (`name` at every depth). Lesson: reusing one row type across two
+commands leaked the wrong field name; the depth-1 shape is the contract the
+deeper walk must match.

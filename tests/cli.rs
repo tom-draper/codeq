@@ -752,6 +752,56 @@ fn callers_callees_and_about() {
 }
 
 #[test]
+fn callers_depth_walks_transitively() {
+    // leaf <- mid <- top : a call chain three deep.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn leaf() {}\n\
+         fn mid() { leaf(); }\n\
+         fn top() { mid(); }\n",
+    );
+
+    // depth 1: only direct callers of leaf.
+    let d1 = f.run(&["callers", "leaf"]);
+    let syms1: Vec<String> = d1["data"].as_array().unwrap().iter()
+        .filter_map(|r| r["symbol"].as_str().map(String::from)).collect();
+    assert_eq!(syms1, ["mid"], "depth 1 is direct only: {syms1:?}");
+
+    // depth 2: reaches top through mid, each tagged with its hop distance.
+    let d2 = f.run(&["callers", "leaf", "--depth", "2"]);
+    let rows = d2["data"].as_array().unwrap();
+    let depth_of = |sym: &str| rows.iter()
+        .find(|r| r["symbol"] == sym).unwrap()["depth"].as_u64().unwrap();
+    assert_eq!(depth_of("mid"), 1, "direct caller is hop 1");
+    assert_eq!(depth_of("top"), 2, "transitive caller is hop 2");
+}
+
+#[test]
+fn callees_depth_walks_transitively() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn leaf() {}\n\
+         fn mid() { leaf(); }\n\
+         fn top() { mid(); }\n",
+    );
+
+    let d1 = field_set(&f.run(&["callees", "top"]), "name");
+    assert!(d1.contains(&"mid".to_string()), "{d1:?}");
+    assert!(!d1.contains(&"leaf".to_string()), "leaf is two hops down: {d1:?}");
+
+    let d2 = f.run(&["callees", "top", "--depth", "2"]);
+    let rows = d2["data"].as_array().unwrap();
+    let names: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"mid") && names.contains(&"leaf"), "{names:?}");
+    let depth_of = |n: &str| rows.iter()
+        .find(|r| r["name"] == n).unwrap()["depth"].as_u64().unwrap();
+    assert_eq!(depth_of("mid"), 1);
+    assert_eq!(depth_of("leaf"), 2);
+}
+
+#[test]
 fn about_path_scopes_to_one_definition() {
     // Two same-named `thing`s in different files must not be merged.
     let f = Fixture::new();

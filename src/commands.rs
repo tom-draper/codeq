@@ -589,17 +589,132 @@ fn collect_idents(text: &str, out: &mut HashSet<String>) {
 }
 
 /// `callers <name>` — who references this symbol (by enclosing definition).
-pub fn cmd_callers(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result<()> {
+/// A node in a transitive `callers`/`callees` walk, tagged with the hop distance.
+#[derive(Serialize)]
+struct Hop {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    path: String,
+    line: usize,
+    /// Hops from the queried symbol (1 = direct).
+    depth: usize,
+    #[serde(skip_serializing_if = "is_false")]
+    test: bool,
+}
+
+/// A transitive callee, mirroring `Callee` (so `name` is the field at every
+/// depth) plus its hop distance.
+#[derive(Serialize)]
+struct CalleeHop {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    /// Hops from the queried symbol (1 = direct).
+    depth: usize,
+}
+
+/// Safety bound on a transitive walk so a hot symbol can't blow up.
+const HOP_CAP: usize = 2000;
+
+pub fn cmd_callers(cwd: &Path, name: &str, path: Option<&str>, depth: usize, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let data = callers_of(&s, name, path)?;
-    s.emit(data)
+    if depth <= 1 {
+        return s.emit(callers_of(&s, name, path)?);
+    }
+    // Breadth-first up the call tree: each hop expands the newly-found callers by
+    // their enclosing symbol name. Deterministic; each caller reported once at its
+    // shortest depth, each name expanded once.
+    let mut reported: HashSet<(String, Option<String>)> = HashSet::new();
+    let mut expanded: HashSet<String> = HashSet::from([name.to_string()]);
+    let mut frontier: Vec<String> = vec![name.to_string()];
+    let mut hops: Vec<Hop> = Vec::new();
+    'walk: for d in 1..=depth {
+        let mut next: Vec<String> = Vec::new();
+        for sym in &frontier {
+            for c in callers_of(&s, sym, path)? {
+                if !reported.insert((c.path.clone(), c.symbol.clone())) {
+                    continue;
+                }
+                if let Some(cn) = &c.symbol {
+                    if expanded.insert(cn.clone()) {
+                        next.push(cn.clone());
+                    }
+                }
+                hops.push(Hop {
+                    symbol: c.symbol,
+                    kind: c.kind,
+                    path: c.path,
+                    line: c.line,
+                    depth: d,
+                    test: c.test,
+                });
+                if hops.len() >= HOP_CAP {
+                    break 'walk;
+                }
+            }
+        }
+        frontier = next;
+        if frontier.is_empty() {
+            break;
+        }
+    }
+    hops.sort_by(|a, b| {
+        a.depth
+            .cmp(&b.depth)
+            .then(a.path.cmp(&b.path))
+            .then(a.line.cmp(&b.line))
+    });
+    s.emit(hops)
 }
 
 /// `callees <name>` — what this symbol references (by name).
-pub fn cmd_callees(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result<()> {
+pub fn cmd_callees(cwd: &Path, name: &str, path: Option<&str>, depth: usize, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let data = callees_of(&s, name, path)?;
-    s.emit(data)
+    if depth <= 1 {
+        return s.emit(callees_of(&s, name, path)?);
+    }
+    // Breadth-first down the call tree by callee name.
+    let mut reported: HashSet<(String, String)> = HashSet::new();
+    let mut expanded: HashSet<String> = HashSet::from([name.to_string()]);
+    let mut frontier: Vec<String> = vec![name.to_string()];
+    let mut hops: Vec<CalleeHop> = Vec::new();
+    'walk: for d in 1..=depth {
+        let mut next: Vec<String> = Vec::new();
+        for sym in &frontier {
+            for c in callees_of(&s, sym, path)? {
+                if !reported.insert((c.path.clone(), c.name.clone())) {
+                    continue;
+                }
+                if expanded.insert(c.name.clone()) {
+                    next.push(c.name.clone());
+                }
+                hops.push(CalleeHop {
+                    name: c.name,
+                    kind: c.kind,
+                    path: c.path,
+                    line: c.line,
+                    depth: d,
+                });
+                if hops.len() >= HOP_CAP {
+                    break 'walk;
+                }
+            }
+        }
+        frontier = next;
+        if frontier.is_empty() {
+            break;
+        }
+    }
+    hops.sort_by(|a, b| {
+        a.depth
+            .cmp(&b.depth)
+            .then(a.path.cmp(&b.path))
+            .then(a.line.cmp(&b.line))
+    });
+    s.emit(hops)
 }
 
 #[derive(Serialize)]

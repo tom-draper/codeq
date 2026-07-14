@@ -190,11 +190,13 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push("callers".into());
             args.push(s(a, "name")?.into());
             opt(&mut args, a, "path", "--path");
+            optn(&mut args, a, "depth", "--depth");
         }
         "codeq_callees" => {
             args.push("callees".into());
             args.push(s(a, "name")?.into());
             opt(&mut args, a, "path", "--path");
+            optn(&mut args, a, "depth", "--depth");
         }
         "codeq_about" => {
             args.push("about".into());
@@ -292,6 +294,7 @@ fn tools() -> Value {
     }
     let str_ = json!({ "type": "string" });
     let bool_ = json!({ "type": "boolean" });
+    let num_ = json!({ "type": "integer" });
     let int_ = json!({ "type": "integer" });
 
     json!([
@@ -316,11 +319,11 @@ fn tools() -> Value {
             "Word-boundary uses of a symbol name across the repo, each annotated with its enclosing definition; definition sites are flagged. Textual (not type-resolved).",
             json!({ "name": str_, "path": str_, "language": str_, "limit": int_ }), &["name"]),
         tool("codeq_callers",
-            "The distinct definitions that reference a symbol (its callers), with test sites flagged — what could break if you change it. Textual, not type-resolved. path restricts to callers located in matching files.",
-            json!({ "name": str_, "path": str_ }), &["name"]),
+            "The distinct definitions that reference a symbol (its callers), with test sites flagged — what could break if you change it. Textual, not type-resolved. path restricts to callers in matching files. depth (default 1) walks transitively up the call tree, each result tagged with its hop distance.",
+            json!({ "name": str_, "path": str_, "depth": num_ }), &["name"]),
         tool("codeq_callees",
-            "The definitions referenced by name inside a symbol's body (its callees) — what it depends on. path scopes to the symbol's definition(s) in matching files (use it when the name is common, e.g. new/build).",
-            json!({ "name": str_, "path": str_ }), &["name"]),
+            "The definitions referenced by name inside a symbol's body (its callees) — what it depends on. path scopes to the symbol's definition(s). depth (default 1) walks transitively down the call tree.",
+            json!({ "name": str_, "path": str_, "depth": num_ }), &["name"]),
         tool("codeq_about",
             "One-call dossier before editing a symbol: its definition(s) with signature and doc, its callers (who breaks), and its callees (what it depends on). Replaces several separate lookups. path scopes the definition and callees to matching files to disambiguate a common name.",
             json!({ "name": str_, "path": str_ }), &["name"]),

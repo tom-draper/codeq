@@ -19,6 +19,9 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
 - **Understand a symbol before editing:** `codeq about NAME` (definition +
   callers + callees, one call)
 - **Who uses it / what breaks:** `codeq callers NAME` · `codeq references NAME`
+  - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
+    `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
+    with its `depth`; text output indents by hop. For blast-radius / reachability.
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
   reference NAME (by test-file path or test-like name). For the edit→find-the-test loop.
 - **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`

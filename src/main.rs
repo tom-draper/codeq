@@ -123,6 +123,10 @@ enum Command {
         /// Restrict to callers located in paths containing this substring.
         #[arg(long)]
         path: Option<String>,
+        /// Transitive hops up the call tree (1 = direct callers). Each result is
+        /// tagged with its depth.
+        #[arg(long, default_value_t = 1)]
+        depth: usize,
     },
     /// Definitions a symbol references (its callees, name-based).
     Callees {
@@ -131,6 +135,9 @@ enum Command {
         /// Scope to the definition(s) of the symbol in matching paths.
         #[arg(long)]
         path: Option<String>,
+        /// Transitive hops down the call tree (1 = direct callees).
+        #[arg(long, default_value_t = 1)]
+        depth: usize,
     },
     /// Dossier for a symbol: definition(s) + callers + callees, in one call.
     About {
@@ -378,11 +385,11 @@ fn main() -> ExitCode {
             path,
             limit,
         } => commands::cmd_definitions(&cwd, &symbol, path.as_deref(), limit, out),
-        Command::Callers { name, path } => {
-            commands::cmd_callers(&cwd, &name, path.as_deref(), out)
+        Command::Callers { name, path, depth } => {
+            commands::cmd_callers(&cwd, &name, path.as_deref(), depth, out)
         }
-        Command::Callees { name, path } => {
-            commands::cmd_callees(&cwd, &name, path.as_deref(), out)
+        Command::Callees { name, path, depth } => {
+            commands::cmd_callees(&cwd, &name, path.as_deref(), depth, out)
         }
         Command::About { name, path } => {
             commands::cmd_about(&cwd, &name, path.as_deref(), out)
