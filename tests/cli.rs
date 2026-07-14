@@ -1851,6 +1851,22 @@ fn javascript_require_and_es_import_both_captured() {
 }
 
 #[test]
+fn callees_are_calls_not_field_or_type_references() {
+    // callees is call-aware: a name counts only when it's actually called
+    // (followed by `(`), so field accesses and type/variable references that
+    // merely share a name with a definition are not reported as callees.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn helper() {}\nfn field() {}\nstruct SomeType;\nfn caller() {\n    helper();\n    let y = self.field;\n    let z = SomeType;\n}\n",
+    );
+    let names = field_set(&f.run(&["callees", "caller"]), "name");
+    assert!(names.contains(&"helper".to_string()), "called function missing: {names:?}");
+    assert!(!names.contains(&"field".to_string()), "a field access is not a callee: {names:?}");
+    assert!(!names.contains(&"SomeType".to_string()), "a type reference is not a callee: {names:?}");
+}
+
+#[test]
 fn cpp_header_method_declarations_are_extracted() {
     // Declaration-only members (the norm in .hpp headers) must be findable, not
     // just inline or out-of-line definitions — otherwise a header-only class

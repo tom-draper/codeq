@@ -557,21 +557,34 @@ fn callees_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Callee>
     Ok(out)
 }
 
+/// Collect the identifiers that are *called* in `text`: a name (>= 2 chars)
+/// immediately followed by `(`, ignoring whitespace. Keeping only call sites
+/// (`foo()`, `obj.method()`, `Type::new()`) drops the field accesses, variable
+/// uses and type references that merely share a name with some definition — the
+/// main source of callee noise. Real callees are always called, so nothing that
+/// is genuinely a callee is lost. (Still name-based, not type-resolved: a std
+/// `.remove()` can't be told apart from a local `remove`.)
 fn collect_idents(text: &str, out: &mut HashSet<String>) {
-    let mut cur = String::new();
-    for ch in text.chars() {
-        if ch == '_' || ch.is_alphanumeric() {
-            cur.push(ch);
-        } else if !cur.is_empty() {
-            if cur.len() >= 2 {
-                out.insert(std::mem::take(&mut cur));
-            } else {
-                cur.clear();
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        if chars[i] == '_' || chars[i].is_alphanumeric() {
+            let start = i;
+            while i < n && (chars[i] == '_' || chars[i].is_alphanumeric()) {
+                i += 1;
             }
+            // Peek past whitespace for a '(' — the mark of a call.
+            let mut j = i;
+            while j < n && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < n && chars[j] == '(' && i - start >= 2 {
+                out.insert(chars[start..i].iter().collect());
+            }
+        } else {
+            i += 1;
         }
-    }
-    if cur.len() >= 2 {
-        out.insert(cur);
     }
 }
 

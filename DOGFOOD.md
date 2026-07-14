@@ -441,11 +441,16 @@ that flow worked well (orient → read one symbol). Two findings:
   `db`, `path`, `remove`, `new` — these are field accesses (`s.db`, `.path`),
   std method calls (`.remove`), and a name that collides with an unrelated def
   (`Fixture::remove` in tests). Name-based analysis can't tell `x.remove()`
-  (std) from a call to a defined `remove`. Skipping `.`-preceded identifiers
-  would drop the field/std noise but also lose real method-call callees
-  (`s.emit`, `extractor.extract`). Left as-is and documented; a proper fix needs
-  resolution, which is deliberately out of scope. Reader beware: callees is a
-  superset.
+  (std) from a call to a defined `remove`.
+  - **PARTIALLY RESOLVED (session 17): callees is now call-aware.** `collect_idents`
+    only collects a name when it's immediately followed by `(` — an actual call —
+    so field accesses (`s.db`, `.path`), type references, and variable uses that
+    merely share a name with a definition are dropped, while real calls
+    (`foo()`, `obj.method()`, `Type::new()`) are kept. Strict improvement: no true
+    callee is lost (real callees are always called). What *remains* is genuine
+    same-name **call** collision (a std `.remove()` vs a local `remove`, `X::new`),
+    which needs type resolution — still deliberately out of scope. Reader beware:
+    callees is still a superset, just a much tighter one.
 
 ## 2026-07-13 — RESOLVED: symbol commands need path scoping (highest priority)
 
