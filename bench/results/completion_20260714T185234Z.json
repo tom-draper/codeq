@@ -1,0 +1,54 @@
+{
+  "timestamp": "2026-07-14T18:52:34+00:00",
+  "codeq_commit": "d8f0c33af777",
+  "repos": 25,
+  "totals": {
+    "codeq_tokens": 661792,
+    "baseline_tokens": 2775832,
+    "token_ratio": 4.19,
+    "codeq_calls": 250,
+    "baseline_calls": 840
+  },
+  "per_task": {
+    "read-impl": {
+      "codeq_tokens": 9112,
+      "baseline_tokens": 36342
+    },
+    "understand-sym": {
+      "codeq_tokens": 16010,
+      "baseline_tokens": 70223
+    },
+    "callsites": {
+      "codeq_tokens": 3090,
+      "baseline_tokens": 43575
+    },
+    "blast-radius": {
+      "codeq_tokens": 52604,
+      "baseline_tokens": 193397
+    },
+    "which-tests": {
+      "codeq_tokens": 1774,
+      "baseline_tokens": 26601
+    },
+    "file-structure": {
+      "codeq_tokens": 75284,
+      "baseline_tokens": 751285
+    },
+    "public-api": {
+      "codeq_tokens": 79767,
+      "baseline_tokens": 25361
+    },
+    "package-api": {
+      "codeq_tokens": 378286,
+      "baseline_tokens": 1580886
+    },
+    "usages": {
+      "codeq_tokens": 37663,
+      "baseline_tokens": 39963
+    },
+    "file-imports": {
+      "codeq_tokens": 8200,
+      "baseline_tokens": 8194
+    }
+  }
+}

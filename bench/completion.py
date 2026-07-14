@@ -114,6 +114,31 @@ def base_public_api(path, S, F, m):
                      F]], path)
 
 
+def base_package_api(path, S, F, m):
+    """A whole package's public API the generic way: to enumerate what a directory
+    exports (with complete signatures and visibility), an agent reads the files
+    that hold it — a decl grep gives incomplete first-lines and can't filter
+    public. We charge reading exactly the files the package's API lives in (the
+    distinct files codeq `api <dir>` draws from), capped so one big package can't
+    dominate — which *under*-charges the baseline. codeq does it in one call."""
+    scope = os.path.dirname(F) or "."
+    p = subprocess.run([CODEQ, "--json", "api", scope, "--limit", "0"],
+                       cwd=path, capture_output=True).stdout
+    try:
+        rows = json.loads(p)["data"]
+    except (ValueError, KeyError):
+        rows = []
+    files, seen = [], set()
+    for r in rows:
+        fp = r.get("path")
+        if fp and fp not in seen:
+            seen.add(fp)
+            files.append(fp)
+    if not files:
+        return 1, len(p), 0.0
+    return measure([["cat", fp] for fp in files[:15]], path)  # cap: undercharges
+
+
 def base_rg_imports(path, S, F, m):
     """The file's imports the generic way. A line grep for import keywords finds
     single-line imports, but a block/grouped import (`import (` in Go, `use a::{`
@@ -192,6 +217,8 @@ TASKS = [
      base_read_file,    "learn a file's API/shape"),
     ("public-api",      lambda S, F, m: [CODEQ, "api", F],
      base_public_api,   "a file's exported API vs grepping decls and filtering"),
+    ("package-api",     lambda S, F, m: [CODEQ, "api", os.path.dirname(F) or "."],
+     base_package_api,  "a package's exported API vs reading its files"),
     ("usages",          lambda S, F, m: [CODEQ, "references", S, "--limit", "0"],
      base_rg_word,      "all references (near-parity with rg)"),
     ("file-imports",    lambda S, F, m: [CODEQ, "imports", F],

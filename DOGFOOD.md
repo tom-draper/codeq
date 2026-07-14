@@ -673,3 +673,17 @@ declaration lines and filtering public by eye). It immediately showed codeq
 
 Left the 0.3x in the suite rather than tuning the baseline until codeq won — two
 non-wins (file-imports, public-api) are what makes the other seven credible.
+
+## 2026-07-14 — package-scale `api` is where the win is (benchmark confirms)
+
+Followed the single-file `public-api` non-win with a `package-api` task: `api
+<dir>` (a whole package's exported surface, one call) vs the generic path of
+reading the files that hold that API. Result across 25 repos: 4.2x fewer tokens
+and 284 -> 25 tool calls (11x fewer), even with the baseline capped at 15 files
+per package (which under-charges it).
+
+The two api tasks now sit side by side and tell the honest truth about scope:
+single-file `public-api` *loses* 0.3x (its complete signatures outweigh a decl
+grep on one file), package-scale `package-api` *wins* 4.2x (the alternative is
+reading N files). api's value is the package surface, exactly as predicted — the
+benchmark now shows both the ceiling and the floor.
