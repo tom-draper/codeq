@@ -1950,11 +1950,17 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "freshness": "every command refreshes changed files before answering",
         },
     });
-    let value = serde_json::json!({ "schema": RESULT_SCHEMA, "data": data });
-    if out.pretty {
-        println!("{}", serde_json::to_string_pretty(&value)?);
+    // Honor the global output mode like every other command: JSON on
+    // --json/--meta/--pretty, otherwise codeq's compact text.
+    if out.json || out.meta || out.pretty {
+        let value = serde_json::json!({ "schema": RESULT_SCHEMA, "data": data });
+        if out.pretty {
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        } else {
+            println!("{}", serde_json::to_string(&value)?);
+        }
     } else {
-        println!("{}", serde_json::to_string(&value)?);
+        print!("{}", crate::envelope::render_data_text(&data));
     }
     Ok(())
 }

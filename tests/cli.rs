@@ -223,6 +223,11 @@ fn capabilities_describes_the_tool() {
     let langs = field_names(&d["extraction_languages"]);
     assert!(langs.contains(&"rust".to_string()) && langs.contains(&"python".to_string()));
     assert_eq!(d["result_schema"], "codeq.result.v1");
+
+    // Default output is text like every other command, not a raw JSON dump.
+    let text = String::from_utf8_lossy(&f.raw(&["capabilities"]).stdout).into_owned();
+    assert!(!text.contains("\"schema\""), "capabilities text mode dumped JSON: {text}");
+    assert!(text.contains("# commands"), "capabilities text missing sections: {text}");
 }
 
 // ---------------------------------------------------------------------------

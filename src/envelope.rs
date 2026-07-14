@@ -93,6 +93,14 @@ impl<T: Serialize> Envelope<T> {
     }
 }
 
+/// Render a bare `data` value as codeq's compact text output, for commands that
+/// don't flow through [`Envelope`] (e.g. `capabilities`, which is session-less).
+pub fn render_data_text(data: &Value) -> String {
+    let mut s = String::new();
+    render_value(data, &mut s);
+    s
+}
+
 /// Render a `data` payload as compact, deterministic, grep-style text.
 ///
 /// - array of rows → one `path:line:col: payload` line each;
