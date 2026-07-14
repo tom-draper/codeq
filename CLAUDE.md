@@ -18,6 +18,11 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   `codeq read <file> --symbol NAME` · `codeq read <file> --lines A-B`
 - **Understand a symbol before editing:** `codeq about NAME` (definition +
   callers + callees, one call)
+- **Learn a module's public API (how to call it):** `codeq api <path>` — only the
+  *exported* definitions, with signatures, instead of reading whole files. "Public"
+  is each language's own notion (Rust `pub`, JS/TS `export`, Go capitalization,
+  Python non-underscore, a `public` modifier, non-`static` in C/C++); `pub(crate)`
+  and `protected` are `restricted`, not public. `--kind function` to narrow.
 - **Who uses it / what breaks:** `codeq callers NAME` · `codeq references NAME`
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged

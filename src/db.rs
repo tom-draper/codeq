@@ -13,7 +13,7 @@ use rusqlite::Connection;
 // BOM-prefixed files — bump so pre-fix indexes rebuild on upgrade.
 // v6: git-free freshness via a native dir-mtime cache (the `dirs` table); old
 // indexes lack it, so rebuild to populate it.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 pub struct Db {
     pub conn: Connection,
@@ -94,6 +94,7 @@ impl Db {
                 doc        TEXT,
                 source     TEXT NOT NULL,
                 confidence REAL NOT NULL,
+                visibility TEXT,
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
             );
 
@@ -141,6 +142,9 @@ impl Db {
             .conn
             .execute("ALTER TABLE facts ADD COLUMN signature TEXT", []);
         let _ = self.conn.execute("ALTER TABLE facts ADD COLUMN doc TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE facts ADD COLUMN visibility TEXT", []);
 
         // On a schema version change, wipe derived data so the next refresh
         // rebuilds everything (including the FTS index) from scratch.

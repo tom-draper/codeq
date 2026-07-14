@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 6);
+    assert_eq!(v["index"]["schema"], 7);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -660,6 +660,57 @@ fn python_docstring_and_signature_extracted() {
     let r = &v["data"][0];
     assert_eq!(r["signature"], "def greet():");
     assert_eq!(r["doc"], "Say hi.");
+}
+
+#[test]
+fn api_lists_only_public_definitions_rust() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "pub fn exported() {}\n\
+         fn internal() {}\n\
+         pub(crate) fn crate_only() {}\n\
+         pub struct Public;\n",
+    );
+    let names = field_set(&f.run(&["api", "a.rs"]), "name");
+    assert!(names.contains(&"exported".to_string()), "pub fn missing: {names:?}");
+    assert!(names.contains(&"Public".to_string()), "pub struct missing: {names:?}");
+    assert!(!names.contains(&"internal".to_string()), "private fn leaked: {names:?}");
+    assert!(!names.contains(&"crate_only".to_string()),
+            "pub(crate) is restricted, not public: {names:?}");
+}
+
+#[test]
+fn api_visibility_rules_per_language() {
+    // Go: exported by capitalization.
+    let g = Fixture::new();
+    g.write("m.go", "package m\nfunc Exported() {}\nfunc unexported() {}\n");
+    let gn = field_set(&g.run(&["api", "m.go"]), "name");
+    assert!(gn.contains(&"Exported".to_string()) && !gn.contains(&"unexported".to_string()), "{gn:?}");
+
+    // Python: public unless leading underscore.
+    let p = Fixture::new();
+    p.write("m.py", "def public():\n    pass\ndef _private():\n    pass\n");
+    let pn = field_set(&p.run(&["api", "m.py"]), "name");
+    assert!(pn.contains(&"public".to_string()) && !pn.contains(&"_private".to_string()), "{pn:?}");
+
+    // JS: exported iff `export`.
+    let j = Fixture::new();
+    j.write("m.js", "export function shown() {}\nfunction hidden() {}\n");
+    let jn = field_set(&j.run(&["api", "m.js"]), "name");
+    assert!(jn.contains(&"shown".to_string()) && !jn.contains(&"hidden".to_string()), "{jn:?}");
+}
+
+#[test]
+fn api_kind_filter_and_signature() {
+    let f = Fixture::new();
+    f.write("a.rs", "/// A doc.\npub fn func() {}\npub struct S;\n");
+    // --kind narrows to one kind.
+    let v = f.run(&["api", "a.rs", "--kind", "function"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "kind filter should return only the function: {rows:?}");
+    assert_eq!(rows[0]["name"], "func");
+    assert_eq!(rows[0]["signature"], "pub fn func()", "signature is carried");
 }
 
 #[test]

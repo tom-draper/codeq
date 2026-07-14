@@ -229,6 +229,14 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push("importers".into());
             args.push(s(a, "query")?.into());
         }
+        "codeq_api" => {
+            args.push("api".into());
+            if let Some(p) = s(a, "path") {
+                args.push(p.into());
+            }
+            opt(&mut args, a, "kind", "--kind");
+            optn(&mut args, a, "limit", "--limit");
+        }
         "codeq_deps" => {
             args.push("deps".into());
             if let Some(f) = s(a, "file") {
@@ -350,6 +358,9 @@ fn tools() -> Value {
         tool("codeq_importers",
             "Files whose imports match a module string.",
             json!({ "query": str_ }), &["query"]),
+        tool("codeq_api",
+            "The public API surface of a file or directory: the definitions it exports for outside use, with signatures. \"Public\" is each language's own notion (Rust pub, JS/TS export, Go capitalization, Python non-underscore, a public modifier in Java/C#/PHP, non-static in C/C++); pub(crate)/protected are excluded. Use it to learn how to call an unfamiliar module without reading whole files. path scopes to a file/dir substring; kind filters to one kind (function, struct, class, …).",
+            json!({ "path": str_, "kind": str_, "limit": num_ }), &[]),
         tool("codeq_deps",
             "Internal files a file depends on, resolved from its imports (raw import strings matched to file stems — heuristic, not a real module resolver). depth (default 1) walks transitive dependencies. cycles=true reports every import cycle in the repo instead (omit file).",
             json!({ "file": str_, "depth": num_, "cycles": bool_ }), &[]),

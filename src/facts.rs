@@ -34,6 +34,10 @@ pub struct Fact {
     pub doc: Option<String>,
     pub source: String,
     pub confidence: f64,
+    /// Normalized visibility: `public` (module/external API), `private`
+    /// (module- or file-local), `restricted` (`pub(crate)`, `protected`). `None`
+    /// for facts where it doesn't apply (imports) or can't be determined.
+    pub visibility: Option<String>,
 }
 
 impl Fact {
@@ -164,6 +168,11 @@ impl LangSpec {
                     } else {
                         name
                     };
+                    let visibility = if kind == "import" {
+                        None
+                    } else {
+                        visibility_of(self.lang, &name, node, src)
+                    };
                     let start = node.start_position();
                     let end = node.end_position();
                     facts.push(Fact {
@@ -179,6 +188,7 @@ impl LangSpec {
                         doc: doc_of(src, self.lang, node, body),
                         source: self.source.clone(),
                         confidence: 1.0,
+                        visibility,
                     });
                 }
             }
@@ -340,6 +350,114 @@ pub fn has_spans(language: &str) -> bool {
 /// The declaration text with any body stripped, collapsed to one line and
 /// capped. When there is no body capture (structs, consts, imports, …) the
 /// whole node text is used, still capped.
+/// The text of the first direct child of `node` whose kind is `kind`.
+fn first_child_kind<'a>(node: Node, kind: &str, src: &'a [u8]) -> Option<&'a str> {
+    let mut c = node.walk();
+    let found = node.children(&mut c).find(|n| n.kind() == kind);
+    found.and_then(|n| n.utf8_text(src).ok())
+}
+
+/// Whether any ancestor of `node` has the given kind (walks up to the root).
+fn has_ancestor_kind(node: Node, kind: &str) -> bool {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if n.kind() == kind {
+            return true;
+        }
+        cur = n.parent();
+    }
+    false
+}
+
+/// The concatenated text of a definition's modifier node(s): Java has a single
+/// `modifiers` wrapper, C# has repeated `modifier` children — handle both.
+fn modifier_words(def: Node, src: &[u8]) -> String {
+    let mut c = def.walk();
+    let mut out = String::new();
+    for ch in def.children(&mut c) {
+        if ch.kind() == "modifiers" || ch.kind() == "modifier" {
+            if let Ok(t) = ch.utf8_text(src) {
+                out.push_str(t);
+                out.push(' ');
+            }
+        }
+    }
+    out
+}
+
+/// Normalized visibility of a definition, by each language's own notion of it.
+/// `public` = the external/module API; `private` = module- or file-local;
+/// `restricted` = crate-visible (`pub(crate)`) or `protected`. Heuristic where a
+/// language has no keyword: Go by name case, Python by leading underscore, and
+/// Ruby is always reported public (its `private`/`protected` are stateful section
+/// markers this doesn't track). `None` when it doesn't apply or is unknown.
+fn visibility_of(lang: &str, name: &str, def: Node, src: &[u8]) -> Option<String> {
+    let s = |v: &str| Some(v.to_string());
+    match lang {
+        "rust" => match first_child_kind(def, "visibility_modifier", src) {
+            None => s("private"),
+            Some("pub") => s("public"),
+            Some(_) => s("restricted"), // pub(crate) / pub(super) / pub(in …)
+        },
+        "go" => match name.chars().next() {
+            Some(c) if c.is_uppercase() => s("public"),
+            Some(_) => s("private"),
+            None => None,
+        },
+        "python" => {
+            let dunder = name.starts_with("__") && name.ends_with("__");
+            if name.starts_with('_') && !dunder {
+                s("private")
+            } else {
+                s("public")
+            }
+        }
+        "javascript" | "typescript" | "tsx" => {
+            if def.kind() == "method_definition" {
+                // Members are public by default; only a modifier or a #private
+                // name restricts them.
+                if name.starts_with('#') {
+                    return s("private");
+                }
+                match first_child_kind(def, "accessibility_modifier", src) {
+                    Some("private") => s("private"),
+                    Some("protected") => s("restricted"),
+                    _ => s("public"),
+                }
+            } else if has_ancestor_kind(def, "export_statement") {
+                s("public")
+            } else {
+                s("private") // a top-level definition that isn't exported
+            }
+        }
+        "java" | "csharp" => {
+            let mods = modifier_words(def, src);
+            if mods.contains("public") {
+                s("public")
+            } else if mods.contains("protected") {
+                s("restricted")
+            } else {
+                s("private") // no/other modifier = package-private / internal
+            }
+        }
+        "php" => match first_child_kind(def, "visibility_modifier", src) {
+            Some(m) if m.contains("public") => s("public"),
+            Some(m) if m.contains("protected") => s("restricted"),
+            Some(_) => s("private"),
+            None => s("public"), // a top-level function is globally callable
+        },
+        "c" | "cpp" => {
+            if first_child_kind(def, "storage_class_specifier", src) == Some("static") {
+                s("private") // internal linkage
+            } else {
+                s("public")
+            }
+        }
+        "ruby" => s("public"), // section-based private/protected not tracked
+        _ => None,
+    }
+}
+
 fn signature_of(src: &[u8], def: Node, body: Option<Node>) -> String {
     let end = match body {
         Some(b) => b.start_byte(),

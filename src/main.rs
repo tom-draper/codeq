@@ -117,6 +117,20 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// The public API surface: definitions exported for outside use, with
+    /// signatures. "Public" is each language's own notion (Rust `pub`, JS/TS
+    /// `export`, Go capitalization, Python non-underscore, a `public` modifier,
+    /// non-`static` in C/C++). Scope with a path; filter with `--kind`.
+    Api {
+        /// File or directory substring to scope the surface to (default: repo).
+        path: Option<String>,
+        /// Only this kind (e.g. function, struct, class, interface).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// Definitions that reference a symbol (its callers), test sites flagged.
     Callers {
         /// Exact symbol name.
@@ -399,6 +413,9 @@ fn main() -> ExitCode {
             path,
             limit,
         } => commands::cmd_definitions(&cwd, &symbol, path.as_deref(), limit, out),
+        Command::Api { path, kind, limit } => {
+            commands::cmd_api(&cwd, path.as_deref(), kind.as_deref(), limit, out)
+        }
         Command::Callers { name, path, depth } => {
             commands::cmd_callers(&cwd, &name, path.as_deref(), depth, out)
         }

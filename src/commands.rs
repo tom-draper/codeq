@@ -395,6 +395,63 @@ pub fn cmd_definitions(
 }
 
 #[derive(Serialize)]
+struct ApiRow {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+}
+
+/// `api [<path>]` — the public API surface: definitions the code exports for
+/// outside use, with signatures. "Public" is each language's own notion
+/// (Rust `pub`, JS/TS `export`, Go capitalization, Python non-underscore, a
+/// `public` modifier in Java/C#/PHP, non-`static` in C/C++); `pub(crate)` and
+/// `protected` count as `restricted`, not public, so they're excluded. `path`
+/// scopes to a file or directory substring; `--kind` filters to one kind.
+pub fn cmd_api(
+    cwd: &Path,
+    path: Option<&str>,
+    kind: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let mut sql = String::from(
+        "SELECT name, kind, path, start_line, signature
+         FROM facts WHERE visibility = 'public' AND kind <> 'import'",
+    );
+    let mut args: Vec<String> = Vec::new();
+    if let Some(p) = path {
+        sql.push_str(&format!(" AND path LIKE ?{}", args.len() + 1));
+        args.push(format!("%{p}%"));
+    }
+    if let Some(k) = kind {
+        sql.push_str(&format!(" AND kind = ?{}", args.len() + 1));
+        args.push(k.to_string());
+    }
+    sql.push_str(" ORDER BY path, start_line");
+    if limit > 0 {
+        sql.push_str(&format!(" LIMIT {limit}"));
+    }
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let param_refs: Vec<&dyn rusqlite::ToSql> =
+        args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
+    let rows = stmt.query_map(param_refs.as_slice(), |r| {
+        Ok(ApiRow {
+            name: r.get(0)?,
+            kind: r.get(1)?,
+            path: r.get(2)?,
+            line: r.get(3)?,
+            signature: r.get(4)?,
+        })
+    })?;
+    let data: Vec<ApiRow> = rows.collect::<std::result::Result<_, _>>()?;
+    s.emit(data)
+}
+
+#[derive(Serialize)]
 struct Caller {
     #[serde(skip_serializing_if = "Option::is_none")]
     symbol: Option<String>,

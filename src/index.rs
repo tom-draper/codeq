@@ -97,8 +97,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             "INSERT OR REPLACE INTO facts(
                 id, kind, name, path, language,
                 start_byte, end_byte, start_line, start_col, end_line, end_col,
-                signature, doc, source, confidence)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                signature, doc, source, confidence, visibility)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
         )?;
         // FTS5 has no UPSERT; update is delete-then-insert keyed by path.
         let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
@@ -232,6 +232,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                             &f.doc,
                             &f.source,
                             f.confidence,
+                            &f.visibility,
                         ))?;
                     }
                     for (sb, eb, sp) in spans {

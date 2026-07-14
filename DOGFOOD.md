@@ -633,3 +633,23 @@ keyword line is a block opener (`(`/`{`), read the block. file-imports moved 0.8
 -> 1.0x (true parity on bytes) and 25 vs 39 tool calls — codeq's one call still
 wins, honestly now. Lesson: when codeq "loses" a bench task, check the baseline is
 solving the same problem before believing it.
+
+## 2026-07-14 — wishlist #1: `api` (public API surface) + visibility extraction
+
+Built the highest-value net-new capability: `codeq api <path>` returns only the
+*exported* definitions of a module, with signatures — the "how do I call this
+unfamiliar module" task that made agents `cat` whole files. Needed real parser
+work: a normalized `visibility` (public/private/restricted) computed per language
+and stored on every definition fact (schema v6 -> v7).
+
+Visibility is each language's own notion: Rust `pub` (node), JS/TS `export`
+(ancestor node), Go capitalization, Python leading-underscore, a `public`
+modifier in Java/C#/PHP, non-`static` in C/C++. `pub(crate)`/`protected` map to
+`restricted` (excluded from `api`, since they're not external API). Verified the
+discrimination on a 5-language probe and at scale (cobra: 450 public / 572 total).
+
+Honest limits, documented not hidden: Ruby `private`/`protected` are stateful
+section markers this doesn't track (all reported public); Go test functions are
+capitalized so they count as public and show up (scope with a path or `--kind`).
+Dogfooded immediately: `api src/deps.rs` cleanly listed the pub structs + methods
+and excluded every private helper — the intended replacement for reading the file.
