@@ -913,6 +913,13 @@ fn search_context_lines() {
     assert_eq!(m["after"].as_array().unwrap().len(), 1);
     assert!(m["before"][0].as_str().unwrap().contains("fn a"));
     assert!(m["after"][0].as_str().unwrap().contains("fn b"));
+
+    // Text mode must render the context lines too (grep-style `path-line-`), not
+    // silently drop the -C flag. Match on line 2, context on 1 and 3.
+    let text = String::from_utf8_lossy(&f.raw(&["search", "target", "-C", "1"]).stdout).into_owned();
+    assert!(text.contains("a.rs-1- fn a() {}"), "before-context line missing: {text}");
+    assert!(text.contains("a.rs:2:") && text.contains("let target = 1;"), "match line missing: {text}");
+    assert!(text.contains("a.rs-3- fn b() {}"), "after-context line missing: {text}");
 }
 
 #[test]

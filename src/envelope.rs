@@ -191,7 +191,30 @@ fn render_row(row: &Value, out: &mut String) {
         let enclosing = str_of("symbol")
             .map(|s| format!("  [{s}]"))
             .unwrap_or_default();
-        out.push_str(&format!("{pad}{loc}{}{enclosing}\n", t.trim()));
+        let match_line = format!("{pad}{loc}{}{enclosing}\n", t.trim());
+
+        // -A/-B/-C context lines: render grep-style (`path-line- content`) with
+        // computed line numbers, so the flag isn't a silent no-op in text mode.
+        let before = o.get("before").and_then(|v| v.as_array());
+        let after = o.get("after").and_then(|v| v.as_array());
+        if let (Some(p), Some(ln)) = (str_of("path"), int_of("line")) {
+            if before.is_some() || after.is_some() {
+                if let Some(b) = before {
+                    let start = ln - b.len() as i64;
+                    for (i, cl) in b.iter().filter_map(|v| v.as_str()).enumerate() {
+                        out.push_str(&format!("{pad}{p}-{}- {}\n", start + i as i64, cl.trim_end()));
+                    }
+                }
+                out.push_str(&match_line);
+                if let Some(a) = after {
+                    for (i, cl) in a.iter().filter_map(|v| v.as_str()).enumerate() {
+                        out.push_str(&format!("{pad}{p}-{}- {}\n", ln + 1 + i as i64, cl.trim_end()));
+                    }
+                }
+                return;
+            }
+        }
+        out.push_str(&match_line);
         return;
     }
     if let Some(sig) = str_of("signature") {
