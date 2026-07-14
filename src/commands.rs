@@ -11,6 +11,7 @@ use serde::Serialize;
 
 use crate::context::{self, Request};
 use crate::db::{Db, SCHEMA_VERSION};
+use crate::deps;
 use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
 use crate::facts::{has_spans, Span};
 use crate::index::{language_for, refresh};
@@ -1086,6 +1087,101 @@ pub fn cmd_importers(cwd: &Path, query: &str, limit: usize, out: Out) -> Result<
     })?;
     let data: Vec<ImportRow> = rows.collect::<std::result::Result<_, _>>()?;
     s.emit(data)
+}
+
+#[derive(Serialize)]
+struct DepRow {
+    /// The depended-upon file.
+    path: String,
+    /// The raw import string that produced this edge (for verification).
+    module: String,
+    /// Hops from the queried file (1 = direct).
+    depth: usize,
+}
+
+#[derive(Serialize)]
+struct CycleRow {
+    /// Number of files in the cycle.
+    length: usize,
+    /// The files in dependency order; the last depends back on the first.
+    cycle: Vec<String>,
+}
+
+/// Load the internal import graph: every indexed file, and every import fact as
+/// an `(importing_file, raw_module)` pair, resolved to file→file edges.
+fn load_dep_graph(s: &Session) -> Result<deps::Graph> {
+    let files: Vec<String> = {
+        let mut stmt = s.db.conn.prepare("SELECT path FROM files ORDER BY path")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    let imports: Vec<(String, String)> = {
+        let mut stmt = s
+            .db
+            .conn
+            .prepare("SELECT path, name FROM facts WHERE kind = 'import'")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    Ok(deps::Graph::build(files, imports))
+}
+
+/// `deps <file> [--depth N]` — the internal files a file depends on, resolved
+/// from its imports; `--cycles` reports every import cycle in the repo instead.
+pub fn cmd_deps(
+    cwd: &Path,
+    file: Option<&str>,
+    depth: usize,
+    cycles: bool,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let graph = load_dep_graph(&s)?;
+
+    if cycles {
+        let data: Vec<CycleRow> = graph
+            .cycles()
+            .into_iter()
+            .map(|c| CycleRow { length: c.len(), cycle: c })
+            .collect();
+        return s.emit(data);
+    }
+
+    let file = file.ok_or_else(|| anyhow!("deps needs a <file> (or --cycles)"))?;
+    // Resolve the query to an indexed file path: exact, else unique suffix match.
+    let target = resolve_dep_target(&graph, &s, file)?;
+    let hops = graph.deps(&target, depth.max(1));
+    let data: Vec<DepRow> = hops
+        .into_iter()
+        .map(|h| DepRow { path: h.path, module: h.module, depth: h.depth })
+        .collect();
+    s.emit(data)
+}
+
+/// Map a user-supplied file query to an indexed path: use it verbatim if it is
+/// a node, else match indexed paths that end with the query (a unique suffix
+/// wins; ambiguity is an error listing the candidates).
+fn resolve_dep_target(graph: &deps::Graph, s: &Session, query: &str) -> Result<String> {
+    if graph.contains(query) {
+        return Ok(query.to_string());
+    }
+    let mut stmt = s.db.conn.prepare("SELECT path FROM files ORDER BY path")?;
+    let paths: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    let q = query.trim_start_matches("./");
+    let matches: Vec<String> = paths
+        .into_iter()
+        .filter(|p| p == q || p.ends_with(&format!("/{q}")))
+        .collect();
+    match matches.len() {
+        1 => Ok(matches.into_iter().next().unwrap()),
+        0 => Err(anyhow!("no indexed file matches '{query}'")),
+        _ => Err(anyhow!(
+            "'{query}' is ambiguous ({} files match); use a longer path",
+            matches.len()
+        )),
+    }
 }
 
 /// The substring to match import module strings against. A path-shaped query

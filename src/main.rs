@@ -11,6 +11,7 @@ mod astgrep;
 mod commands;
 mod context;
 mod db;
+mod deps;
 mod envelope;
 mod facts;
 mod index;
@@ -210,6 +211,19 @@ enum Command {
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
+    },
+    /// Internal files a file depends on, resolved from its imports (transitive
+    /// with `--depth`). `--cycles` reports every import cycle in the repo.
+    /// Resolution is heuristic (import segments matched to file stems).
+    Deps {
+        /// The file to start from (a path or unique suffix). Omit with `--cycles`.
+        file: Option<String>,
+        /// Walk transitive dependencies to this many hops (1 = direct only).
+        #[arg(long, default_value_t = 1)]
+        depth: usize,
+        /// Report every import cycle in the repo instead of one file's deps.
+        #[arg(long)]
+        cycles: bool,
     },
     /// Structural (AST) search: match a code pattern with `$VAR` metavariables.
     /// Parsed with the language's grammar, so it matches syntax, not text —
@@ -427,6 +441,11 @@ fn main() -> ExitCode {
             query,
             limit,
         } => commands::cmd_importers(&cwd, &query, limit, out),
+        Command::Deps {
+            file,
+            depth,
+            cycles,
+        } => commands::cmd_deps(&cwd, file.as_deref(), depth, cycles, out),
         Command::Astgrep {
             pattern,
             language,

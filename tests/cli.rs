@@ -2074,6 +2074,76 @@ fn go_import_block_captures_each_module() {
     assert!(mods.iter().any(|m| m == "os"), "os missing from import block: {mods:?}");
 }
 
+// ---------------------------------------------------------------------------
+// deps (module-dependency graph)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deps_resolves_imports_to_internal_files_and_drops_external() {
+    let f = Fixture::new();
+    // a imports an internal module (b) and an external one (os).
+    f.write("a.py", "import os\nimport b\n");
+    f.write("b.py", "x = 1\n");
+
+    let v = f.run(&["deps", "a.py"]);
+    let rows = v["data"].as_array().unwrap();
+    let targets: Vec<&str> = rows.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    assert_eq!(targets, ["b.py"], "only the internal import resolves: {targets:?}");
+    assert_eq!(rows[0]["module"], "b", "edge carries the raw import string");
+    assert_eq!(rows[0]["depth"], 1);
+}
+
+#[test]
+fn deps_depth_walks_the_import_chain() {
+    let f = Fixture::new();
+    f.write("a.py", "import b\n"); // a -> b -> c
+    f.write("b.py", "import c\n");
+    f.write("c.py", "x = 1\n");
+
+    // depth 1 stops at the direct import.
+    let d1 = field_set(&f.run(&["deps", "a.py"]), "path");
+    assert!(d1.contains(&"b.py".to_string()) && !d1.contains(&"c.py".to_string()), "{d1:?}");
+
+    // depth 2 reaches c through b, tagged with its hop distance.
+    let d2 = f.run(&["deps", "a.py", "--depth", "2"]);
+    let rows = d2["data"].as_array().unwrap();
+    let depth_of = |p: &str| rows.iter()
+        .find(|r| r["path"] == p).unwrap()["depth"].as_u64().unwrap();
+    assert_eq!(depth_of("b.py"), 1);
+    assert_eq!(depth_of("c.py"), 2, "transitive dep is hop 2");
+}
+
+#[test]
+fn deps_cycles_reports_import_cycle() {
+    let f = Fixture::new();
+    f.write("x.py", "import y\n");
+    f.write("y.py", "import x\n");
+    f.write("z.py", "x = 1\n"); // not in any cycle
+
+    let v = f.run(&["deps", "--cycles"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "exactly one cycle: {rows:?}");
+    let cyc: Vec<&str> = rows[0]["cycle"].as_array().unwrap()
+        .iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(cyc, ["x.py", "y.py"], "cycle canonicalized to start at least member: {cyc:?}");
+    assert_eq!(rows[0]["length"], 2);
+}
+
+#[test]
+fn deps_disambiguates_same_stem_by_path_alignment() {
+    // Two files share the stem `util`; an import naming the package picks the
+    // aligned one, not the unrelated same-stem file.
+    let f = Fixture::new();
+    f.write("pkg/util.py", "a = 1\n");
+    f.write("other/util.py", "b = 1\n");
+    f.write("main.py", "import pkg.util\n");
+
+    let targets = field_set(&f.run(&["deps", "main.py"]), "path");
+    assert!(targets.contains(&"pkg/util.py".to_string()), "aligned file missing: {targets:?}");
+    assert!(!targets.contains(&"other/util.py".to_string()),
+            "unaligned same-stem file leaked: {targets:?}");
+}
+
 #[test]
 fn stats_reports_per_language_file_counts() {
     let f = Fixture::new();

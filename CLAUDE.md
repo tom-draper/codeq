@@ -33,6 +33,12 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   to X", "all `Ok($X)` returns", etc. Each match is annotated with its enclosing
   `[symbol]`. Limits: it's structurally exact (include optional syntax the code
   has) and can't see inside macro invocations.
+- **Module-dependency graph:** `codeq deps <file> [--depth N]` — the internal
+  files a file depends on, resolved from its imports (each edge shows the raw
+  import string); `--depth N` walks transitively. `codeq deps --cycles` lists
+  every import cycle in the repo. Resolution is heuristic (import segments matched
+  to file stems), so `from pkg import x` (module = just `pkg`) won't resolve while
+  `import pkg.x` does — verify via the edge's module string.
 - **Trim tokens on list output:** append `--fields a,b`
 
 ## Known limitations (found by dogfooding — don't be misled)

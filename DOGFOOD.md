@@ -561,3 +561,27 @@ callee name under `symbol`, but depth-1 callees use `name` — so `callees X` an
 `Callee` (`name` at every depth). Lesson: reusing one row type across two
 commands leaked the wrong field name; the depth-1 shape is the contract the
 deeper walk must match.
+
+## 2026-07-14 — module-dependency graph: deps + deps --cycles
+
+Second wishlist item. `deps <file> [--depth N]` resolves a file's raw imports to
+internal files and walks the graph; `deps --cycles` finds every import cycle.
+The hard part is resolution: imports are raw strings (`crate::db`, `foo.bar`,
+`./x`), so `deps` matches an import's path *segments* against repo file stems,
+scoring candidates by how many path components the import names — `foo.bar.util`
+picks `foo/bar/util.py` over an unrelated `util.py`. No real module resolver, so
+it's honest-but-fuzzy: unresolved imports are treated as external (no edge), and
+genuine ambiguity is reported as multiple edges rather than a guess.
+
+Dogfooded on this repo: `deps src/commands.rs` cleanly resolved all 7 `crate::`
+imports to their files; `deps --cycles` correctly found none (the crate is a
+DAG). Caught by writing a test: Python `from pkg import x` stores the module as
+just `pkg` (the from-clause, not `pkg.x`), so with no `pkg.py` it can't resolve —
+`import pkg.x` carries both segments and does. A real limitation of resolving
+from the stored string; documented rather than papered over.
+
+Also a text-rendering gap: a cycle is a *list* field (`cycle: [a, b]`), which the
+generic row renderer dropped (it only prints scalar fields), leaving a bare
+`length=2`. Added a dedicated branch so cycles render as `a -> b -> a` — the loop
+closed back to its first member. Lesson (again): every new row shape needs a look
+at the text renderer, not just the JSON.

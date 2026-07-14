@@ -224,6 +224,15 @@ fn render_row(row: &Value, out: &mut String) {
         out.push_str(&format!("{pad}{loc}{sig}\n"));
         return;
     }
+    // An import cycle: the ordered file list, closed back to its first member so
+    // the loop is visible (`a -> b -> a`).
+    if let Some(cycle) = o.get("cycle").and_then(|v| v.as_array()) {
+        let files: Vec<&str> = cycle.iter().filter_map(|v| v.as_str()).collect();
+        if !files.is_empty() {
+            out.push_str(&format!("{pad}{} -> {}\n", files.join(" -> "), files[0]));
+            return;
+        }
+    }
     // Bare identifiers (symbols, callers, imports, map groupings), then any other
     // scalar fields as `key=value` — so metric rows like map's `definitions`/
     // `files`/`importers` counts render instead of vanishing.

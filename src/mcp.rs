@@ -229,6 +229,14 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push("importers".into());
             args.push(s(a, "query")?.into());
         }
+        "codeq_deps" => {
+            args.push("deps".into());
+            if let Some(f) = s(a, "file") {
+                args.push(f.into());
+            }
+            optn(&mut args, a, "depth", "--depth");
+            flag(&mut args, a, "cycles", "--cycles");
+        }
         "codeq_astgrep" => {
             args.push("astgrep".into());
             args.push(s(a, "pattern")?.into());
@@ -342,6 +350,9 @@ fn tools() -> Value {
         tool("codeq_importers",
             "Files whose imports match a module string.",
             json!({ "query": str_ }), &["query"]),
+        tool("codeq_deps",
+            "Internal files a file depends on, resolved from its imports (raw import strings matched to file stems — heuristic, not a real module resolver). depth (default 1) walks transitive dependencies. cycles=true reports every import cycle in the repo instead (omit file).",
+            json!({ "file": str_, "depth": num_, "cycles": bool_ }), &[]),
         tool("codeq_astgrep",
             "Structural (AST) search: match a code pattern with $NAME / $_ metavariables (and $$$ for any run of siblings, e.g. foo($$$)), parsed with the language's own grammar so it matches syntax not text — e.g. '$X.unwrap()' finds every .unwrap() call whatever the receiver. Deterministic; a repeated $NAME must bind identically. Cannot see inside macro invocations. language is required.",
             json!({ "pattern": str_, "language": str_, "path": str_ }), &["pattern", "language"]),
