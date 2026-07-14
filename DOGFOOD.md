@@ -4,6 +4,27 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-13 — session 14: dogfooding caught `index --rebuild` leaving an empty index
+
+Prompted to actually dogfood (I'd drifted to grep/rg/sed), used `codeq search
+'fresh_token|freshness_token'` to check the git-free change left no dangling
+refs. The text output's `[enclosing-symbol]` annotation pointed straight at a
+`DELETE FROM meta WHERE key='fresh_token'` inside `Session::open`'s `--rebuild`
+path — `codeq read --lines` then showed the whole block.
+
+- **REAL BUG, FIXED: `codeq index --rebuild` produced an *empty* index.** The
+  rebuild wiped `files`/`content_fts` but not the new `dirs` cache; the next
+  refresh's `is_fresh` then saw an unchanged `dirs` cache + an empty `files`
+  table, judged the index fresh, and skipped the walk. Verified: 355 symbols → 0
+  after `--rebuild`. Same latent bug in `migrate()`'s schema-version wipe. Fixed
+  both to clear `dirs` whenever they wipe `files`; regression test added
+  (`rebuild_repopulates_the_index`).
+- **Why the harness missed it:** `differential.py`/`completion.py` force a clean
+  index with `rm -rf .codeq`, never exercising `--rebuild`. A whole command path
+  was untested — only *using* the tool (and reading its own output) surfaced it.
+  The `[enclosing-symbol]` annotation restored earlier this day is what made the
+  stray statement legible at a glance.
+
 ## 2026-07-13 — session 13: git-free freshness via codeq's own index cache
 
 Profiling showed ~58% of every command's latency was the git freshness check

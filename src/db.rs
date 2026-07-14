@@ -148,7 +148,9 @@ impl Db {
         if prev.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
             self.conn.execute("DELETE FROM files", [])?; // cascades to facts
             let _ = self.conn.execute("DELETE FROM content_fts", []);
-            let _ = self.conn.execute("DELETE FROM meta WHERE key = 'fresh_token'", []);
+            // Clear the dir cache too: an empty `files` table against a populated
+            // `dirs` cache would look "fresh" and skip the rebuild walk.
+            let _ = self.conn.execute("DELETE FROM dirs", []);
             let _ = self.set_meta("last_indexed_at", "0");
         }
         self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;

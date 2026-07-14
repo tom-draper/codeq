@@ -1436,6 +1436,22 @@ fn freshness_reflects_untracked_edits() {
 }
 
 #[test]
+fn rebuild_repopulates_the_index() {
+    // `index --rebuild` wipes derived tables; it must also clear the dir cache,
+    // or the next refresh sees empty files + unchanged dirs, calls it "fresh",
+    // and leaves the index empty.
+    let f = Fixture::new();
+    f.write("a.rs", "fn alpha() {}\nfn beta() {}\n");
+    f.git_init_commit();
+    assert_eq!(field_set(&f.run(&["symbols"]), "name").len(), 2);
+
+    f.run(&["index", "--rebuild"]);
+    let names = field_set(&f.run(&["symbols"]), "name");
+    assert!(names.contains(&"alpha".to_string()) && names.contains(&"beta".to_string()),
+            "rebuild left an empty index: {names:?}");
+}
+
+#[test]
 fn freshness_detects_added_file() {
     // The git-free freshness cache detects a new file via its parent directory's
     // bumped mtime — no manual reindex, no git.

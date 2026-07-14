@@ -44,8 +44,10 @@ impl Session {
         if rebuild {
             db.conn.execute("DELETE FROM files", [])?; // cascades to facts
             db.conn.execute("DELETE FROM content_fts", [])?;
-            // Force the next refresh to do a full walk, not hit the fast path.
-            db.conn.execute("DELETE FROM meta WHERE key = 'fresh_token'", [])?;
+            // Also clear the directory cache: otherwise the next refresh sees an
+            // empty `files` table against an unchanged `dirs` cache, judges the
+            // index "fresh", and skips the walk — leaving it empty.
+            db.conn.execute("DELETE FROM dirs", [])?;
         }
         let stats = refresh(&db, &repo)?;
         Ok(Session {
