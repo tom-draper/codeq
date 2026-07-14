@@ -13,7 +13,7 @@ use rusqlite::Connection;
 // BOM-prefixed files — bump so pre-fix indexes rebuild on upgrade.
 // v6: git-free freshness via a native dir-mtime cache (the `dirs` table); old
 // indexes lack it, so rebuild to populate it.
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 pub struct Db {
     pub conn: Connection,
@@ -106,6 +106,18 @@ impl Db {
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
             );
 
+            -- Type relations: `subtype` implements/extends `supertype`
+            -- (impl/extends/implements edges the call graph doesn't cover).
+            CREATE TABLE IF NOT EXISTS impls (
+                path      TEXT NOT NULL,
+                line      INTEGER NOT NULL,
+                subtype   TEXT NOT NULL,
+                supertype TEXT NOT NULL,
+                relation  TEXT NOT NULL,
+                language  TEXT,
+                FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
+            );
+
             -- Directory mtimes: codeq's own index cache for cheap, git-free
             -- freshness. A file added/removed/renamed bumps its parent dir's
             -- mtime, so checking these detects structural changes without a walk.
@@ -119,6 +131,8 @@ impl Db {
             CREATE INDEX IF NOT EXISTS facts_name ON facts(name);
             CREATE INDEX IF NOT EXISTS facts_path ON facts(path);
             CREATE INDEX IF NOT EXISTS spans_path ON spans(path);
+            CREATE INDEX IF NOT EXISTS impls_supertype ON impls(supertype);
+            CREATE INDEX IF NOT EXISTS impls_subtype ON impls(subtype);
             "#,
         )?;
 

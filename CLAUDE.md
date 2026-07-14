@@ -27,6 +27,11 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For blast-radius / reachability.
+- **Who implements / extends a type:** `codeq implementors NAME` — the types that
+  `impl T for X` (Rust), `extends`/`implements` (Java/TS/PHP/C#/C++), subclass
+  (`class X(Base)` Python, `class X < Y` Ruby). The inheritance edges the call
+  graph misses; `--relation implements|extends` to filter. Go (structural) / C
+  have none; name-based like the other graph commands.
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
   reference NAME (by test-file path or test-like name). For the edit→find-the-test loop.
 - **Find dead code:** `codeq unused [<path>]` — definitions with no reference

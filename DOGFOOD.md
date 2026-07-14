@@ -720,3 +720,23 @@ grep dumps every occurrence of a used name). Baseline capped at 20 symbols/file,
 so it *under*-charges. First acted on the feature's own finding — removed the
 dead `has_been_indexed` it flagged — then benchmarked it. Totals: 11 tasks, 5.8x
 tokens, 4.6x tool calls.
+
+## 2026-07-14 — `implementors` (type hierarchy) — the one real graph gap
+
+Every graph command so far (callers/callees/about) is *call*-based; nothing
+answered "who implements this trait / extends this class." Built `implementors
+<type>` on a new relations pass: a third tree-sitter query per language captures
+`@sub` (the deriving type) and `@implements`/`@extends` (the supertype), stored
+in a dedicated `impls` table (mirroring `spans`; schema v7 -> v8) rather than
+overloaded onto facts — 20 `kind <> 'import'` sites showed how error-prone
+overloading would be.
+
+Covers 9 languages: Rust `impl T for X`, Java/TS/PHP `extends`+`implements`
+(distinctly), Python `class X(Base)`, Ruby `class X < Y`, C++/C# base lists, JS
+`extends`. Go (structural typing) and C have none — reported honestly, not faked.
+All 9 grammar queries matched on the first try; validated at scale on the corpus
+(serde: 323 relations, `implementors Serialize` → str/String/Option<T>…;
+newtonsoft: 700; gson `implementors TypeAdapterFactory` → every factory class).
+
+Known limit, documented: C#'s grammar can't distinguish a base class from an
+interface in the base list, so C# reports everything as `extends`.

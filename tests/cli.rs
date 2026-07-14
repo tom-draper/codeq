@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 7);
+    assert_eq!(v["index"]["schema"], 8);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -826,6 +826,63 @@ fn callers_depth_walks_transitively() {
         .find(|r| r["symbol"] == sym).unwrap()["depth"].as_u64().unwrap();
     assert_eq!(depth_of("mid"), 1, "direct caller is hop 1");
     assert_eq!(depth_of("top"), 2, "transitive caller is hop 2");
+}
+
+#[test]
+fn implementors_finds_rust_trait_impls() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "trait Shape {}\n\
+         struct Circle;\n\
+         struct Square;\n\
+         impl Shape for Circle {}\n\
+         impl Shape for Square {}\n\
+         impl Circle { fn area(&self) {} }\n",
+    );
+    let v = f.run(&["implementors", "Shape"]);
+    let rows = v["data"].as_array().unwrap();
+    let subs: Vec<&str> = rows.iter().map(|r| r["subtype"].as_str().unwrap()).collect();
+    assert!(subs.contains(&"Circle") && subs.contains(&"Square"), "{subs:?}");
+    // The inherent `impl Circle {}` is not a relation to Shape.
+    assert_eq!(rows.len(), 2, "inherent impl leaked: {rows:?}");
+    assert_eq!(rows[0]["relation"], "implements");
+}
+
+#[test]
+fn implementors_distinguishes_extends_from_implements() {
+    // Java: extends a class, implements an interface — reported distinctly.
+    let f = Fixture::new();
+    f.write(
+        "A.java",
+        "class Animal {}\n\
+         interface Runner {}\n\
+         class Dog extends Animal implements Runner {}\n",
+    );
+    let animal = f.run(&["implementors", "Animal"]);
+    assert_eq!(animal["data"][0]["subtype"], "Dog");
+    assert_eq!(animal["data"][0]["relation"], "extends");
+
+    let runner = f.run(&["implementors", "Runner"]);
+    assert_eq!(runner["data"][0]["subtype"], "Dog");
+    assert_eq!(runner["data"][0]["relation"], "implements");
+
+    // --relation filters.
+    let only_ext = f.run(&["implementors", "Animal", "--relation", "implements"]);
+    assert_eq!(only_ext["data"].as_array().unwrap().len(), 0,
+               "Animal is extended, not implemented");
+}
+
+#[test]
+fn implementors_covers_python_and_ruby_inheritance() {
+    let f = Fixture::new();
+    f.write("m.py", "class Animal:\n    pass\nclass Dog(Animal):\n    pass\n");
+    f.write("m.rb", "class Base\nend\nclass Sub < Base\nend\n");
+
+    let py = f.run(&["implementors", "Animal"]);
+    assert_eq!(py["data"][0]["subtype"], "Dog");
+    let rb = f.run(&["implementors", "Base"]);
+    assert_eq!(rb["data"][0]["subtype"], "Sub");
 }
 
 #[test]

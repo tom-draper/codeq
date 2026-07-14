@@ -177,6 +177,23 @@ enum Command {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
+    /// Types that implement or extend a trait / interface / base class — the
+    /// inheritance edges the call graph doesn't cover (`impl T for X` in Rust,
+    /// `extends`/`implements` in Java/TS/PHP, `class X(Base)` in Python, …). Go
+    /// (structural typing) and C have none. Name-based.
+    Implementors {
+        /// The trait / interface / base class name.
+        name: String,
+        /// Restrict to one relation: `implements` or `extends`.
+        #[arg(long)]
+        relation: Option<String>,
+        /// Restrict to paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// Definitions with no reference anywhere outside their own definition site
     /// — candidate dead code. Conservative and name-based: a mention in a comment
     /// or string counts as a use, and a same-named symbol elsewhere masks it, so
@@ -455,6 +472,19 @@ fn main() -> ExitCode {
             &name,
             path.as_deref(),
             language.as_deref(),
+            limit,
+            out,
+        ),
+        Command::Implementors {
+            name,
+            relation,
+            path,
+            limit,
+        } => commands::cmd_implementors(
+            &cwd,
+            &name,
+            relation.as_deref(),
+            path.as_deref(),
             limit,
             out,
         ),

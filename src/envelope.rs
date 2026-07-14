@@ -237,7 +237,7 @@ fn render_row(row: &Value, out: &mut String) {
     // scalar fields as `key=value` — so metric rows like map's `definitions`/
     // `files`/`importers` counts render instead of vanishing.
     let mut parts: Vec<String> = Vec::new();
-    for key in ["kind", "name", "module", "symbol", "dir"] {
+    for key in ["kind", "name", "module", "symbol", "subtype", "dir"] {
         if let Some(v) = str_of(key) {
             parts.push(v.to_string());
         }
@@ -250,7 +250,7 @@ fn render_row(row: &Value, out: &mut String) {
     const CONSUMED: &[&str] = &[
         "path", "line", "col", "start_line", "end_line", "start_col", "end_col",
         "start_byte", "end_byte", "depth", "text", "signature", "doc", "source",
-        "id", "confidence", "language", "kind", "name", "module", "symbol", "dir",
+        "id", "confidence", "language", "kind", "name", "module", "symbol", "subtype", "dir",
     ];
     for (k, v) in o {
         if CONSUMED.contains(&k.as_str()) {

@@ -109,6 +109,11 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
         let mut ins_span = tx.prepare(
             "INSERT INTO spans(path, start_byte, end_byte, kind) VALUES(?1, ?2, ?3, ?4)",
         )?;
+        let mut del_impls = tx.prepare("DELETE FROM impls WHERE path = ?1")?;
+        let mut ins_impl = tx.prepare(
+            "INSERT INTO impls(path, line, subtype, supertype, relation, language)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
 
         let now = now_ns();
 
@@ -213,8 +218,9 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 // Facts + spans are derived from content: drop stale, re-extract.
                 del_facts.execute([&rel])?;
                 del_spans.execute([&rel])?;
+                del_impls.execute([&rel])?;
                 if let Some(lang) = language {
-                    let (facts, spans) = extractor.extract(lang, &bytes);
+                    let (facts, spans, relations) = extractor.extract(lang, &bytes);
                     for f in facts {
                         ins_fact.execute((
                             f.id(&rel),
@@ -237,6 +243,16 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                     }
                     for (sb, eb, sp) in spans {
                         ins_span.execute((&rel, sb as i64, eb as i64, sp.as_i64()))?;
+                    }
+                    for r in relations {
+                        ins_impl.execute((
+                            &rel,
+                            r.start_line as i64,
+                            &r.subtype,
+                            &r.supertype,
+                            r.relation,
+                            lang,
+                        ))?;
                     }
                 }
             }

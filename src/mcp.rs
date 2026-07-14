@@ -229,6 +229,13 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push("importers".into());
             args.push(s(a, "query")?.into());
         }
+        "codeq_implementors" => {
+            args.push("implementors".into());
+            args.push(s(a, "name")?.into());
+            opt(&mut args, a, "relation", "--relation");
+            opt(&mut args, a, "path", "--path");
+            optn(&mut args, a, "limit", "--limit");
+        }
         "codeq_unused" => {
             args.push("unused".into());
             if let Some(p) = s(a, "path") {
@@ -367,6 +374,9 @@ fn tools() -> Value {
         tool("codeq_importers",
             "Files whose imports match a module string.",
             json!({ "query": str_ }), &["query"]),
+        tool("codeq_implementors",
+            "Types that implement or extend a trait / interface / base class — the inheritance edges the call graph doesn't cover (impl T for X in Rust, extends/implements in Java/TS/PHP, class X(Base) in Python, class X < Y in Ruby, base lists in C++/C#). Use it to answer 'who implements this interface' before changing it. Go (structural typing) and C have none. Name-based. relation filters to 'implements' or 'extends'.",
+            json!({ "name": str_, "relation": str_, "path": str_, "limit": num_ }), &["name"]),
         tool("codeq_unused",
             "Definitions with no reference anywhere outside their own definition site — candidate dead code. Conservative and name-based: a mention in a comment or string counts as a use, and a same-named symbol elsewhere masks it, so it under-reports rather than misleads. visibility is shown so a public symbol (maybe external API, not dead) is distinguishable from a private one. Test-file definitions are excluded by default (framework entry points look unused); set include_tests to include them. path/kind scope what is reported; the usage check is always repo-wide.",
             json!({ "path": str_, "kind": str_, "include_tests": bool_, "limit": num_ }), &[]),

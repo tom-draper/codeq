@@ -40,6 +40,20 @@ pub struct Fact {
     pub visibility: Option<String>,
 }
 
+/// A type relation: `subtype` implements/extends `supertype`. Captures
+/// `impl Trait for X` (Rust), `class X extends Y` / `implements I` (Java/TS/…),
+/// `class X(Base)` (Python), etc. — the inheritance/implementation edges the
+/// call graph doesn't cover.
+pub struct Relation {
+    /// The implementing/deriving type (`X` in `impl T for X`).
+    pub subtype: String,
+    /// The trait/interface/base being implemented or extended (`T`).
+    pub supertype: String,
+    /// `"implements"` or `"extends"`.
+    pub relation: &'static str,
+    pub start_line: usize,
+}
+
 impl Fact {
     /// Content-addressed id, stable within an index version + working-tree
     /// state. Encodes position, so it is deliberately *not* durable across
@@ -81,6 +95,8 @@ struct LangSpec {
     capture_names: Vec<String>,
     span_query: Query,
     span_capture_names: Vec<String>,
+    rel_query: Query,
+    rel_capture_names: Vec<String>,
     source: String,
     lang: &'static str,
 }
@@ -90,6 +106,7 @@ impl LangSpec {
         language: tree_sitter::Language,
         query_src: &str,
         span_src: &str,
+        rel_src: &str,
         source: &str,
         lang: &'static str,
     ) -> Result<LangSpec> {
@@ -105,22 +122,30 @@ impl LangSpec {
             .iter()
             .map(|s| s.to_string())
             .collect();
+        let rel_query = Query::new(&language, rel_src).context("compiling relation query")?;
+        let rel_capture_names = rel_query
+            .capture_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         Ok(LangSpec {
             parser,
             query,
             capture_names,
             span_query,
             span_capture_names,
+            rel_query,
+            rel_capture_names,
             source: source.to_string(),
             lang,
         })
     }
 
-    /// One parse yields both definition facts and comment/string spans.
-    fn extract(&mut self, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>) {
+    /// One parse yields definition facts, comment/string spans, and type relations.
+    fn extract(&mut self, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>) {
         let tree = match self.parser.parse(src, None) {
             Some(t) => t,
-            None => return (Vec::new(), Vec::new()),
+            None => return (Vec::new(), Vec::new(), Vec::new()),
         };
         let root = tree.root_node();
 
@@ -211,7 +236,48 @@ impl LangSpec {
             spans.sort_by_key(|(s, _, _)| *s);
         }
 
-        (facts, spans)
+        // Third pass: type relations (implements / extends). One match binds the
+        // subtype (`@sub`) once and one or more supertypes (`@implements` /
+        // `@extends`), so a class implementing several interfaces yields several.
+        let mut relations = Vec::new();
+        {
+            let mut cursor = QueryCursor::new();
+            let mut it = cursor.matches(&self.rel_query, root, src);
+            while let Some(m) = it.next() {
+                let mut sub: Option<&str> = None;
+                let mut supers: Vec<(&str, &str)> = Vec::new(); // (relation, name)
+                for cap in m.captures {
+                    let cname = self.rel_capture_names[cap.index as usize].as_str();
+                    let text = match cap.node.utf8_text(src) {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    };
+                    match cname {
+                        "sub" => sub = Some(text),
+                        "implements" => supers.push(("implements", text)),
+                        "extends" => supers.push(("extends", text)),
+                        _ => {}
+                    }
+                }
+                if let Some(sub) = sub {
+                    for (relation, sup) in supers {
+                        relations.push(Relation {
+                            subtype: sub.to_string(),
+                            supertype: sup.to_string(),
+                            relation,
+                            start_line: m
+                                .captures
+                                .iter()
+                                .map(|c| c.node.start_position().row + 1)
+                                .min()
+                                .unwrap_or(0),
+                        });
+                    }
+                }
+            }
+        }
+
+        (facts, spans, relations)
     }
 }
 
@@ -222,6 +288,7 @@ impl Extractor {
                 tree_sitter_rust::LANGUAGE.into(),
                 RUST_QUERY,
                 RUST_SPANS,
+                RUST_REL,
                 "treesitter/rust",
                 "rust",
             )?,
@@ -229,6 +296,7 @@ impl Extractor {
                 tree_sitter_python::LANGUAGE.into(),
                 PYTHON_QUERY,
                 PYTHON_SPANS,
+                PYTHON_REL,
                 "treesitter/python",
                 "python",
             )?,
@@ -236,6 +304,7 @@ impl Extractor {
                 tree_sitter_javascript::LANGUAGE.into(),
                 JS_QUERY,
                 JS_SPANS,
+                JS_REL,
                 "treesitter/javascript",
                 "javascript",
             )?,
@@ -243,6 +312,7 @@ impl Extractor {
                 tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
                 &format!("{JS_QUERY}\n{TS_EXTRA}"),
                 JS_SPANS,
+                TS_REL,
                 "treesitter/typescript",
                 "typescript",
             )?,
@@ -250,6 +320,7 @@ impl Extractor {
                 tree_sitter_typescript::LANGUAGE_TSX.into(),
                 &format!("{JS_QUERY}\n{TS_EXTRA}"),
                 JS_SPANS,
+                TS_REL,
                 "treesitter/tsx",
                 "tsx",
             )?,
@@ -257,6 +328,7 @@ impl Extractor {
                 tree_sitter_go::LANGUAGE.into(),
                 GO_QUERY,
                 GO_SPANS,
+                GO_REL,
                 "treesitter/go",
                 "go",
             )?,
@@ -264,6 +336,7 @@ impl Extractor {
                 tree_sitter_java::LANGUAGE.into(),
                 JAVA_QUERY,
                 JAVA_SPANS,
+                JAVA_REL,
                 "treesitter/java",
                 "java",
             )?,
@@ -271,6 +344,7 @@ impl Extractor {
                 tree_sitter_ruby::LANGUAGE.into(),
                 RUBY_QUERY,
                 RUBY_SPANS,
+                RUBY_REL,
                 "treesitter/ruby",
                 "ruby",
             )?,
@@ -278,6 +352,7 @@ impl Extractor {
                 tree_sitter_c::LANGUAGE.into(),
                 C_QUERY,
                 C_SPANS,
+                C_REL,
                 "treesitter/c",
                 "c",
             )?,
@@ -285,6 +360,7 @@ impl Extractor {
                 tree_sitter_cpp::LANGUAGE.into(),
                 CPP_QUERY,
                 CPP_SPANS,
+                CPP_REL,
                 "treesitter/cpp",
                 "cpp",
             )?,
@@ -292,6 +368,7 @@ impl Extractor {
                 tree_sitter_c_sharp::LANGUAGE.into(),
                 CSHARP_QUERY,
                 CSHARP_SPANS,
+                CSHARP_REL,
                 "treesitter/csharp",
                 "csharp",
             )?,
@@ -299,6 +376,7 @@ impl Extractor {
                 tree_sitter_php::LANGUAGE_PHP.into(),
                 PHP_QUERY,
                 PHP_SPANS,
+                PHP_REL,
                 "treesitter/php",
                 "php",
             )?,
@@ -307,7 +385,11 @@ impl Extractor {
 
     /// One parse per file yields definition facts and comment/string spans.
     /// Unsupported languages yield nothing (not an error).
-    pub fn extract(&mut self, language: &str, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>) {
+    pub fn extract(
+        &mut self,
+        language: &str,
+        src: &[u8],
+    ) -> (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>) {
         match language {
             "rust" => self.rust.extract(src),
             "python" => self.python.extract(src),
@@ -321,7 +403,7 @@ impl Extractor {
             "cpp" => self.cpp.extract(src),
             "csharp" => self.csharp.extract(src),
             "php" => self.php.extract(src),
-            _ => (Vec::new(), Vec::new()),
+            _ => (Vec::new(), Vec::new(), Vec::new()),
         }
     }
 }
@@ -781,4 +863,71 @@ const JS_SPANS: &str = r#"
 (comment) @comment
 (string) @string
 (template_string) @string
+"#;
+
+// ---------------------------------------------------------------------------
+// Type-relation queries: `@sub` is the implementing/deriving type, `@implements`
+// / `@extends` the trait/interface/base. Go (structural typing) and C (no
+// inheritance) have none. Grammar-specific; kept minimal and verified by tests.
+// ---------------------------------------------------------------------------
+
+const RUST_REL: &str = r#"
+(impl_item trait: (_) @implements type: (_) @sub)
+"#;
+
+const PYTHON_REL: &str = r#"
+(class_definition
+  name: (identifier) @sub
+  superclasses: (argument_list [(identifier) (attribute)] @extends))
+"#;
+
+const JS_REL: &str = r#"
+(class_declaration name: (identifier) @sub (class_heritage (identifier) @extends))
+(class_declaration name: (identifier) @sub (class_heritage (member_expression) @extends))
+"#;
+
+const TS_REL: &str = r#"
+(class_declaration
+  name: (type_identifier) @sub
+  (class_heritage (extends_clause value: (identifier) @extends)))
+(class_declaration
+  name: (type_identifier) @sub
+  (class_heritage (implements_clause (type_identifier) @implements)))
+(interface_declaration
+  name: (type_identifier) @sub
+  (extends_type_clause (type_identifier) @extends))
+"#;
+
+const GO_REL: &str = "";
+
+const JAVA_REL: &str = r#"
+(class_declaration name: (identifier) @sub (superclass (type_identifier) @extends))
+(class_declaration
+  name: (identifier) @sub
+  (super_interfaces (type_list (type_identifier) @implements)))
+(interface_declaration
+  name: (identifier) @sub
+  (extends_interfaces (type_list (type_identifier) @extends)))
+"#;
+
+const RUBY_REL: &str = r#"
+(class name: (constant) @sub superclass: (superclass (constant) @extends))
+"#;
+
+const C_REL: &str = "";
+
+const CPP_REL: &str = r#"
+(class_specifier name: (type_identifier) @sub (base_class_clause (type_identifier) @extends))
+(struct_specifier name: (type_identifier) @sub (base_class_clause (type_identifier) @extends))
+"#;
+
+const CSHARP_REL: &str = r#"
+(class_declaration name: (identifier) @sub (base_list (identifier) @extends))
+(interface_declaration name: (identifier) @sub (base_list (identifier) @extends))
+"#;
+
+const PHP_REL: &str = r#"
+(class_declaration name: (name) @sub (base_clause (name) @extends))
+(class_declaration name: (name) @sub (class_interface_clause (name) @implements))
+(interface_declaration name: (name) @sub (base_clause (name) @extends))
 "#;

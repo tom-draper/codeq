@@ -2052,6 +2052,66 @@ pub fn cmd_references(
 }
 
 #[derive(Serialize)]
+struct ImplementorRow {
+    /// The implementing/deriving type.
+    subtype: String,
+    /// How it relates: "implements" or "extends".
+    relation: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+}
+
+/// `implementors <type>` — the types that implement or extend a trait /
+/// interface / base class. Covers the inheritance edges the call graph doesn't:
+/// `impl T for X` (Rust), `class X extends Y` / `implements I` (Java/TS/PHP/…),
+/// `class X(Base)` (Python), `class X < Y` (Ruby), base lists (C++/C#). Go
+/// (structural typing) and C have none. Name-based, like the other graph
+/// commands.
+pub fn cmd_implementors(
+    cwd: &Path,
+    name: &str,
+    relation: Option<&str>,
+    path: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let mut sql = String::from(
+        "SELECT subtype, relation, path, line, language
+         FROM impls WHERE supertype = ?1",
+    );
+    let mut args: Vec<String> = vec![name.to_string()];
+    if let Some(r) = relation {
+        sql.push_str(&format!(" AND relation = ?{}", args.len() + 1));
+        args.push(r.to_string());
+    }
+    if let Some(p) = path {
+        sql.push_str(&format!(" AND path LIKE ?{}", args.len() + 1));
+        args.push(format!("%{p}%"));
+    }
+    sql.push_str(" ORDER BY path, line");
+    if limit > 0 {
+        sql.push_str(&format!(" LIMIT {limit}"));
+    }
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let param_refs: Vec<&dyn rusqlite::ToSql> =
+        args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
+    let rows = stmt.query_map(param_refs.as_slice(), |r| {
+        Ok(ImplementorRow {
+            subtype: r.get(0)?,
+            relation: r.get(1)?,
+            path: r.get(2)?,
+            line: r.get(3)?,
+            language: r.get(4)?,
+        })
+    })?;
+    let data: Vec<ImplementorRow> = rows.collect::<std::result::Result<_, _>>()?;
+    s.emit(data)
+}
+
+#[derive(Serialize)]
 struct UnusedRow {
     name: String,
     kind: String,
