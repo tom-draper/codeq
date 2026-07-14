@@ -179,10 +179,4 @@ impl Db {
             .ok();
         Ok(v)
     }
-
-    /// Whether the index has ever been built.
-    #[allow(dead_code)]
-    pub fn has_been_indexed(&self) -> bool {
-        matches!(self.get_meta("last_indexed_at"), Ok(Some(_)))
-    }
 }
