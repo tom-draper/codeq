@@ -107,6 +107,47 @@ def base_rg_imports(path, S, F, m):
                      r"^\s*(import|from|require|use|include|using)\b", F]], path)
 
 
+def codeq_caller_syms(path, S):
+    """The distinct enclosing symbols that call S (codeq's ground truth) — the set
+    a generic agent reaches by reading a window at each direct call site."""
+    p = subprocess.run([CODEQ, "--json", "callers", S], cwd=path, capture_output=True).stdout
+    try:
+        rows = json.loads(p)["data"]
+    except (ValueError, KeyError):
+        return []
+    seen, out = set(), []
+    for r in rows:
+        s = r.get("symbol")
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def base_blast_radius(path, S, F, m):
+    """Two-hop blast radius the honest generic way: grep S's call sites and read a
+    window at each to learn the enclosing callers (hop 1), then grep each of those
+    to reach hop 2. codeq does it in one `callers --depth 2` call."""
+    ms1, r1 = run(["rg", "-n", "--no-heading", "--no-messages", rf"{S}\("], path)
+    c1, b1, t1 = measure(windows(first_hits(r1, 5)), path)  # read to identify enclosers
+    calls, nbytes, ms = 1 + c1, len(r1) + b1, ms1 + t1
+    for sym in codeq_caller_syms(path, S)[:5]:               # hop 2: re-grep each
+        dt, r2 = run(["rg", "-n", "--no-heading", "--no-messages", rf"{sym}\("], path)
+        calls += 1
+        nbytes += len(r2)
+        ms += dt
+    return calls, nbytes, ms
+
+
+def base_which_tests(path, S, F, m):
+    """Which tests exercise S: grep S within test-looking files, then read a window
+    at each hit to confirm it's a test. codeq does it in one `tests` call."""
+    ms, r = run(["rg", "-nw", "--no-heading", "--no-messages",
+                 "-g", "*test*", "-g", "*spec*", "-g", "*Test*", "-g", "*_test*", S], path)
+    c, b, t = measure(windows(first_hits(r, 5)), path)
+    return 1 + c, len(r) + b, ms + t
+
+
 # ---- tasks: (name, codeq argv builder, baseline fn, note)
 TASKS = [
     ("read-impl",       lambda S, F, m: [CODEQ, "read", F, "--symbol", S],
@@ -115,6 +156,10 @@ TASKS = [
      base_understand,   "def + callers + callees before editing"),
     ("callsites",       lambda S, F, m: [CODEQ, "callers", S],
      base_callsites,    "who calls it, with context"),
+    ("blast-radius",    lambda S, F, m: [CODEQ, "callers", S, "--depth", "2"],
+     base_blast_radius, "2-hop caller tree vs iterative grep rounds"),
+    ("which-tests",     lambda S, F, m: [CODEQ, "tests", S],
+     base_which_tests,  "tests exercising S vs grep-in-tests + read"),
     ("file-structure",  lambda S, F, m: [CODEQ, "outline", F],
      base_read_file,    "learn a file's API/shape"),
     ("usages",          lambda S, F, m: [CODEQ, "references", S, "--limit", "0"],

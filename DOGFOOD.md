@@ -585,3 +585,26 @@ generic row renderer dropped (it only prints scalar fields), leaving a bare
 `length=2`. Added a dedicated branch so cycles render as `a -> b -> a` — the loop
 closed back to its first member. Lesson (again): every new row shape needs a look
 at the text renderer, not just the JSON.
+
+## 2026-07-14 — proved the premise, then made the benchmark measure what we built
+
+Ran the task-level token-to-completion harness (bench/completion.py) across the
+full 25-repo / 12-language corpus: completing a realistic task costs a generic
+agent (rg/sed/cat) ~6x the tokens of codeq. Premise holds.
+
+But the harness predated the session's new capabilities, so it undersold exactly
+where codeq wins hardest — the multi-round work. Added two tasks with fair
+(conservative) baselines:
+
+- **blast-radius** = `callers S --depth 2` vs the honest generic loop: grep S's
+  call sites, read a window at each to learn the enclosing callers (hop 1), then
+  grep each of those (hop 2). Result: 155 baseline tool calls vs 25 — a 6x
+  call-count explosion codeq collapses into one command. (Baseline under-charges,
+  not over: it skips the hop-2 reads, so the real gap is wider.)
+- **which-tests** = `tests S` vs grep-in-test-files + read-to-confirm: **15x**
+  fewer tokens. The single sharpest win in the suite.
+
+Kept the one task codeq *loses* (file-imports, 0.8x — annotated output is heavier
+than raw `rg` on import lines) rather than cherry-pick it out; a benchmark you
+only run to win isn't a benchmark. New totals: 8 tasks, 5.7x tokens, 2.6x tool
+calls across 25 repos.
