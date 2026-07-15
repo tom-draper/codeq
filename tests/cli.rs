@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 9);
+    assert_eq!(v["index"]["schema"], 10);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -838,6 +838,23 @@ fn resolved_follows_rust_mod_declarations_as_edges() {
     let row = res["data"].as_array().unwrap().iter()
         .find(|r| r["symbol"] == "root").expect("root should survive resolution");
     assert_eq!(row["via"], "imported", "mod-declared dependency should resolve: {res}");
+}
+
+#[test]
+fn resolved_follows_python_from_import_of_a_submodule() {
+    // `from pkg import target` where target is the submodule pkg/target.py — the
+    // bare module string `pkg` can't stem-match the package dir, so before the
+    // qualified-import fix this reference was unresolved. Now `pkg.target` reaches
+    // pkg/target.py and the reference resolves.
+    let f = Fixture::new();
+    f.write("pkg/__init__.py", "\n");
+    f.write("pkg/target.py", "def make():\n    return 1\n");
+    f.write("user.py", "from pkg import target\ndef use():\n    return target.make()\n");
+
+    let res = f.run(&["callers", "make", "--resolved"]);
+    let row = res["data"].as_array().unwrap().iter()
+        .find(|r| r["symbol"] == "use").expect("use() should survive resolution");
+    assert_eq!(row["via"], "imported", "from-import of a submodule should resolve: {res}");
 }
 
 #[test]
@@ -2018,9 +2035,14 @@ fn python_import_forms_all_capture_the_module() {
         "import os\nfrom sys import path\nfrom collections import OrderedDict, defaultdict\nimport json as j\n",
     );
     let mods = field_set(&f.run(&["imports", "a.py"]), "module");
-    for m in ["os", "sys", "collections", "json"] {
-        assert!(mods.iter().any(|x| x == m), "module '{m}' not captured: {mods:?}");
-    }
+    // Plain imports keep the bare module.
+    assert!(mods.contains(&"os".to_string()), "{mods:?}");
+    assert!(mods.contains(&"json".to_string()), "{mods:?}");
+    // `from X import a, b` is captured qualified per name (X.a) so the imported
+    // symbol — dropped by the bare module string — resolves to its defining file.
+    assert!(mods.contains(&"sys.path".to_string()), "{mods:?}");
+    assert!(mods.contains(&"collections.OrderedDict".to_string()), "{mods:?}");
+    assert!(mods.contains(&"collections.defaultdict".to_string()), "{mods:?}");
 }
 
 #[test]

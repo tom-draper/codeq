@@ -28,9 +28,10 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
     `references` — drops occurrences whose file can't reach a definition of NAME
     through imports, and tags the rest `via` same-file / imported / ambiguous.
     Opt-in and heuristic (import resolution is best-effort — a stem-matched edge,
-    so e.g. Python `from pkg import x` where the module is just `pkg` won't
-    resolve), so it can over-prune; the default stays a safe textual superset.
-    Rust `mod x;` declarations count as edges (intra-crate reachability works).
+    so e.g. Python `from . import x` relative/`import *` wildcard forms stay
+    coarse), so it can over-prune; the default stays a safe textual superset. Rust
+    `mod x;` declarations and Python `from pkg import x` (captured as `pkg.x`) both
+    count as edges, so intra-crate and package-submodule reachability work.
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For blast-radius / reachability.
@@ -66,8 +67,9 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   files a file depends on, resolved from its imports (each edge shows the raw
   import string); `--depth N` walks transitively. `codeq deps --cycles` lists
   every import cycle in the repo. Resolution is heuristic (import segments matched
-  to file stems), so `from pkg import x` (module = just `pkg`) won't resolve while
-  `import pkg.x` does — verify via the edge's module string.
+  to file stems); Python `from pkg import x` is captured as `pkg.x` so it resolves
+  like `import pkg.x`, but relative (`from . import x`) and wildcard forms stay
+  coarse — verify via the edge's module string.
 - **Trim tokens on list output:** append `--fields a,b`
 
 ## Known limitations (found by dogfooding — don't be misled)

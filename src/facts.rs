@@ -159,6 +159,10 @@ impl LangSpec {
                 let mut def: Option<Node> = None;
                 let mut body: Option<Node> = None;
                 let mut guard: Option<&str> = None;
+                // For `from MODULE import a, b` (Python): the module and each
+                // imported name, combined below into qualified `MODULE.a` imports.
+                let mut from_module: Option<&str> = None;
+                let mut from_names: Vec<Node> = Vec::new();
                 for cap in m.captures {
                     match self.capture_names[cap.index as usize].as_str() {
                         "name" => {
@@ -171,9 +175,39 @@ impl LangSpec {
                         // (The query engine here doesn't evaluate `#eq?`, so we
                         // filter in code.)
                         "guard" => guard = cap.node.utf8_text(src).ok(),
+                        "from_module" => from_module = cap.node.utf8_text(src).ok(),
+                        "from_name" => from_names.push(cap.node),
                         other => {
                             kind = Some(other);
                             def = Some(cap.node);
+                        }
+                    }
+                }
+                // `from MODULE import a, b [as c]` → a qualified `MODULE.a` import
+                // per imported name. The bare module string alone drops the name,
+                // so the dependency graph can't resolve it to the file that defines
+                // it; the qualified form stem-matches that file. Aliases keep the
+                // original name (what determines the source file).
+                if let Some(module) = from_module {
+                    for nn in &from_names {
+                        if let Ok(local) = nn.utf8_text(src) {
+                            let start = nn.start_position();
+                            let end = nn.end_position();
+                            facts.push(Fact {
+                                kind: "import".to_string(),
+                                name: format!("{module}.{local}"),
+                                start_byte: nn.start_byte(),
+                                end_byte: nn.end_byte(),
+                                start_line: start.row + 1,
+                                start_col: start.column,
+                                end_line: end.row + 1,
+                                end_col: end.column,
+                                signature: String::new(),
+                                doc: None,
+                                source: self.source.clone(),
+                                confidence: 1.0,
+                                visibility: None,
+                            });
                         }
                     }
                 }
@@ -648,7 +682,18 @@ const PYTHON_QUERY: &str = r#"
 ; Raw syntactic imports.
 (import_statement (dotted_name) @name) @import
 (import_statement (aliased_import (dotted_name) @name)) @import
-(import_from_statement module_name: (dotted_name) @name) @import
+; `from X import a, b [as c]` — capture the module and each imported name; the
+; extractor combines them into qualified `X.a` imports so the name (which the
+; bare module string drops) resolves to its defining file.
+(import_from_statement
+  module_name: (dotted_name) @from_module
+  name: (dotted_name (identifier) @from_name))
+(import_from_statement
+  module_name: (dotted_name) @from_module
+  name: (aliased_import name: (dotted_name (identifier) @from_name)))
+; `from X import *` (wildcard) and relative `from . import x` — keep the coarse
+; module string (no specific name to qualify with).
+(import_from_statement module_name: (dotted_name) @name (wildcard_import)) @import
 (import_from_statement module_name: (relative_import) @name) @import
 "#;
 

@@ -796,3 +796,24 @@ rebuild with the new edges.
 The fix I flagged when shipping `--resolved`, closed. Remaining honest gap: stem
 resolution still can't follow Python `from pkg import x` (module string is just
 `pkg`). Verified: 135 tests, differential 5223/5223, text-mode pass.
+
+## 2026-07-15 — closed the Python `from pkg import x` resolution gap
+
+The gap flagged when `--resolved` shipped: `from pkg import x` stored only the
+module `pkg`, so the imported name was lost and — worse — a bare `pkg` couldn't
+even stem-match a package directory (`pkg/__init__.py`, stem `__init__`), so
+package imports resolved to nothing and got over-pruned.
+
+Fix: capture `from MODULE import a, b [as c]` as one qualified `MODULE.a` import
+per name (the extractor combines a `@from_module` + `@from_name` capture; aliases
+keep the original name, which is what picks the source file). Now `from pkg
+import target` → `pkg.target`, which stem-matches `pkg/target.py`. Verified on the
+actual gap case (package + submodule): `deps user.py` reaches `pkg/target.py` and
+`callers make --resolved` keeps the importer as `via=imported` — both previously
+unresolved. Dogfooded on flask: from-imports now show qualified (`datetime.
+timedelta`, `collections.abc`) and app.py's internal edges resolve.
+
+Also a genuine improvement to `imports`/`deps` granularity, not just resolution:
+`from x import a, b` is now two precise edges instead of one coarse `x`. Remaining
+coarse forms (documented): relative `from . import x` and wildcard `import *`.
+Schema v9 -> v10. Suite 136 green, differential 5223/5223, text-mode pass.
