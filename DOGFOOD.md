@@ -853,3 +853,22 @@ enclosing defs, so a def that both calls and mentions still counts once).
 With this the false-positive story is complete along two axes: `--resolved`
 (which definition) and `--calls`/`--on` (which occurrence). Suite 139 green,
 differential 5223/5223, text-mode pass.
+
+## 2026-07-15 — `read --raw`: serving the edit loop, not just reading
+
+Reflection on my own workflow: codeq owned *orient* and ceded the edit handoff —
+after it told me *where* code was, I re-fetched it with grep+Read to get the exact
+`old_string` for an edit, because codeq's output is comprehension-optimized
+(folded, `[symbol]`-annotated, `cat -n` line prefixes) — the opposite of what an
+editor's search text needs.
+
+`read --raw` closes that: exact bytes of a symbol/range, no prefixes, no folding,
+addressed by name. `codeq read foo.rs --symbol bar --raw` now yields bar's source
+verbatim, ready to paste as an Edit `old_string` — collapsing grep-for-line →
+Read-region → strip-prefixes into one call. With `--symbol` it refuses an
+ambiguous multi-match (an edit anchor must be unique) and points to `--lines`.
+
+Deliberately kept read-only (the safe half of the "serve the edit loop" fork);
+structural edit primitives (`replace`/`insert` by symbol) are the mutation half,
+left for later. Default read output unchanged. Suite 141 green, differential
+5223/5223 (read 500/500), text-mode pass.

@@ -230,6 +230,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "lines", "--lines");
             opt(&mut args, a, "symbol", "--symbol");
             flag(&mut args, a, "full", "--full");
+            flag(&mut args, a, "raw", "--raw");
         }
         "codeq_imports" => {
             args.push("imports".into());
@@ -388,8 +389,8 @@ fn tools() -> Value {
             "Resolve a location (e.g. from a stack trace or compiler error) to the definition(s) enclosing it, innermost first. Location is <path>:<line>.",
             json!({ "location": str_ }), &["location"]),
         tool("codeq_read",
-            "Read a file — PREFER THIS over a raw file read for large files. By default it folds long function/method bodies to their signature plus a marker with the exact hidden line range, so you see the whole file's structure cheaply; then expand with lines (verbatim slice, e.g. \"40-80\") or symbol (a named definition, verbatim). full returns the unfolded file. Line-numbered text.",
-            json!({ "file": str_, "lines": str_, "symbol": str_, "full": bool_ }), &["file"]),
+            "Read a file — PREFER THIS over a raw file read for large files. By default it folds long function/method bodies to their signature plus a marker with the exact hidden line range, so you see the whole file's structure cheaply; then expand with lines (verbatim slice, e.g. \"40-80\") or symbol (a named definition, verbatim). full returns the unfolded file. Line-numbered text. raw=true drops the line-number prefixes and folding to emit exact bytes — use it to grab a symbol's source as an edit's search text (old_string); with symbol it requires a single match.",
+            json!({ "file": str_, "lines": str_, "symbol": str_, "full": bool_, "raw": bool_ }), &["file"]),
         tool("codeq_imports",
             "List import statements (raw module strings), optionally scoped to files whose path matches.",
             json!({ "path": str_ }), &[]),

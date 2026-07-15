@@ -1108,6 +1108,7 @@ pub fn cmd_read(
     lines: Option<&str>,
     symbol: Option<&str>,
     full: bool,
+    raw: bool,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
@@ -1119,11 +1120,18 @@ pub fn cmd_read(
     let text = String::from_utf8_lossy(bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes));
     let file_lines: Vec<&str> = text.lines().collect();
     let n = file_lines.len();
+    let show = |a: usize, b: usize| {
+        if raw {
+            print_range_raw(&file_lines, a, b)
+        } else {
+            print_range(&file_lines, a, b)
+        }
+    };
 
     // Verbatim line range.
     if let Some(spec) = lines {
         let (a, b) = parse_range(spec)?;
-        print_range(&file_lines, a, b);
+        show(a, b);
         return Ok(());
     }
 
@@ -1139,16 +1147,27 @@ pub fn cmd_read(
         if ranges.is_empty() {
             return Err(anyhow!("no definition named '{name}' in {rel}"));
         }
-        for (a, b) in ranges {
-            print_range(&file_lines, a as usize, b as usize);
-            println!();
+        // `--raw` yields exact bytes for an editor's old_string, so a single
+        // clean block is what's wanted — refuse an ambiguous multi-match rather
+        // than emit two concatenated definitions.
+        if raw && ranges.len() > 1 {
+            return Err(anyhow!(
+                "{} definitions named '{name}' in {rel}; --raw needs one — use --lines A-B",
+                ranges.len()
+            ));
+        }
+        for (a, b) in &ranges {
+            show(*a as usize, *b as usize);
+            if !raw {
+                println!(); // blank between/after defs, as the folded view does
+            }
         }
         return Ok(());
     }
 
     // Whole file when asked, or when we can't parse it to know what to fold.
-    if full || !crate::facts::has_spans(language_for(&rel).unwrap_or("")) {
-        print_range(&file_lines, 1, n);
+    if full || raw || !crate::facts::has_spans(language_for(&rel).unwrap_or("")) {
+        show(1, n);
         return Ok(());
     }
 
@@ -1191,6 +1210,16 @@ fn print_range(lines: &[&str], a: usize, b: usize) {
     for i in a.max(1)..=b {
         if let Some(l) = lines.get(i - 1) {
             println!("{i:6}  {l}");
+        }
+    }
+}
+
+/// Verbatim lines with no line-number prefix — exact source, ready to drop into
+/// an editor's search text (the `--raw` view).
+fn print_range_raw(lines: &[&str], a: usize, b: usize) {
+    for i in a.max(1)..=b {
+        if let Some(l) = lines.get(i - 1) {
+            println!("{l}");
         }
     }
 }

@@ -2242,6 +2242,33 @@ fn read_symbol_returns_only_that_definition() {
 }
 
 #[test]
+fn read_raw_emits_exact_bytes_ready_for_edit() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn other() {}\nfn helper() {\n    let x = 1;\n    x\n}\n");
+
+    // Default is line-numbered; --raw is the exact source, no prefixes.
+    let numbered = String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "helper"]).stdout).unwrap();
+    assert!(numbered.contains("  2  fn helper"), "default should be line-numbered: {numbered:?}");
+
+    let raw = String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "helper", "--raw"]).stdout).unwrap();
+    // Byte-exact: the source of `helper` verbatim, and it drops into Edit's
+    // old_string as-is (must be a substring of the file's own text).
+    assert_eq!(raw, "fn helper() {\n    let x = 1;\n    x\n}\n");
+    let file = std::fs::read_to_string(f.dir.path().join("a.rs")).unwrap();
+    assert!(file.contains(raw.trim_end()), "raw output must be a verbatim slice of the file");
+}
+
+#[test]
+fn read_raw_symbol_refuses_ambiguous_match() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn dup() {}\nmod m { fn dup() {} }\n");
+    let r = f.raw(&["read", "a.rs", "--symbol", "dup", "--raw"]);
+    assert!(!r.status.success(), "ambiguous --raw should fail");
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(err.contains("needs one"), "should explain the ambiguity: {err}");
+}
+
+#[test]
 fn callees_report_the_functions_a_symbol_calls() {
     let f = Fixture::new();
     f.write(

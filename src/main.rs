@@ -302,6 +302,10 @@ enum Command {
         /// Return the whole file without folding.
         #[arg(long)]
         full: bool,
+        /// Exact bytes with no line-number prefix — ready to paste as an editor's
+        /// search text (old_string). With --symbol, requires a single match.
+        #[arg(long)]
+        raw: bool,
     },
     /// List import statements (raw, unresolved module strings).
     Imports {
@@ -607,7 +611,8 @@ fn main() -> ExitCode {
             lines,
             symbol,
             full,
-        } => commands::cmd_read(&cwd, &file, lines.as_deref(), symbol.as_deref(), full, out),
+            raw,
+        } => commands::cmd_read(&cwd, &file, lines.as_deref(), symbol.as_deref(), full, raw, out),
         Command::Imports {
             path,
             limit,

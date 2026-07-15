@@ -25,6 +25,11 @@ benchmarks — not as a step you run before querying.
   to signatures; read this instead of ingesting a whole large file.
 - **Read one definition / range (verbatim, line-numbered):**
   `codeq read <file> --symbol NAME` · `codeq read <file> --lines A-B`
+- **Grab a symbol's source to edit it:** add `--raw` — exact bytes, no
+  line-number prefixes, no folding, addressed by name. Its output drops straight
+  into the Edit tool's `old_string`, so you skip the grep-for-the-line →
+  read-the-region → strip-prefixes dance. With `--symbol` it requires a single
+  match (a clean anchor); scope with `--lines A-B` if a name is ambiguous.
 - **Understand a symbol before editing:** `codeq about NAME` (definition +
   callers + callees, one call)
 - **Learn a module's public API (how to call it):** `codeq api <path>` — only the
