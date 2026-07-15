@@ -833,3 +833,23 @@ actually hit it in — Rust (`use`/`mod`), Python (`from`), JS/TS (`import {}`).
 Star re-exports (`export * from`) and wildcard/relative forms stay coarse by
 design (no specific name to qualify). Schema v10 -> v11. Suite 137 green,
 differential 5223/5223, text-mode pass.
+
+## 2026-07-15 — resolution refinements: `--calls` and `--on` (scan-time, no extraction)
+
+The two deferred refinements, both done at *scan time* from the match position —
+no new index extraction. `--calls` keeps only call sites (`NAME(` after the
+match), excluding a bare identifier / field / variable of the same name; `--on
+RECV` keeps only `RECV.NAME` / `RECV::NAME` / `RECV->NAME`, disambiguating a
+common method by its receiver. Both imply code-only (a call in a doc comment
+isn't a call site — caught when `references build --calls` surfaced a `//! fn
+build()` prose example, since references defaults to matching everything).
+
+Dogfooded: `references build` 56 → 15 with `--calls` (drops "cargo build" prose,
+comments), `--calls --resolved` → 9 (composes), and `references build --on Graph`
+→ exactly the one `deps::Graph::build(...)` call. `--calls` shows its value on
+`references` (every occurrence) more than `callers` (which already dedups to
+enclosing defs, so a def that both calls and mentions still counts once).
+
+With this the false-positive story is complete along two axes: `--resolved`
+(which definition) and `--calls`/`--on` (which occurrence). Suite 139 green,
+differential 5223/5223, text-mode pass.

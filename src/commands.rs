@@ -514,7 +514,13 @@ struct Caller {
 /// Distinct definitions that contain a word-boundary reference to `name`,
 /// excluding `name`'s own declaration. Textual (name-based), not type-resolved.
 /// `path` restricts to callers *located* in matching files.
-fn callers_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Caller>> {
+fn callers_of(
+    s: &Session,
+    name: &str,
+    path: Option<&str>,
+    call_only: bool,
+    qualifier: Option<&str>,
+) -> Result<Vec<Caller>> {
     let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))?;
     let candidates = fetch_bodies(&s.db.conn, like_of(name).as_deref(), path, None)?;
     // Callers means references in *code* — not comments, strings, or prose in
@@ -525,6 +531,8 @@ fn callers_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Caller>
         out: OutMode::Matches,
         in_filter: InFilter::Code,
         limit: 0,
+        call_only,
+        qualifier: qualifier.map(str::to_string),
     };
     let hits = match run_search(&s.db.conn, &re, candidates, &opts)? {
         SearchData::Matches { matches, .. } => matches,
@@ -731,11 +739,13 @@ pub fn cmd_callers(
     path: Option<&str>,
     depth: usize,
     resolved: bool,
+    call_only: bool,
+    qualifier: Option<&str>,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
-        let callers = callers_of(&s, name, path)?;
+        let callers = callers_of(&s, name, path, call_only, qualifier)?;
         let rows = resolve_rows(&s, name, resolved, callers, |c| c.path.as_str(), |c, v| {
             c.via = v;
         })?;
@@ -751,7 +761,7 @@ pub fn cmd_callers(
     'walk: for d in 1..=depth {
         let mut next: Vec<String> = Vec::new();
         for sym in &frontier {
-            for c in callers_of(&s, sym, path)? {
+            for c in callers_of(&s, sym, path, false, None)? {
                 if !reported.insert((c.path.clone(), c.symbol.clone())) {
                     continue;
                 }
@@ -956,7 +966,7 @@ pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result
     let s = Session::open(cwd, false, out)?;
     let data = About {
         definitions: definitions_of(&s, name, path, 0)?,
-        callers: callers_of(&s, name, None)?,
+        callers: callers_of(&s, name, None, false, None)?,
         callees: callees_of(&s, name, path)?,
     };
     s.emit(data)
@@ -1786,6 +1796,8 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         out: out_mode,
         in_filter,
         limit: args.limit,
+        call_only: false,
+        qualifier: None,
     };
     let data = run_search(&s.db.conn, &re, candidates, &opts)?;
     s.emit(data)
@@ -1821,6 +1833,8 @@ pub fn cmd_references(
     language: Option<&str>,
     limit: usize,
     resolved: bool,
+    call_only: bool,
+    qualifier: Option<&str>,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
@@ -1831,12 +1845,21 @@ pub fn cmd_references(
     // to files that contain it (the \b matcher then confirms word boundaries).
     let match_query = like_of(name);
     let candidates = fetch_bodies(&s.db.conn, match_query.as_deref(), path, language)?;
+    // A call site or qualified access is *code* — a doc-comment example like
+    // `fn build()` is not one — so the position filters imply code-only.
+    let in_filter = if call_only || qualifier.is_some() {
+        InFilter::Code
+    } else {
+        InFilter::Any
+    };
     let opts = ScanOpts {
         before: 0,
         after: 0,
         out: OutMode::Matches,
-        in_filter: InFilter::Any,
+        in_filter,
         limit,
+        call_only,
+        qualifier: qualifier.map(str::to_string),
     };
     let (hits, truncated) = match run_search(&s.db.conn, &re, candidates, &opts)? {
         SearchData::Matches { matches, truncated } => (matches, truncated),
@@ -1998,6 +2021,8 @@ fn name_is_used(
         out: OutMode::Matches,
         in_filter: InFilter::Any,
         limit: 0,
+        call_only: false,
+        qualifier: None,
     };
     let hits = match run_search(&s.db.conn, &re, candidates, &opts)? {
         SearchData::Matches { matches, .. } => matches,
@@ -2147,6 +2172,8 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
         out: OutMode::Matches,
         in_filter: InFilter::Any,
         limit: 0,
+        call_only: false,
+        qualifier: None,
     };
     let hits = match run_search(&s.db.conn, &re, candidates, &opts)? {
         SearchData::Matches { matches, .. } => matches,

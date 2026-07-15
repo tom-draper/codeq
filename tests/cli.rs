@@ -880,6 +880,41 @@ fn resolved_follows_js_named_imports() {
 }
 
 #[test]
+fn calls_filter_excludes_non_call_references() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn make() {}\n\
+         fn caller() { make(); }\n\
+         fn mentioner() { let make = 1; let _ = make; }\n",
+    );
+    // Default (name-based) counts the unrelated local `make` in mentioner.
+    let all = field_set(&f.run(&["callers", "make"]), "symbol");
+    assert!(all.contains(&"mentioner".to_string()), "default should include the mention: {all:?}");
+
+    // --calls keeps only the real call site.
+    let calls = field_set(&f.run(&["callers", "make", "--calls"]), "symbol");
+    assert!(calls.contains(&"caller".to_string()), "real caller dropped: {calls:?}");
+    assert!(!calls.contains(&"mentioner".to_string()), "bare mention not excluded: {calls:?}");
+}
+
+#[test]
+fn on_filter_disambiguates_by_receiver() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn f() {\n    Foo::make();\n    Bar::make();\n    thing.make();\n}\n",
+    );
+    let lines = |recv: &str| -> Vec<i64> {
+        f.run(&["references", "make", "--on", recv])["data"]["references"]
+            .as_array().unwrap().iter().map(|r| r["line"].as_i64().unwrap()).collect()
+    };
+    assert_eq!(lines("Foo"), [2], "only Foo::make()");
+    assert_eq!(lines("Bar"), [3], "only Bar::make()");
+    assert_eq!(lines("thing"), [4], "method-call receiver");
+}
+
+#[test]
 fn resolved_is_a_noop_without_a_definition_to_anchor() {
     // A name with no definition in the repo (an external symbol) can't be
     // resolved against anything, so --resolved must not silently empty the result.

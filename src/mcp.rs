@@ -186,6 +186,8 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "language", "--language");
             optn(&mut args, a, "limit", "--limit");
             flag(&mut args, a, "resolved", "--resolved");
+            flag(&mut args, a, "calls", "--calls");
+            opt(&mut args, a, "on", "--on");
         }
         "codeq_callers" => {
             args.push("callers".into());
@@ -193,6 +195,8 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "depth", "--depth");
             flag(&mut args, a, "resolved", "--resolved");
+            flag(&mut args, a, "calls", "--calls");
+            opt(&mut args, a, "on", "--on");
         }
         "codeq_callees" => {
             args.push("callees".into());
@@ -363,11 +367,11 @@ fn tools() -> Value {
             "Locate the definition(s) of an exact symbol name, with signature, doc, and precise byte/line ranges. path scopes to matching files.",
             json!({ "symbol": str_, "path": str_ }), &["symbol"]),
         tool("codeq_references",
-            "Word-boundary uses of a symbol name across the repo, each annotated with its enclosing definition; definition sites are flagged. Textual (not type-resolved) by default. resolved=true prunes references whose file can't reach a definition through imports (tagging the rest via same-file/imported/ambiguous) — a heuristic precision filter.",
-            json!({ "name": str_, "path": str_, "language": str_, "limit": int_, "resolved": bool_ }), &["name"]),
+            "Word-boundary uses of a symbol name across the repo, each annotated with its enclosing definition; definition sites are flagged. Textual (not type-resolved) by default. resolved=true prunes references whose file can't reach a definition through imports. calls=true keeps only call sites (NAME(), excluding bare mentions). on='RECV' keeps only calls qualified by that receiver/type (RECV.NAME / RECV::NAME). Precision filters compose.",
+            json!({ "name": str_, "path": str_, "language": str_, "limit": int_, "resolved": bool_, "calls": bool_, "on": str_ }), &["name"]),
         tool("codeq_callers",
-            "The distinct definitions that reference a symbol (its callers), with test sites flagged — what could break if you change it. Textual, not type-resolved. path restricts to callers in matching files. depth (default 1) walks transitively up the call tree, each result tagged with its hop distance. resolved=true (direct callers only) prunes callers whose file can't reach a definition through imports, tagging the rest via same-file/imported/ambiguous.",
-            json!({ "name": str_, "path": str_, "depth": num_, "resolved": bool_ }), &["name"]),
+            "The distinct definitions that reference a symbol (its callers), with test sites flagged — what could break if you change it. Textual, not type-resolved. path restricts to callers in matching files. depth (default 1) walks transitively up the call tree, each result tagged with its hop distance. Precision filters (direct callers only): resolved=true prunes callers whose file can't reach a definition through imports; calls=true keeps only call sites NAME(); on='RECV' keeps only calls qualified by that receiver/type (RECV.NAME / RECV::NAME) to disambiguate a common method name.",
+            json!({ "name": str_, "path": str_, "depth": num_, "resolved": bool_, "calls": bool_, "on": str_ }), &["name"]),
         tool("codeq_callees",
             "The definitions referenced by name inside a symbol's body (its callees) — what it depends on. path scopes to the symbol's definition(s). depth (default 1) walks transitively down the call tree.",
             json!({ "name": str_, "path": str_, "depth": num_ }), &["name"]),

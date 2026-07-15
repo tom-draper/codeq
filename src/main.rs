@@ -149,6 +149,14 @@ enum Command {
         /// positives at the risk of dropping real callers behind unresolved imports.
         #[arg(long)]
         resolved: bool,
+        /// Keep only call sites — `NAME(` — excluding a bare identifier, field, or
+        /// variable of the same name (direct callers only).
+        #[arg(long)]
+        calls: bool,
+        /// Keep only calls qualified by this receiver/type — `RECV.NAME` /
+        /// `RECV::NAME` / `RECV->NAME` — to disambiguate a common method name.
+        #[arg(long, value_name = "RECV")]
+        on: Option<String>,
     },
     /// Definitions a symbol references (its callees, name-based).
     Callees {
@@ -200,6 +208,13 @@ enum Command {
         /// a safe textual superset.
         #[arg(long)]
         resolved: bool,
+        /// Keep only call sites — `NAME(` — excluding bare mentions of the name.
+        #[arg(long)]
+        calls: bool,
+        /// Keep only occurrences qualified by this receiver/type — `RECV.NAME` /
+        /// `RECV::NAME` / `RECV->NAME`.
+        #[arg(long, value_name = "RECV")]
+        on: Option<String>,
     },
     /// Types that implement or extend a trait / interface / base class — the
     /// inheritance edges the call graph doesn't cover (`impl T for X` in Rust,
@@ -498,7 +513,18 @@ fn main() -> ExitCode {
             path,
             depth,
             resolved,
-        } => commands::cmd_callers(&cwd, &name, path.as_deref(), depth, resolved, out),
+            calls,
+            on,
+        } => commands::cmd_callers(
+            &cwd,
+            &name,
+            path.as_deref(),
+            depth,
+            resolved,
+            calls,
+            on.as_deref(),
+            out,
+        ),
         Command::Callees { name, path, depth } => {
             commands::cmd_callees(&cwd, &name, path.as_deref(), depth, out)
         }
@@ -516,6 +542,8 @@ fn main() -> ExitCode {
             language,
             limit,
             resolved,
+            calls,
+            on,
         } => commands::cmd_references(
             &cwd,
             &name,
@@ -523,6 +551,8 @@ fn main() -> ExitCode {
             language.as_deref(),
             limit,
             resolved,
+            calls,
+            on.as_deref(),
             out,
         ),
         Command::Implementors {

@@ -107,6 +107,45 @@ pub(crate) struct ScanOpts {
     pub(crate) out: OutMode,
     pub(crate) in_filter: InFilter,
     pub(crate) limit: usize,
+    /// Keep only matches in call position — immediately followed by `(` — so a
+    /// bare identifier / field / variable of the same name is excluded.
+    pub(crate) call_only: bool,
+    /// Keep only matches qualified by this receiver: `RECV.name`, `RECV::name`,
+    /// or `RECV->name`. For disambiguating a method/associated name by its type.
+    pub(crate) qualifier: Option<String>,
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b == b'_' || b.is_ascii_alphanumeric()
+}
+
+/// Whether the match ending at byte `end` is immediately followed by `(` (after
+/// optional spaces/tabs) — i.e. it's a call, not a bare mention.
+fn is_call_position(bytes: &[u8], end: usize) -> bool {
+    let mut j = end;
+    while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+        j += 1;
+    }
+    j < bytes.len() && bytes[j] == b'('
+}
+
+/// Whether the match starting at byte `off` is qualified by `recv` — preceded by
+/// `recv.` / `recv::` / `recv->` at a word boundary.
+fn has_qualifier(bytes: &[u8], off: usize, recv: &str) -> bool {
+    let q = recv.as_bytes();
+    for sep in [b"::".as_slice(), b"->".as_slice(), b".".as_slice()] {
+        if off < sep.len() || &bytes[off - sep.len()..off] != sep {
+            continue;
+        }
+        let qend = off - sep.len();
+        if qend >= q.len()
+            && &bytes[qend - q.len()..qend] == q
+            && (qend == q.len() || !is_ident_byte(bytes[qend - q.len() - 1]))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 pub(crate) struct FileDef {
@@ -315,11 +354,20 @@ pub(crate) fn run_search(
             }
             OutMode::Matches => {
                 let defs = load_file_defs(&mut def_stmt, rel)?;
+                let bytes = body.as_bytes();
                 let mut last_line = usize::MAX;
                 for m in re.find_iter(body) {
                     let off = m.start();
                     if !accept(off) {
                         continue;
+                    }
+                    if opts.call_only && !is_call_position(bytes, m.end()) {
+                        continue;
+                    }
+                    if let Some(recv) = &opts.qualifier {
+                        if !has_qualifier(bytes, off, recv) {
+                            continue;
+                        }
                     }
                     let line_idx = starts.partition_point(|&s| s <= off) - 1;
                     if line_idx == last_line {

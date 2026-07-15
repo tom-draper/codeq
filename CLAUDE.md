@@ -24,15 +24,20 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   Python non-underscore, a `public` modifier, non-`static` in C/C++); `pub(crate)`
   and `protected` are `restricted`, not public. `--kind function` to narrow.
 - **Who uses it / what breaks:** `codeq callers NAME` · `codeq references NAME`
-  - **Cut false positives (import-scoped):** add `--resolved` to `callers`/
-    `references` — drops occurrences whose file can't reach a definition of NAME
-    through imports, and tags the rest `via` same-file / imported / ambiguous.
-    Opt-in and heuristic (import resolution is best-effort — a stem-matched edge,
-    so e.g. Python `from . import x` relative/`import *` wildcard forms stay
-    coarse), so it can over-prune; the default stays a safe textual superset.
-    Rust `mod x;` declarations and named imports (Python `from pkg import x` →
-    `pkg.x`, JS/TS `import {a} from './x'` → `./x.a`) all count as edges, so
-    intra-crate, package-submodule, and named-binding reachability work.
+  - **Cut false positives.** Three opt-in, composable filters on `callers`/
+    `references` (the default stays a safe textual superset):
+    - `--resolved` — import-scoped: drops occurrences whose file can't reach a
+      definition of NAME through imports; tags the rest `via` same-file /
+      imported / ambiguous. Heuristic (best-effort import resolution — a
+      stem-matched edge, so Python `from . import x` relative / `import *`
+      wildcard forms stay coarse). Rust `mod x;` and named imports (Python `from
+      pkg import x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a`) all count
+      as edges, so intra-crate, package-submodule, and named-binding reachability
+      work.
+    - `--calls` — keep only call sites (`NAME(`), excluding a bare identifier,
+      field, or variable of the same name (code-only).
+    - `--on RECV` — keep only calls qualified by a receiver/type (`RECV.NAME`,
+      `RECV::NAME`, `RECV->NAME`) — disambiguates a common method name.
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For blast-radius / reachability.
