@@ -50,7 +50,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Build or refresh the index for the current repository.
+    /// Force a full rebuild or pre-warm the index. Rarely needed: every other
+    /// command auto-refreshes changed files before answering, so you never have
+    /// to run this for a query to see the current tree.
     Index {
         /// Discard the existing index and reparse every file.
         #[arg(long)]

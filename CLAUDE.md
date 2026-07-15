@@ -9,6 +9,15 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
 (`path:line:col: payload`); pass `--json` for the `codeq.result.v1` envelope
 (what the MCP server and programmatic consumers use).
 
+**Never run `codeq index` for correctness — every query auto-refreshes first.**
+Each command opens the index and reruns the git-free freshness check (changed/
+added/removed files get reparsed, schema-version bumps trigger a rebuild) *before*
+answering, so a query always reflects the current tree — even right after an edit.
+The refresh count is only shown under `--json`/`--meta` (the `index` block's
+`reindexed_files`), which is why it *looks* like nothing happened. `index` exists
+only to force a full `--rebuild` or to pre-warm the cache for timing-sensitive
+benchmarks — not as a step you run before querying.
+
 ## Prefer codeq for navigation
 
 - **Orient:** `codeq map`
