@@ -874,6 +874,38 @@ fn implementors_distinguishes_extends_from_implements() {
 }
 
 #[test]
+fn supertypes_is_the_inverse_of_implementors() {
+    let f = Fixture::new();
+    f.write(
+        "A.java",
+        "class Animal {}\n\
+         interface Runner {}\n\
+         class Dog extends Animal implements Runner {}\n",
+    );
+    // supertypes Dog = what Dog derives from, with each relation.
+    let sup = f.run(&["supertypes", "Dog"]);
+    let rows = sup["data"].as_array().unwrap();
+    let by: std::collections::HashMap<&str, &str> = rows.iter()
+        .map(|r| (r["supertype"].as_str().unwrap(), r["relation"].as_str().unwrap()))
+        .collect();
+    assert_eq!(by.get("Animal"), Some(&"extends"), "{by:?}");
+    assert_eq!(by.get("Runner"), Some(&"implements"), "{by:?}");
+
+    // Inverse: Dog appears in implementors of each of its supertypes.
+    for (sup_name, rel) in [("Animal", "extends"), ("Runner", "implements")] {
+        let imp = f.run(&["implementors", sup_name]);
+        let row = imp["data"].as_array().unwrap().iter()
+            .find(|r| r["subtype"] == "Dog").expect("Dog missing from implementors");
+        assert_eq!(row["relation"], rel);
+    }
+
+    // --relation filters supertypes too.
+    let ext = f.run(&["supertypes", "Dog", "--relation", "extends"]);
+    let names = field_set(&ext, "supertype");
+    assert!(names.contains(&"Animal".to_string()) && !names.contains(&"Runner".to_string()), "{names:?}");
+}
+
+#[test]
 fn implementors_covers_python_and_ruby_inheritance() {
     let f = Fixture::new();
     f.write("m.py", "class Animal:\n    pass\nclass Dog(Animal):\n    pass\n");

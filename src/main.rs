@@ -206,6 +206,22 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// The traits / interfaces / base classes a type extends or implements — the
+    /// reverse of `implementors`. The names as written at the declaration, not
+    /// transitively resolved. Name-based.
+    Supertypes {
+        /// The deriving type (class / struct / impl target).
+        name: String,
+        /// Restrict to one relation: `implements` or `extends`.
+        #[arg(long)]
+        relation: Option<String>,
+        /// Restrict to paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// Definitions with no reference anywhere outside their own definition site
     /// — candidate dead code. Conservative and name-based: a mention in a comment
     /// or string counts as a use, and a same-named symbol elsewhere masks it, so
@@ -498,6 +514,19 @@ fn main() -> ExitCode {
             path,
             limit,
         } => commands::cmd_implementors(
+            &cwd,
+            &name,
+            relation.as_deref(),
+            path.as_deref(),
+            limit,
+            out,
+        ),
+        Command::Supertypes {
+            name,
+            relation,
+            path,
+            limit,
+        } => commands::cmd_supertypes(
             &cwd,
             &name,
             relation.as_deref(),

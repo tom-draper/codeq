@@ -1803,6 +1803,52 @@ pub fn cmd_implementors(
 }
 
 #[derive(Serialize)]
+struct SupertypeRow {
+    /// The trait / interface / base class this type extends or implements.
+    supertype: String,
+    /// How it relates: "implements" or "extends".
+    relation: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+}
+
+/// `supertypes <type>` — the traits / interfaces / base classes a type extends
+/// or implements (the reverse of `implementors`): `impl S for X` shows `S` for
+/// `supertypes X`, `class X extends Y implements I` shows `Y` and `I`. The
+/// supertype names, as written at the declaration — not transitively resolved.
+pub fn cmd_supertypes(
+    cwd: &Path,
+    name: &str,
+    relation: Option<&str>,
+    path: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let filters = Filters::new().eq("relation", relation).like("path", path);
+    let sql = format!(
+        "SELECT supertype, relation, path, line, language
+         FROM impls WHERE subtype = ?{} ORDER BY path, line{}",
+        filters.sql(),
+        limit_clause(limit),
+    );
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_with(&[&name], &filters).as_slice(), |r| {
+        Ok(SupertypeRow {
+            supertype: r.get(0)?,
+            relation: r.get(1)?,
+            path: r.get(2)?,
+            line: r.get(3)?,
+            language: r.get(4)?,
+        })
+    })?;
+    let data: Vec<SupertypeRow> = rows.collect::<std::result::Result<_, _>>()?;
+    s.emit(data)
+}
+
+#[derive(Serialize)]
 struct UnusedRow {
     name: String,
     kind: String,

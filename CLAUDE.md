@@ -36,6 +36,9 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   (`class X(Base)` Python, `class X < Y` Ruby). The inheritance edges the call
   graph misses; `--relation implements|extends` to filter. Go (structural) / C
   have none; name-based like the other graph commands.
+  - **The reverse — what a type derives from:** `codeq supertypes NAME` — the
+    traits / interfaces / base classes NAME extends or implements (as written at
+    the declaration, not transitively resolved).
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
   reference NAME (by test-file path or test-like name). For the edit→find-the-test loop.
 - **Find dead code:** `codeq unused [<path>]` — definitions with no reference
