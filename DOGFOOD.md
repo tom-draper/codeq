@@ -756,3 +756,25 @@ a bug) the deliberate `collect_idents` >=2-char filter that drops single-char
 call-noise — fixed the fixture to realistic names. Name-based caveat, as with all
 graph commands: the chain-by-name is right, but an ambiguous name's displayed
 *location* may resolve to the wrong same-named definition.
+
+## 2026-07-15 — import-scoped resolution: `--resolved` for callers/references
+
+Took on the biggest standing limitation — the name-based graph's false positives.
+Full type resolution is out of scope, but the module-dependency graph (already
+built for `deps`) gives a principled, deterministic filter: a reference resolves
+to a definition when its file *is* the definition site (`same-file`) or *reaches*
+one through imports (`imported`), several (`ambiguous`), or none (`unresolved`).
+`--resolved` drops the unresolved ones and tags the rest; the default output is
+unchanged (safe superset), so it's opt-in precision, not a silent behavior change.
+
+Dogfooded on codeq itself: `callers new` 190 -> 174 (conservative), `references
+build` 53 -> 12 — and the 41 pruned `build`s were exactly the noise name-matching
+wrongly includes: "cargo build" in markdown, "build release" in Python strings,
+prose in docs — none of them codeq's `build` functions. Correct pruning.
+
+Honest limits (documented, opt-in for this reason): import resolution is
+best-effort, so `--resolved` can over-prune. Notably Rust `mod x;` declarations
+aren't captured as import edges, so intra-crate uses reached only via `mod` +
+`crate::` paths may read as `unresolved` — a future win is treating `mod` as a
+reachability edge. Safe superset stays the default; a name with no definition to
+anchor to leaves the result untouched (never silently emptied).

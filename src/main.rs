@@ -143,6 +143,12 @@ enum Command {
         /// tagged with its depth.
         #[arg(long, default_value_t = 1)]
         depth: usize,
+        /// Import-scoped resolution (direct callers only): drop callers whose file
+        /// can't reach a definition of the name through imports, and tag the rest
+        /// `via` same-file / imported / ambiguous. Heuristic; prunes false
+        /// positives at the risk of dropping real callers behind unresolved imports.
+        #[arg(long)]
+        resolved: bool,
     },
     /// Definitions a symbol references (its callees, name-based).
     Callees {
@@ -188,6 +194,12 @@ enum Command {
         /// Maximum matches to return (0 = unlimited).
         #[arg(long, default_value_t = 100)]
         limit: usize,
+        /// Import-scoped resolution: drop references whose file can't reach a
+        /// definition of the name through imports, and tag the rest `via`
+        /// same-file / imported / ambiguous. Heuristic (opt-in) — the default is
+        /// a safe textual superset.
+        #[arg(long)]
+        resolved: bool,
     },
     /// Types that implement or extend a trait / interface / base class — the
     /// inheritance edges the call graph doesn't cover (`impl T for X` in Rust,
@@ -481,9 +493,12 @@ fn main() -> ExitCode {
         Command::Api { path, kind, limit } => {
             commands::cmd_api(&cwd, path.as_deref(), kind.as_deref(), limit, out)
         }
-        Command::Callers { name, path, depth } => {
-            commands::cmd_callers(&cwd, &name, path.as_deref(), depth, out)
-        }
+        Command::Callers {
+            name,
+            path,
+            depth,
+            resolved,
+        } => commands::cmd_callers(&cwd, &name, path.as_deref(), depth, resolved, out),
         Command::Callees { name, path, depth } => {
             commands::cmd_callees(&cwd, &name, path.as_deref(), depth, out)
         }
@@ -500,12 +515,14 @@ fn main() -> ExitCode {
             path,
             language,
             limit,
+            resolved,
         } => commands::cmd_references(
             &cwd,
             &name,
             path.as_deref(),
             language.as_deref(),
             limit,
+            resolved,
             out,
         ),
         Command::Implementors {

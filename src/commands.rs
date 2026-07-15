@@ -505,6 +505,10 @@ struct Caller {
     /// Best-effort: the caller looks like a test (path or symbol name).
     #[serde(skip_serializing_if = "is_false")]
     test: bool,
+    /// How this caller's file connects to a definition of the name via the import
+    /// graph (only set under `--resolved`): same-file / imported / ambiguous.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    via: Option<String>,
 }
 
 /// Distinct definitions that contain a word-boundary reference to `name`,
@@ -559,6 +563,7 @@ fn callers_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Caller>
             path: h.path,
             line: h.line,
             test,
+            via: None,
         });
     }
     Ok(out)
@@ -720,10 +725,21 @@ struct CalleeHop {
 /// Safety bound on a transitive walk so a hot symbol can't blow up.
 const HOP_CAP: usize = 2000;
 
-pub fn cmd_callers(cwd: &Path, name: &str, path: Option<&str>, depth: usize, out: Out) -> Result<()> {
+pub fn cmd_callers(
+    cwd: &Path,
+    name: &str,
+    path: Option<&str>,
+    depth: usize,
+    resolved: bool,
+    out: Out,
+) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
-        return s.emit(callers_of(&s, name, path)?);
+        let callers = callers_of(&s, name, path)?;
+        let rows = resolve_rows(&s, name, resolved, callers, |c| c.path.as_str(), |c, v| {
+            c.via = v;
+        })?;
+        return s.emit(rows);
     }
     // Breadth-first up the call tree: each hop expands the newly-found callers by
     // their enclosing symbol name. Deterministic; each caller reported once at its
@@ -1332,6 +1348,98 @@ fn load_dep_graph(s: &Session) -> Result<deps::Graph> {
     Ok(deps::Graph::build(files, imports))
 }
 
+/// Import-scoped resolution for the name-based graph commands: attributes a
+/// reference in some file to a *definition* of the name via the module-dependency
+/// graph. A reference resolves when its file is the definition site (`same-file`)
+/// or reaches one through imports (`imported`), several (`ambiguous`), or none
+/// (`unresolved` — the strongest false-positive signal, since the file can't see
+/// any definition). Heuristic — import resolution is itself best-effort — so it's
+/// opt-in (`--resolved`); the default output stays a safe superset. Caches per
+/// file. See [[differential-bench-harness]] for how precision is measured.
+struct Resolver {
+    graph: deps::Graph,
+    defs: std::collections::HashSet<String>,
+    cache: HashMap<String, &'static str>,
+}
+
+impl Resolver {
+    fn new(s: &Session, name: &str) -> Result<Resolver> {
+        let mut defs = HashSet::new();
+        {
+            let mut stmt = s.db.conn.prepare(
+                "SELECT DISTINCT path FROM facts WHERE name = ?1 AND kind <> 'import'",
+            )?;
+            let rows = stmt.query_map([name], |r| r.get::<_, String>(0))?;
+            for row in rows {
+                defs.insert(row?);
+            }
+        }
+        Ok(Resolver {
+            graph: load_dep_graph(s)?,
+            defs,
+            cache: HashMap::new(),
+        })
+    }
+
+    /// Whether resolution can apply at all — there's a definition to anchor to.
+    fn has_defs(&self) -> bool {
+        !self.defs.is_empty()
+    }
+
+    /// How `file`'s reference to the name connects to a definition of it.
+    fn via(&mut self, file: &str) -> &'static str {
+        if let Some(v) = self.cache.get(file) {
+            return v;
+        }
+        let v = if self.defs.contains(file) {
+            "same-file"
+        } else {
+            let hits = {
+                let reach = self.graph.reachable_from(file);
+                self.defs.iter().filter(|d| reach.contains(d.as_str())).count()
+            };
+            match hits {
+                0 => "unresolved",
+                1 => "imported",
+                _ => "ambiguous",
+            }
+        };
+        self.cache.insert(file.to_string(), v);
+        v
+    }
+}
+
+/// Apply import-scoped resolution to a list of reference-bearing rows: when
+/// `resolved`, tag each with its `via` and drop the ones whose file can't reach
+/// any definition (`unresolved`). A no-op when `resolved` is false, or when the
+/// name has no definition to anchor to (so it never silently empties a result).
+fn resolve_rows<T>(
+    s: &Session,
+    name: &str,
+    resolved: bool,
+    rows: Vec<T>,
+    path_of: impl Fn(&T) -> &str,
+    set_via: impl Fn(&mut T, Option<String>),
+) -> Result<Vec<T>> {
+    if !resolved {
+        return Ok(rows);
+    }
+    let mut r = Resolver::new(s, name)?;
+    if !r.has_defs() {
+        return Ok(rows); // nothing to anchor resolution to — leave untouched
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for mut row in rows {
+        let v = r.via(path_of(&row));
+        if v == "unresolved" {
+            continue;
+        }
+        set_via(&mut row, Some(v.to_string()));
+        out.push(row);
+    }
+    Ok(out)
+}
+
 /// `deps <file> [--depth N]` — the internal files a file depends on, resolved
 /// from its imports; `--cycles` reports every import cycle in the repo instead.
 pub fn cmd_deps(
@@ -1690,6 +1798,10 @@ struct ReferenceRow {
     /// True when this line is the definition site of the symbol (not a use).
     #[serde(skip_serializing_if = "is_false")]
     definition: bool,
+    /// Import-scoped attribution (only under `--resolved`): same-file / imported
+    /// / ambiguous.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    via: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1708,6 +1820,7 @@ pub fn cmd_references(
     path: Option<&str>,
     language: Option<&str>,
     limit: usize,
+    resolved: bool,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
@@ -1743,13 +1856,21 @@ pub fn cmd_references(
         }
     }
 
-    let references = hits
+    let references: Vec<ReferenceRow> = hits
         .into_iter()
         .map(|h| {
             let definition = defsites.contains(&(h.path.clone(), h.line as i64));
-            ReferenceRow { hit: h, definition }
+            ReferenceRow { hit: h, definition, via: None }
         })
         .collect();
+    let references = resolve_rows(
+        &s,
+        name,
+        resolved,
+        references,
+        |r| r.hit.path.as_str(),
+        |r, v| r.via = v,
+    )?;
 
     s.emit(ReferencesResult { references, truncated })
 }

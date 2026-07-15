@@ -803,6 +803,57 @@ fn callers_callees_and_about() {
 }
 
 #[test]
+fn callers_resolved_prunes_unreachable_and_tags_via() {
+    let f = Fixture::new();
+    f.write("def.rs", "pub fn target() {}\nfn self_caller() { target(); }\n");
+    f.write("user.rs", "use crate::def::target;\nfn user() { target(); }\n");
+    f.write("stranger.rs", "fn stranger() { let target = 1; let _ = target; }\n");
+
+    // Default (name-based) includes the unrelated `target` in stranger.rs.
+    let all = field_set(&f.run(&["callers", "target"]), "path");
+    assert!(all.contains(&"stranger.rs".to_string()), "default should include stranger: {all:?}");
+
+    // --resolved drops the reference that can't reach a definition, and tags the
+    // rest by how they connect.
+    let res = f.run(&["callers", "target", "--resolved"]);
+    let rows = res["data"].as_array().unwrap();
+    let via = |sym: &str| rows.iter()
+        .find(|r| r["symbol"] == sym)
+        .map(|r| r["via"].as_str().unwrap().to_string());
+    assert_eq!(via("self_caller"), Some("same-file".into()), "{rows:?}");
+    assert_eq!(via("user"), Some("imported".into()), "{rows:?}");
+    assert!(!rows.iter().any(|r| r["path"] == "stranger.rs"),
+            "unreachable reference should be pruned: {rows:?}");
+}
+
+#[test]
+fn resolved_is_a_noop_without_a_definition_to_anchor() {
+    // A name with no definition in the repo (an external symbol) can't be
+    // resolved against anything, so --resolved must not silently empty the result.
+    let f = Fixture::new();
+    f.write("a.rs", "fn c1() { external_thing(); }\nfn c2() { external_thing(); }\n");
+    let plain = f.run(&["callers", "external_thing"]);
+    let resolved = f.run(&["callers", "external_thing", "--resolved"]);
+    assert_eq!(
+        plain["data"].as_array().unwrap().len(),
+        resolved["data"].as_array().unwrap().len(),
+        "no definition to anchor → --resolved should leave the result unchanged",
+    );
+    // And it must not have tagged anything.
+    assert!(resolved["data"].as_array().unwrap().iter().all(|r| r.get("via").is_none()));
+}
+
+#[test]
+fn callers_default_has_no_via_field() {
+    // Resolution is opt-in: the default output shape is unchanged.
+    let f = Fixture::new();
+    f.write("a.rs", "fn helper() {}\nfn caller() { helper(); }\n");
+    let v = f.run(&["callers", "helper"]);
+    assert!(v["data"].as_array().unwrap().iter().all(|r| r.get("via").is_none()),
+            "default callers must not carry a via field");
+}
+
+#[test]
 fn callers_depth_walks_transitively() {
     // leaf <- mid <- top : a call chain three deep.
     let f = Fixture::new();

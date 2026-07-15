@@ -145,6 +145,32 @@ impl Graph {
         self.edges.contains_key(file)
     }
 
+    /// Every internal file transitively reachable from `start` via imports
+    /// (excluding `start` itself). Used to resolve which definition a reference
+    /// can actually see.
+    pub fn reachable_from<'a>(&'a self, start: &str) -> HashSet<&'a str> {
+        let mut seen: HashSet<&'a str> = HashSet::new();
+        let mut stack: Vec<&'a str> = vec![];
+        // Seed with `start`'s direct targets (start itself is excluded).
+        if let Some(bucket) = self.edges.get(start) {
+            for e in bucket {
+                if seen.insert(e.to.as_str()) {
+                    stack.push(e.to.as_str());
+                }
+            }
+        }
+        while let Some(f) = stack.pop() {
+            if let Some(bucket) = self.edges.get(f) {
+                for e in bucket {
+                    if seen.insert(e.to.as_str()) {
+                        stack.push(e.to.as_str());
+                    }
+                }
+            }
+        }
+        seen
+    }
+
     /// Transitive dependencies of `file` up to `depth` hops (BFS), each reached
     /// file reported once at its shortest depth with the linking import.
     pub fn deps(&self, file: &str, depth: usize) -> Vec<DepHop> {

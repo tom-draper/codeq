@@ -24,6 +24,12 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   Python non-underscore, a `public` modifier, non-`static` in C/C++); `pub(crate)`
   and `protected` are `restricted`, not public. `--kind function` to narrow.
 - **Who uses it / what breaks:** `codeq callers NAME` · `codeq references NAME`
+  - **Cut false positives (import-scoped):** add `--resolved` to `callers`/
+    `references` — drops occurrences whose file can't reach a definition of NAME
+    through imports, and tags the rest `via` same-file / imported / ambiguous.
+    Opt-in and heuristic (import resolution is best-effort, e.g. Rust `mod`
+    declarations aren't edges), so it can over-prune; the default stays a safe
+    textual superset.
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For blast-radius / reachability.
@@ -70,7 +76,9 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   `codeq about build --path context` targets the `build` in that file. Without a
   scope, `definitions`/`callees`/`about` cover every same-named symbol. (`about`
   keeps callers repo-wide even when scoped.)
-- **References/callers are textual (name-based), not type-resolved.**
+- **References/callers are textual (name-based), not type-resolved.** `--resolved`
+  narrows them using the import graph (see above), but it's a heuristic filter,
+  not real type resolution.
 
 ## Build / test
 
