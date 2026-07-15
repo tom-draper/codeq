@@ -817,3 +817,19 @@ Also a genuine improvement to `imports`/`deps` granularity, not just resolution:
 `from x import a, b` is now two precise edges instead of one coarse `x`. Remaining
 coarse forms (documented): relative `from . import x` and wildcard `import *`.
 Schema v9 -> v10. Suite 136 green, differential 5223/5223, text-mode pass.
+
+## 2026-07-15 — extended qualified-import capture to JS/TS named imports
+
+The `@from_module`/`@from_name` mechanism built for Python from-imports is
+language-agnostic, so extending it to JS/TS was one query pattern (shared across
+JS/TS/TSX via JS_QUERY): `import { a, b [as c] } from './x'` now emits qualified
+`./x.a` per named binding, capturing the *source* name (not the alias, which is
+the local binding — the source name is what picks the exporting file). Default and
+namespace imports keep the coarse module string. `callers make --resolved` on a JS
+fixture importing `{ make }` correctly resolves the importer as `via=imported`.
+
+With this, named-binding reachability works across the three languages people
+actually hit it in — Rust (`use`/`mod`), Python (`from`), JS/TS (`import {}`).
+Star re-exports (`export * from`) and wildcard/relative forms stay coarse by
+design (no specific name to qualify). Schema v10 -> v11. Suite 137 green,
+differential 5223/5223, text-mode pass.

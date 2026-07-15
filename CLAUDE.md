@@ -29,9 +29,10 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
     through imports, and tags the rest `via` same-file / imported / ambiguous.
     Opt-in and heuristic (import resolution is best-effort — a stem-matched edge,
     so e.g. Python `from . import x` relative/`import *` wildcard forms stay
-    coarse), so it can over-prune; the default stays a safe textual superset. Rust
-    `mod x;` declarations and Python `from pkg import x` (captured as `pkg.x`) both
-    count as edges, so intra-crate and package-submodule reachability work.
+    coarse), so it can over-prune; the default stays a safe textual superset.
+    Rust `mod x;` declarations and named imports (Python `from pkg import x` →
+    `pkg.x`, JS/TS `import {a} from './x'` → `./x.a`) all count as edges, so
+    intra-crate, package-submodule, and named-binding reachability work.
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For blast-radius / reachability.
@@ -67,9 +68,10 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   files a file depends on, resolved from its imports (each edge shows the raw
   import string); `--depth N` walks transitively. `codeq deps --cycles` lists
   every import cycle in the repo. Resolution is heuristic (import segments matched
-  to file stems); Python `from pkg import x` is captured as `pkg.x` so it resolves
-  like `import pkg.x`, but relative (`from . import x`) and wildcard forms stay
-  coarse — verify via the edge's module string.
+  to file stems); named imports are captured qualified — Python `from pkg import
+  x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a` — so the imported symbol
+  resolves like a direct module import; relative (`from . import x`) and wildcard
+  forms stay coarse. Verify via the edge's module string.
 - **Trim tokens on list output:** append `--fields a,b`
 
 ## Known limitations (found by dogfooding — don't be misled)

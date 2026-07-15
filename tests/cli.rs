@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 10);
+    assert_eq!(v["index"]["schema"], 11);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -855,6 +855,28 @@ fn resolved_follows_python_from_import_of_a_submodule() {
     let row = res["data"].as_array().unwrap().iter()
         .find(|r| r["symbol"] == "use").expect("use() should survive resolution");
     assert_eq!(row["via"], "imported", "from-import of a submodule should resolve: {res}");
+}
+
+#[test]
+fn resolved_follows_js_named_imports() {
+    // `import { make } from './util'` — the named binding is captured qualified
+    // (./util.make) so the importer resolves to the file exporting it.
+    let f = Fixture::new();
+    f.write("util.js", "export function make() { return 1; }\n");
+    f.write("user.js", "import { make } from './util';\nexport function use() { return make(); }\n");
+    f.write("alias.js", "import { make as m } from './util';\nexport function viaAlias() { return m(); }\n");
+
+    let mods = field_set(&f.run(&["imports", "user.js"]), "module");
+    assert!(mods.contains(&"./util.make".to_string()), "named import not qualified: {mods:?}");
+    // Aliases record the *source* name (what determines the exporting file).
+    let amods = field_set(&f.run(&["imports", "alias.js"]), "module");
+    assert!(amods.contains(&"./util.make".to_string()), "alias should record source name: {amods:?}");
+
+    // user.js calls make() directly → resolves as imported.
+    let res = f.run(&["callers", "make", "--resolved"]);
+    let row = res["data"].as_array().unwrap().iter()
+        .find(|r| r["symbol"] == "use").expect("use() should survive resolution");
+    assert_eq!(row["via"], "imported", "{res}");
 }
 
 #[test]

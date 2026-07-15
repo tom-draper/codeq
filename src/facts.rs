@@ -711,6 +711,12 @@ const JS_QUERY: &str = r#"
 ; ES module imports and re-exports (raw module string, quotes stripped).
 (import_statement source: (string (string_fragment) @name)) @import
 (export_statement source: (string (string_fragment) @name)) @import
+; Named imports `import { a, b [as c] } from './x'` — qualified `./x.a` per name
+; (the source name, not the alias, picks the exporting file) so the imported
+; binding resolves. The coarse module capture above still covers default/namespace.
+(import_statement
+  (import_clause (named_imports (import_specifier name: (identifier) @from_name)))
+  source: (string (string_fragment) @from_module))
 ; CommonJS require("x") — a call, not a syntactic import, so it's guarded by the
 ; callee name (`require`) via the @guard handling in `extract`.
 (call_expression
