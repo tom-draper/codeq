@@ -740,3 +740,19 @@ newtonsoft: 700; gson `implementors TypeAdapterFactory` → every factory class)
 
 Known limit, documented: C#'s grammar can't distinguish a base class from an
 interface in the base list, so C# reports everything as `extends`.
+
+## 2026-07-15 — `path` (shortest call chain between two symbols)
+
+Rounded out the graph family: `callers/callees --depth` give reachability (does X
+reach Y, at what depth), but not *how*. `path <from> <to>` does a BFS down the
+callee graph and reconstructs the shortest chain — from calls … calls to — shown
+step by step, indented by position. Pure index, no git (matches the "agents use
+git themselves" stance). Reuses `callees_of`; empty when unreachable within
+`--max-depth`.
+
+Dogfooded on codeq: `path cmd_search innermost` traced cmd_search -> run_search
+-> innermost exactly. A test using single-letter fn names (a/b/c/d) surfaced (not
+a bug) the deliberate `collect_idents` >=2-char filter that drops single-char
+call-noise — fixed the fixture to realistic names. Name-based caveat, as with all
+graph commands: the chain-by-name is right, but an ambiguous name's displayed
+*location* may resolve to the wrong same-named definition.

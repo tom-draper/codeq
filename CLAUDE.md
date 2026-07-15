@@ -27,6 +27,10 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For blast-radius / reachability.
+  - **Call chain between two symbols:** `codeq path FROM TO` — the shortest chain
+    where FROM calls … calls TO, shown step by step (empty if unreachable within
+    `--max-depth`, default 8). Reachability *with the route*, vs `callees --depth`
+    which only says whether/at what depth.
 - **Who implements / extends a type:** `codeq implementors NAME` — the types that
   `impl T for X` (Rust), `extends`/`implements` (Java/TS/PHP/C#/C++), subclass
   (`class X(Base)` Python, `class X < Y` Ruby). The inheritance edges the call

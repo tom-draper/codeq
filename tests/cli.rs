@@ -931,6 +931,59 @@ fn unused_excludes_test_files_by_default() {
 }
 
 #[test]
+fn path_finds_shortest_call_chain() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn leaf() {}\n\
+         fn mid() { leaf(); }\n\
+         fn top() { mid(); }\n\
+         fn other() {}\n",
+    );
+    let v = f.run(&["path", "top", "leaf"]);
+    let steps: Vec<&str> = v["data"].as_array().unwrap().iter()
+        .map(|r| r["symbol"].as_str().unwrap()).collect();
+    assert_eq!(steps, ["top", "mid", "leaf"], "chain wrong: {steps:?}");
+    // Depth indexes the position in the chain.
+    let depths: Vec<u64> = v["data"].as_array().unwrap().iter()
+        .map(|r| r["depth"].as_u64().unwrap()).collect();
+    assert_eq!(depths, [0, 1, 2]);
+}
+
+#[test]
+fn path_empty_when_unreachable_and_single_when_self() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn leaf() {}\nfn top() { leaf(); }\n");
+
+    // leaf does not reach top.
+    let none = f.run(&["path", "leaf", "top"]);
+    assert_eq!(none["data"].as_array().unwrap().len(), 0, "should be unreachable");
+
+    // a symbol reaches itself in zero hops.
+    let self_path = f.run(&["path", "top", "top"]);
+    let rows = self_path["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["symbol"], "top");
+    assert_eq!(rows[0]["depth"], 0);
+}
+
+#[test]
+fn path_respects_max_depth() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn d4() {}\nfn c3() { d4(); }\nfn b2() { c3(); }\nfn a1() { b2(); }\n",
+    );
+    // a1 -> b2 -> c3 -> d4 is 3 hops; a max-depth of 2 can't reach d4.
+    let shallow = f.run(&["path", "a1", "d4", "--max-depth", "2"]);
+    assert_eq!(shallow["data"].as_array().unwrap().len(), 0, "3-hop chain found at depth 2");
+    let deep = f.run(&["path", "a1", "d4", "--max-depth", "3"]);
+    let steps: Vec<&str> = deep["data"].as_array().unwrap().iter()
+        .map(|r| r["symbol"].as_str().unwrap()).collect();
+    assert_eq!(steps, ["a1", "b2", "c3", "d4"]);
+}
+
+#[test]
 fn callees_depth_walks_transitively() {
     let f = Fixture::new();
     f.write(

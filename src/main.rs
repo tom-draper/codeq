@@ -155,6 +155,17 @@ enum Command {
         #[arg(long, default_value_t = 1)]
         depth: usize,
     },
+    /// The shortest call chain from one symbol to another (`from` calls … calls
+    /// `to`), if one exists — reachability with the route shown. Name-based.
+    Path {
+        /// The symbol the chain starts at.
+        from: String,
+        /// The symbol the chain must reach.
+        to: String,
+        /// Maximum chain length to search (hops).
+        #[arg(long, default_value_t = 8)]
+        max_depth: usize,
+    },
     /// Dossier for a symbol: definition(s) + callers + callees, in one call.
     About {
         /// Exact symbol name.
@@ -460,6 +471,11 @@ fn main() -> ExitCode {
         Command::Callees { name, path, depth } => {
             commands::cmd_callees(&cwd, &name, path.as_deref(), depth, out)
         }
+        Command::Path {
+            from,
+            to,
+            max_depth,
+        } => commands::cmd_path(&cwd, &from, &to, max_depth, out),
         Command::About { name, path } => {
             commands::cmd_about(&cwd, &name, path.as_deref(), out)
         }

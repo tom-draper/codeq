@@ -819,6 +819,112 @@ pub fn cmd_callees(cwd: &Path, name: &str, path: Option<&str>, depth: usize, out
 }
 
 #[derive(Serialize)]
+struct PathStep {
+    symbol: String,
+    kind: String,
+    path: String,
+    line: i64,
+    /// Position in the chain (0 = the `from` symbol). Text output indents by it.
+    depth: usize,
+}
+
+/// `path <from> <to>` — the shortest call chain from `from` to `to`, if one
+/// exists: `from` calls … calls `to`. A BFS down the callee graph (so the chain
+/// is shortest by hops), bounded by `max_depth`. Reachability with the route
+/// shown, complementing `callees --depth` (which only says whether/at what depth
+/// something is reached). Name-based, like the other graph commands; emits an
+/// empty result when `to` isn't reachable from `from` within `max_depth`.
+pub fn cmd_path(
+    cwd: &Path,
+    from: &str,
+    to: &str,
+    max_depth: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    // Location of a symbol name (its first definition site), for the output rows.
+    let loc_of = |name: &str| -> Result<Option<(String, String, i64)>> {
+        let defs = definitions_of(&s, name, None, 1)?;
+        Ok(defs
+            .into_iter()
+            .next()
+            .map(|d| (d.kind, d.path, d.start_line)))
+    };
+
+    // Trivial path: a symbol reaches itself in zero hops.
+    if from == to {
+        let step = loc_of(from)?.map(|(kind, path, line)| PathStep {
+            symbol: from.to_string(),
+            kind,
+            path,
+            line,
+            depth: 0,
+        });
+        return s.emit(step.into_iter().collect::<Vec<_>>());
+    }
+
+    // BFS down the callee graph, recording each name's discoverer so the chain
+    // can be rebuilt. Callees are sorted per node so the found path is stable.
+    let mut pred: HashMap<String, String> = HashMap::new();
+    let mut loc: HashMap<String, (String, String, i64)> = HashMap::new();
+    let mut visited: HashSet<String> = HashSet::from([from.to_string()]);
+    let mut frontier: Vec<String> = vec![from.to_string()];
+    let mut found = false;
+    'walk: for _ in 1..=max_depth {
+        let mut next: Vec<String> = Vec::new();
+        for node in &frontier {
+            let mut callees = callees_of(&s, node, None)?;
+            callees.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)).then(a.line.cmp(&b.line)));
+            for c in callees {
+                if !visited.insert(c.name.clone()) {
+                    continue;
+                }
+                pred.insert(c.name.clone(), node.clone());
+                loc.insert(c.name.clone(), (c.kind, c.path, c.line));
+                if c.name == to {
+                    found = true;
+                    break 'walk;
+                }
+                next.push(c.name);
+                if visited.len() >= HOP_CAP {
+                    break 'walk;
+                }
+            }
+        }
+        frontier = next;
+        if frontier.is_empty() {
+            break;
+        }
+    }
+
+    if !found {
+        return s.emit(Vec::<PathStep>::new());
+    }
+
+    // Rebuild the chain from `to` back to `from`, then reverse.
+    let mut chain: Vec<String> = vec![to.to_string()];
+    let mut cur = to.to_string();
+    while let Some(p) = pred.get(&cur) {
+        chain.push(p.clone());
+        cur = p.clone();
+    }
+    chain.reverse();
+
+    let mut steps: Vec<PathStep> = Vec::with_capacity(chain.len());
+    for (depth, name) in chain.into_iter().enumerate() {
+        let l = if name == from {
+            loc_of(&name)?
+        } else {
+            loc.get(&name).cloned()
+        };
+        let (kind, path, line) = l.unwrap_or_else(|| (String::new(), String::new(), 0));
+        steps.push(PathStep { symbol: name, kind, path, line, depth });
+    }
+    s.emit(steps)
+}
+
+#[derive(Serialize)]
 struct About {
     definitions: Vec<DefinitionRow>,
     callers: Vec<Caller>,
