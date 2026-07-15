@@ -778,3 +778,21 @@ aren't captured as import edges, so intra-crate uses reached only via `mod` +
 `crate::` paths may read as `unresolved` — a future win is treating `mod` as a
 reachability edge. Safe superset stays the default; a name with no definition to
 anchor to leaves the result untouched (never silently emptied).
+
+## 2026-07-15 — Rust `mod` as a reachability edge (improves --resolved recall)
+
+Followed up the resolution work's own documented gap: Rust files that pull in
+submodules via `mod x;` (not `use crate::x`) had no import edges, so their
+references read as `unresolved` and `--resolved` over-pruned them. Classic case:
+`main.rs`/`lib.rs`, which are almost all `mod` declarations — they were graph
+sinks, so every reference in them got dropped.
+
+Fix: capture an external `mod x;` (bodyless — `!body` in the query excludes inline
+`mod x { … }`) as an import fact, so it feeds the dependency graph. Now `deps
+src/main.rs` reaches the whole crate, and `callers cmd_map --resolved` keeps the
+`main.rs` dispatcher as `via=imported` (previously pruned). Schema v8 -> v9 to
+rebuild with the new edges.
+
+The fix I flagged when shipping `--resolved`, closed. Remaining honest gap: stem
+resolution still can't follow Python `from pkg import x` (module string is just
+`pkg`). Verified: 135 tests, differential 5223/5223, text-mode pass.

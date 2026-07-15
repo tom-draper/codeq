@@ -635,6 +635,10 @@ const RUST_QUERY: &str = r#"
 
 ; Raw syntactic imports: name is the module path as written in source.
 (use_declaration argument: (_) @name) @import
+; An external `mod foo;` (no inline body) pulls in another file's module — a
+; file-level dependency edge, so treat it as an import for reachability. Inline
+; `mod foo { … }` (has a body) is not a separate file, so exclude it via `!body`.
+(mod_item name: (identifier) @name !body) @import
 "#;
 
 const PYTHON_QUERY: &str = r#"

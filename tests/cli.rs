@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 8);
+    assert_eq!(v["index"]["schema"], 9);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -824,6 +824,20 @@ fn callers_resolved_prunes_unreachable_and_tags_via() {
     assert_eq!(via("user"), Some("imported".into()), "{rows:?}");
     assert!(!rows.iter().any(|r| r["path"] == "stranger.rs"),
             "unreachable reference should be pruned: {rows:?}");
+}
+
+#[test]
+fn resolved_follows_rust_mod_declarations_as_edges() {
+    // A Rust file that pulls in another via `mod thing;` (not `use crate::…`)
+    // can still reach that file's definitions — the `mod` edge must count.
+    let f = Fixture::new();
+    f.write("lib.rs", "mod thing;\nfn root() { make(); }\n");
+    f.write("thing.rs", "pub fn make() {}\n");
+
+    let res = f.run(&["callers", "make", "--resolved"]);
+    let row = res["data"].as_array().unwrap().iter()
+        .find(|r| r["symbol"] == "root").expect("root should survive resolution");
+    assert_eq!(row["via"], "imported", "mod-declared dependency should resolve: {res}");
 }
 
 #[test]

@@ -27,9 +27,10 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
   - **Cut false positives (import-scoped):** add `--resolved` to `callers`/
     `references` — drops occurrences whose file can't reach a definition of NAME
     through imports, and tags the rest `via` same-file / imported / ambiguous.
-    Opt-in and heuristic (import resolution is best-effort, e.g. Rust `mod`
-    declarations aren't edges), so it can over-prune; the default stays a safe
-    textual superset.
+    Opt-in and heuristic (import resolution is best-effort — a stem-matched edge,
+    so e.g. Python `from pkg import x` where the module is just `pkg` won't
+    resolve), so it can over-prune; the default stays a safe textual superset.
+    Rust `mod x;` declarations count as edges (intra-crate reachability works).
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For blast-radius / reachability.

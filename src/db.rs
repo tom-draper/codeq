@@ -13,7 +13,7 @@ use rusqlite::Connection;
 // BOM-prefixed files — bump so pre-fix indexes rebuild on upgrade.
 // v6: git-free freshness via a native dir-mtime cache (the `dirs` table); old
 // indexes lack it, so rebuild to populate it.
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 pub struct Db {
     pub conn: Connection,
