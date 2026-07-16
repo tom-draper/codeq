@@ -980,3 +980,14 @@ every repo. Zoekt pays this because it serves interactive any-name search over
 giant repos; codeq doesn't. And the streaming search fix already removed the
 actual scale risk (the memory blowup). Revisit only if reference latency on huge
 repos becomes a real, reported pain — the design and numbers are here.
+
+## 2026-07-16 — SQLite pragma tuning: net-negative here, not shipped
+
+Tried the classic bulk-load / read pragmas (cache_size -256MB, mmap_size 256MB,
+temp_store MEMORY) as a low-risk broad win. Measured net-negative on the test env
+(tmpfs / RAM-backed): cold index 18.3 -> 26s, warm_noop 99 -> 128ms; only callers
+improved slightly. Reason: mmap and a big cache pay off by avoiding disk I/O, but
+on a RAM-backed FS there's no I/O to avoid — they just add setup overhead. They'd
+likely help on a real SSD, but shipping a change that regresses the measurable
+case for an unmeasurable one is the wrong call. Reverted. (If ever revisited,
+gate the pragmas on index-vs-query and benchmark on real disk.)
