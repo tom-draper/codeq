@@ -894,3 +894,22 @@ the slowest-growing (0.5→1.4s, name-based candidate scan). DB ≈ source size
 (trigram FTS dominates). Correctness held: 141 tests, differential 5223/5223,
 incremental edits still detected. Remaining (linear, not bugs): the freshness
 sweep and `callers` cost at 100k+ files — noted, not yet optimized.
+
+## 2026-07-16 — parallel cold index (2.7x more, on top of the O(n²) fix)
+
+Profiling the (now-linear) cold index showed it CPU-bound single-threaded — 1.00
+cores on a 4-core box, 3 idle. Split the cost: ~67% parse/extract (tree-sitter),
+~33% FTS trigram insert (serial, single SQLite writer). So parsing is
+embarrassingly parallel with a serial-writer ceiling.
+
+Parallelized it safely: worker threads each own an Extractor and do
+read+hash+parse; results flow over a **bounded** channel to a single writer
+thread that owns the transaction. Only *parsing* is concurrent — every SQLite
+write stays on one thread, so index content is deterministic regardless of which
+worker finishes first (facts are content-addressed, queries ORDER BY). Confirmed:
+differential 5223/5223 on two consecutive runs (no nondeterminism), text-mode
+pass, incremental edits/deletes still correct.
+
+Result: 9k-file cold index 50s -> 18.3s (**2.7x**, 2.2 cores busy — the serial FTS
+writer is the ceiling, exactly the profile). Combined with the O(n²) fix this
+session: **233s -> 18.3s (12.7x)**. Extrapolated 100k files: ~40min -> ~3min.

@@ -6,13 +6,15 @@
 //! nothing.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
 use ignore::WalkBuilder;
 
 use crate::db::Db;
-use crate::facts::Extractor;
+use crate::facts::{Extractor, Fact, Relation, Span};
 use crate::repo::Repo;
 
 /// Result of a refresh pass.
@@ -27,6 +29,75 @@ struct Stored {
     size: i64,
     mtime_ns: i64,
     hash: Option<String>,
+}
+
+/// A file parsed by a worker thread, ready for the serial writer to store. The
+/// parse (read + hash + tree-sitter extraction) is the CPU cost and runs in
+/// parallel; all SQLite writes stay on one thread, so index *content* is
+/// deterministic regardless of which worker finished first.
+struct Parsed {
+    rel: String,
+    size: i64,
+    mtime_ns: i64,
+    hash: String,
+    language: Option<&'static str>,
+    content_changed: bool,
+    was_indexed: bool,
+    /// Body for the FTS index — `Some` for a changed text file, else `None`.
+    body: Option<String>,
+    facts: Vec<Fact>,
+    spans: Vec<(usize, usize, Span)>,
+    relations: Vec<Relation>,
+}
+
+/// Read, hash, and (if the content changed) parse one file. Pure and
+/// thread-safe: workers call it in parallel. `None` on an unreadable file.
+fn parse_one(
+    existing: &HashMap<String, Stored>,
+    extractor: &mut Extractor,
+    rel: &str,
+    abs: &Path,
+    size: i64,
+    mtime_ns: i64,
+) -> Option<Parsed> {
+    let mut bytes = std::fs::read(abs).ok()?;
+    // Strip a leading UTF-8 BOM so line-1 anchors match and byte offsets align.
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        bytes.drain(..3);
+    }
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let is_binary = looks_binary(&bytes);
+    let language = if is_binary { None } else { language_for(rel) };
+
+    let prev = existing.get(rel);
+    let content_changed = prev
+        .map(|p| p.hash.as_deref() != Some(hash.as_str()))
+        .unwrap_or(true);
+    let was_indexed = prev.is_some();
+
+    let (body, facts, spans, relations) = if content_changed && !is_binary {
+        let (f, s, r) = match language {
+            Some(lang) => extractor.extract(lang, &bytes),
+            None => (Vec::new(), Vec::new(), Vec::new()),
+        };
+        (Some(String::from_utf8_lossy(&bytes).into_owned()), f, s, r)
+    } else {
+        (None, Vec::new(), Vec::new(), Vec::new())
+    };
+
+    Some(Parsed {
+        rel: rel.to_string(),
+        size,
+        mtime_ns,
+        hash,
+        language,
+        content_changed,
+        was_indexed,
+        body,
+        facts,
+        spans,
+        relations,
+    })
 }
 
 /// Bring the index in line with the working tree. Returns how many files were
@@ -76,163 +147,175 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
     let mut seen: HashMap<String, ()> = HashMap::new();
     let mut dirs_seen: HashMap<String, i64> = HashMap::new();
-    let mut reindexed: u64 = 0;
     let mut partial_failures: u64 = 0;
-    let mut extractor = Extractor::new()?;
 
+    // Serial walk (stat-bound): record directory mtimes for the freshness cache,
+    // build the `seen` set, and collect the files that actually need
+    // (re)processing — unchanged files short-circuit on the size+mtime fast path.
+    let now = now_ns();
+    let mut work: Vec<(String, PathBuf, i64, i64)> = Vec::new();
+    let walker = WalkBuilder::new(repo_root)
+        .standard_filters(true) // .gitignore, .ignore, hidden, parents
+        .build();
+    for dent in walker {
+        let dent = match dent {
+            Ok(d) => d,
+            Err(_) => continue, // unreadable entry: skip, don't crash
+        };
+        let ftype = match dent.file_type() {
+            Some(t) => t,
+            None => continue,
+        };
+        let abs = dent.path();
+        let rel = match abs.strip_prefix(repo_root) {
+            Ok(r) => r.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+        // Cache every walked directory's mtime for the freshness fast path.
+        if ftype.is_dir() {
+            if let Some(m) = dent.metadata().ok().as_ref().and_then(mtime_ns_of) {
+                dirs_seen.insert(rel.clone(), m);
+            }
+            // Ignore files change which paths get indexed, but they're hidden
+            // (never walked), so an in-place `.gitignore`/`.ignore` edit bumps
+            // no cached mtime — track them here or freshness would miss it.
+            for ig in [".gitignore", ".ignore"] {
+                if let Some(m) = std::fs::metadata(abs.join(ig)).ok().as_ref().and_then(mtime_ns_of) {
+                    let key = if rel.is_empty() { ig.to_string() } else { format!("{rel}/{ig}") };
+                    dirs_seen.insert(key, m);
+                }
+            }
+            continue;
+        }
+        if !ftype.is_file() {
+            continue;
+        }
+
+        let meta = match dent.metadata() {
+            Ok(m) => m,
+            Err(_) => {
+                partial_failures += 1;
+                continue;
+            }
+        };
+        let size = meta.len() as i64;
+        let mtime_ns = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+
+        seen.insert(rel.clone(), ());
+
+        // Fast path: size + mtime unchanged => trust the stored hash, no read.
+        if let Some(prev) = existing.get(&rel) {
+            if prev.size == size && prev.mtime_ns == mtime_ns {
+                continue;
+            }
+        }
+        work.push((rel, abs.to_path_buf(), size, mtime_ns));
+    }
+
+    // Parse the changed files in parallel (read + hash + tree-sitter extraction
+    // is the CPU cost) and write the results serially on this thread — the
+    // transaction never crosses threads, so index content stays deterministic
+    // regardless of which worker finished first. A bounded channel bounds the
+    // parsed bodies held in flight.
     let tx = db.conn.unchecked_transaction()?;
-    {
-        let mut upsert = tx.prepare(
-            "INSERT INTO files(path, language, size_bytes, mtime_ns, content_hash, indexed_at)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(path) DO UPDATE SET
-                language = excluded.language,
-                size_bytes = excluded.size_bytes,
-                mtime_ns = excluded.mtime_ns,
-                content_hash = excluded.content_hash,
-                indexed_at = excluded.indexed_at",
-        )?;
-        let mut del_facts = tx.prepare("DELETE FROM facts WHERE path = ?1")?;
-        let mut ins_fact = tx.prepare(
-            "INSERT OR REPLACE INTO facts(
-                id, kind, name, path, language,
-                start_byte, end_byte, start_line, start_col, end_line, end_col,
-                signature, doc, source, confidence, visibility)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
-        )?;
-        // FTS5 has no UPSERT; update is delete-then-insert keyed by path.
-        let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
-        let mut ins_fts = tx.prepare(
-            "INSERT INTO content_fts(path, language, body) VALUES(?1, ?2, ?3)",
-        )?;
-        let mut del_spans = tx.prepare("DELETE FROM spans WHERE path = ?1")?;
-        let mut ins_span = tx.prepare(
-            "INSERT INTO spans(path, start_byte, end_byte, kind) VALUES(?1, ?2, ?3, ?4)",
-        )?;
-        let mut del_impls = tx.prepare("DELETE FROM impls WHERE path = ?1")?;
-        let mut ins_impl = tx.prepare(
-            "INSERT INTO impls(path, line, subtype, supertype, relation, language)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-        )?;
-
-        let now = now_ns();
-
-        let walker = WalkBuilder::new(repo_root)
-            .standard_filters(true) // .gitignore, .ignore, hidden, parents
-            .build();
-
-        for dent in walker {
-            let dent = match dent {
-                Ok(d) => d,
-                Err(_) => continue, // unreadable entry: skip, don't crash
-            };
-            let ftype = match dent.file_type() {
-                Some(t) => t,
-                None => continue,
-            };
-            let abs = dent.path();
-            let rel = match abs.strip_prefix(repo_root) {
-                Ok(r) => r.to_string_lossy().replace('\\', "/"),
-                Err(_) => continue,
-            };
-            // Cache every walked directory's mtime for the freshness fast path.
-            if ftype.is_dir() {
-                if let Some(m) = dent.metadata().ok().as_ref().and_then(mtime_ns_of) {
-                    dirs_seen.insert(rel.clone(), m);
-                }
-                // Ignore files change which paths get indexed, but they're hidden
-                // (never walked), so an in-place `.gitignore`/`.ignore` edit bumps
-                // no cached mtime — track them here or freshness would miss it.
-                for ig in [".gitignore", ".ignore"] {
-                    if let Some(m) = std::fs::metadata(abs.join(ig)).ok().as_ref().and_then(mtime_ns_of) {
-                        let key = if rel.is_empty() { ig.to_string() } else { format!("{rel}/{ig}") };
-                        dirs_seen.insert(key, m);
+    let parse_failures = AtomicU64::new(0);
+    let reindexed = {
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .clamp(1, 8);
+        let chunk = work.len().div_ceil(workers).max(1);
+        let (res_tx, res_rx) = std::sync::mpsc::sync_channel::<Parsed>(256);
+        std::thread::scope(|scope| -> Result<u64> {
+            for c in work.chunks(chunk) {
+                let sender = res_tx.clone();
+                let existing = &existing;
+                let failures = &parse_failures;
+                scope.spawn(move || {
+                    let mut ex = match Extractor::new() {
+                        Ok(e) => e,
+                        Err(_) => return,
+                    };
+                    for (rel, abs, size, mtime) in c {
+                        match parse_one(existing, &mut ex, rel, abs, *size, *mtime) {
+                            Some(p) => {
+                                if sender.send(p).is_err() {
+                                    return; // writer went away (error) — stop
+                                }
+                            }
+                            None => {
+                                failures.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
                     }
-                }
-                continue;
+                });
             }
-            if !ftype.is_file() {
-                continue;
-            }
+            drop(res_tx); // close the channel once every worker's clone is gone
 
-            let meta = match dent.metadata() {
-                Ok(m) => m,
-                Err(_) => {
-                    partial_failures += 1;
+            // Serial writer: owns the transaction and its prepared statements.
+            let mut upsert = tx.prepare(
+                "INSERT INTO files(path, language, size_bytes, mtime_ns, content_hash, indexed_at)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(path) DO UPDATE SET
+                    language = excluded.language,
+                    size_bytes = excluded.size_bytes,
+                    mtime_ns = excluded.mtime_ns,
+                    content_hash = excluded.content_hash,
+                    indexed_at = excluded.indexed_at",
+            )?;
+            let mut del_facts = tx.prepare("DELETE FROM facts WHERE path = ?1")?;
+            let mut ins_fact = tx.prepare(
+                "INSERT OR REPLACE INTO facts(
+                    id, kind, name, path, language,
+                    start_byte, end_byte, start_line, start_col, end_line, end_col,
+                    signature, doc, source, confidence, visibility)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+            )?;
+            let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
+            let mut ins_fts =
+                tx.prepare("INSERT INTO content_fts(path, language, body) VALUES(?1, ?2, ?3)")?;
+            let mut del_spans = tx.prepare("DELETE FROM spans WHERE path = ?1")?;
+            let mut ins_span = tx.prepare(
+                "INSERT INTO spans(path, start_byte, end_byte, kind) VALUES(?1, ?2, ?3, ?4)",
+            )?;
+            let mut del_impls = tx.prepare("DELETE FROM impls WHERE path = ?1")?;
+            let mut ins_impl = tx.prepare(
+                "INSERT INTO impls(path, line, subtype, supertype, relation, language)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+
+            let mut reindexed: u64 = 0;
+            for p in res_rx {
+                upsert.execute((&p.rel, p.language, p.size, p.mtime_ns, &p.hash, now))?;
+                if !p.content_changed {
                     continue;
                 }
-            };
-            let size = meta.len() as i64;
-            let mtime_ns = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos() as i64)
-                .unwrap_or(0);
-
-            seen.insert(rel.clone(), ());
-
-            // Fast path: size + mtime unchanged => trust the stored hash.
-            if let Some(prev) = existing.get(&rel) {
-                if prev.size == size && prev.mtime_ns == mtime_ns {
-                    continue;
-                }
-            }
-
-            // Something moved: read + hash to decide whether content actually
-            // changed. Read once, reuse the bytes for fact extraction.
-            let mut bytes = match std::fs::read(abs) {
-                Ok(b) => b,
-                Err(_) => {
-                    partial_failures += 1;
-                    continue; // unreadable; leave prior row untouched
-                }
-            };
-            // Strip a leading UTF-8 BOM so line-1 `^`/`$` anchors match and the
-            // stored byte offsets align with the logical content — ripgrep and
-            // editors do the same. A BOM before the first char otherwise hides
-            // line 1 from anchored search (common in C#/Windows-authored files).
-            if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-                bytes.drain(..3);
-            }
-            let hash = blake3::hash(&bytes).to_hex().to_string();
-            let is_binary = looks_binary(&bytes);
-            let language = if is_binary { None } else { language_for(&rel) };
-
-            let prev = existing.get(&rel);
-            let content_changed = prev
-                .map(|p| p.hash.as_deref() != Some(hash.as_str()))
-                .unwrap_or(true);
-            let was_indexed = prev.is_some();
-
-            upsert.execute((&rel, language, size, mtime_ns, &hash, now))?;
-
-            if content_changed {
                 reindexed += 1;
-                // Drop the file's stale derived rows — but only if it was already
-                // indexed. A brand-new file (every file during --rebuild / a cold
-                // index) has nothing to delete, and `DELETE FROM content_fts WHERE
-                // path=?` scans the whole growing FTS table (path is UNINDEXED),
-                // so running it per new file made cold indexing O(files²).
-                if was_indexed {
-                    del_fts.execute([&rel])?;
-                    del_facts.execute([&rel])?;
-                    del_spans.execute([&rel])?;
-                    del_impls.execute([&rel])?;
+                // Only a previously-indexed file has stale rows to drop; a new file
+                // (every file on a cold index) has none, and `DELETE FROM
+                // content_fts WHERE path=?` scans the UNINDEXED-path FTS table, so
+                // skipping it for new files is what keeps cold indexing linear.
+                if p.was_indexed {
+                    del_fts.execute([&p.rel])?;
+                    del_facts.execute([&p.rel])?;
+                    del_spans.execute([&p.rel])?;
+                    del_impls.execute([&p.rel])?;
                 }
-                // FTS first (covers text files even when we can't classify them).
-                if !is_binary {
-                    let body = String::from_utf8_lossy(&bytes);
-                    ins_fts.execute((&rel, language, body.as_ref()))?;
+                if let Some(body) = &p.body {
+                    ins_fts.execute((&p.rel, p.language, body.as_str()))?;
                 }
-                if let Some(lang) = language {
-                    let (facts, spans, relations) = extractor.extract(lang, &bytes);
-                    for f in facts {
+                if let Some(lang) = p.language {
+                    for f in &p.facts {
                         ins_fact.execute((
-                            f.id(&rel),
+                            f.id(&p.rel),
                             &f.kind,
                             &f.name,
-                            &rel,
+                            &p.rel,
                             lang,
                             f.start_byte as i64,
                             f.end_byte as i64,
@@ -247,12 +330,12 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                             &f.visibility,
                         ))?;
                     }
-                    for (sb, eb, sp) in spans {
-                        ins_span.execute((&rel, sb as i64, eb as i64, sp.as_i64()))?;
+                    for (sb, eb, sp) in &p.spans {
+                        ins_span.execute((&p.rel, *sb as i64, *eb as i64, sp.as_i64()))?;
                     }
-                    for r in relations {
+                    for r in &p.relations {
                         ins_impl.execute((
-                            &rel,
+                            &p.rel,
                             r.start_line as i64,
                             &r.subtype,
                             &r.supertype,
@@ -262,8 +345,10 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                     }
                 }
             }
-        }
-    }
+            Ok(reindexed)
+        })?
+    };
+    partial_failures += parse_failures.load(Ordering::Relaxed);
 
     // Drop files that vanished from the tree.
     {
