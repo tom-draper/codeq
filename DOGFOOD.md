@@ -959,3 +959,24 @@ new -l 0` 2368 → **1177 ms (2x)** (it had materialized all bodies *and* matche
 index would be the only way further, a much larger change). Correct: differential
 5223/5223, text-mode pass, 141 tests. The glob filter (search --glob) became a
 per-row path predicate.
+
+## 2026-07-16 — token (inverted position) index: measured, declined
+
+Considered a Zoekt-style token index — store every identifier occurrence's
+position (`name -> [(file, line, col), …]`) so `references`/`callers` become an
+indexed `WHERE name=?` lookup instead of loading + regex-scanning bodies. It's the
+only way past the residual bandwidth-bound scan cost on common-name queries.
+
+Measured the real cost on the 27k corpus before building: **23.8M** identifier
+occurrences (~910 MB, ~doubles the 1.2 GB DB); **11.9M** if restricted to
+symbol-name occurrences (~450 MB, but needs two-pass indexing). Plus a real
+index-time hit (tokenize 237 MB + insert millions of rows) on the cold index we
+just optimized.
+
+Declined. The trade is poor for codeq's workload: a *specific* symbol matches few
+files, so today's scan is already ~tens of ms — the token index only rescues the
+*rare* common-name query, at a *permanent* 450–910 MB + slower-indexing cost on
+every repo. Zoekt pays this because it serves interactive any-name search over
+giant repos; codeq doesn't. And the streaming search fix already removed the
+actual scale risk (the memory blowup). Revisit only if reference latency on huge
+repos becomes a real, reported pain — the design and numbers are here.
