@@ -388,16 +388,30 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 /// first mismatch. Streams (no HashMap) and skips the content_hash column, so the
 /// common "nothing changed" path is just syscalls. An empty dir cache (no index
 /// yet, or a pre-v6 one) is never fresh — the caller must do a full walk.
+///
+/// This runs on *every* query, so it's allocation-conscious: it borrows each
+/// cached path from the SQLite row (no per-row `String`) and reuses one path
+/// buffer (`root/…`) instead of allocating a fresh `PathBuf` per file — which at
+/// 100k files is ~200k allocations saved off the per-query cost.
 fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
+    // Reused `root/<rel>` buffer: truncate back to `root/` and append each rel.
+    let mut buf = root.to_string_lossy().into_owned();
+    if !buf.ends_with(std::path::MAIN_SEPARATOR) {
+        buf.push(std::path::MAIN_SEPARATOR);
+    }
+    let base = buf.len();
+
     let mut any_dir = false;
     {
         let mut stmt = db.conn.prepare("SELECT path, mtime_ns FROM dirs")?;
         let mut rows = stmt.query([])?;
         while let Some(r) = rows.next()? {
             any_dir = true;
-            let path: String = r.get(0)?;
+            let rel = r.get_ref(0)?.as_str()?;
             let mtime: i64 = r.get(1)?;
-            if path_mtime(&root.join(&path)) != Some(mtime) {
+            buf.truncate(base);
+            buf.push_str(rel);
+            if path_mtime(std::path::Path::new(&buf)) != Some(mtime) {
                 return Ok(false);
             }
         }
@@ -410,10 +424,12 @@ fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
         .prepare("SELECT path, size_bytes, mtime_ns FROM files")?;
     let mut rows = stmt.query([])?;
     while let Some(r) = rows.next()? {
-        let path: String = r.get(0)?;
+        let rel = r.get_ref(0)?.as_str()?;
         let size: i64 = r.get(1)?;
         let mtime: i64 = r.get::<_, Option<i64>>(2)?.unwrap_or(0);
-        if file_size_mtime(&root.join(&path)) != Some((size, mtime)) {
+        buf.truncate(base);
+        buf.push_str(rel);
+        if file_size_mtime(std::path::Path::new(&buf)) != Some((size, mtime)) {
             return Ok(false);
         }
     }
