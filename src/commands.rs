@@ -865,13 +865,16 @@ pub fn cmd_path(
     from: &str,
     to: &str,
     max_depth: usize,
+    path: Option<&str>,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
-    // Location of a symbol name (its first definition site), for the output rows.
+    // Location + initial expansion of `from` are scoped by `path`, so an ambiguous
+    // start name (e.g. `main` in several files/languages) resolves to the intended
+    // definition. Only `from` is scoped; the chain then follows callees anywhere.
     let loc_of = |name: &str| -> Result<Option<(String, String, i64)>> {
-        let defs = definitions_of(&s, name, None, 1)?;
+        let defs = definitions_of(&s, name, path, 1)?;
         Ok(defs
             .into_iter()
             .next()
@@ -900,7 +903,9 @@ pub fn cmd_path(
     'walk: for _ in 1..=max_depth {
         let mut next: Vec<String> = Vec::new();
         for node in &frontier {
-            let mut callees = callees_of(&s, node, None)?;
+            // Scope only the start symbol's callees; hops after it follow anywhere.
+            let scope = if node.as_str() == from { path } else { None };
+            let mut callees = callees_of(&s, node, scope)?;
             callees.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)).then(a.line.cmp(&b.line)));
             for c in callees {
                 if !visited.insert(c.name.clone()) {

@@ -214,6 +214,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push(s(a, "from")?.into());
             args.push(s(a, "to")?.into());
             optn(&mut args, a, "max_depth", "--max-depth");
+            opt(&mut args, a, "path", "--path");
         }
         "codeq_outline" => {
             args.push("outline".into());
@@ -380,8 +381,8 @@ fn tools() -> Value {
             "One-call dossier before editing a symbol: its definition(s) with signature and doc, its callers (who breaks), and its callees (what it depends on). Replaces several separate lookups. path scopes the definition and callees to matching files to disambiguate a common name.",
             json!({ "name": str_, "path": str_ }), &["name"]),
         tool("codeq_path",
-            "The shortest call chain from one symbol to another (from calls … calls to), if one exists — reachability with the route shown, e.g. how an entry point reaches a low-level function. Name-based; empty when unreachable within max_depth (default 8).",
-            json!({ "from": str_, "to": str_, "max_depth": num_ }), &["from", "to"]),
+            "The shortest call chain from one symbol to another (from calls … calls to), if one exists — reachability with the route shown, e.g. how an entry point reaches a low-level function. Name-based; empty when unreachable within max_depth (default 8). path scopes the start symbol to matching files, to disambiguate a common/cross-language `from` like `main`.",
+            json!({ "from": str_, "to": str_, "max_depth": num_, "path": str_ }), &["from", "to"]),
         tool("codeq_outline",
             "The structure of a file top to bottom: its definitions with signatures and nesting depth.",
             json!({ "file": str_, "docs": bool_ }), &["file"]),

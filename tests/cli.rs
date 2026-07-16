@@ -1122,6 +1122,26 @@ fn path_finds_shortest_call_chain() {
 }
 
 #[test]
+fn path_scopes_the_start_symbol_by_path() {
+    // Two `entry` functions in different files; only one reaches `leaf`.
+    let f = Fixture::new();
+    f.write("a.rs", "fn leaf() {}\nfn entry() { leaf(); }\n");
+    f.write("b.rs", "fn entry() { unrelated(); }\nfn unrelated() {}\n");
+
+    // Scoped to b.rs, `entry` can't reach leaf.
+    let none = f.run(&["path", "entry", "leaf", "--path", "b.rs"]);
+    assert_eq!(none["data"].as_array().unwrap().len(), 0, "b.rs entry shouldn't reach leaf");
+
+    // Scoped to a.rs, it does — and starts from the a.rs definition.
+    let hit = f.run(&["path", "entry", "leaf", "--path", "a.rs"]);
+    let rows = hit["data"].as_array().unwrap();
+    assert_eq!(rows[0]["symbol"], "entry");
+    assert_eq!(rows[0]["path"], "a.rs", "start location should be the scoped def");
+    let syms: Vec<&str> = rows.iter().map(|r| r["symbol"].as_str().unwrap()).collect();
+    assert_eq!(syms, ["entry", "leaf"]);
+}
+
+#[test]
 fn path_empty_when_unreachable_and_single_when_self() {
     let f = Fixture::new();
     f.write("a.rs", "fn leaf() {}\nfn top() { leaf(); }\n");

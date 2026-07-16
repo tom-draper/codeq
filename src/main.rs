@@ -181,6 +181,10 @@ enum Command {
         /// Maximum chain length to search (hops).
         #[arg(long, default_value_t = 8)]
         max_depth: usize,
+        /// Scope the start symbol to definitions in matching paths — disambiguates
+        /// a common/cross-language `from` (e.g. `main`).
+        #[arg(long)]
+        path: Option<String>,
     },
     /// Dossier for a symbol: definition(s) + callers + callees, in one call.
     About {
@@ -538,7 +542,8 @@ fn main() -> ExitCode {
             from,
             to,
             max_depth,
-        } => commands::cmd_path(&cwd, &from, &to, max_depth, out),
+            path,
+        } => commands::cmd_path(&cwd, &from, &to, max_depth, path.as_deref(), out),
         Command::About { name, path } => {
             commands::cmd_about(&cwd, &name, path.as_deref(), out)
         }
