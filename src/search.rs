@@ -155,66 +155,6 @@ pub(crate) struct FileDef {
     pub(crate) end_byte: usize,
 }
 
-/// Candidate file bodies pulled from the FTS index — no filesystem reads.
-/// When `like` holds one or more `%literal%` patterns, the content index (a
-/// trigram FTS5 table) narrows to files whose body matches ANY of them, via
-/// trigram-accelerated `LIKE` — a safe superset (`_`/`%` in the literal act as
-/// wildcards, only broadening; the precise regex confirms). `LIKE` is used
-/// rather than FTS `MATCH`, which silently drops substring matches for many
-/// short/underscore terms. With no patterns, every text file is a candidate
-/// (regex with no extractable literal). `path`/`language` filters apply after.
-pub(crate) fn fetch_bodies(
-    conn: &rusqlite::Connection,
-    like: Option<&[String]>,
-    path: Option<&str>,
-    language: Option<&str>,
-) -> Result<Vec<(String, Option<String>, String)>> {
-    let patterns = like.filter(|l| !l.is_empty());
-
-    let mut sql = String::from("SELECT path, language, body FROM content_fts");
-    if let Some(pats) = patterns {
-        let clause = (1..=pats.len())
-            .map(|i| format!("body LIKE ?{i}"))
-            .collect::<Vec<_>>()
-            .join(" OR ");
-        sql.push_str(&format!(" WHERE {clause}"));
-    }
-    sql.push_str(" ORDER BY path");
-
-    let raw: Vec<(String, Option<String>, String)> = {
-        let mut stmt = conn.prepare(&sql)?;
-        if let Some(pats) = patterns {
-            let params: Vec<&dyn rusqlite::ToSql> =
-                pats.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
-            let rows = stmt.query_map(params.as_slice(), row_to_body)?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
-        } else {
-            let rows = stmt.query_map([], row_to_body)?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
-        }
-    };
-
-    let mut out = Vec::new();
-    for (p, lang, body) in raw {
-        if let Some(pf) = path {
-            if !p.contains(pf) {
-                continue;
-            }
-        }
-        if let Some(lf) = language {
-            if lang.as_deref() != Some(lf) {
-                continue;
-            }
-        }
-        out.push((p, lang, body));
-    }
-    Ok(out)
-}
-
-fn row_to_body(r: &rusqlite::Row) -> rusqlite::Result<(String, Option<String>, String)> {
-    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-}
-
 /// Byte offset of the start of each line.
 fn line_starts_of(text: &str) -> Vec<usize> {
     let mut v = vec![0usize];
@@ -273,14 +213,43 @@ pub(crate) fn innermost(defs: &[FileDef], off: usize) -> Option<&FileDef> {
 /// Deterministic order (path, then line). When `opts.in_filter` is not `Any`,
 /// matches are classified via cached spans; files in a language we cannot parse
 /// are excluded (never guessed).
+/// Stream candidate file bodies from the trigram FTS index and run `re` over each,
+/// shaping the output per `opts.out`. Deterministic order (path, then line).
+///
+/// Bodies are *borrowed* from each SQLite row and scanned in place — never
+/// collected — so a query over a common substring (which can match a large
+/// fraction of a big repo) holds one body at a time instead of materializing all
+/// of them (which spiked memory into the hundreds of MB and copied every byte).
+/// The trigram `LIKE` prefilter is a safe superset (`_`/`%` only broaden); the
+/// precise regex confirms. With no literal, every text file is a candidate.
+/// `path`/`language` filters apply per row; when `opts.in_filter` isn't `Any`,
+/// matches are classified via cached spans (files in an unparseable language are
+/// skipped, never guessed).
 pub(crate) fn run_search(
     conn: &rusqlite::Connection,
     re: &regex::Regex,
-    candidates: Vec<(String, Option<String>, String)>,
+    like: Option<&[String]>,
+    path_filter: Option<&str>,
+    language_filter: Option<&str>,
+    path_accept: Option<&dyn Fn(&str) -> bool>,
     opts: &ScanOpts,
 ) -> Result<SearchData> {
     let cap = if opts.limit == 0 { usize::MAX } else { opts.limit };
     let filtering = opts.in_filter != InFilter::Any;
+
+    let patterns = like.filter(|l| !l.is_empty());
+    let mut sql = String::from("SELECT path, language, body FROM content_fts");
+    if let Some(pats) = patterns {
+        let clause = (1..=pats.len())
+            .map(|i| format!("body LIKE ?{i}"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        sql.push_str(&format!(" WHERE {clause}"));
+    }
+    sql.push_str(" ORDER BY path");
+    let params: Vec<&dyn rusqlite::ToSql> = patterns
+        .map(|pats| pats.iter().map(|p| p as &dyn rusqlite::ToSql).collect())
+        .unwrap_or_default();
 
     let mut def_stmt = conn.prepare(
         "SELECT name, kind, start_byte, end_byte FROM facts
@@ -297,31 +266,52 @@ pub(crate) fn run_search(
     let mut hits: Vec<Hit> = Vec::new();
     let mut truncated = false;
 
-    'outer: for (rel, lang, body) in &candidates {
+    let mut fts_stmt = conn.prepare(&sql)?;
+    let mut rows = fts_stmt.query(params.as_slice())?;
+    'outer: while let Some(row) = rows.next()? {
+        let rel = row.get_ref(0)?.as_str()?;
+        if let Some(pf) = path_filter {
+            if !rel.contains(pf) {
+                continue;
+            }
+        }
+        if let Some(accept) = path_accept {
+            if !accept(rel) {
+                continue;
+            }
+        }
+        let lang: Option<String> = row.get(1)?;
+        if let Some(lf) = language_filter {
+            if lang.as_deref() != Some(lf) {
+                continue;
+            }
+        }
+        // Borrow the body from the row — never copied into an owned String.
+        let body = row.get_ref(2)?.as_str()?;
+
         // Load cached spans if filtering; skip files in a language we can't parse.
         let spans = if filtering {
             if !has_spans(lang.as_deref().unwrap_or("")) {
                 continue;
             }
-            let rows = span_stmt.query_map([rel], |r| {
+            let srows = span_stmt.query_map([rel], |r| {
                 Ok((
                     r.get::<_, i64>(0)? as usize,
                     r.get::<_, i64>(1)? as usize,
                     Span::from_i64(r.get::<_, i64>(2)?).unwrap_or(Span::Str),
                 ))
             })?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
+            srows.collect::<std::result::Result<Vec<_>, _>>()?
         } else {
             Vec::new()
         };
         let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(&spans, off));
-
         let starts = line_starts_of(body);
 
         match opts.out {
             OutMode::Files => {
                 if re.find_iter(body).any(|m| accept(m.start())) {
-                    files.push(rel.clone());
+                    files.push(rel.to_string());
                     if files.len() >= cap {
                         truncated = true;
                         break 'outer;
@@ -343,7 +333,7 @@ pub(crate) fn run_search(
                 }
                 if n > 0 {
                     counts.push(FileCount {
-                        path: rel.clone(),
+                        path: rel.to_string(),
                         count: n,
                     });
                     if counts.len() >= cap {
@@ -377,7 +367,7 @@ pub(crate) fn run_search(
 
                     let enclosing = innermost(&defs, off);
                     hits.push(Hit {
-                        path: rel.clone(),
+                        path: rel.to_string(),
                         line: line_idx + 1,
                         col: off - starts[line_idx],
                         symbol: enclosing.map(|d| d.name.clone()),

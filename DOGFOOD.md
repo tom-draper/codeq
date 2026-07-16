@@ -938,3 +938,24 @@ worst case (common-name queries), at the cost of per-query multi-connection
 complexity. **Reverted it** — shipping complexity that misses the actual
 bottleneck isn't worth it. The honest remaining cost is body-loading, which is
 I/O/memory-bound and the pathological case is uncommon.
+
+## 2026-07-16 — streaming search: bound memory, stop copying bodies
+
+Chased the real query bottleneck (fetch_bodies) after the parallel-scan revert.
+Measured it: `callers new` on 27k files matches 9,903 files = **174 MB of bodies**,
+and `fetch_bodies` loaded them all into a Vec at once — 226 MB peak RSS. The scan
+itself is memory-bandwidth-bound (why parallelizing it did nothing), so the fix is
+to *move less data*, not add cores.
+
+Merged fetch_bodies into run_search as a streaming pass: iterate the FTS cursor
+one row at a time and **borrow** each body from the row (`get_ref`/`as_str`,
+never copied into a String), scan it, drop it. Peak memory is now one body, not
+all matching bodies — the scale-robustness win (a common-name query on a huge repo
+no longer risks loading GBs / OOM). Also kills the 174 MB of String allocation.
+
+Results (27k, worst case `new`): peak RSS 226 → **109 MB (2.1x)**; `references
+new -l 0` 2368 → **1177 ms (2x)** (it had materialized all bodies *and* matches);
+`callers`/`search` ~1.1x (the residual is the bandwidth-bound regex scan — a token
+index would be the only way further, a much larger change). Correct: differential
+5223/5223, text-mode pass, 141 tests. The glob filter (search --glob) became a
+per-row path predicate.

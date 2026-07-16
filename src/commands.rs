@@ -15,7 +15,7 @@ use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
 use crate::index::{language_for, refresh};
 use crate::repo::Repo;
 use crate::search::{
-    fetch_bodies, innermost, like_of, load_file_defs, regex_prefilter, run_search, FileDef, Hit,
+    innermost, like_of, load_file_defs, regex_prefilter, run_search, FileDef, Hit,
     InFilter, OutMode, ScanOpts, SearchData,
 };
 
@@ -522,7 +522,6 @@ fn callers_of(
     qualifier: Option<&str>,
 ) -> Result<Vec<Caller>> {
     let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))?;
-    let candidates = fetch_bodies(&s.db.conn, like_of(name).as_deref(), path, None)?;
     // Callers means references in *code* — not comments, strings, or prose in
     // unparseable files (which are excluded). Uses the cached comment/string spans.
     let opts = ScanOpts {
@@ -534,7 +533,8 @@ fn callers_of(
         call_only,
         qualifier: qualifier.map(str::to_string),
     };
-    let hits = match run_search(&s.db.conn, &re, candidates, &opts)? {
+    let hits = match run_search(&s.db.conn, &re, like_of(name).as_deref(), path, None, None, &opts)?
+    {
         SearchData::Matches { matches, .. } => matches,
         _ => unreachable!(),
     };
@@ -1800,12 +1800,16 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     } else {
         regex_prefilter(args.pattern)
     };
-    let mut candidates = fetch_bodies(&s.db.conn, match_query.as_deref(), args.path, args.language)?;
-
-    if !args.globs.is_empty() {
-        let gf = GlobFilter::build(args.globs)?;
-        candidates.retain(|(path, _, _)| gf.accepts(path));
-    }
+    // A `--glob` set becomes a per-row path predicate for the streaming scan.
+    let glob = if args.globs.is_empty() {
+        None
+    } else {
+        Some(GlobFilter::build(args.globs)?)
+    };
+    let glob_accept = glob.as_ref().map(|gf| move |p: &str| gf.accepts(p));
+    let path_accept = glob_accept
+        .as_ref()
+        .map(|f| f as &dyn Fn(&str) -> bool);
 
     let out_mode = if args.files_with_matches {
         OutMode::Files
@@ -1828,7 +1832,15 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         call_only: false,
         qualifier: None,
     };
-    let data = run_search(&s.db.conn, &re, candidates, &opts)?;
+    let data = run_search(
+        &s.db.conn,
+        &re,
+        match_query.as_deref(),
+        args.path,
+        args.language,
+        path_accept,
+        &opts,
+    )?;
     s.emit(data)
 }
 
@@ -1873,7 +1885,6 @@ pub fn cmd_references(
     // The name is a substring of every reference, so the trigram index narrows
     // to files that contain it (the \b matcher then confirms word boundaries).
     let match_query = like_of(name);
-    let candidates = fetch_bodies(&s.db.conn, match_query.as_deref(), path, language)?;
     // A call site or qualified access is *code* — a doc-comment example like
     // `fn build()` is not one — so the position filters imply code-only.
     let in_filter = if call_only || qualifier.is_some() {
@@ -1890,7 +1901,8 @@ pub fn cmd_references(
         call_only,
         qualifier: qualifier.map(str::to_string),
     };
-    let (hits, truncated) = match run_search(&s.db.conn, &re, candidates, &opts)? {
+    let (hits, truncated) =
+        match run_search(&s.db.conn, &re, match_query.as_deref(), path, language, None, &opts)? {
         SearchData::Matches { matches, truncated } => (matches, truncated),
         _ => unreachable!("references always uses Matches mode"),
     };
@@ -2043,7 +2055,6 @@ fn name_is_used(
     let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))
         .map_err(|e| anyhow!("invalid name: {e}"))?;
     let like = like_of(name);
-    let candidates = fetch_bodies(&s.db.conn, like.as_deref(), None, None)?;
     let opts = ScanOpts {
         before: 0,
         after: 0,
@@ -2053,7 +2064,7 @@ fn name_is_used(
         call_only: false,
         qualifier: None,
     };
-    let hits = match run_search(&s.db.conn, &re, candidates, &opts)? {
+    let hits = match run_search(&s.db.conn, &re, like.as_deref(), None, None, None, &opts)? {
         SearchData::Matches { matches, .. } => matches,
         _ => unreachable!("unused always uses Matches mode"),
     };
@@ -2194,7 +2205,6 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
 
     let expr = format!(r"\b{}\b", regex::escape(name));
     let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
-    let candidates = fetch_bodies(&s.db.conn, like_of(name).as_deref(), path, None)?;
     let opts = ScanOpts {
         before: 0,
         after: 0,
@@ -2204,7 +2214,7 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
         call_only: false,
         qualifier: None,
     };
-    let hits = match run_search(&s.db.conn, &re, candidates, &opts)? {
+    let hits = match run_search(&s.db.conn, &re, like_of(name).as_deref(), path, None, None, &opts)? {
         SearchData::Matches { matches, .. } => matches,
         _ => unreachable!("tests always uses Matches mode"),
     };
