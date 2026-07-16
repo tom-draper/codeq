@@ -26,3 +26,8 @@ target
 # Benchmark corpus cache (cloned repos; results/ IS committed)
 bench/.corpus/
 __pycache__/
+
+# Track shareable Claude Code skills; the rest of .claude is local (global-ignored).
+!.claude/
+.claude/*
+!.claude/skills/
