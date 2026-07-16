@@ -913,3 +913,28 @@ pass, incremental edits/deletes still correct.
 Result: 9k-file cold index 50s -> 18.3s (**2.7x**, 2.2 cores busy — the serial FTS
 writer is the ceiling, exactly the profile). Combined with the O(n²) fix this
 session: **233s -> 18.3s (12.7x)**. Extrapolated 100k files: ~40min -> ~3min.
+
+## 2026-07-16 — chasing the per-query cost: what's worth it, what isn't
+
+Two more perf leads after the cold-index wins. Kept a daemonless single binary
+throughout (no watcher/fsmonitor).
+
+**Freshness sweep (`is_fresh`, runs on every query).** Measured: pure stats of 27k
+files = 52ms, but parallelizing them is *6x slower* — warm-inode stat contends
+across threads (the kernel VFS path isn't embarrassingly parallel). So the sweep
+is at its stat-floor within a daemonless binary. Shipped only the honest part:
+borrow the path from the SQLite row and reuse one `root/…` buffer instead of a
+String + PathBuf alloc per file (~200k allocations saved at 100k files). Small on
+a warm cache; cleaner, and matters more cold.
+
+**Query scan (`callers`/`references` at scale).** Profiled callers `new`: it
+looked like the 739ms was regex scan, so I parallelized `run_search` (workers with
+their own read connections). Correct (differential 5223/5223 twice) but only
+~1.3x. Then measured pure-regex Count mode parallel: 799 vs 739ms — *no* speedup.
+The real cost is upstream in `fetch_bodies`, which serially loads the full body of
+every file containing the substring (MBs for a common name); the scan is a small
+fraction. So the change optimized the wrong target for a modest win on a *rare*
+worst case (common-name queries), at the cost of per-query multi-connection
+complexity. **Reverted it** — shipping complexity that misses the actual
+bottleneck isn't worth it. The honest remaining cost is body-loading, which is
+I/O/memory-bound and the pathological case is uncommon.
