@@ -1012,3 +1012,35 @@ lookups in callees_of, indexed queries, the streaming search). Found and fixed t
 Left alone (measured/considered, not worth it): callees_of loads each target's
 full body to slice one function (fine — targets are few and files usually small;
 a substr(blob) would help only huge files, with UTF-8 byte/char subtlety).
+
+## 2026-07-16 — skill-file loop: cold subagents as a doc-and-tool fuzzer
+
+Developed the codeq usage skill (`.claude/skills/codeq/SKILL.md`) by iterating it
+against fresh subagents, and it worked well enough to write down as a repeatable
+method.
+
+**The loop.** Spawn a *cold* general-purpose subagent (no session context) given
+ONLY the skill file, a handful of concrete navigation tasks with checkable answers,
+and instructions to (a) prefer codeq, (b) note every fallback to grep/reading
+files and why, and (c) end with a blunt FRICTION REPORT. Read its report, fix the
+friction, re-run with a fresh agent and slightly different tasks. Stop when an
+agent says "it was clear" and lands every task first try.
+
+**Four rounds converged it** (1: 4/5, 2: 5/5, 3: 5/5, 4: 4/4, zero grep fallback in
+any round). Two findings worth remembering:
+
+1. **It's a fuzzer for the tool, not just the docs.** A fresh agent with no
+   assumptions found a real bug I'd missed — `codeq path main run_search` resolved
+   the *Python* `main` and `path` had no `--path` to disambiguate (fixed in code) —
+   and pinned the exact semantics my own doc got wrong: `--on RECV` matches the
+   *literal receiver token*, so it fits `Type::method` (`Session::open`) but not
+   `var.method` (`s.emit()`, token is `s`). Testing the docs surfaced tool gaps.
+2. **Navigation tasks overcome the grep reflex.** Every agent stayed entirely in
+   codeq. (Contrast: I reach for grep/Read in *edit*-dominated work, because the
+   harness gates Edit on a prior Read — see the earlier honest-reflection notes.)
+   So the skill is effective for its real job (explore/understand), and that's the
+   job to optimize the doc for.
+
+**Re-run it whenever codeq gains a command or flag**: add a task that exercises the
+new thing, run one cold subagent, read the friction report. Cheap regression test
+for both the tool's UX and the skill file.
