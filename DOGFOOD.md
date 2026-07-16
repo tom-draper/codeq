@@ -991,3 +991,24 @@ on a RAM-backed FS there's no I/O to avoid — they just add setup overhead. The
 likely help on a real SSD, but shipping a change that regresses the measurable
 case for an unmeasurable one is the wrong call. Reverted. (If ever revisited,
 gate the pragmas on index-vs-query and benchmark on real disk.)
+
+## 2026-07-16 — efficiency audit: astgrep streaming + lazy scan work
+
+Audited the hot paths for inefficiencies. Most are already tight (batched IN-clause
+lookups in callees_of, indexed queries, the streaming search). Found and fixed two:
+
+1. **astgrep materialized all language bodies** into a Vec before matching — the
+   same anti-pattern the search streaming fix removed. Since astgrep::search takes
+   an iterator, streaming the FTS rows straight in (no Vec) bounds it to one body
+   at a time: csharp peak RSS 35 -> 12 MB. Matters on a big single-language repo.
+2. **run_search computed line-starts (a full-body newline scan) for every
+   candidate** even in Files mode (never used) and for candidates that match the
+   substring prefilter but not `\bword\b`. Made line-starts *and* the per-file
+   defs load lazy — computed only when a match actually survives the filters. Win
+   is modest for common names (most candidates match) but real when the substring
+   over-matches: `references newer` (trigram "new" hits thousands, "\bnewer\b" few)
+   scans in ~109 ms. Correct: differential 5223/5223, text-mode, 141 tests.
+
+Left alone (measured/considered, not worth it): callees_of loads each target's
+full body to slice one function (fine — targets are few and files usually small;
+a substr(blob) would help only huge files, with UTF-8 byte/char subtlety).

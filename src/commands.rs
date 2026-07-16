@@ -1573,13 +1573,15 @@ pub fn cmd_astgrep(
         params.push(l);
     }
     sql.push_str(" ORDER BY path");
-    let files: Vec<(String, String)> = {
-        let mut stmt = s.db.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params.as_slice(), |r| {
+    // Stream the bodies into the matcher one at a time (it re-parses each and
+    // keeps only matches), so a big single-language repo isn't all held in memory
+    // at once — the astgrep matcher takes an iterator, so no Vec is needed.
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let files = stmt
+        .query_map(params.as_slice(), |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?;
-        rows.collect::<std::result::Result<_, _>>()?
-    };
+        })?
+        .filter_map(|r| r.ok());
 
     let mut matches = crate::astgrep::search(language, pattern, files)?;
     let truncated = limit > 0 && matches.len() > limit;

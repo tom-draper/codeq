@@ -306,7 +306,10 @@ pub(crate) fn run_search(
             Vec::new()
         };
         let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(&spans, off));
-        let starts = line_starts_of(body);
+        // Line starts are only needed once there's a match (Files mode never
+        // needs them). Compute lazily, so a non-matching candidate — and every
+        // candidate in Files mode — skips the full-body newline scan.
+        let mut starts: Option<Vec<usize>> = None;
 
         match opts.out {
             OutMode::Files => {
@@ -325,7 +328,8 @@ pub(crate) fn run_search(
                     if !accept(m.start()) {
                         continue;
                     }
-                    let li = starts.partition_point(|&s| s <= m.start()) - 1;
+                    let s = starts.get_or_insert_with(|| line_starts_of(body));
+                    let li = s.partition_point(|&x| x <= m.start()) - 1;
                     if li != last {
                         last = li;
                         n += 1;
@@ -343,8 +347,12 @@ pub(crate) fn run_search(
                 }
             }
             OutMode::Matches => {
-                let defs = load_file_defs(&mut def_stmt, rel)?;
                 let bytes = body.as_bytes();
+                // Both the line index and the file's defs are only needed once a
+                // match survives the filters — load them lazily so a candidate
+                // that matches the substring but not `\bword\b` (or is filtered
+                // by --calls/--on) costs neither a body scan nor a defs query.
+                let mut defs: Option<Vec<FileDef>> = None;
                 let mut last_line = usize::MAX;
                 for m in re.find_iter(body) {
                     let off = m.start();
@@ -359,30 +367,29 @@ pub(crate) fn run_search(
                             continue;
                         }
                     }
-                    let line_idx = starts.partition_point(|&s| s <= off) - 1;
+                    let s = starts.get_or_insert_with(|| line_starts_of(body));
+                    let line_idx = s.partition_point(|&x| x <= off) - 1;
                     if line_idx == last_line {
                         continue; // one row per line
                     }
                     last_line = line_idx;
 
-                    let enclosing = innermost(&defs, off);
+                    let d = defs
+                        .get_or_insert_with(|| load_file_defs(&mut def_stmt, rel).unwrap_or_default());
+                    let enclosing = innermost(d, off);
                     hits.push(Hit {
                         path: rel.to_string(),
                         line: line_idx + 1,
-                        col: off - starts[line_idx],
+                        col: off - s[line_idx],
                         symbol: enclosing.map(|d| d.name.clone()),
                         kind: enclosing.map(|d| d.kind.clone()),
-                        text: line_text(body, &starts, line_idx),
+                        text: line_text(body, s, line_idx),
                         before: context_lines(
                             body,
-                            &starts,
+                            s,
                             line_idx.saturating_sub(opts.before)..line_idx,
                         ),
-                        after: context_lines(
-                            body,
-                            &starts,
-                            (line_idx + 1)..(line_idx + 1 + opts.after),
-                        ),
+                        after: context_lines(body, s, (line_idx + 1)..(line_idx + 1 + opts.after)),
                     });
                     if hits.len() >= cap {
                         truncated = true;
