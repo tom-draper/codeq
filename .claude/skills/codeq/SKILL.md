@@ -64,6 +64,7 @@ refresh the index — every command auto-refreshes changed files first.
   symbol. `--in code|comments|strings` to scope. A superset of grep.
 - `codeq astgrep '<PATTERN>' --language <lang>` — structural (AST) search, e.g.
   `codeq astgrep '$X.unwrap()' --language rust`. Scope to files with `--path <substr>`.
+  Each match is annotated with the `[symbol]` it sits inside.
 
 ## Gotchas
 - **Symbol lookups match by NAME across the whole repo, in every language.** For a
@@ -74,8 +75,9 @@ refresh the index — every command auto-refreshes changed files first.
 - **callers/references are textual (name-based), not type-resolved.** A row with a
   blank symbol is a module-level mention (e.g. an `import`/`use`), not a real call —
   ignore it. Three flags cut false positives:
-  - `--calls` — only genuine call sites (`NAME(`), dropping bare mentions. If a
-    method name has a single definition, this alone finds all its callers.
+  - `--calls` — only genuine call sites (`NAME(`), dropping bare mentions. Best
+    for an instance method invoked on a variable (`codeq callers emit --calls`);
+    if the method name has a single definition, this alone finds all its callers.
   - `--on <RECV>` — only calls written `RECV.NAME` / `RECV::NAME` / `RECV->NAME`,
     matching the *literal token* before the call. Ideal for associated/static calls
     (`codeq callers open --on Session` → `Session::open(...)`). It will NOT match an
