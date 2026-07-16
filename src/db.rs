@@ -133,6 +133,7 @@ impl Db {
             CREATE INDEX IF NOT EXISTS spans_path ON spans(path);
             CREATE INDEX IF NOT EXISTS impls_supertype ON impls(supertype);
             CREATE INDEX IF NOT EXISTS impls_subtype ON impls(subtype);
+            CREATE INDEX IF NOT EXISTS impls_path ON impls(path);
             "#,
         )?;
 

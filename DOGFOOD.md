@@ -872,3 +872,25 @@ Deliberately kept read-only (the safe half of the "serve the edit loop" fork);
 structural edit primitives (`replace`/`insert` by symbol) are the mutation half,
 left for later. Default read output unchanged. Suite 141 green, differential
 5223/5223 (read 500/500), text-mode pass.
+
+## 2026-07-16 — scale test found an O(files²) cold-index bug
+
+Indexed a synthetic 9k-file repo (the whole bench corpus, hardlink-multiplied in
+tmpfs) — cold index took **233s** (~25ms/file), yet the same repos indexed
+*separately* summed to ~40s. Classic superlinearity. Cause: the per-file refresh
+did `DELETE FROM content_fts WHERE path=?` unconditionally, and `content_fts.path`
+is UNINDEXED (FTS5), so each delete scans the whole *growing* FTS table — O(n²)
+over a cold index / `--rebuild`, where every file is "changed".
+
+Fix: only run the stale-row deletes when the file was *already* indexed (`prev =
+existing.get(path)`); a brand-new file has nothing to delete. Also added the
+missing `impls(path)` index (same scan for its per-file delete). Cold index of 9k
+files: **233s → 50s (4.7x)**, and now linear (9k/18k/27k → 50/78/153s, ~5ms/file).
+
+Scale profile after the fix (27k files, 1.2GB index): cold index linear ~5ms/file;
+warm queries linear — freshness sweep 37→70→102ms (the per-query "always fresh"
+tax, stat over the manifest, ~3.7ms/1k files), search fast (25→62ms), `callers`
+the slowest-growing (0.5→1.4s, name-based candidate scan). DB ≈ source size
+(trigram FTS dominates). Correctness held: 141 tests, differential 5223/5223,
+incremental edits still detected. Remaining (linear, not bugs): the freshness
+sweep and `callers` cost at 100k+ files — noted, not yet optimized.

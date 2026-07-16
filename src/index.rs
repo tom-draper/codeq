@@ -199,26 +199,32 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             let is_binary = looks_binary(&bytes);
             let language = if is_binary { None } else { language_for(&rel) };
 
-            let content_changed = existing
-                .get(&rel)
+            let prev = existing.get(&rel);
+            let content_changed = prev
                 .map(|p| p.hash.as_deref() != Some(hash.as_str()))
                 .unwrap_or(true);
+            let was_indexed = prev.is_some();
 
             upsert.execute((&rel, language, size, mtime_ns, &hash, now))?;
 
             if content_changed {
                 reindexed += 1;
-                // Content-derived data: drop stale, rebuild. FTS first (covers
-                // text files even when we can't classify their language).
-                del_fts.execute([&rel])?;
+                // Drop the file's stale derived rows — but only if it was already
+                // indexed. A brand-new file (every file during --rebuild / a cold
+                // index) has nothing to delete, and `DELETE FROM content_fts WHERE
+                // path=?` scans the whole growing FTS table (path is UNINDEXED),
+                // so running it per new file made cold indexing O(files²).
+                if was_indexed {
+                    del_fts.execute([&rel])?;
+                    del_facts.execute([&rel])?;
+                    del_spans.execute([&rel])?;
+                    del_impls.execute([&rel])?;
+                }
+                // FTS first (covers text files even when we can't classify them).
                 if !is_binary {
                     let body = String::from_utf8_lossy(&bytes);
                     ins_fts.execute((&rel, language, body.as_ref()))?;
                 }
-                // Facts + spans are derived from content: drop stale, re-extract.
-                del_facts.execute([&rel])?;
-                del_spans.execute([&rel])?;
-                del_impls.execute([&rel])?;
                 if let Some(lang) = language {
                     let (facts, spans, relations) = extractor.extract(lang, &bytes);
                     for f in facts {
