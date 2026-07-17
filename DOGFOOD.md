@@ -1206,3 +1206,27 @@ radius stays name-based and depth-bounded (default 3, HOP_CAP guard); for a foun
 change "everything is affected" is the correct answer, not noise. +1 test (148), MCP
 parity clean, textmode ALL PASS. Lesson: dogfooding a command on a *real* messy diff
 surfaces output-shape problems that a clean 3-symbol fixture never will.
+
+## `install` — one-command MCP setup (borrowed from codegraph)
+
+codegraph's `install` auto-writes its MCP config into each detected agent; manual MCP
+registration is real adoption friction. `codeq install` detects installed agents (Claude
+Code, Cursor, Windsurf, Gemini — all share the `{ "mcpServers": {...} }` JSON shape) and
+merges a `codeq` entry into each one's config, pointing at the absolute path of the running
+binary (`current_exe`).
+
+This is the one codeq command that writes outside the index, so it's the most conservative:
+- **Read-only-index rule still holds** — it touches *agent config* in `$HOME`, never the
+  repository codeq indexes. That distinction is why it's allowed at all.
+- Only edits *detected* agents unless `--agent` names one; merges without dropping other
+  keys (verified: a pre-existing server and unrelated keys survive); idempotent
+  (`already-current`); `--dry-run` previews; `--uninstall` removes only the codeq key.
+- Pure in the home dir (`apply(home, opts)`), so it's unit-tested against a temp dir and
+  **never touches a real config in tests** — the one feature where testing against the real
+  side effect would be actively harmful.
+- CLI-only, not an MCP tool: an agent has no reason to install codeq into other agents.
+
+3 unit tests + docs; 148 integration tests still green. Lesson: for a command with an
+irreversible side effect on the user's machine, make the core a pure function of an
+injected root so it can be exercised safely, and gate the effect behind detection +
+dry-run + uninstall.

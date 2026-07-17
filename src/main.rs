@@ -15,6 +15,7 @@ mod deps;
 mod envelope;
 mod facts;
 mod index;
+mod install;
 mod mcp;
 mod repo;
 mod search;
@@ -487,6 +488,21 @@ enum Command {
     },
     /// Run as an MCP server over stdio (for agent hosts to call codeq natively).
     Mcp,
+    /// Register codeq's MCP server with detected AI coding agents (Claude Code,
+    /// Cursor, Windsurf, Gemini), writing to each agent's own config. Only touches
+    /// detected agents unless `--agent` names one.
+    Install {
+        /// Show what would change without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Remove codeq from each agent's config instead of adding it.
+        #[arg(long)]
+        uninstall: bool,
+        /// Target just this agent (and create its config if absent): claude-code,
+        /// cursor, windsurf, or gemini.
+        #[arg(long)]
+        agent: Option<String>,
+    },
 }
 
 /// Restore the default SIGPIPE behaviour (Rust sets it to ignore, which turns a
@@ -750,6 +766,11 @@ fn main() -> ExitCode {
         Command::Map { limit } => commands::cmd_map(&cwd, limit, out),
         Command::Capabilities {} => commands::cmd_capabilities(out),
         Command::Mcp => mcp::serve(),
+        Command::Install {
+            dry_run,
+            uninstall,
+            agent,
+        } => commands::cmd_install(dry_run, uninstall, agent.as_deref(), out),
     };
 
     match result {

@@ -151,6 +151,13 @@ from explicit seeds only (it never infers what you are working on):
 Cursor can call codeq natively instead of shelling out. It has no async runtime and bridges
 each tool call to the CLI in its working directory.
 
+`codeq install` wires it up for you: it detects which agents are installed (Claude Code,
+Cursor, Windsurf, Gemini) and adds the codeq server to each one's MCP config, merging into
+whatever is already there. Use `--dry-run` to preview, `--uninstall` to remove, and
+`--agent <name>` to target one specifically.
+
+Or register it by hand:
+
 ```json
 {
   "mcpServers": {
@@ -189,7 +196,7 @@ reparsed or a parse partially failing.
 ## Development
 
 ```bash
-cargo test    # 147 integration tests drive the binary against fixture repos
+cargo test    # 148 integration tests drive the binary against fixture repos
 ```
 
 The tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,

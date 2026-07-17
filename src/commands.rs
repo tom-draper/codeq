@@ -2638,6 +2638,65 @@ pub fn cmd_affected(
     })
 }
 
+/// `install` — register codeq's MCP server with detected AI coding agents. Writes
+/// to each agent's own config (in the home directory), never to a repository, so
+/// it needs no index/Session. Honours `--json`/`--pretty` for its own summary.
+pub fn cmd_install(
+    dry_run: bool,
+    uninstall: bool,
+    agent: Option<&str>,
+    out: Out,
+) -> Result<()> {
+    let home = crate::install::home_dir()?;
+    let bin = std::env::current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "codeq".to_string());
+    let opts = crate::install::Options {
+        dry_run,
+        uninstall,
+        only: agent.map(String::from),
+        bin,
+    };
+    let actions = crate::install::apply(&home, &opts)?;
+
+    if out.json {
+        let data = serde_json::json!({
+            "schema": crate::envelope::RESULT_SCHEMA,
+            "data": actions,
+        });
+        let s = if out.pretty {
+            serde_json::to_string_pretty(&data)?
+        } else {
+            serde_json::to_string(&data)?
+        };
+        println!("{s}");
+    } else {
+        for a in &actions {
+            let note = a
+                .note
+                .as_deref()
+                .map(|n| format!("  ({n})"))
+                .unwrap_or_default();
+            println!("{:<12}  {:<15}  {}{}", a.agent, a.action, a.config, note);
+        }
+        let touched = actions
+            .iter()
+            .filter(|a| !matches!(a.action, "skipped" | "already-current" | "already-absent"))
+            .count();
+        if touched == 0 && !uninstall {
+            println!(
+                "\nNo agents updated. Detected agents are configured automatically; \
+                 target one explicitly with `--agent <name>` (claude-code, cursor, \
+                 windsurf, gemini)."
+            );
+        } else if !dry_run && !uninstall && touched > 0 {
+            println!("\nRestart the agent(s) above to pick up the codeq MCP server.");
+        }
+    }
+    Ok(())
+}
+
 fn is_false(b: &bool) -> bool {
     !*b
 }
