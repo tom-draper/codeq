@@ -1044,3 +1044,28 @@ any round). Two findings worth remembering:
 **Re-run it whenever codeq gains a command or flag**: add a task that exercises the
 new thing, run one cold subagent, read the friction report. Cheap regression test
 for both the tool's UX and the skill file.
+
+## 2026-07-17 — FTS size-cap: built, correct, but breaks search⊇grep — reverted
+
+Built a size/minified cap: skip trigram-FTS-indexing files over 2 MB or with a
+huge average line length (minified bundles, SVG blobs, one-line JSON), still
+recording them in `files`. It worked exactly as designed — real large source
+(json.hpp 900KB avgline 37, lodash.js, module.c) stayed indexed; large.json (6.7MB)
+and the SVGs skipped; a synthetic minified-JS repo indexed to 96 KB instead of
+~6.7 MB.
+
+But the **differential caught it: 5223 -> 5210**. All 13 failures are codeq missing
+content rg finds in the skipped files — the SVGs, and **20,000+ lines in
+large.json**. The cap breaks codeq's core "search is a superset of grep on text"
+guarantee: any file skipped for FTS is silently unsearchable, so `search`/
+`references`/`callers` miss real content. And *any* skipping violates it — there's
+no threshold that both saves space and preserves the invariant.
+
+So a **default** cap is wrong, full stop. The only correct form is **opt-in** (a
+persisted per-repo setting, default off, so the default keeps the guarantee and a
+minified-heavy repo can trade searchability for a smaller/faster index). That's
+real plumbing (thread a max-bytes setting through refresh -> workers, persist it in
+`meta`, apply on every auto-refresh) for a niche benefit. Reverted to the clean
+5223/5223 state; the design + the invariant tradeoff are captured here for if it's
+ever worth the opt-in build. Lesson: the differential is the guardrail that stops
+a plausible-looking index optimization from silently making search lie.
