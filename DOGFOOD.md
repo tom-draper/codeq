@@ -1069,3 +1069,16 @@ real plumbing (thread a max-bytes setting through refresh -> workers, persist it
 5223/5223 state; the design + the invariant tradeoff are captured here for if it's
 ever worth the opt-in build. Lesson: the differential is the guardrail that stops
 a plausible-looking index optimization from silently making search lie.
+
+## `about` section ordering — definitions should lead (fixed)
+
+A cold subagent testing the skill file noted `codeq about NAME` printed sections
+alphabetically (`# callees`, `# callers`, `# definitions`) — so *definitions*, the
+thing you most want first, came last. Root cause was not in the renderer: serde_json
+defaults its `Value` object to a sorted `BTreeMap`, so the `About` struct's declared
+field order (`definitions, callers, callees`) was lost before `render_value` ever saw
+it. Fix: enable serde_json's `preserve_order` feature (one Cargo line) so objects keep
+declaration order everywhere — a strict improvement (declared order is intentional and
+meaningful) rather than a per-command special-case in the text renderer. `about` now
+leads with definitions; 142 tests, differential 5223/5223, textmode ALL PASS unchanged.
+Lesson: "alphabetical output" bugs can live in the serialization layer, not the printer.

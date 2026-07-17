@@ -20,7 +20,7 @@ regex = "1.13.0"
 regex-syntax = "0.8.11"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 streaming-iterator = "0.1.9"
 tree-sitter = "0.26.10"
 tree-sitter-c = "0.24.2"
