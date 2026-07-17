@@ -178,6 +178,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push("definitions".into());
             args.push(s(a, "symbol")?.into());
             opt(&mut args, a, "path", "--path");
+            optn(&mut args, a, "limit", "--limit");
         }
         "codeq_references" => {
             args.push("references".into());
@@ -239,10 +240,12 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             if let Some(p) = s(a, "path") {
                 args.push(p.into());
             }
+            optn(&mut args, a, "limit", "--limit");
         }
         "codeq_importers" => {
             args.push("importers".into());
             args.push(s(a, "query")?.into());
+            optn(&mut args, a, "limit", "--limit");
         }
         "codeq_implementors" => {
             args.push("implementors".into());
@@ -289,16 +292,19 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push("--language".into());
             args.push(s(a, "language")?.into());
             opt(&mut args, a, "path", "--path");
+            optn(&mut args, a, "limit", "--limit");
         }
         "codeq_tests" => {
             args.push("tests".into());
             args.push(s(a, "name")?.into());
             opt(&mut args, a, "path", "--path");
+            optn(&mut args, a, "limit", "--limit");
         }
         "codeq_changed" => {
             args.push("changed".into());
             opt(&mut args, a, "compare_to", "--compare-to");
             flag(&mut args, a, "symbols", "--symbols");
+            optn(&mut args, a, "limit", "--limit");
         }
         "codeq_context" => {
             args.push("context".into());
@@ -314,7 +320,9 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             }
             flag(&mut args, a, "changed", "--changed");
             opt(&mut args, a, "compare_to", "--compare-to");
+            opt(&mut args, a, "path", "--path");
             flag(&mut args, a, "expand", "--expand");
+            flag(&mut args, a, "no_text", "--no-text");
             flag(&mut args, a, "plan", "--plan");
             optn(&mut args, a, "max_tokens", "--max-tokens");
         }
@@ -368,7 +376,7 @@ fn tools() -> Value {
             json!({ "pattern": str_, "kind": str_, "language": str_, "path": str_, "signatures": bool_, "limit": int_ }), &[]),
         tool("codeq_definitions",
             "Locate the definition(s) of an exact symbol name, with signature, doc, and precise byte/line ranges. path scopes to matching files.",
-            json!({ "symbol": str_, "path": str_ }), &["symbol"]),
+            json!({ "symbol": str_, "path": str_, "limit": int_ }), &["symbol"]),
         tool("codeq_references",
             "Word-boundary uses of a symbol name across the repo, each annotated with its enclosing definition; definition sites are flagged. Textual (not type-resolved) by default. resolved=true prunes references whose file can't reach a definition through imports. calls=true keeps only call sites (NAME(), excluding bare mentions). on='RECV' keeps only calls qualified by that receiver/type (RECV.NAME / RECV::NAME). Precision filters compose.",
             json!({ "name": str_, "path": str_, "language": str_, "limit": int_, "resolved": bool_, "calls": bool_, "on": str_ }), &["name"]),
@@ -395,10 +403,10 @@ fn tools() -> Value {
             json!({ "file": str_, "lines": str_, "symbol": str_, "full": bool_, "raw": bool_ }), &["file"]),
         tool("codeq_imports",
             "List import statements (raw module strings), optionally scoped to files whose path matches.",
-            json!({ "path": str_ }), &[]),
+            json!({ "path": str_, "limit": int_ }), &[]),
         tool("codeq_importers",
             "Files whose imports match a module string.",
-            json!({ "query": str_ }), &["query"]),
+            json!({ "query": str_, "limit": int_ }), &["query"]),
         tool("codeq_implementors",
             "Types that implement or extend a trait / interface / base class — the inheritance edges the call graph doesn't cover (impl T for X in Rust, extends/implements in Java/TS/PHP, class X(Base) in Python, class X < Y in Ruby, base lists in C++/C#). Use it to answer 'who implements this interface' before changing it. Go (structural typing) and C have none. Name-based. relation filters to 'implements' or 'extends'.",
             json!({ "name": str_, "relation": str_, "path": str_, "limit": num_ }), &["name"]),
@@ -416,16 +424,16 @@ fn tools() -> Value {
             json!({ "file": str_, "depth": num_, "cycles": bool_ }), &[]),
         tool("codeq_astgrep",
             "Structural (AST) search: match a code pattern with $NAME / $_ metavariables (and $$$ for any run of siblings, e.g. foo($$$)), parsed with the language's own grammar so it matches syntax not text — e.g. '$X.unwrap()' finds every .unwrap() call whatever the receiver. Deterministic; a repeated $NAME must bind identically. Cannot see inside macro invocations. language is required.",
-            json!({ "pattern": str_, "language": str_, "path": str_ }), &["pattern", "language"]),
+            json!({ "pattern": str_, "language": str_, "path": str_, "limit": int_ }), &["pattern", "language"]),
         tool("codeq_tests",
             "Which tests exercise a symbol: the test functions that reference the given name (heuristic — a test-file path or test-like function name). Great for the edit-then-find-the-test loop.",
-            json!({ "name": str_, "path": str_ }), &["name"]),
+            json!({ "name": str_, "path": str_, "limit": int_ }), &["name"]),
         tool("codeq_changed",
             "Files changed vs a git ref (default main); set symbols to get the definitions the change touched instead.",
-            json!({ "compare_to": str_, "symbols": bool_ }), &[]),
+            json!({ "compare_to": str_, "symbols": bool_, "limit": int_ }), &[]),
         tool("codeq_context",
-            "Assemble token-budgeted code context from explicit seeds: named symbols and/or changed files. Set expand for one deterministic hop to referenced definitions.",
-            json!({ "symbols": { "type": "array", "items": str_ }, "changed": bool_, "compare_to": str_, "expand": bool_, "plan": bool_, "max_tokens": int_ }), &[]),
+            "Assemble token-budgeted code context from explicit seeds: named symbols and/or changed files. path scopes the seeds to matching files. Set expand for one deterministic hop to referenced definitions; no_text returns provenance only (locations without source, for a cheap map).",
+            json!({ "symbols": { "type": "array", "items": str_ }, "changed": bool_, "compare_to": str_, "path": str_, "expand": bool_, "no_text": bool_, "plan": bool_, "max_tokens": int_ }), &[]),
         tool("codeq_files",
             "List indexed files, optionally filtered by path substring or language.",
             json!({ "pattern": str_, "language": str_, "limit": int_ }), &[]),

@@ -1729,6 +1729,59 @@ fn mcp_server_handshake_and_tool_call() {
     assert_eq!(data["data"][0]["kind"], "function");
 }
 
+/// Guards CLI↔MCP flag parity: `codeq_context` must forward the `path` and
+/// `no_text` arguments to the CLI (they were once absent from the MCP arm). The
+/// `no_text` check is the real regression catch — if the flag isn't forwarded,
+/// chunks still carry their source `text`.
+#[test]
+fn mcp_context_forwards_path_and_no_text_flags() {
+    use std::io::Write;
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    f.write("a.rs", "fn target() {}\nfn caller() { target(); }\n");
+
+    let mut child = PCommand::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let reqs = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"codeq_context","arguments":{"symbols":["target"],"path":"a.rs","no_text":true}}}"#,
+    ];
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        for r in reqs {
+            writeln!(stdin, "{r}").unwrap();
+        }
+    }
+
+    let out = child.wait_with_output().unwrap();
+    let msgs: Vec<Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    let call = msgs.iter().find(|m| m["id"] == 2).expect("tool result for id 2");
+    assert!(call["error"].is_null(), "unexpected JSON-RPC error: {call:?}");
+    assert_ne!(call["result"]["isError"].as_bool(), Some(true), "tool errored: {call:?}");
+    let text = call["result"]["content"][0]["text"].as_str().unwrap();
+    let data: Value = serde_json::from_str(text).unwrap();
+    let chunks = data["data"]["chunks"].as_array().expect("chunks array");
+    // --path a.rs kept the seed; --no-text dropped its source text.
+    assert!(chunks.iter().any(|c| c["symbol"] == "target"), "seed missing: {chunks:?}");
+    assert!(chunks.iter().all(|c| c.get("text").is_none()),
+            "no_text was not forwarded — source text leaked: {chunks:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Map (factual aggregation, no opinion)
 // ---------------------------------------------------------------------------

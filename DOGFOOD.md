@@ -1107,3 +1107,31 @@ Wired through CLI + MCP (schema + arm) + docs; +1 test (143 total), differential
 5223/5223, textmode ALL PASS. Lesson: "parity" isn't "add every flag" — it's matching
 the *useful* precision, and being honest in the docs about the one flag that would be
 dead weight.
+
+## CLI↔MCP parity audit — flag drift found and closed
+
+After adding `callees --resolved` to both CLI and MCP, ran a full parity audit
+(agents-via-MCP are a primary consumer, so drift there is silent breakage). Method:
+scripted diff of the clap command/flag surface against the MCP arms + schemas, then a
+*definitive* check — extract every CLI flag each MCP arm actually pushes and confirm
+the CLI subcommand accepts it (`--help` grep).
+
+- **Command level: clean.** Every subcommand has an MCP tool except `help`/`index`/
+  `mcp` (correctly excluded). No rename drift.
+- **Flag level: real drift.** `--limit` was exposed on some MCP tools (callers,
+  search, symbols, …) but silently missing from 6 others (`definitions`, `changed`,
+  `tests`, `imports`, `importers`, `astgrep`) — an MCP agent couldn't cap results
+  there. And `codeq_context` was missing `--path` (scope seeds) and `--no-text`
+  (provenance-only). Wired all of them through arm + schema.
+- **The scripted heuristic itself over-reported** `context --limit`: the earlier
+  regex saw `limit` in the variant body (from `max_tokens`) and flagged it, but
+  `context` has no such flag. I nearly wired a phantom `--limit` into the context arm
+  — the *definitive* arm-flag-vs-`--help` check (and a runtime `context --limit` →
+  "unexpected argument") caught it before commit. Reverted just that one; the other
+  six were verified real at runtime first.
+
+Locked in with an MCP-protocol regression test (`mcp_context_forwards_path_and_no_text_flags`)
+driving the real JSON-RPC server — the `no_text` assertion fails if the flag stops
+being forwarded. 144 tests. Lesson: a scripted surface-diff is a good *finder* but a
+bad *authority* — confirm each hit against the real CLI before wiring it, or you trade
+one drift for a worse one (a schema that promises a flag the CLI rejects).
