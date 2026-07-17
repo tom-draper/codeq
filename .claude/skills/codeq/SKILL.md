@@ -84,5 +84,9 @@ refresh the index — every command auto-refreshes changed files first.
     instance-method call on a variable — `s.emit()` where `s: Session` has token
     `s`, not `Session` — so use `--calls` there instead.
   - `--resolved` — drops occurrences whose file can't reach a definition of NAME via imports.
+- **`callees` is already call-only** (a bare mention isn't a callee), so it needs no
+  `--calls`. It does take `--resolved`, which keeps only callees whose definition file
+  the symbol's own file can reach via imports — pruning unrelated same-named defs (a
+  common `new`/`open` matching every same-named definition repo-wide).
 - **Trim output tokens** with `--fields name,path,line`.
 - Default output is text; use `--json` only when you need to parse it programmatically.

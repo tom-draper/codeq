@@ -1082,3 +1082,28 @@ declaration order everywhere — a strict improvement (declared order is intenti
 meaningful) rather than a per-command special-case in the text renderer. `about` now
 leads with definitions; 142 tests, differential 5223/5223, textmode ALL PASS unchanged.
 Lesson: "alphabetical output" bugs can live in the serialization layer, not the printer.
+
+## callees precision parity — `--resolved` (and why NOT `--calls`)
+
+`callers`/`references` grew three precision filters (`--calls`, `--on`, `--resolved`),
+but `callees` had none — an agent who learns `--calls` on callers would reach for it
+on callees and find nothing. Investigating the actual over-match (DOGFOOD logged
+`callees` pulling in a `Fixture::remove` the target never calls) showed the honest
+shape of the gap:
+
+- **`--calls` would be a no-op.** `collect_idents` already requires a `(` after the
+  name, so `callees` is call-position only by construction. Adding a `--calls` flag
+  that does nothing would be worse than the inconsistency. Documented instead.
+- **`--resolved` is the real fix**, and here it can be *more* precise than the
+  name-based Resolver used for callers: the anchor is fixed (NAME's own definition
+  file), so we prune by each callee's *specific* def-file reachability through the
+  import graph, not just "some def of this name is reachable." `callees run
+  --resolved` drops the unrelated `work` in a file `run`'s file can't import, tagging
+  the rest `via` same-file / imported. Same documented heuristic limit as everywhere:
+  if several same-named defs sit in reachable files it keeps them all (can't tell
+  which you meant) — a superset-narrowing, not type resolution.
+
+Wired through CLI + MCP (schema + arm) + docs; +1 test (143 total), differential
+5223/5223, textmode ALL PASS. Lesson: "parity" isn't "add every flag" — it's matching
+the *useful* precision, and being honest in the docs about the one flag that would be
+dead weight.

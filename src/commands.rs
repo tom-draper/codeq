@@ -583,13 +583,22 @@ struct Callee {
     kind: String,
     path: String,
     line: i64,
+    /// How this callee's definition file connects to `name`'s file via the import
+    /// graph (only set under `--resolved`): same-file / imported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    via: Option<String>,
 }
 
 /// Definitions referenced by name inside `name`'s body — its (textual) callees.
 /// Same one-hop, name-based rule as `context --expand`. `path` scopes which
 /// definition(s) of `name` to analyse (so a common name like `build` doesn't
 /// merge unrelated functions).
-fn callees_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Callee>> {
+fn callees_of(
+    s: &Session,
+    name: &str,
+    path: Option<&str>,
+    resolved: bool,
+) -> Result<Vec<Callee>> {
     let targets: Vec<(String, usize, usize)> = {
         let mut sql = String::from(
             "SELECT path, start_byte, end_byte FROM facts WHERE name = ?1 AND kind <> 'import'",
@@ -661,8 +670,35 @@ fn callees_of(s: &Session, name: &str, path: Option<&str>) -> Result<Vec<Callee>
                     kind: k,
                     path: p,
                     line: l,
+                    via: None,
                 });
             }
+        }
+    }
+    // Import-scoped resolution: a genuine callee's definition should live in a
+    // file `name`'s own file can reach through imports (or the same file). Unlike
+    // the name-based Resolver used for callers, here the anchor is fixed — `name`'s
+    // definition file(s) — so we can prune by each callee's *specific* def-file
+    // reachability, dropping unrelated same-named definitions in unreachable files
+    // (the documented callees over-match). Heuristic, like all import resolution:
+    // it can't tell which same-named def you meant if several sit in reachable
+    // files, so it narrows a superset rather than pinpointing.
+    if resolved {
+        let target_files: HashSet<String> = targets.iter().map(|(p, _, _)| p.clone()).collect();
+        let graph = load_dep_graph(s)?;
+        let mut reach: HashSet<String> = target_files.clone();
+        for tf in &target_files {
+            for r in graph.reachable_from(tf) {
+                reach.insert(r.to_string());
+            }
+        }
+        out.retain(|c| reach.contains(&c.path));
+        for c in &mut out {
+            c.via = Some(if target_files.contains(&c.path) {
+                "same-file".to_string()
+            } else {
+                "imported".to_string()
+            });
         }
     }
     out.sort_by(|a, b| {
@@ -798,10 +834,17 @@ pub fn cmd_callers(
 }
 
 /// `callees <name>` — what this symbol references (by name).
-pub fn cmd_callees(cwd: &Path, name: &str, path: Option<&str>, depth: usize, out: Out) -> Result<()> {
+pub fn cmd_callees(
+    cwd: &Path,
+    name: &str,
+    path: Option<&str>,
+    depth: usize,
+    resolved: bool,
+    out: Out,
+) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
-        return s.emit(callees_of(&s, name, path)?);
+        return s.emit(callees_of(&s, name, path, resolved)?);
     }
     // Breadth-first down the call tree by callee name.
     let mut reported: HashSet<(String, String)> = HashSet::new();
@@ -811,7 +854,7 @@ pub fn cmd_callees(cwd: &Path, name: &str, path: Option<&str>, depth: usize, out
     'walk: for d in 1..=depth {
         let mut next: Vec<String> = Vec::new();
         for sym in &frontier {
-            for c in callees_of(&s, sym, path)? {
+            for c in callees_of(&s, sym, path, false)? {
                 if !reported.insert((c.path.clone(), c.name.clone())) {
                     continue;
                 }
@@ -905,7 +948,7 @@ pub fn cmd_path(
         for node in &frontier {
             // Scope only the start symbol's callees; hops after it follow anywhere.
             let scope = if node.as_str() == from { path } else { None };
-            let mut callees = callees_of(&s, node, scope)?;
+            let mut callees = callees_of(&s, node, scope, false)?;
             callees.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)).then(a.line.cmp(&b.line)));
             for c in callees {
                 if !visited.insert(c.name.clone()) {
@@ -972,7 +1015,7 @@ pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result
     let data = About {
         definitions: definitions_of(&s, name, path, 0)?,
         callers: callers_of(&s, name, None, false, None)?,
-        callees: callees_of(&s, name, path)?,
+        callees: callees_of(&s, name, path, false)?,
     };
     s.emit(data)
 }

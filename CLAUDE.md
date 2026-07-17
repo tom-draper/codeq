@@ -52,6 +52,12 @@ benchmarks — not as a step you run before querying.
       field, or variable of the same name (code-only).
     - `--on RECV` — keep only calls qualified by a receiver/type (`RECV.NAME`,
       `RECV::NAME`, `RECV->NAME`) — disambiguates a common method name.
+  - **`callees` is already call-position only** (a bare mention of a name isn't a
+    callee), so it needs no `--calls`; it does take `--resolved`, which keeps only
+    callees whose definition file NAME's *own* file can reach through imports (tags
+    each `via` same-file / imported) — pruning the name-based over-match where a
+    common callee name (`new`, `open`) matches unrelated same-named defs in
+    unreachable files.
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For blast-radius / reachability.

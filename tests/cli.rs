@@ -827,6 +827,29 @@ fn callers_resolved_prunes_unreachable_and_tags_via() {
 }
 
 #[test]
+fn callees_resolved_prunes_unreachable_same_named_defs() {
+    let f = Fixture::new();
+    // `run` (in core.rs) calls `work`; core.rs defines its own `work`.
+    f.write("core.rs", "pub fn work() {}\npub fn run() { work(); }\n");
+    // An unrelated `work` in a file core.rs can't reach through imports.
+    f.write("orphan.rs", "pub fn work() {}\n");
+
+    // Default (name-based) over-matches: both `work` definitions show up.
+    let all = field_set(&f.run(&["callees", "run"]), "path");
+    assert!(all.contains(&"core.rs".to_string()), "{all:?}");
+    assert!(all.contains(&"orphan.rs".to_string()),
+            "default should over-match the unrelated same-named def: {all:?}");
+
+    // --resolved keeps only the reachable (same-file) callee, tags it via, and
+    // prunes the unrelated same-named def in the unreachable file.
+    let res = f.run(&["callees", "run", "--resolved"]);
+    let rows = res["data"].as_array().unwrap();
+    assert!(rows.iter().any(|r| r["path"] == "core.rs" && r["via"] == "same-file"), "{rows:?}");
+    assert!(!rows.iter().any(|r| r["path"] == "orphan.rs"),
+            "unreachable same-named callee should be pruned: {rows:?}");
+}
+
+#[test]
 fn resolved_follows_rust_mod_declarations_as_edges() {
     // A Rust file that pulls in another via `mod thing;` (not `use crate::…`)
     // can still reach that file's definitions — the `mod` edge must count.

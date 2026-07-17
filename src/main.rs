@@ -170,6 +170,13 @@ enum Command {
         /// Transitive hops down the call tree (1 = direct callees).
         #[arg(long, default_value_t = 1)]
         depth: usize,
+        /// Import-scoped resolution (direct callees only): keep only callees whose
+        /// definition file `name`'s own file can reach through imports (or the same
+        /// file), and tag each `via` same-file / imported. Heuristic; prunes the
+        /// name-based over-match (unrelated same-named definitions in unreachable
+        /// files) at the risk of dropping a real callee behind an unresolved import.
+        #[arg(long)]
+        resolved: bool,
     },
     /// The shortest call chain from one symbol to another (`from` calls … calls
     /// `to`), if one exists — reachability with the route shown. Name-based.
@@ -535,8 +542,8 @@ fn main() -> ExitCode {
             on.as_deref(),
             out,
         ),
-        Command::Callees { name, path, depth } => {
-            commands::cmd_callees(&cwd, &name, path.as_deref(), depth, out)
+        Command::Callees { name, path, depth, resolved } => {
+            commands::cmd_callees(&cwd, &name, path.as_deref(), depth, resolved, out)
         }
         Command::Path {
             from,
