@@ -256,7 +256,9 @@ pub fn cmd_changed(
 
 /// Definitions whose line range overlaps a changed hunk — "which functions did
 /// this change touch". Deterministic (path, start_line).
-fn changed_symbols(s: &Session, compare_to: &str, limit: usize) -> Result<()> {
+/// Definitions whose body overlaps a changed hunk vs `compare_to` — the diff's
+/// touched symbols. Shared by `changed --symbols` and `affected`.
+fn touched_defs(s: &Session, compare_to: &str) -> Result<Vec<ChangedSymbolRow>> {
     let ranges = s.repo.changed_line_ranges(compare_to)?;
     let mut paths: Vec<&String> = ranges.keys().collect();
     paths.sort();
@@ -295,6 +297,11 @@ fn changed_symbols(s: &Session, compare_to: &str, limit: usize) -> Result<()> {
             }
         }
     }
+    Ok(data)
+}
+
+fn changed_symbols(s: &Session, compare_to: &str, limit: usize) -> Result<()> {
+    let mut data = touched_defs(s, compare_to)?;
     if limit > 0 && data.len() > limit {
         data.truncate(limit);
     }
@@ -2395,9 +2402,21 @@ fn is_test_name(name: &str) -> bool {
 /// as a test when its file looks like a test file or its enclosing function name
 /// looks like a test. Name-based, like `references`; can't see attribute-only
 /// tests (Rust `#[cfg(test)]` unit fns in a non-test path may be missed).
-pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: Out) -> Result<()> {
-    let s = Session::open(cwd, false, out)?;
+#[derive(Serialize)]
+struct TestRow {
+    path: String,
+    line: i64,
+    name: String,
+    kind: String,
+}
 
+/// The enclosing test functions (path, test-name) that reference `name`,
+/// excluding `name`'s own definition. Shared by `tests` and `affected`.
+fn test_sites(
+    s: &Session,
+    name: &str,
+    path: Option<&str>,
+) -> Result<std::collections::BTreeSet<(String, String)>> {
     let expr = format!(r"\b{}\b", regex::escape(name));
     let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
     let opts = ScanOpts {
@@ -2414,12 +2433,10 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
         _ => unreachable!("tests always uses Matches mode"),
     };
 
-    // Unique enclosing tests (path, test-name) that reference `name` — excluding
-    // `name`'s own definition (enclosing == name).
     let mut tests: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
     for h in &hits {
         let sym = match &h.symbol {
-            Some(s) if s != name => s,
+            Some(sy) if sy != name => sy,
             _ => continue,
         };
         let is_fn = matches!(h.kind.as_deref(), Some("function") | Some("method"));
@@ -2427,15 +2444,16 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
             tests.insert((h.path.clone(), sym.clone()));
         }
     }
+    Ok(tests)
+}
 
-    // Resolve each test's definition line/kind via the facts(name) index.
-    #[derive(Serialize)]
-    struct TestRow {
-        path: String,
-        line: i64,
-        name: String,
-        kind: String,
-    }
+/// Resolve (path, test-name) sites to their definition rows (line, kind), sorted
+/// and de-duped; returns (rows, truncated).
+fn resolve_test_rows(
+    s: &Session,
+    tests: &std::collections::BTreeSet<(String, String)>,
+    limit: usize,
+) -> Result<(Vec<TestRow>, bool)> {
     let mut rows: Vec<TestRow> = Vec::new();
     let names: Vec<String> = tests
         .iter()
@@ -2444,6 +2462,9 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
         .into_iter()
         .collect();
     for chunk in names.chunks(500) {
+        if chunk.is_empty() {
+            continue;
+        }
         let placeholders = vec!["?"; chunk.len()].join(",");
         let sql = format!(
             "SELECT path, name, start_line, kind FROM facts
@@ -2478,6 +2499,13 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
     if truncated {
         rows.truncate(limit);
     }
+    Ok((rows, truncated))
+}
+
+pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: Out) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let tests = test_sites(&s, name, path)?;
+    let (rows, truncated) = resolve_test_rows(&s, &tests, limit)?;
 
     #[derive(Serialize)]
     struct TestsData {
@@ -2487,6 +2515,125 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
     }
     s.emit(TestsData {
         tests: rows,
+        truncated,
+    })
+}
+
+/// A definition pulled into the blast radius: a transitive caller of a changed
+/// symbol, tagged with its hop distance from the change.
+#[derive(serde::Serialize)]
+struct ImpactNode {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    path: String,
+    line: i64,
+    depth: usize,
+}
+
+/// A test file to re-run, with how many of its test-like functions reference
+/// something in scope. File granularity is what you act on ("run these files")
+/// and avoids listing every individual test function (and test-file helper).
+#[derive(serde::Serialize)]
+struct AffectedTestFile {
+    path: String,
+    tests: usize,
+}
+
+#[derive(serde::Serialize)]
+struct AffectedResult {
+    changed: Vec<ChangedSymbolRow>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    impacted: Vec<ImpactNode>,
+    tests: Vec<AffectedTestFile>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    truncated: bool,
+}
+
+/// `affected --compare-to <ref>` — for a diff: the definitions it touched, their
+/// transitive callers (the blast radius), and the tests exercising any of them —
+/// "what should I re-check and re-run for this change". Composes `changed
+/// --symbols` + a caller BFS + `tests`; name-based like the rest of the graph.
+pub fn cmd_affected(
+    cwd: &Path,
+    compare_to: &str,
+    depth: usize,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    let changed = touched_defs(&s, compare_to)?;
+
+    // Blast radius: BFS up the call tree from the changed definition names. Each
+    // caller is reported once at its shortest hop distance.
+    let mut impacted: Vec<ImpactNode> = Vec::new();
+    let mut in_scope: HashSet<String> = changed.iter().map(|c| c.name.clone()).collect();
+    let mut reported: HashSet<(String, String)> = HashSet::new();
+    let mut frontier: Vec<String> = in_scope.iter().cloned().collect();
+    frontier.sort();
+    'walk: for d in 1..=depth {
+        let mut next: Vec<String> = Vec::new();
+        for sym in &frontier {
+            for c in callers_of(&s, sym, None, false, None, false)? {
+                let Some(cname) = c.symbol.clone() else { continue };
+                if !reported.insert((c.path.clone(), cname.clone())) {
+                    continue;
+                }
+                impacted.push(ImpactNode {
+                    name: cname.clone(),
+                    kind: c.kind,
+                    path: c.path,
+                    line: c.line as i64,
+                    depth: d,
+                });
+                if in_scope.insert(cname.clone()) {
+                    next.push(cname);
+                }
+                if impacted.len() >= HOP_CAP {
+                    break 'walk;
+                }
+            }
+        }
+        frontier = next;
+        frontier.sort();
+        if frontier.is_empty() {
+            break;
+        }
+    }
+    impacted.sort_by(|a, b| {
+        a.depth
+            .cmp(&b.depth)
+            .then(a.path.cmp(&b.path))
+            .then(a.line.cmp(&b.line))
+    });
+
+    // Test files exercising anything in scope (changed symbols ∪ blast radius),
+    // with a per-file count of matching test-like functions — the actionable
+    // "what to run", without one row per individual test.
+    let mut sites: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
+    for name in &in_scope {
+        for site in test_sites(&s, name, None)? {
+            sites.insert(site);
+        }
+    }
+    let mut by_file: BTreeMap<String, usize> = BTreeMap::new();
+    for (path, _test) in &sites {
+        *by_file.entry(path.clone()).or_insert(0) += 1;
+    }
+    let mut tests: Vec<AffectedTestFile> = by_file
+        .into_iter()
+        .map(|(path, tests)| AffectedTestFile { path, tests })
+        .collect();
+    let truncated = limit > 0 && tests.len() > limit;
+    if truncated {
+        tests.truncate(limit);
+    }
+
+    s.emit(AffectedResult {
+        changed,
+        impacted,
+        tests,
         truncated,
     })
 }

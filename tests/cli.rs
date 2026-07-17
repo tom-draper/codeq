@@ -915,6 +915,36 @@ fn explore_forces_focus_source_under_a_tight_budget() {
 }
 
 #[test]
+fn affected_reports_changed_blast_radius_and_test_files() {
+    let f = Fixture::new();
+    // core <- mid <- a test that only reaches core transitively (through mid).
+    f.write("src.rs", "fn core() { let _ = 1; }\nfn mid() { core(); }\n");
+    f.write("t.rs", "fn test_core_behaviour() { mid(); }\n");
+    f.git_init_commit();
+    // Change only core()'s body.
+    f.write("src.rs", "fn core() { let _ = 2; }\nfn mid() { core(); }\n");
+
+    let d = f.run(&["affected", "--compare-to", "HEAD"]);
+    let d = &d["data"];
+
+    // changed = the touched definition.
+    let changed: Vec<&str> = d["changed"].as_array().unwrap().iter()
+        .filter_map(|c| c["name"].as_str()).collect();
+    assert!(changed.contains(&"core"), "{changed:?}");
+
+    // blast radius includes the direct caller (transitively, the test too).
+    let impacted: Vec<&str> = d["impacted"].as_array().unwrap().iter()
+        .filter_map(|c| c["name"].as_str()).collect();
+    assert!(impacted.contains(&"mid"), "blast radius missing caller: {impacted:?}");
+
+    // the test that exercises the change only via mid is reported, at file level.
+    let test_files: Vec<&str> = d["tests"].as_array().unwrap().iter()
+        .filter_map(|t| t["path"].as_str()).collect();
+    assert!(test_files.contains(&"t.rs"),
+            "transitively-affected test file missing: {test_files:?}");
+}
+
+#[test]
 fn resolved_follows_rust_mod_declarations_as_edges() {
     // A Rust file that pulls in another via `mod thing;` (not `use crate::…`)
     // can still reach that file's definitions — the `mod` edge must count.

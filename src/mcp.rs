@@ -313,6 +313,12 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             flag(&mut args, a, "symbols", "--symbols");
             optn(&mut args, a, "limit", "--limit");
         }
+        "codeq_affected" => {
+            args.push("affected".into());
+            opt(&mut args, a, "compare_to", "--compare-to");
+            optn(&mut args, a, "depth", "--depth");
+            optn(&mut args, a, "limit", "--limit");
+        }
         "codeq_context" => {
             args.push("context".into());
             // symbols may be an array or a comma string.
@@ -441,6 +447,9 @@ fn tools() -> Value {
         tool("codeq_changed",
             "Files changed vs a git ref (default main); set symbols to get the definitions the change touched instead.",
             json!({ "compare_to": str_, "symbols": bool_, "limit": int_ }), &[]),
+        tool("codeq_affected",
+            "For a diff (vs compare_to, default main): the definitions it touched, their transitive callers up to depth hops (the blast radius), and the tests that exercise any of them — 'what should I re-check and re-run for this change'. Returns changed, impacted, and tests. Name-based like the rest of the graph.",
+            json!({ "compare_to": str_, "depth": num_, "limit": int_ }), &[]),
         tool("codeq_context",
             "Assemble token-budgeted code context from explicit seeds: named symbols and/or changed files. path scopes the seeds to matching files. Set expand for one deterministic hop to referenced definitions; no_text returns provenance only (locations without source, for a cheap map).",
             json!({ "symbols": { "type": "array", "items": str_ }, "changed": bool_, "compare_to": str_, "path": str_, "expand": bool_, "no_text": bool_, "plan": bool_, "max_tokens": int_ }), &[]),

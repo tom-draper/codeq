@@ -1186,3 +1186,23 @@ Wired CLI + MCP (registered first, as the primary tool, mirroring codegraph) + d
 +2 tests (147), textmode ALL PASS. Lesson (again): the biggest capability of the session
 was mostly *fusing* two things we already had, with one precise-targeting fix so it
 doesn't inherit the name-based blowup.
+
+## `affected` — "what to re-run for this diff" (borrowed from codegraph)
+
+codegraph ships `affected` (test files impacted by a change); we had every piece
+(`changed --symbols`, a caller BFS, `tests`) but never composed them. `affected
+--compare-to <ref>` returns the diff's touched definitions, their transitive callers
+(the blast radius, depth-bounded), and the test files exercising any of them. Built by
+extracting three shared helpers (`touched_defs`, `test_sites`, `resolve_test_rows`) from
+the existing commands so nothing is duplicated.
+
+Dogfooding it on its own (huge, core-touching) commit immediately exposed a UX problem
+the fixture tests would not have: at *function* granularity the tests list was 153 rows,
+including test-file *helpers* (`git`, `run`, `field_set`) that our name/path test
+heuristic can't tell from real tests. Fix, matching codegraph's own choice: report test
+*files* with a per-file match count (`tests/cli.rs: tests=153`) — that's what you act on
+("run this file"), and it sidesteps the helper-vs-test ambiguity entirely. The blast
+radius stays name-based and depth-bounded (default 3, HOP_CAP guard); for a foundational
+change "everything is affected" is the correct answer, not noise. +1 test (148), MCP
+parity clean, textmode ALL PASS. Lesson: dogfooding a command on a *real* messy diff
+surfaces output-shape problems that a clean 3-symbol fixture never will.

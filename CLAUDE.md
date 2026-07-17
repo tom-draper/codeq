@@ -84,6 +84,10 @@ benchmarks — not as a step you run before querying.
     the declaration, not transitively resolved).
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
   reference NAME (by test-file path or test-like name). For the edit→find-the-test loop.
+- **What a diff affects:** `codeq affected --compare-to <ref>` — the definitions the
+  diff touched, their transitive callers (blast radius, `--depth N`), and the test
+  *files* to re-run. Composes `changed --symbols` + a caller BFS + `tests`; name-based,
+  so it over-includes rather than misses.
 - **Find dead code:** `codeq unused [<path>]` — definitions with no reference
   anywhere outside their own definition site. Conservative (a comment/string
   mention counts as a use; name-based, so a same-named symbol elsewhere masks it)

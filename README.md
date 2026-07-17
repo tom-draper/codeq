@@ -105,6 +105,9 @@ Search:
 Repo state:
 - `codeq changed --compare-to <ref>` lists files changed vs a git ref (`--symbols` for the
   definitions touched).
+- `codeq affected --compare-to <ref>` takes a diff and reports the definitions it touched,
+  their transitive callers (the blast radius), and the test files that exercise any of them,
+  so you know what to re-check and re-run.
 - `codeq files`, `codeq symbols`, and `codeq stats` list and count.
 - `codeq capabilities` self-describes: commands, languages, fact kinds, schema.
 

@@ -81,6 +81,20 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// For a diff: the definitions it touched, their transitive callers (blast
+    /// radius), and the tests exercising any of them — what to re-check and re-run
+    /// for the change. Name-based.
+    Affected {
+        /// Ref to compare against, e.g. main.
+        #[arg(long, default_value = "main")]
+        compare_to: String,
+        /// How many hops up the call tree to include as blast radius.
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+        /// Maximum test rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// List defined symbols (functions, structs, classes, …).
     Symbols {
         /// Substring to match against symbol names.
@@ -517,6 +531,11 @@ fn main() -> ExitCode {
             symbols,
             limit,
         } => commands::cmd_changed(&cwd, &compare_to, symbols, limit, out),
+        Command::Affected {
+            compare_to,
+            depth,
+            limit,
+        } => commands::cmd_affected(&cwd, &compare_to, depth, limit, out),
         Command::Symbols {
             pattern,
             kind,
