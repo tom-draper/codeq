@@ -1,71 +1,21 @@
 # codeq
 
-`codeq` is a deterministic index of repository facts, built for AI coding agents.
+codeq is a deterministic index of repository facts, built for AI coding agents.
 
-Agents waste tokens, time, and money rediscovering things a computer can compute
-exactly: file lists, symbols, imports, changed functions, a file's structure. `codeq`
-indexes those facts once and answers precise, structured queries so an agent can
-understand a repository without re-deriving it through `find`, `rg`, `git`, and `cat`
-on every task.
+Agents burn tokens and time rediscovering things a computer can just compute: where a
+symbol is defined, who calls it, what a file contains, what changed since a commit. codeq
+parses the repo once into SQLite and answers precise, structured queries, so an agent can
+navigate a codebase without re-deriving it with `find`, `rg`, `git`, and `cat` on every
+task.
 
-Its guiding rule: **codeq reports facts, it does not guess.** Results are deterministic
-and reproducible. There is no relevance ranking, no "did you mean", no intent inference.
-Where a list is ordered by a count, the count is in every row so the ordering is
-transparent. An agent that can trust the output has no reason to fall back to ad-hoc
-shell pipelines.
+The rule it follows: codeq reports facts, it does not guess. No relevance ranking, no
+"did you mean", no intent inference. The same query returns the same answer every time. An
+agent that can trust the output has no reason to fall back to ad-hoc shell pipelines.
 
-> Status: working prototype. Symbol/import extraction currently covers **Rust**,
-> **Python**, **JavaScript**, **TypeScript/TSX**, **Go**, **Java**, **Ruby**, **C**, **C++**,
-> **C#**, and **PHP**; other languages are indexed as files only (still fully searchable).
-> See [DRAFT.md](./DRAFT.md) for
-> the design rationale and [GEMINI.md](./GEMINI.md) / [GPT.md](./GPT.md) for the critical
-> reviews that shaped it.
-
-## Why not just `grep` and `find`?
-
-`grep` and `find` operate on **bytes and lines**. `codeq` operates on a **parsed,
-persistent model of the code**. That difference buys five things shell tools cannot give:
-
-- **Structure.** Shell tools match text with no idea what it *is*. `grep authenticate`
-  returns the definition, every call, comment mentions, and substrings all mixed together.
-  `codeq definitions authenticate` returns *the definition*, with signature and doc.
-  `codeq search` goes further: every match is annotated with the definition that encloses
-  it — grep tells you `file:625`, codeq tells you you're inside `fn cmd_search`.
-
-- **`search` is a strict superset of grep.** Same regex engine as ripgrep's default (the
-  Rust `regex` crate), plus the ergonomics you'd fall back to `rg` for (`-A`/`-B`/`-C`
-  context, `-l` files-with-matches, `-c` counts, `-w` whole-word, `-g` include/exclude
-  globs) *and* things grep cannot do at all: `--in code|comments|strings` restricts matches
-  by syntactic class (find `TODO` only in comments; find a literal only in real code).
-  There is no query where grep wins.
-
-- **Relationships.** `importers` answers "who imports this?", `outline` gives a file's
-  structure and nesting, `map` aggregates imports and definitions across the whole repo.
-  None of these are reachable from a single byte-level scan.
-
-- **Understand without reading.** `outline` and `definitions --signatures` let an agent
-  grasp an API surface from signatures and docstrings alone — no function bodies, so far
-  fewer tokens. `grep` can't strip a body; it doesn't know where the body is.
-
-- **Compute once, keep fresh.** `codeq` parses each file once into SQLite; queries hit an
-  index, and only changed files (by size + mtime) are re-parsed. Parsing is the expensive
-  part `grep` never does — so the win is amortized across a *session* of many structured
-  queries against a mostly-stable tree, which is exactly the agent workload. (For a single
-  one-off text search, `ripgrep` will often beat a cold index — `codeq` is not trying to
-  replace `rg` for that.)
-
-- **A stable contract.** Versioned JSON with byte/line ranges, an extraction `source`, and
-  a `confidence` — instead of unstructured text re-parsed with brittle regex every time.
-
-**The honest boundary:** `codeq`'s facts are *syntactic*, not deeply semantic. It knows an
-identifier is a function definition; it does **not** resolve a call to its definition across
-module aliases, generics, or build systems. Half-right resolution would produce exactly the
-untrustworthy results that send an agent back to `grep`, so `codeq` deliberately stops at
-facts it can guarantee.
-
-In one line: *grep and find answer "where do these bytes appear." `codeq` answers "what is
-defined here, what is it, what's its shape, what depends on it, and give me just enough of
-it to fit my budget" — computed once and kept fresh.*
+> Status: working prototype. Symbol and import extraction covers Rust, Python, JavaScript,
+> TypeScript/TSX, Go, Java, Ruby, C, C++, C#, and PHP. Other languages are indexed as files
+> and stay fully searchable. See [DRAFT.md](./DRAFT.md) for the design rationale, and
+> [GEMINI.md](./GEMINI.md) / [GPT.md](./GPT.md) for the reviews that shaped it.
 
 ## Install
 
@@ -74,139 +24,121 @@ cargo build --release
 # binary at ./target/release/codeq
 ```
 
-Requires a Rust toolchain and `git` on PATH. The index is stored at `.codeq/index.db`
-under the repo root (git-ignored, safe to delete).
+You need a Rust toolchain and `git` on PATH. The index lives at `.codeq/index.db` under the
+repo root. It is git-ignored and safe to delete.
 
-## How it works
+## Why not grep and find?
 
-- **Daemonless and incremental.** Every command refreshes the index before answering.
-  Unchanged files (same size + mtime) are skipped; changed files are reparsed. There is
-  no background process to manage.
-- **SQLite fact store.** Files and definitions/imports (with byte + line ranges,
-  signatures, and docstrings) live in `.codeq/index.db`, in WAL mode so parallel agent
-  invocations can read while one refreshes.
-- **Tree-sitter extraction.** Symbols and imports come from Tree-sitter queries, so they
-  distinguish a definition from a mention. Import strings are **raw** — codeq does not
-  resolve path aliases, package roots, or module systems.
-- **Index-backed search.** File contents are held in a SQLite FTS5 index, so `search` and
-  `references` query the index instead of re-reading the filesystem: a literal or symbol
-  query is narrowed by the full-text index, then confirmed with a precise regex / word
-  boundary check. (The tradeoff is index size — it holds a copy of the text.)
+grep and find work on bytes and lines. codeq works on a parsed model of the code, which
+buys a few things a byte scan cannot:
+
+- Structure. `grep authenticate` mixes the definition, every call, and comment mentions
+  together. `codeq definitions authenticate` returns just the definition, with its
+  signature and doc. Every `codeq search` match is tagged with the definition that encloses
+  it, so you get `fn cmd_search` instead of `file:625`.
+- Relationships. Who calls this, what does it call, who implements this trait, who imports
+  this module, what breaks if I change it. `callers`, `callees`, `implementors`,
+  `importers`, and `about` answer these directly.
+- Less to read. `outline` and `api` show a file or module from signatures and docstrings
+  alone, no bodies, so an agent grasps the shape for a fraction of the tokens.
+- Computed once, kept fresh. Each file is parsed once; only changed files (by size and
+  mtime) are reparsed. The cost is amortized across a session of many queries against a
+  mostly stable tree, which is the agent workload. For a single one-off text search a cold
+  `rg` will often win, and that is fine: codeq is not trying to replace it there.
+
+search itself is a strict superset of grep. It uses the same regex engine as ripgrep (the
+Rust `regex` crate), adds the flags you would reach for `rg` to get (`-A`/`-B`/`-C`, `-l`,
+`-c`, `-w`, `-g`), and does one thing grep cannot: `--in code|comments|strings` restricts
+matches by syntactic class, so you can find a TODO only in comments, or a literal only in
+real code.
+
+The honest boundary: codeq's facts are syntactic, not deeply semantic. It knows an
+identifier is a function definition. It does not resolve a call to its definition across
+module aliases, generics, or build systems. The graph commands match by name, with opt-in
+heuristics (`--resolved`, `--calls`, `--on`) to cut false positives. Half-right resolution
+would produce the untrustworthy results that send an agent back to grep, so codeq stops at
+facts it can stand behind.
 
 ## Commands
 
-Run inside a repository. Output is compact JSON on stdout.
+Run any command inside a repo. Default output is compact text (`path:line:col: payload`,
+grep style); add `--json` for the structured envelope.
 
-| Command | Answers |
-| --- | --- |
-| `codeq index [--rebuild]` | Build or refresh the index. |
-| `codeq files [pattern] [--language L]` | Indexed files, optionally filtered. |
-| `codeq changed --compare-to <ref> [--symbols]` | Files changed vs a git ref; with `--symbols`, the definitions the change touched. |
-| `codeq stats` | Counts by language and total bytes. |
-| `codeq map [--limit N]` | Factual aggregation for orientation (see below). |
-| `codeq symbols [pattern] [--kind K] [--language L] [--path P] [--signatures]` | Defined symbols. |
-| `codeq definitions <name>` | Exact-name definition(s) with signature, doc, and precise ranges. |
-| `codeq references <name> [--path P] [--language L]` | Word-boundary uses of a symbol, each with its enclosing definition; definition sites flagged. |
-| `codeq callers <name>` | Distinct definitions that reference a symbol (in code), test sites flagged — what could break if you change it. |
-| `codeq callees <name>` | Definitions referenced by name inside a symbol's body — what it depends on. |
-| `codeq about <name>` | One-call dossier: definition(s) + signature/doc + callers + callees. |
-| `codeq at <path>:<line>` | The definition(s) enclosing a location (e.g. from a stack trace), innermost first. |
-| `codeq outline <file> [--docs]` | A file's definitions top to bottom, with signatures and nesting depth. |
-| `codeq search <pattern> [-i] [-w] [--fixed] [-g GLOB] [-A/-B/-C N] [-l] [-c] [--in code\|comments\|strings]` | Content search, each match annotated with its enclosing definition. A strict superset of grep (see below). |
-| `codeq imports [path]` | Import statements (raw module strings). |
-| `codeq importers <query>` | Files whose imports match `query` (raw string match). |
-| `codeq context --symbols a,b \| --changed [--expand]` | Token-budgeted context assembly (see below). |
-| `codeq capabilities` | Self-description: commands, languages, fact kinds, schema. |
+Orient and read:
+- `codeq map` groups counts (languages, directories, imports, definitions) to get your bearings.
+- `codeq read <file>` returns the file with long bodies folded to signatures (see below).
+- `codeq outline <file>` lists definitions top to bottom with nesting.
+- `codeq api <path>` shows only the exported definitions of a file or directory, with signatures.
 
-### Global options
+Find and understand a symbol:
+- `codeq definitions <name>` gives the definition(s), with signature, doc, and ranges.
+- `codeq about <name>` is a one-call dossier: definition plus callers plus callees.
+- `codeq at <path>:<line>` names the definition enclosing a location, e.g. from a stack trace.
 
-- `--fields a,b,c` — keep only these fields on each result row (pay for what you need);
-  works on list commands and the rows inside `search`/`references`/`context`/`map`.
-- `--meta` — include the full `repo`/`index` metadata envelope (see below).
-- `--pretty` — pretty-print for humans (implies `--meta`).
+Trace relationships (matched by name):
+- `codeq callers <name>` and `codeq callees <name>` show who calls it and what it calls.
+  `--depth N` walks the tree; `callers --examples` prints the actual call line at each site.
+- `codeq references <name>` lists every use, each tagged with its enclosing definition.
+- `codeq path <from> <to>` finds the shortest call chain between two symbols.
+- `codeq implementors <type>` and `codeq supertypes <type>` show who implements or extends a
+  type, and what it derives from.
+- `codeq tests <name>` finds the tests that exercise a symbol.
+- `codeq unused [path]` lists definitions with no reference anywhere (candidate dead code).
 
-## Output contract
+Imports and dependencies:
+- `codeq imports [path]` and `codeq importers <query>` list import statements, and who
+  imports a module.
+- `codeq deps <file>` shows the internal files a file depends on (`--cycles` for import cycles).
 
-Every result is `{"schema": "codeq.result.v1", "data": ...}`. The `data` shape is
-per-command (an array for list commands, an object for `map`/`stats`/`context`).
+Search:
+- `codeq search <pattern>` is content search, each match tagged with its enclosing definition.
+- `codeq astgrep '<pattern>' --language <lang>` matches over the syntax tree, e.g. `'$X.unwrap()'`.
 
-Because codeq refreshes on read, answers are almost always fresh — so the metadata
-envelope is **omitted unless it carries signal**. The `repo` and `index` blocks appear
-only when you pass `--meta`, or automatically when something is noteworthy (files were
-reparsed, or a read/parse partially failed). With `--meta`:
+Repo state:
+- `codeq changed --compare-to <ref>` lists files changed vs a git ref (`--symbols` for the
+  definitions touched).
+- `codeq files`, `codeq symbols`, and `codeq stats` list and count.
+- `codeq capabilities` self-describes: commands, languages, fact kinds, schema.
 
-```json
-{
-  "schema": "codeq.result.v1",
-  "repo":  { "root": "/w/project", "vcs": "git", "head": "abc123", "dirty": true },
-  "index": { "schema": 1, "fresh": true, "elapsed_ms": 8 },
-  "data":  [ ... ]
-}
-```
+Cross-cutting flags: `--path <substr>` scopes a name-based lookup to matching files,
+`--fields a,b` trims output to the fields you want, and `--json` switches to the structured
+envelope.
 
-Facts carry byte ranges, 1-based line/column ranges, an extraction `source`
-(e.g. `treesitter/rust`), and a `confidence`.
+## read, a folding file reader
 
-## `map`
-
-One call to orient in an unfamiliar repo. Every field is a grouped count from the index —
-nothing is a judgement about importance:
-
-- `totals` — files, symbols, imports.
-- `languages` — files, bytes, and symbols per language.
-- `directories` — files and symbols per top-level directory.
-- `manifests` — recognised project files present (`Cargo.toml`, `package.json`, `README*`, …).
-- `imports_by_module` — each raw import string and how many files import it.
-- `definitions_by_file` — each file and its definition count.
-
-Count-ordered lists include the count in every row and an `ordering` field stating the
-sort rule, so the result is transparent and reproducible.
-
-## `context`
-
-Assembles the smallest useful slice of code for a task, under a token budget, from
-**explicit seeds** — codeq never infers what you're working on:
-
-- Seed with `--symbols name,name` and/or `--changed [--compare-to <ref>]`.
-- Each chunk is a definition's source, with provenance (path, symbol, kind, ranges) and an
-  approximate token estimate (`~4 bytes/token`, labeled as approximate).
-- The default returns exactly the seeds. `--expand` adds one deterministic hop:
-  definitions referenced *by name* inside the seed chunks.
-- When the budget truncates, an `omitted` list reports what was left out so the agent can
-  request more. `--plan` adds an explanatory query plan (seeds, modes, ordering); it's
-  opt-in to keep the default payload lean.
-
-## `read` — a folding file reader
-
-`codeq read <file>` is a file reader built for an agent's token budget. Instead of
-ingesting a whole large file, it returns the file with long function/method **bodies
-folded** to their signature plus a marker giving the exact hidden line range — so you see
-the file's entire structure (imports, every signature, docstrings) for a fraction of the
-tokens, then expand only what you need:
+`codeq read <file>` is built for a token budget. It returns the file with long function
+bodies folded to their signature plus a marker with the hidden line range, so you see the
+whole structure (imports, signatures, docstrings) cheaply, then open only what you need:
 
 ```
   20  impl Repo {
   23      pub fn discover(start: &Path) -> Result<Repo> {
-          ⋮  8 lines (24–31)
+          ⋮  8 lines (24-31)
   33      pub fn vcs(&self) -> &'static str {
-          ⋮  6 lines (34–39)
+          ⋮  6 lines (34-39)
 ```
 
-- `codeq read <file> --lines 24-31` — verbatim, line-numbered slice (ready for editing)
-- `codeq read <file> --symbol discover` — a named definition, verbatim
-- `codeq read <file> --full` — the whole file, unfolded
+- `codeq read <file> --lines 24-31` for a verbatim, line-numbered slice.
+- `codeq read <file> --symbol discover` for one named definition, verbatim.
+- `codeq read <file> --raw --symbol discover` for exact bytes with no line prefixes, ready
+  to drop into an edit.
+- `codeq read <file> --full` for the whole file, unfolded.
 
-Output is line-numbered **text**, not JSON (it's a reader). A 2000-line file's skeleton is a
-few percent of the tokens of reading it whole; you pay for a body only when you open it.
-Non-parsed languages return the file unchanged.
+## context
+
+`codeq context` assembles the smallest useful slice of code for a task under a token budget,
+from explicit seeds only (it never infers what you are working on):
+
+- Seed with `--symbols name,name` and/or `--changed`.
+- Each chunk is a definition's source with provenance and an approximate token estimate.
+- `--expand` adds one deterministic hop to definitions referenced by name in the seeds.
+- When the budget truncates, the response says what was left out, so the agent can ask for more.
 
 ## MCP server
 
-`codeq mcp` runs a Model Context Protocol server over stdio, so agent hosts (Claude Code,
-Cursor, …) can call codeq natively instead of shelling out. It's dependency-free (no async
-runtime) and bridges each tool call to the CLI in the server's working directory.
-
-Register it with your host, e.g.:
+`codeq mcp` runs a Model Context Protocol server over stdio, so hosts like Claude Code and
+Cursor can call codeq natively instead of shelling out. It has no async runtime and bridges
+each tool call to the CLI in its working directory.
 
 ```json
 {
@@ -216,28 +148,40 @@ Register it with your host, e.g.:
 }
 ```
 
-Exposed tools: `codeq_map`, `codeq_search`, `codeq_symbols`, `codeq_definitions`,
-`codeq_references`, `codeq_outline`, `codeq_at`, `codeq_imports`, `codeq_importers`,
-`codeq_changed`, `codeq_context`, `codeq_files`, `codeq_capabilities`. Each returns codeq's
-JSON as the tool result. Start with `codeq_map` to orient.
+Each query command above is exposed as a `codeq_*` tool that returns codeq's JSON as the
+result. Start with `codeq_map` to orient.
 
-## Examples
+## Output contract
 
-```bash
-codeq map
-codeq changed --compare-to main --fields path
-codeq outline src/auth/session.rs
-codeq definitions authenticate
-codeq importers auth::session
-codeq context --symbols authenticate --expand --max-tokens 8000
-```
+Every result is `{"schema": "codeq.result.v1", "data": ...}`. Facts carry byte ranges,
+1-based line and column ranges, an extraction source (e.g. `treesitter/rust`), and a
+confidence.
+
+codeq refreshes on read, so answers are almost always fresh and the metadata envelope is
+omitted unless it carries signal. Pass `--meta` to always include the `repo` and `index`
+blocks; they also appear on their own when something is noteworthy, like files being
+reparsed or a parse partially failing.
+
+## How it works
+
+- Daemonless. Every command refreshes the index first: unchanged files (same size and
+  mtime) are skipped, changed files are reparsed. There is no background process.
+- SQLite store. Files, definitions, and imports (with ranges, signatures, docstrings) live
+  in `.codeq/index.db` in WAL mode, so one invocation can refresh while others read.
+- Tree-sitter extraction. Symbols and imports come from Tree-sitter queries, so a definition
+  is distinguished from a mention. Import strings are kept raw; codeq does not resolve
+  aliases or package roots.
+- Index-backed search. File contents sit in an FTS5 trigram index. A query is narrowed by
+  the index, then confirmed with a precise regex, so search never re-reads the filesystem
+  and never drops a match grep would find.
 
 ## Development
 
 ```bash
-cargo test    # 56 integration tests drive the binary against fixture repos
+cargo test    # 145 integration tests drive the binary against fixture repos
 ```
 
-Tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,
-binary/unicode/large files, non-git repos, deleted-file cascade), assert that `map` is
-byte-for-byte reproducible, and that the regex prefilter never drops a match.
+The tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,
+binary, unicode, and large files, non-git repos, deleted-file cascades), assert that `map`
+is byte-for-byte reproducible, and check the standing invariant that search always returns a
+superset of grep.
