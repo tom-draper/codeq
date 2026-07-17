@@ -13,8 +13,9 @@ The rule it follows: codeq reports facts, it does not guess. No relevance rankin
 agent that can trust the output has no reason to fall back to ad-hoc shell pipelines.
 
 > Status: working prototype. Symbol and import extraction covers Rust, Python, JavaScript,
-> TypeScript/TSX, Go, Java, Ruby, C, C++, C#, and PHP. Other languages are indexed as files
-> and stay fully searchable. See [DRAFT.md](./DRAFT.md) for the design rationale, and
+> TypeScript/TSX, Go, Java, Ruby, C, C++, C#, PHP, Bash, Lua, Scala, Kotlin, and Swift. Other
+> languages are indexed as files and stay fully searchable. See
+> [DRAFT.md](./DRAFT.md) for the design rationale, and
 > [GEMINI.md](./GEMINI.md) / [GPT.md](./GPT.md) for the reviews that shaped it.
 
 ## Install

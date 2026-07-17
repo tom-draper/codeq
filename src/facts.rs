@@ -87,6 +87,11 @@ pub struct Extractor {
     cpp: LangSpec,
     csharp: LangSpec,
     php: LangSpec,
+    bash: LangSpec,
+    lua: LangSpec,
+    scala: LangSpec,
+    kotlin: LangSpec,
+    swift: LangSpec,
 }
 
 struct LangSpec {
@@ -414,6 +419,46 @@ impl Extractor {
                 "treesitter/php",
                 "php",
             )?,
+            bash: LangSpec::new(
+                tree_sitter_bash::LANGUAGE.into(),
+                BASH_QUERY,
+                BASH_SPANS,
+                "",
+                "treesitter/bash",
+                "bash",
+            )?,
+            lua: LangSpec::new(
+                tree_sitter_lua::LANGUAGE.into(),
+                LUA_QUERY,
+                LUA_SPANS,
+                "",
+                "treesitter/lua",
+                "lua",
+            )?,
+            scala: LangSpec::new(
+                tree_sitter_scala::LANGUAGE.into(),
+                SCALA_QUERY,
+                SCALA_SPANS,
+                "",
+                "treesitter/scala",
+                "scala",
+            )?,
+            kotlin: LangSpec::new(
+                tree_sitter_kotlin_ng::LANGUAGE.into(),
+                KOTLIN_QUERY,
+                KOTLIN_SPANS,
+                "",
+                "treesitter/kotlin",
+                "kotlin",
+            )?,
+            swift: LangSpec::new(
+                tree_sitter_swift::LANGUAGE.into(),
+                SWIFT_QUERY,
+                SWIFT_SPANS,
+                "",
+                "treesitter/swift",
+                "swift",
+            )?,
         })
     }
 
@@ -437,6 +482,11 @@ impl Extractor {
             "cpp" => self.cpp.extract(src),
             "csharp" => self.csharp.extract(src),
             "php" => self.php.extract(src),
+            "bash" => self.bash.extract(src),
+            "lua" => self.lua.extract(src),
+            "scala" => self.scala.extract(src),
+            "kotlin" => self.kotlin.extract(src),
+            "swift" => self.swift.extract(src),
             _ => (Vec::new(), Vec::new(), Vec::new()),
         }
     }
@@ -460,6 +510,11 @@ pub fn has_spans(language: &str) -> bool {
             | "cpp"
             | "csharp"
             | "php"
+            | "bash"
+            | "lua"
+            | "scala"
+            | "kotlin"
+            | "swift"
     )
 }
 
@@ -985,4 +1040,84 @@ const PHP_REL: &str = r#"
 (class_declaration name: (name) @sub (base_clause (name) @extends))
 (class_declaration name: (name) @sub (class_interface_clause (name) @implements))
 (interface_declaration name: (name) @sub (base_clause (name) @extends))
+"#;
+
+// Bash: functions only (source/. includes are plain commands, not captured).
+const BASH_QUERY: &str = r#"
+(function_definition name: (word) @name body: (_) @body) @function
+"#;
+const BASH_SPANS: &str = r#"
+(comment) @comment
+(string) @string
+(raw_string) @string
+(ansi_c_string) @string
+(translated_string) @string
+"#;
+
+// Lua: named functions, incl. `M.f` (@function) and `obj:m` (@method). `require`
+// is a plain call, so imports aren't captured.
+const LUA_QUERY: &str = r#"
+(function_declaration name: (identifier) @name body: (block) @body) @function
+(function_declaration name: (dot_index_expression) @name body: (block) @body) @function
+(function_declaration name: (method_index_expression) @name body: (block) @body) @method
+"#;
+const LUA_SPANS: &str = r#"
+(comment) @comment
+(string) @string
+"#;
+
+// Scala: defs, classes/objects/traits/enums, type aliases, and imports.
+const SCALA_QUERY: &str = r#"
+(function_definition name: (identifier) @name body: (_) @body) @function
+(function_definition name: (identifier) @name !body) @function
+(function_declaration name: (identifier) @name) @function
+(class_definition name: (identifier) @name body: (_) @body) @class
+(class_definition name: (identifier) @name !body) @class
+(object_definition name: (identifier) @name body: (_) @body) @class
+(object_definition name: (identifier) @name !body) @class
+(trait_definition name: (identifier) @name body: (_) @body) @trait
+(trait_definition name: (identifier) @name !body) @trait
+(enum_definition name: (identifier) @name) @enum
+(type_definition name: (identifier) @name) @type
+(import_declaration path: (_) @name) @import
+"#;
+const SCALA_SPANS: &str = r#"
+(comment) @comment
+(block_comment) @comment
+(string) @string
+(interpolated_string) @string
+"#;
+
+// Kotlin: classes/objects/functions and imports. The grammar exposes no body
+// field, so signatures are the (capped) declaration, like Ruby.
+const KOTLIN_QUERY: &str = r#"
+(class_declaration name: (_) @name) @class
+(object_declaration name: (_) @name) @class
+(function_declaration name: (_) @name) @function
+(import [(identifier) (qualified_identifier)] @name) @import
+"#;
+const KOTLIN_SPANS: &str = r#"
+(line_comment) @comment
+(block_comment) @comment
+(string_literal) @string
+"#;
+
+// Swift: functions, class/struct/enum/actor (all `class_declaration`), protocols,
+// and imports. `name:` is pinned to the identifier node because a
+// `function_declaration` also exposes its return type under a `name` field.
+const SWIFT_QUERY: &str = r#"
+(function_declaration name: (simple_identifier) @name body: (function_body) @body) @function
+(function_declaration name: (simple_identifier) @name !body) @function
+(protocol_function_declaration name: (simple_identifier) @name) @method
+(class_declaration name: (type_identifier) @name body: (class_body) @body) @class
+(class_declaration name: (type_identifier) @name !body) @class
+(protocol_declaration name: (type_identifier) @name body: (protocol_body) @body) @interface
+(protocol_declaration name: (type_identifier) @name !body) @interface
+(import_declaration (identifier) @name) @import
+"#;
+const SWIFT_SPANS: &str = r#"
+(comment) @comment
+(multiline_comment) @comment
+(line_string_literal) @string
+(multi_line_string_literal) @string
 "#;

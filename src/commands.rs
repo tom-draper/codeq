@@ -2946,11 +2946,12 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "imports", "importers", "astgrep", "tests", "context", "capabilities", "mcp",
         ],
         // Languages with symbol + import extraction.
-        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php"],
+        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift"],
         // Languages recognised for file classification (extraction may be absent).
         "classified_languages": [
             "rust", "javascript", "typescript", "tsx", "python", "go", "java",
-            "json", "yaml", "toml", "markdown", "sql", "shell", "c", "cpp", "ruby",
+            "json", "yaml", "toml", "markdown", "sql", "bash", "lua", "scala",
+            "kotlin", "swift", "c", "cpp", "csharp", "php", "ruby",
         ],
         "fact_kinds": [
             "function", "method", "struct", "enum", "union", "trait", "module",

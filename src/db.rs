@@ -13,7 +13,10 @@ use rusqlite::Connection;
 // BOM-prefixed files — bump so pre-fix indexes rebuild on upgrade.
 // v6: git-free freshness via a native dir-mtime cache (the `dirs` table); old
 // indexes lack it, so rebuild to populate it.
-pub const SCHEMA_VERSION: i64 = 11;
+// v12: added Bash/Lua/Scala/Kotlin/Swift extraction (and remapped .sh from the
+// non-extracted "shell" label to "bash"), so existing indexes must rebuild to
+// populate facts/spans for these files.
+pub const SCHEMA_VERSION: i64 = 12;
 
 pub struct Db {
     pub conn: Connection,

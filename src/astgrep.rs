@@ -54,6 +54,11 @@ pub fn ts_language(name: &str) -> Option<tree_sitter::Language> {
         "cpp" => tree_sitter_cpp::LANGUAGE.into(),
         "csharp" => tree_sitter_c_sharp::LANGUAGE.into(),
         "php" => tree_sitter_php::LANGUAGE_PHP.into(),
+        "bash" => tree_sitter_bash::LANGUAGE.into(),
+        "lua" => tree_sitter_lua::LANGUAGE.into(),
+        "scala" => tree_sitter_scala::LANGUAGE.into(),
+        "kotlin" => tree_sitter_kotlin_ng::LANGUAGE.into(),
+        "swift" => tree_sitter_swift::LANGUAGE.into(),
         _ => return None,
     })
 }

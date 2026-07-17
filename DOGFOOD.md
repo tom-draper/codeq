@@ -1248,3 +1248,30 @@ story, only sharper. Crucially the harness also reports where codeq *doesn't* wi
 all-green table skips. Numbers went into the README Benchmarks table; reproduce with
 `python3 bench/completion.py`. Lesson: a benchmark that admits its near-parity and losing
 cases is more persuasive than one that doesn't.
+
+## Five more languages: Bash, Lua, Scala, Kotlin, Swift
+
+Extended extraction from 12 to 17 languages, closing part of the breadth gap vs
+codegraph. Each needs a grammar crate + three tree-sitter queries (defs, comment/string
+spans, relations) + wiring (Extractor field, extract arm, has_spans, extension map,
+astgrep grammar, capabilities) + a schema bump (11 -> 12) so indexes rebuild.
+
+The queries were the real work, and writing them blind was a trap. Two bugs only a
+parse-tree dump caught (I wrote a throwaway `tsdump` bin, used it, deleted it):
+- **Swift double-matched** every function: `function_declaration` exposes BOTH its name
+  AND its return type under a field literally named `name`, so `name: (_)` bound twice.
+  Fix: pin to `name: (simple_identifier)`. Protocol methods are also a distinct node
+  (`protocol_function_declaration`), not `function_declaration`.
+- **Kotlin looked broken** on a hand-written single-line class after `package`+`import`
+  (whole class became an ERROR node) but parses real multi-line code with zero errors —
+  the pathology was my test snippet, not the grammar. Lesson: validate a new grammar on
+  realistic multi-line code, not minimal one-liners, and dump the actual tree before
+  trusting node-types.json (Kotlin's name field is `identifier`, not the `type_identifier`
+  the schema suggested).
+
+Bash/Lua/Scala worked first try. v1 scope: defs + spans + imports (Scala/Kotlin/Swift
+have real import statements; Bash/Lua use call-style includes, skipped). Relations
+(implementors/supertypes) deferred — empty like Go/C. Verified end to end on all five:
+outline, callers/callees, read-fold, search + enclosing symbol, `--in` span classification,
+explore. 149 tests (+1), differential search 2250/2250 (invariant unaffected), textmode
+ALL PASS.

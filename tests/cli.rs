@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 11);
+    assert_eq!(v["index"]["schema"], 12);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -942,6 +942,34 @@ fn affected_reports_changed_blast_radius_and_test_files() {
         .filter_map(|t| t["path"].as_str()).collect();
     assert!(test_files.contains(&"t.rs"),
             "transitively-affected test file missing: {test_files:?}");
+}
+
+#[test]
+fn extracts_definitions_for_added_languages() {
+    let f = Fixture::new();
+    f.write("s.sh", "greet() { echo hi; }\nfunction bye { echo bye; }\n");
+    f.write("m.lua", "local function helper(x) return x end\nfunction process(n) return helper(n) end\n");
+    f.write("a.scala", "class Foo { def bar(): Int = 1 }\ntrait Greeter { def greet(): String }\n");
+    f.write("K.kt", "package p\nclass Widget {\n    fun render(): String = \"w\"\n}\nfun topLevel(): Int = 1\n");
+    f.write("V.swift", "class Vehicle { func drive() -> String { return \"v\" } }\nprotocol Named { func name() -> String }\n");
+
+    // Each new language's definitions land in the symbol table.
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    for want in [
+        "greet", "bye", "helper", "process", "Foo", "bar", "Greeter",
+        "Widget", "render", "topLevel", "Vehicle", "drive", "Named",
+    ] {
+        assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
+    }
+
+    // The call graph works across a new language: Lua `process` calls `helper`.
+    let callees = field_set(&f.run(&["callees", "process"]), "name");
+    assert!(callees.contains(&"helper".to_string()), "{callees:?}");
+
+    // Imports are captured where the language has a real import statement.
+    f.write("b.swift", "import Foundation\nfunc go() {}\n");
+    let imports = field_set(&f.run(&["imports", "b.swift"]), "module");
+    assert!(imports.contains(&"Foundation".to_string()), "{imports:?}");
 }
 
 #[test]

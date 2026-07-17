@@ -482,12 +482,16 @@ pub fn language_for(path: &str) -> Option<&'static str> {
         "toml" => "toml",
         "md" | "markdown" => "markdown",
         "sql" => "sql",
-        "sh" | "bash" => "shell",
+        "sh" | "bash" => "bash",
         "c" | "h" => "c",
         "cc" | "cpp" | "cxx" | "hpp" | "hh" => "cpp",
         "cs" => "csharp",
         "php" => "php",
         "rb" => "ruby",
+        "lua" => "lua",
+        "scala" | "sc" => "scala",
+        "kt" | "kts" => "kotlin",
+        "swift" => "swift",
         _ => return None,
     };
     Some(lang)
