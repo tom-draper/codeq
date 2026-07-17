@@ -870,6 +870,51 @@ fn callers_examples_surface_the_call_expression() {
 }
 
 #[test]
+fn explore_bundles_definition_callers_callees_and_source() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn helper(x: i32) -> i32 { x + 1 }\n\
+         fn caller() { let _ = helper(41); }\n",
+    );
+
+    let r = f.run(&["explore", "helper"]);
+    let d = &r["data"];
+
+    // focus = the definition, carrying its signature.
+    assert_eq!(d["focus"][0]["name"], "helper");
+    assert!(d["focus"][0]["signature"].as_str().unwrap().contains("helper"), "{d}");
+
+    // callers include the enclosing caller definition.
+    let callers: Vec<&str> = d["callers"].as_array().unwrap().iter()
+        .filter_map(|c| c["name"].as_str()).collect();
+    assert!(callers.contains(&"caller"), "{callers:?}");
+
+    // source carries verbatim bodies, each tagged by role; the focus body is present.
+    let src = d["source"].as_array().unwrap();
+    let focus_chunk = src.iter().find(|c| c["reason"] == "focus").expect("focus source chunk");
+    assert!(focus_chunk["text"].as_str().unwrap().contains("x + 1"), "{focus_chunk}");
+    assert!(src.iter().any(|c| c["reason"] == "caller" && c["symbol"] == "caller"),
+            "caller source missing: {src:?}");
+}
+
+#[test]
+fn explore_forces_focus_source_under_a_tight_budget() {
+    let f = Fixture::new();
+    // A big caller body and a small focus, with a budget too small for both.
+    let big = "fn caller() {\n".to_string() + &"    let _ = focus();\n".repeat(80) + "}\n";
+    f.write("a.rs", &format!("fn focus() {{}}\n{big}"));
+
+    let d = f.run(&["explore", "focus", "--max-tokens", "5"]);
+    let src = d["data"]["source"].as_array().unwrap();
+    // The focus is forced in even over budget; the oversized caller is omitted.
+    assert!(src.iter().any(|c| c["reason"] == "focus"), "focus must survive the budget: {src:?}");
+    let omitted: Vec<&str> = d["data"]["omitted"].as_array().unwrap().iter()
+        .filter_map(|o| o["symbol"].as_str()).collect();
+    assert!(omitted.contains(&"caller"), "oversized caller should be reported omitted: {omitted:?}");
+}
+
+#[test]
 fn resolved_follows_rust_mod_declarations_as_edges() {
     // A Rust file that pulls in another via `mod thing;` (not `use crate::…`)
     // can still reach that file's definitions — the `mod` edge must count.

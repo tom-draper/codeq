@@ -1157,3 +1157,32 @@ representative site per caller (callers already dedupes by enclosing symbol);
 `--calls`/`--on`/`--resolved`. Wired CLI + MCP + docs, +1 test (145), textmode ALL
 PASS. Lesson: the best "new capability" is often plumbing an existing value (the hit
 text) to an existing sink (the match-line renderer) — look before building.
+
+## `explore` — the one-call answer (learning from codegraph)
+
+codegraph's whole thesis is a single `explore` tool that returns "relevant symbols'
+verbatim source grouped by file, plus the call paths between them," and that one design
+choice is where its headline "58% fewer tool calls" comes from. We had the graph
+(`about`) and the budgeted source assembler (`context`) as separate commands but nothing
+that fused them, so an agent ran `definitions` -> `callers` -> `read` -> `read`. `explore`
+composes what already existed: the graph functions for the edges, plus context's chunking
+and budget fill for the source.
+
+Two things the "look before building" habit caught:
+
+1. **A common-name blowup.** Seeding `context::build` with bare neighbour *names* would
+   re-expand a common callee (`new`, `open`) to every same-named definition in the repo,
+   and since seeds are force-included, blow the budget with noise. Fix: a targeted
+   assembler (`context::source_for`) keyed on the precise `(name, path)` we already
+   resolved, not on names. Never balloons.
+2. **No renderer work.** Structuring the result as a flat object of arrays
+   (`focus`/`callers`/`callees`/`source`) let the existing envelope renderer print it as
+   `# section` blocks, and tagging each source chunk with a role reason ("focus"/"caller"/
+   "callee") made `render_row`'s multi-line-text branch emit `path:line (caller)` headers
+   for free. The focus is `forced` so it survives any budget; overflow is reported in
+   `omitted`.
+
+Wired CLI + MCP (registered first, as the primary tool, mirroring codegraph) + docs.
++2 tests (147), textmode ALL PASS. Lesson (again): the biggest capability of the session
+was mostly *fusing* two things we already had, with one precise-targeting fix so it
+doesn't inherit the name-based blowup.

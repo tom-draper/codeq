@@ -64,6 +64,14 @@ facts it can stand behind.
 Run any command inside a repo. Default output is compact text (`path:line:col: payload`,
 grep style); add `--json` for the structured envelope.
 
+Understand a symbol in one call:
+- `codeq explore <name>` returns the symbol's definition, its callers, its callees, and the
+  verbatim source of that whole neighbourhood, budgeted and grouped by file. It is the
+  fastest way to understand or change a function: structure and code in one call, instead of
+  a `definitions` then `callers` then `read` then `read` sequence. `--max-tokens` caps the
+  source (the definition is always included; callers and callees fill the rest, and anything
+  dropped is listed).
+
 Orient and read:
 - `codeq map` groups counts (languages, directories, imports, definitions) to get your bearings.
 - `codeq read <file>` returns the file with long bodies folded to signatures (see below).
@@ -178,7 +186,7 @@ reparsed or a parse partially failing.
 ## Development
 
 ```bash
-cargo test    # 145 integration tests drive the binary against fixture repos
+cargo test    # 147 integration tests drive the binary against fixture repos
 ```
 
 The tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,

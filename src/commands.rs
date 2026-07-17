@@ -1038,6 +1038,133 @@ pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result
     s.emit(data)
 }
 
+/// A node in an `explore` graph: a definition (focus) or one of its immediate
+/// neighbours (a caller or callee), with just enough to locate and identify it.
+#[derive(serde::Serialize)]
+struct ExploreNode {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+}
+
+/// The one-call answer: the symbol's definition, who calls it, what it calls, and
+/// the verbatim source of that whole neighbourhood, budgeted and grouped by file.
+#[derive(serde::Serialize)]
+struct ExploreResult {
+    focus: Vec<ExploreNode>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    callers: Vec<ExploreNode>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    callees: Vec<ExploreNode>,
+    source: Vec<crate::context::Chunk>,
+    budget: crate::context::Budget,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    omitted: Vec<crate::context::Omitted>,
+}
+
+/// `explore <name>` — a single call that answers "show me this symbol and how it
+/// fits". It composes the graph commands (definition + callers + callees) with
+/// the context assembler (verbatim source of that neighbourhood, under a token
+/// budget, grouped by file), so an agent gets structure *and* code in one shot
+/// instead of a `definitions` → `callers` → `read` → `read` sequence.
+pub fn cmd_explore(
+    cwd: &Path,
+    name: &str,
+    path: Option<&str>,
+    max_tokens: u64,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    // The graph around `name`: its definition(s), who calls it, what it calls.
+    // Callers stay repo-wide (textual "who uses this"); focus and callees honour
+    // `--path` so a common name doesn't merge unrelated symbols.
+    let defs = definitions_of(&s, name, path, 0)?;
+    let callers = callers_of(&s, name, None, false, None, false)?;
+    let callees = callees_of(&s, name, path, false)?;
+
+    let focus: Vec<ExploreNode> = defs
+        .iter()
+        .map(|d| ExploreNode {
+            name: d.name.clone(),
+            kind: Some(d.kind.clone()),
+            path: d.path.clone(),
+            line: d.start_line,
+            signature: d.signature.clone(),
+        })
+        .collect();
+    let caller_nodes: Vec<ExploreNode> = callers
+        .iter()
+        .filter_map(|c| {
+            c.symbol.as_ref().map(|sym| ExploreNode {
+                name: sym.clone(),
+                kind: c.kind.clone(),
+                path: c.path.clone(),
+                line: c.line as i64,
+                signature: None,
+            })
+        })
+        .collect();
+    let callee_nodes: Vec<ExploreNode> = callees
+        .iter()
+        .map(|c| ExploreNode {
+            name: c.name.clone(),
+            kind: Some(c.kind.clone()),
+            path: c.path.clone(),
+            line: c.line,
+            signature: None,
+        })
+        .collect();
+
+    // Verbatim source for the neighbourhood, located precisely by (name, path) so
+    // a common callee name is not re-expanded to every same-named definition. The
+    // focus is forced (always included); callers/callees fill the rest of the
+    // budget. Focus seeds first so the focus definition keeps the "focus" role.
+    let mut seeds: Vec<crate::context::Seed> = Vec::new();
+    for d in &defs {
+        seeds.push(crate::context::Seed {
+            name: d.name.clone(),
+            path: d.path.clone(),
+            role: "focus",
+            forced: true,
+        });
+    }
+    for c in &callers {
+        if let Some(sym) = &c.symbol {
+            seeds.push(crate::context::Seed {
+                name: sym.clone(),
+                path: c.path.clone(),
+                role: "caller",
+                forced: false,
+            });
+        }
+    }
+    for c in &callees {
+        seeds.push(crate::context::Seed {
+            name: c.name.clone(),
+            path: c.path.clone(),
+            role: "callee",
+            forced: false,
+        });
+    }
+
+    let (budget, source, omitted) =
+        crate::context::source_for(&s.db, &s.repo, &seeds, max_tokens)?.into_source();
+
+    s.emit(ExploreResult {
+        focus,
+        callers: caller_nodes,
+        callees: callee_nodes,
+        source,
+        budget,
+        omitted,
+    })
+}
+
 /// `at <path>:<line>` — the definition(s) enclosing a location, innermost first.
 /// Turns a stack-trace or compiler-error line into "what code is this".
 pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {

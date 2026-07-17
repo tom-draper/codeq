@@ -29,8 +29,13 @@ refresh the index — every command auto-refreshes changed files first.
 - `codeq read <file>` — the file with long function bodies folded to signatures.
 - `codeq outline <file>` — just the definitions and their nesting.
 
-**Understand one symbol before editing it**
-- `codeq about <NAME>` — its definition(s) + who calls it + what it calls, in one call.
+**Understand or change one symbol (reach for this first)**
+- `codeq explore <NAME>` — one call returns the definition + callers + callees *and* the
+  verbatim source of that whole neighbourhood, budgeted and grouped by file (each source
+  block tagged focus/caller/callee). Use it instead of a `definitions` → `callers` → `read`
+  → `read` sequence when you need to understand or edit a function/type. `--max-tokens`
+  caps the source; the definition is always kept, and anything dropped is listed.
+- `codeq about <NAME>` — lighter: definition(s) + callers + callees, no source bodies.
   Also the fastest way to find *which file* a symbol lives in.
 - `codeq read <file> --symbol <NAME>` — that definition's source, line-numbered. Add
   `--raw` for exact bytes with no line-number prefix (to copy it verbatim).

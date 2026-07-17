@@ -70,6 +70,14 @@ pub struct ContextResult {
     omitted_truncated: bool,
 }
 
+impl ContextResult {
+    /// Destructure into (budget, chunks, omitted). `explore` reuses context's
+    /// budgeted source assembly and re-presents these under its own graph sections.
+    pub(crate) fn into_source(self) -> (Budget, Vec<Chunk>, Vec<Omitted>) {
+        (self.budget, self.chunks, self.omitted)
+    }
+}
+
 #[derive(Serialize)]
 struct Plan {
     /// Which seed modes were active.
@@ -81,7 +89,7 @@ struct Plan {
 }
 
 #[derive(Serialize)]
-struct Budget {
+pub(crate) struct Budget {
     max_tokens: u64,
     used_tokens: u64,
     /// The estimate is approximate (byte-based); labeled so an agent never
@@ -90,7 +98,7 @@ struct Budget {
 }
 
 #[derive(Serialize)]
-struct Chunk {
+pub(crate) struct Chunk {
     path: String,
     symbol: String,
     kind: String,
@@ -108,7 +116,7 @@ struct Chunk {
 }
 
 #[derive(Serialize)]
-struct Omitted {
+pub(crate) struct Omitted {
     path: String,
     symbol: String,
     est_tokens: u64,
@@ -286,6 +294,105 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         omitted,
         omitted_truncated,
     })
+}
+
+/// A definition to include in an `explore` bundle, already located by (name,
+/// path) so a common name is never re-expanded to every same-named definition in
+/// the repo. `role` is surfaced on the chunk ("focus" / "caller" / "callee");
+/// `forced` chunks (the focus symbol) are always included, even over budget.
+pub struct Seed {
+    pub name: String,
+    pub path: String,
+    pub role: &'static str,
+    pub forced: bool,
+}
+
+/// Budgeted, file-grouped verbatim source for an explicit set of located
+/// definitions. Mirrors `build`'s budget fill but keyed on precise (name, path)
+/// targets, so `explore` never balloons on a common callee name; each chunk keeps
+/// its seed's role. Forced seeds are always included; the rest fill the remaining
+/// budget in a stable order and overflow is reported in `omitted`.
+pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Result<ContextResult> {
+    // Resolve each (name, path) to its definition(s); the first seed to claim a
+    // definition sets its role (pass focus seeds first).
+    let mut cands: Vec<(Def, &'static str, bool)> = Vec::new();
+    let mut seen: HashSet<(String, usize)> = HashSet::new();
+    for seed in seeds {
+        for d in defs_by_name_in_path(db, &seed.name, &seed.path)? {
+            if seen.insert((d.path.clone(), d.start_byte)) {
+                cands.push((d, seed.role, seed.forced));
+            }
+        }
+    }
+
+    // Decide inclusion forced-first (focus always in), then others in path+line
+    // order, but emit chunks grouped by file regardless.
+    let mut order: Vec<usize> = (0..cands.len()).collect();
+    order.sort_by(|&a, &b| {
+        let (da, _, fa) = &cands[a];
+        let (db_, _, fb) = &cands[b];
+        (!fa, da.path.as_str(), da.start_line).cmp(&(!fb, db_.path.as_str(), db_.start_line))
+    });
+
+    let mut file_cache: HashMap<String, Option<Vec<u8>>> = HashMap::new();
+    let mut chunks = Vec::new();
+    let mut omitted = Vec::new();
+    let mut used: u64 = 0;
+    for i in order {
+        let (d, role, forced) = &cands[i];
+        let bytes = d.end_byte.saturating_sub(d.start_byte) as u64;
+        let est = bytes.div_ceil(4).max(1);
+        if !forced && used + est > max_tokens {
+            if omitted.len() < MAX_OMITTED {
+                omitted.push(Omitted {
+                    path: d.path.clone(),
+                    symbol: d.name.clone(),
+                    est_tokens: est,
+                    reason: role,
+                });
+            }
+            continue;
+        }
+        let text = chunk_text(&repo.root, d, &mut file_cache);
+        used += est;
+        chunks.push(Chunk {
+            path: d.path.clone(),
+            symbol: d.name.clone(),
+            kind: d.kind.clone(),
+            language: d.language.clone(),
+            start_line: d.start_line,
+            end_line: d.end_line,
+            start_byte: d.start_byte,
+            end_byte: d.end_byte,
+            est_tokens: est,
+            reason: role,
+            text,
+        });
+    }
+    chunks.sort_by(|a, b| (a.path.as_str(), a.start_line).cmp(&(b.path.as_str(), b.start_line)));
+
+    let omitted_truncated = omitted.len() >= MAX_OMITTED;
+    Ok(ContextResult {
+        plan: None,
+        budget: Budget {
+            max_tokens,
+            used_tokens: used,
+            tokenizer: TOKENIZER,
+        },
+        chunks,
+        omitted,
+        omitted_truncated,
+    })
+}
+
+/// Definitions of an exact name within one file, via the facts(name) index.
+fn defs_by_name_in_path(db: &Db, name: &str, path: &str) -> Result<Vec<Def>> {
+    let sql = format!(
+        "SELECT {DEF_COLUMNS} FROM facts WHERE name = ? AND path = ? AND kind <> 'import'"
+    );
+    let mut stmt = db.conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params![name, path], row_to_def)?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
 fn row_to_def(r: &rusqlite::Row) -> rusqlite::Result<Def> {

@@ -207,6 +207,22 @@ enum Command {
         #[arg(long)]
         path: Option<String>,
     },
+    /// One-call answer for a symbol: its definition, callers, and callees, plus
+    /// the verbatim source of that whole neighbourhood, budgeted and grouped by
+    /// file. Structure and code in one shot, instead of definitions then callers
+    /// then several reads.
+    Explore {
+        /// Exact symbol name to explore.
+        name: String,
+        /// Scope the definition and callees to matching paths (disambiguates a
+        /// common name); callers stay repo-wide.
+        #[arg(long)]
+        path: Option<String>,
+        /// Approximate token budget for the included source (the definition is
+        /// always included; callers and callees fill the rest).
+        #[arg(long, default_value_t = 16000)]
+        max_tokens: u64,
+    },
     /// Word-boundary references to an exact symbol name, with enclosing symbol.
     References {
         /// Exact symbol name to find references to.
@@ -560,6 +576,9 @@ fn main() -> ExitCode {
         } => commands::cmd_path(&cwd, &from, &to, max_depth, path.as_deref(), out),
         Command::About { name, path } => {
             commands::cmd_about(&cwd, &name, path.as_deref(), out)
+        }
+        Command::Explore { name, path, max_tokens } => {
+            commands::cmd_explore(&cwd, &name, path.as_deref(), max_tokens, out)
         }
         Command::References {
             name,

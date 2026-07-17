@@ -212,6 +212,12 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             args.push(s(a, "name")?.into());
             opt(&mut args, a, "path", "--path");
         }
+        "codeq_explore" => {
+            args.push("explore".into());
+            args.push(s(a, "name")?.into());
+            opt(&mut args, a, "path", "--path");
+            optn(&mut args, a, "max_tokens", "--max-tokens");
+        }
         "codeq_path" => {
             args.push("path".into());
             args.push(s(a, "from")?.into());
@@ -361,6 +367,9 @@ fn tools() -> Value {
     let int_ = json!({ "type": "integer" });
 
     json!([
+        tool("codeq_explore",
+            "Understand a symbol in ONE call: its definition, who calls it, what it calls, and the verbatim source of that whole neighbourhood, budgeted and grouped by file. Prefer this over a definitions -> callers -> read -> read sequence when you need to understand or change a function/type. name is the exact symbol; path disambiguates a common name; max_tokens caps the source (the definition is always included, callers and callees fill the rest, and anything dropped is listed under omitted). Returns focus, callers, callees, and source (each chunk tagged focus/caller/callee).",
+            json!({ "name": str_, "path": str_, "max_tokens": int_ }), &["name"]),
         tool("codeq_map",
             "Orient in the repo: factual counts by language, directory, imported module, and file. Start here in an unfamiliar codebase.",
             json!({ "limit": int_ }), &[]),

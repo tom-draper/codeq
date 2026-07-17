@@ -20,6 +20,11 @@ benchmarks — not as a step you run before querying.
 
 ## Prefer codeq for navigation
 
+- **Understand or change one symbol (start here):** `codeq explore NAME` — one call
+  returns its definition + callers + callees *and* the verbatim source of that whole
+  neighbourhood, budgeted and grouped by file (each source block tagged focus/caller/
+  callee). Replaces the `about` → `read` → `read` sequence; `--max-tokens` caps it (the
+  definition is always kept, the rest fill the budget, drops are listed under `omitted`).
 - **Orient:** `codeq map`
 - **Understand a file cheaply:** `codeq read <file>` — folds long function bodies
   to signatures; read this instead of ingesting a whole large file.
