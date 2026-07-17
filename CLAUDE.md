@@ -52,6 +52,10 @@ benchmarks — not as a step you run before querying.
       field, or variable of the same name (code-only).
     - `--on RECV` — keep only calls qualified by a receiver/type (`RECV.NAME`,
       `RECV::NAME`, `RECV->NAME`) — disambiguates a common method name.
+    - `--examples` (callers) — surface the actual call expression at each site (one
+      representative per caller): the row becomes `path:line:col:` the source line,
+      so one command answers "who calls it *and how*". For every call site rather
+      than one per caller, use `references NAME --calls`. Composes with the filters.
   - **`callees` is already call-position only** (a bare mention of a name isn't a
     callee), so it needs no `--calls`; it does take `--resolved`, which keeps only
     callees whose definition file NAME's *own* file can reach through imports (tags

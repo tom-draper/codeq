@@ -198,6 +198,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             flag(&mut args, a, "resolved", "--resolved");
             flag(&mut args, a, "calls", "--calls");
             opt(&mut args, a, "on", "--on");
+            flag(&mut args, a, "examples", "--examples");
         }
         "codeq_callees" => {
             args.push("callees".into());
@@ -381,8 +382,8 @@ fn tools() -> Value {
             "Word-boundary uses of a symbol name across the repo, each annotated with its enclosing definition; definition sites are flagged. Textual (not type-resolved) by default. resolved=true prunes references whose file can't reach a definition through imports. calls=true keeps only call sites (NAME(), excluding bare mentions). on='RECV' keeps only calls qualified by that receiver/type (RECV.NAME / RECV::NAME). Precision filters compose.",
             json!({ "name": str_, "path": str_, "language": str_, "limit": int_, "resolved": bool_, "calls": bool_, "on": str_ }), &["name"]),
         tool("codeq_callers",
-            "The distinct definitions that reference a symbol (its callers), with test sites flagged — what could break if you change it. Textual, not type-resolved. path restricts to callers in matching files. depth (default 1) walks transitively up the call tree, each result tagged with its hop distance. Precision filters (direct callers only): resolved=true prunes callers whose file can't reach a definition through imports; calls=true keeps only call sites NAME(); on='RECV' keeps only calls qualified by that receiver/type (RECV.NAME / RECV::NAME) to disambiguate a common method name.",
-            json!({ "name": str_, "path": str_, "depth": num_, "resolved": bool_, "calls": bool_, "on": str_ }), &["name"]),
+            "The distinct definitions that reference a symbol (its callers), with test sites flagged — what could break if you change it. Textual, not type-resolved. path restricts to callers in matching files. depth (default 1) walks transitively up the call tree, each result tagged with its hop distance. Precision filters (direct callers only): resolved=true prunes callers whose file can't reach a definition through imports; calls=true keeps only call sites NAME(); on='RECV' keeps only calls qualified by that receiver/type (RECV.NAME / RECV::NAME) to disambiguate a common method name. examples=true surfaces the actual call expression at each site (one representative per caller) — how the symbol is really invoked; for every call site use codeq_references with calls=true.",
+            json!({ "name": str_, "path": str_, "depth": num_, "resolved": bool_, "calls": bool_, "on": str_, "examples": bool_ }), &["name"]),
         tool("codeq_callees",
             "The definitions referenced by name inside a symbol's body (its callees) — what it depends on. Already call-position only (a bare mention isn't a callee). path scopes to the symbol's definition(s). depth (default 1) walks transitively down the call tree. resolved=true (direct callees only) keeps only callees whose definition file the symbol's own file can reach through imports, pruning unrelated same-named definitions in unreachable files.",
             json!({ "name": str_, "path": str_, "depth": num_, "resolved": bool_ }), &["name"]),

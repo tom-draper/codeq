@@ -159,6 +159,11 @@ enum Command {
         /// `RECV::NAME` / `RECV->NAME` — to disambiguate a common method name.
         #[arg(long, value_name = "RECV")]
         on: Option<String>,
+        /// Show the actual call expression at each site (one representative example
+        /// per caller): the row becomes `path:line:col:` the source line. For every
+        /// call site instead of one per caller, use `references NAME --calls`.
+        #[arg(long)]
+        examples: bool,
     },
     /// Definitions a symbol references (its callees, name-based).
     Callees {
@@ -532,6 +537,7 @@ fn main() -> ExitCode {
             resolved,
             calls,
             on,
+            examples,
         } => commands::cmd_callers(
             &cwd,
             &name,
@@ -540,6 +546,7 @@ fn main() -> ExitCode {
             resolved,
             calls,
             on.as_deref(),
+            examples,
             out,
         ),
         Command::Callees { name, path, depth, resolved } => {

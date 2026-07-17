@@ -502,6 +502,13 @@ struct Caller {
     kind: Option<String>,
     path: String,
     line: usize,
+    /// The call site's column and source line — populated only under `--examples`,
+    /// which turns a caller row into a usage example: `path:line:col:` the actual
+    /// call expression (one representative site per caller).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    col: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
     /// Best-effort: the caller looks like a test (path or symbol name).
     #[serde(skip_serializing_if = "is_false")]
     test: bool,
@@ -520,6 +527,7 @@ fn callers_of(
     path: Option<&str>,
     call_only: bool,
     qualifier: Option<&str>,
+    examples: bool,
 ) -> Result<Vec<Caller>> {
     let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))?;
     // Callers means references in *code* — not comments, strings, or prose in
@@ -552,12 +560,12 @@ fn callers_of(
 
     let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
     let mut out = Vec::new();
-    for h in hits {
+    for mut h in hits {
         if defsites.contains(&(h.path.clone(), h.line as i64)) {
             continue; // the declaration itself
         }
         if !seen.insert((h.path.clone(), h.symbol.clone())) {
-            continue; // one row per (file, enclosing symbol)
+            continue; // one row per (file, enclosing symbol) — first call site wins
         }
         let test = h.path.contains("test")
             || h.path.contains("spec")
@@ -565,11 +573,20 @@ fn callers_of(
                 .as_deref()
                 .map(|s| s.starts_with("test") || s.starts_with("Test"))
                 .unwrap_or(false);
+        // Under --examples, surface the call site's line/column and source text so
+        // the row reads as a usage example (rendered grep-style by the envelope).
+        let (col, text) = if examples {
+            (Some(h.col), Some(std::mem::take(&mut h.text)))
+        } else {
+            (None, None)
+        };
         out.push(Caller {
             symbol: h.symbol,
             kind: h.kind,
             path: h.path,
             line: h.line,
+            col,
+            text,
             test,
             via: None,
         });
@@ -777,11 +794,12 @@ pub fn cmd_callers(
     resolved: bool,
     call_only: bool,
     qualifier: Option<&str>,
+    examples: bool,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
-        let callers = callers_of(&s, name, path, call_only, qualifier)?;
+        let callers = callers_of(&s, name, path, call_only, qualifier, examples)?;
         let rows = resolve_rows(&s, name, resolved, callers, |c| c.path.as_str(), |c, v| {
             c.via = v;
         })?;
@@ -797,7 +815,7 @@ pub fn cmd_callers(
     'walk: for d in 1..=depth {
         let mut next: Vec<String> = Vec::new();
         for sym in &frontier {
-            for c in callers_of(&s, sym, path, false, None)? {
+            for c in callers_of(&s, sym, path, false, None, false)? {
                 if !reported.insert((c.path.clone(), c.symbol.clone())) {
                     continue;
                 }
@@ -1014,7 +1032,7 @@ pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result
     let s = Session::open(cwd, false, out)?;
     let data = About {
         definitions: definitions_of(&s, name, path, 0)?,
-        callers: callers_of(&s, name, None, false, None)?,
+        callers: callers_of(&s, name, None, false, None, false)?,
         callees: callees_of(&s, name, path, false)?,
     };
     s.emit(data)

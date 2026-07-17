@@ -37,6 +37,8 @@ refresh the index — every command auto-refreshes changed files first.
 
 **Who uses it / what breaks if I change it**
 - `codeq callers <NAME>` — definitions that call/reference NAME (test sites flagged).
+  Add `--examples` to show the actual call expression at each site (how NAME is really
+  invoked, one per caller); `references <NAME> --calls` for every call site.
 - `codeq references <NAME>` — every occurrence, with the enclosing symbol.
 - `codeq tests <NAME>` — which tests exercise NAME *by name* (empty if only exercised
   indirectly, e.g. an internal fn tested through a CLI/public entry point).

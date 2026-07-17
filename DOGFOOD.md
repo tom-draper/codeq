@@ -1135,3 +1135,25 @@ driving the real JSON-RPC server — the `no_text` assertion fails if the flag s
 being forwarded. 144 tests. Lesson: a scripted surface-diff is a good *finder* but a
 bad *authority* — confirm each hit against the real CLI before wiring it, or you trade
 one drift for a worse one (a schema that promises a flag the CLI rejects).
+
+## `callers --examples` — usage examples, reusing what was already there
+
+Goal: answer "how is this API actually called?" in one command. Investigating first
+paid off — two facts changed the design from "new feature" to "surface what's already
+computed":
+
+1. **The source line was already in hand.** `callers_of` runs the same search as
+   `references`, whose `Hit` already carries the matched line `text` — `callers` just
+   *discarded* it, keeping only the enclosing symbol. So an agent had to run `callers`
+   (who) then `references --calls` (how) separately.
+2. **The renderer already formats it.** `render_row` turns any row with a `text` field
+   into a grep-style match line (`path:line:col: <text>  [symbol]`). So no renderer
+   change: `--examples` just stops dropping the hit's `col`/`text`, and the output
+   falls into the existing match-line path automatically.
+
+Result: `callers NAME --examples` → `path:line:col:` the real call expression, one
+representative site per caller (callers already dedupes by enclosing symbol);
+`references NAME --calls` stays the exhaustive per-site form. Composes with
+`--calls`/`--on`/`--resolved`. Wired CLI + MCP + docs, +1 test (145), textmode ALL
+PASS. Lesson: the best "new capability" is often plumbing an existing value (the hit
+text) to an existing sink (the match-line renderer) — look before building.

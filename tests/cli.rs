@@ -850,6 +850,26 @@ fn callees_resolved_prunes_unreachable_same_named_defs() {
 }
 
 #[test]
+fn callers_examples_surface_the_call_expression() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn target(x: i32) {}\nfn caller() { target(41); }\n");
+
+    // Plain callers: the enclosing definition, no source text.
+    let plain = f.run(&["callers", "target"]);
+    let row = &plain["data"].as_array().unwrap()[0];
+    assert_eq!(row["symbol"], "caller");
+    assert!(row.get("text").is_none(), "plain callers should carry no source text: {row:?}");
+
+    // --examples: the row becomes a usage example with the actual call line + column.
+    let ex = f.run(&["callers", "target", "--examples"]);
+    let row = &ex["data"].as_array().unwrap()[0];
+    assert_eq!(row["symbol"], "caller");
+    assert!(row["text"].as_str().unwrap().contains("target(41)"),
+            "example should show the call expression: {row:?}");
+    assert!(row["col"].as_i64().is_some(), "example row should carry a column: {row:?}");
+}
+
+#[test]
 fn resolved_follows_rust_mod_declarations_as_edges() {
     // A Rust file that pulls in another via `mod thing;` (not `use crate::…`)
     // can still reach that file's definitions — the `mod` edge must count.
