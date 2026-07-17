@@ -1230,3 +1230,21 @@ This is the one codeq command that writes outside the index, so it's the most co
 irreversible side effect on the user's machine, make the core a pure function of an
 injected root so it can be exercised safely, and gate the effect behind detection +
 dry-run + uninstall.
+
+## Head-to-head benchmark — published numbers (borrowed from codegraph)
+
+codegraph wins credibility partly by *showing* numbers (58% fewer tool calls, 22%
+faster). We already had `bench/completion.py` (token-to-completion vs a fair generic-tool
+baseline across 25 pinned real repos) but it predated the flagship `explore`. Added an
+`explore` task with an honest baseline: to assemble the same def + callers + callees WITH
+source the generic way is a locate+read loop (read the def, read a window at up to 3 call
+sites, locate+read up to 3 callees) — codeq does it in one call.
+
+Result across 25 repos / 12 tasks: **5.2x fewer tokens, 5x fewer tool calls** (300 vs
+1519). `explore` itself: 25 vs 243 calls (~10x fewer) — the codegraph "fewer tool calls"
+story, only sharper. Crucially the harness also reports where codeq *doesn't* win: `api`
+0.3x (returns complete signatures vs a decl grep's first-lines), imports 0.9x, references
+1.1x (near parity with rg). Publishing the losses is the credibility move codegraph's
+all-green table skips. Numbers went into the README Benchmarks table; reproduce with
+`python3 bench/completion.py`. Lesson: a benchmark that admits its near-parity and losing
+cases is more persuasive than one that doesn't.

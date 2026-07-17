@@ -59,6 +59,39 @@ heuristics (`--resolved`, `--calls`, `--on`) to cut false positives. Half-right 
 would produce the untrustworthy results that send an agent back to grep, so codeq stops at
 facts it can stand behind.
 
+## Benchmarks
+
+How much does codeq actually save an agent? `bench/completion.py` runs, for each of a
+dozen realistic tasks, the exact tool sequence a competent agent would use to reach the
+same answer with generic tools (ripgrep to locate, then read a ~60-line window, never a
+strawman), and sums what the agent pays: tokens ingested (output bytes over 4) and tool
+calls. Across a corpus of 25 real open-source repositories, pinned by tag and spanning
+every supported language:
+
+| Task | codeq tokens | generic tokens | saving | codeq calls | generic calls |
+| --- | --: | --: | --: | --: | --: |
+| explore a symbol (def + callers + callees, with source) | 107k | 161k | 1.5x | 25 | 243 |
+| understand a symbol before editing (`about`) | 16k | 70k | 4.3x | 25 | 99 |
+| read a function's body (`read --symbol`) | 9k | 35k | 3.9x | 25 | 50 |
+| who calls it, with context (`callers`) | 3k | 43k | 13.9x | 25 | 66 |
+| 2-hop blast radius (`callers --depth 2`) | 53k | 194k | 3.7x | 25 | 155 |
+| which tests exercise it (`tests`) | 2k | 27k | 15.0x | 25 | 72 |
+| a file's dead code (`unused`) | 18k | 1144k | 64.2x | 25 | 436 |
+| learn a file's structure (`outline`) | 75k | 751k | 10.0x | 25 | 25 |
+| a file's public API (`api`) | 80k | 25k | 0.3x | 25 | 25 |
+| a package's public API (`api <dir>`) | 378k | 1581k | 4.2x | 25 | 284 |
+| all references (`references`) | 38k | 40k | 1.1x | 25 | 25 |
+| a file's imports (`imports`) | 9k | 8k | 0.9x | 25 | 39 |
+| **all 12 tasks** | **788k** | **4.08M** | **5.2x** | **300** | **1519** |
+
+Completing these tasks costs a generic-tool agent **5.2x the tokens and 5x the tool calls**.
+The `explore` win is mostly in round-trips: one call instead of about ten. codeq is not
+ahead everywhere, and the harness is built to say so: on plain reference search and
+single-line imports it is near parity with ripgrep, and `api` deliberately "loses" on
+tokens because it returns complete signatures with visibility where a declaration grep
+returns incomplete first-lines. Reproduce with `python3 bench/completion.py`; each run is
+written to `bench/results/` (committed, so the trend lives in git).
+
 ## Commands
 
 Run any command inside a repo. Default output is compact text (`path:line:col: payload`,

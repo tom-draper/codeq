@@ -177,6 +177,47 @@ def codeq_caller_syms(path, S):
     return out
 
 
+def codeq_callee_syms(path, S):
+    """The distinct definitions S calls (codeq's ground truth) — the neighbours an
+    agent must locate and read to understand S the way `explore` presents it."""
+    p = subprocess.run([CODEQ, "--json", "callees", S], cwd=path, capture_output=True).stdout
+    try:
+        rows = json.loads(p)["data"]
+    except (ValueError, KeyError):
+        return []
+    seen, out = set(), []
+    for r in rows:
+        n = r.get("name")
+        if n and n != S and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def base_explore(path, S, F, m):
+    """Understand a symbol AND its neighbourhood with source — what `explore`
+    returns in one call: the definition, its callers, and its callees, each with
+    code. The generic way is a locate+read loop: read the def, read a window at up
+    to 3 call sites, and locate+read up to 3 of the callees. codeq does it once."""
+    ms, rloc = run(["rg", "-nw", "--no-heading", "--no-messages", "-m", "1", S], path)
+    c, b, t = measure(windows(first_hits(rloc, 1)), path)
+    calls, nbytes, tms = 1 + c, len(rloc) + b, ms + t
+    # callers: grep call sites, read a window at up to 3 to see the calling code.
+    ms2, rcall = run(["rg", "-n", "--no-heading", "--no-messages", rf"{S}\("], path)
+    c2, b2, t2 = measure(windows(first_hits(rcall, 3)), path)
+    calls += 1 + c2
+    nbytes += len(rcall) + b2
+    tms += ms2 + t2
+    # callees: reach codeq's callee set, locate+read up to 3 of them.
+    for name in codeq_callee_syms(path, S)[:3]:
+        ms3, rc = run(["rg", "-nw", "--no-heading", "--no-messages", "-m", "1", name], path)
+        cc, bb, tt = measure(windows(first_hits(rc, 1)), path)
+        calls += 1 + cc
+        nbytes += len(rc) + bb
+        tms += ms3 + tt
+    return calls, nbytes, tms
+
+
 def base_blast_radius(path, S, F, m):
     """Two-hop blast radius the honest generic way: grep S's call sites and read a
     window at each to learn the enclosing callers (hop 1), then grep each of those
@@ -240,6 +281,8 @@ TASKS = [
      base_locate_read,  "read a function's body"),
     ("understand-sym",  lambda S, F, m: [CODEQ, "about", S],
      base_understand,   "def + callers + callees before editing"),
+    ("explore",         lambda S, F, m: [CODEQ, "explore", S, "--max-tokens", "8000"],
+     base_explore,      "def + callers + callees WITH source, one call vs a grep+read loop"),
     ("callsites",       lambda S, F, m: [CODEQ, "callers", S],
      base_callsites,    "who calls it, with context"),
     ("blast-radius",    lambda S, F, m: [CODEQ, "callers", S, "--depth", "2"],
