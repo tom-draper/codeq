@@ -16,7 +16,8 @@ use rusqlite::Connection;
 // v12: added Bash/Lua/Scala/Kotlin/Swift extraction (and remapped .sh from the
 // non-extracted "shell" label to "bash"), so existing indexes must rebuild to
 // populate facts/spans for these files.
-pub const SCHEMA_VERSION: i64 = 12;
+// v13: added Dart/Zig/Elixir/Solidity extraction — rebuild to populate them.
+pub const SCHEMA_VERSION: i64 = 13;
 
 pub struct Db {
     pub conn: Connection,

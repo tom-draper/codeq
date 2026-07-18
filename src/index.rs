@@ -492,6 +492,10 @@ pub fn language_for(path: &str) -> Option<&'static str> {
         "scala" | "sc" => "scala",
         "kt" | "kts" => "kotlin",
         "swift" => "swift",
+        "dart" => "dart",
+        "zig" => "zig",
+        "ex" | "exs" => "elixir",
+        "sol" => "solidity",
         _ => return None,
     };
     Some(lang)

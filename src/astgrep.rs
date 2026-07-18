@@ -59,6 +59,10 @@ pub fn ts_language(name: &str) -> Option<tree_sitter::Language> {
         "scala" => tree_sitter_scala::LANGUAGE.into(),
         "kotlin" => tree_sitter_kotlin_ng::LANGUAGE.into(),
         "swift" => tree_sitter_swift::LANGUAGE.into(),
+        "dart" => tree_sitter_dart::LANGUAGE.into(),
+        "zig" => tree_sitter_zig::LANGUAGE.into(),
+        "elixir" => tree_sitter_elixir::LANGUAGE.into(),
+        "solidity" => tree_sitter_solidity::LANGUAGE.into(),
         _ => return None,
     })
 }

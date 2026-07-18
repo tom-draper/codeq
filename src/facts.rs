@@ -92,6 +92,10 @@ pub struct Extractor {
     scala: LangSpec,
     kotlin: LangSpec,
     swift: LangSpec,
+    dart: LangSpec,
+    zig: LangSpec,
+    elixir: LangSpec,
+    solidity: LangSpec,
 }
 
 struct LangSpec {
@@ -217,9 +221,17 @@ impl LangSpec {
                     }
                 }
                 if let Some(g) = guard {
-                    if !matches!(g, "require" | "require_relative"
-                        | "require_dependency" | "load" | "autoload")
-                    {
+                    // A guarded match is only valid when the token is a known
+                    // keyword. Elixir definitions are macro calls (`def`/`defp`/
+                    // `defmodule`); every other language guards call-style imports.
+                    let ok = if self.lang == "elixir" {
+                        matches!(g, "def" | "defp" | "defmacro" | "defmacrop"
+                            | "defmodule" | "defprotocol" | "defimpl" | "defguard")
+                    } else {
+                        matches!(g, "require" | "require_relative"
+                            | "require_dependency" | "load" | "autoload")
+                    };
+                    if !ok {
                         continue;
                     }
                 }
@@ -459,6 +471,38 @@ impl Extractor {
                 "treesitter/swift",
                 "swift",
             )?,
+            dart: LangSpec::new(
+                tree_sitter_dart::LANGUAGE.into(),
+                DART_QUERY,
+                DART_SPANS,
+                "",
+                "treesitter/dart",
+                "dart",
+            )?,
+            zig: LangSpec::new(
+                tree_sitter_zig::LANGUAGE.into(),
+                ZIG_QUERY,
+                ZIG_SPANS,
+                "",
+                "treesitter/zig",
+                "zig",
+            )?,
+            elixir: LangSpec::new(
+                tree_sitter_elixir::LANGUAGE.into(),
+                ELIXIR_QUERY,
+                ELIXIR_SPANS,
+                "",
+                "treesitter/elixir",
+                "elixir",
+            )?,
+            solidity: LangSpec::new(
+                tree_sitter_solidity::LANGUAGE.into(),
+                SOLIDITY_QUERY,
+                SOLIDITY_SPANS,
+                "",
+                "treesitter/solidity",
+                "solidity",
+            )?,
         })
     }
 
@@ -487,6 +531,10 @@ impl Extractor {
             "scala" => self.scala.extract(src),
             "kotlin" => self.kotlin.extract(src),
             "swift" => self.swift.extract(src),
+            "dart" => self.dart.extract(src),
+            "zig" => self.zig.extract(src),
+            "elixir" => self.elixir.extract(src),
+            "solidity" => self.solidity.extract(src),
             _ => (Vec::new(), Vec::new(), Vec::new()),
         }
     }
@@ -515,6 +563,10 @@ pub fn has_spans(language: &str) -> bool {
             | "scala"
             | "kotlin"
             | "swift"
+            | "dart"
+            | "zig"
+            | "elixir"
+            | "solidity"
     )
 }
 
@@ -1120,4 +1172,63 @@ const SWIFT_SPANS: &str = r#"
 (multiline_comment) @comment
 (line_string_literal) @string
 (multi_line_string_literal) @string
+"#;
+
+// Dart: top-level functions, methods, classes/mixins/enums, and imports.
+const DART_QUERY: &str = r#"
+(function_declaration signature: (function_signature name: (identifier) @name) body: (function_body) @body) @function
+(method_declaration (method_signature (function_signature name: (identifier) @name)) body: (function_body) @body) @method
+(class_declaration name: (identifier) @name body: (class_body) @body) @class
+(mixin_declaration name: (identifier) @name body: (class_body) @body) @class
+(enum_declaration name: (identifier) @name body: (_) @body) @enum
+(library_import (import_specification uri: (configurable_uri (uri (string_literal) @name)))) @import
+"#;
+const DART_SPANS: &str = r#"
+(comment) @comment
+(string_literal) @string
+"#;
+
+// Zig: functions, and the `const X = struct/enum/union {…}` type idiom.
+const ZIG_QUERY: &str = r#"
+(function_declaration name: (identifier) @name body: (block) @body) @function
+(variable_declaration (identifier) @name (struct_declaration)) @struct
+(variable_declaration (identifier) @name (enum_declaration)) @enum
+(variable_declaration (identifier) @name (union_declaration)) @union
+"#;
+const ZIG_SPANS: &str = r#"
+(comment) @comment
+(string) @string
+"#;
+
+// Solidity: contracts/interfaces/libraries, functions, modifiers, structs, enums,
+// events, and imports.
+const SOLIDITY_QUERY: &str = r#"
+(contract_declaration name: (identifier) @name body: (contract_body) @body) @class
+(interface_declaration name: (identifier) @name body: (contract_body) @body) @interface
+(library_declaration name: (identifier) @name body: (contract_body) @body) @class
+(function_definition name: (identifier) @name body: (_) @body) @function
+(function_definition name: (identifier) @name !body) @function
+(modifier_definition name: (identifier) @name) @function
+(struct_declaration name: (identifier) @name) @struct
+(enum_declaration name: (identifier) @name) @enum
+(event_definition name: (identifier) @name) @type
+(import_directive source: (string) @name) @import
+"#;
+const SOLIDITY_SPANS: &str = r#"
+(comment) @comment
+(string) @string
+"#;
+
+// Elixir: modules and functions. These are macro `call`s (`defmodule`/`def`/
+// `defp`), so the `def*` keyword is captured as a `@guard` that `extract` filters
+// on (an ordinary call like `import Foo` is rejected). `defmodule` names an
+// `alias`; `def`/`defp` name the inner call's (or bare) identifier.
+const ELIXIR_QUERY: &str = r#"
+(call target: (identifier) @guard (arguments (alias) @name)) @module
+(call target: (identifier) @guard (arguments (call target: (identifier) @name))) @function
+(call target: (identifier) @guard (arguments (identifier) @name)) @function
+"#;
+const ELIXIR_SPANS: &str = r#"
+(comment) @comment
+(string) @string
 "#;

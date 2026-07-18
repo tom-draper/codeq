@@ -1275,3 +1275,27 @@ have real import statements; Bash/Lua use call-style includes, skipped). Relatio
 outline, callers/callees, read-fold, search + enclosing symbol, `--in` span classification,
 explore. 149 tests (+1), differential search 2250/2250 (invariant unaffected), textmode
 ALL PASS.
+
+## Four more languages: Dart, Zig, Elixir, Solidity (21 total)
+
+Extraction now spans 21 languages. Dart and Solidity were routine (clean `class`/
+`contract` + `function` nodes with name fields). Two were interesting:
+
+- **Zig** binds types as constants — `const Point = struct {…}` is a `variable_declaration`
+  whose value is a `struct_declaration`, not a named type node. Captured via
+  `(variable_declaration (identifier) @name (struct_declaration)) @struct` (+ enum/union).
+  Functions are clean. Imports (`@import` builtin calls) skipped, like Bash/Lua.
+- **Elixir has no def syntax** — `defmodule`/`def`/`defp` are all macro `call` nodes. Reused
+  the `@guard` mechanism built for Ruby's `require` (a call, not a keyword) and made its
+  keyword allow-list language-aware: for Elixir it accepts the `def*` family, so
+  `defmodule Foo`/`def bar` extract as module/function while an ordinary `import Foo` call is
+  rejected. The call graph resolves across it (`callees` on an Elixir function finds what it
+  calls). Def bodies aren't folded (no body field on the macro call), like Ruby.
+
+Following the last batch's lesson, I dumped real parse trees first (throwaway `tsdump` bin,
+deleted after) rather than trusting node-types.json. Honest v1 limits: relations
+(implementors/supertypes) empty for all four; Elixir imports (`alias`/`import`/`use`)
+skipped; astgrep on Zig is finicky because a bare call isn't valid top-level Zig so the
+metavar pattern won't parse (inherent astgrep limit, grammar is wired). Verified end to end:
+outline, callers/callees, read, search + enclosing symbol, `--in` spans, imports (Dart/
+Solidity). Schema 12 -> 13. 150 tests (+1), differential search 2250/2250, textmode ALL PASS.

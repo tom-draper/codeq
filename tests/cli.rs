@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 12);
+    assert_eq!(v["index"]["schema"], 13);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -970,6 +970,33 @@ fn extracts_definitions_for_added_languages() {
     f.write("b.swift", "import Foundation\nfunc go() {}\n");
     let imports = field_set(&f.run(&["imports", "b.swift"]), "module");
     assert!(imports.contains(&"Foundation".to_string()), "{imports:?}");
+}
+
+#[test]
+fn extracts_definitions_for_dart_zig_elixir_solidity() {
+    let f = Fixture::new();
+    f.write("w.dart", "class Widget {\n  int render(String s) => s.length;\n}\nint topLevel(int n) => n * 2;\n");
+    f.write("m.zig", "pub fn compute(a: i32, b: i32) i32 { return a + b; }\nconst Point = struct { x: i32 };\n");
+    f.write("app.ex", "defmodule Math do\n  def run(a, b) do\n    helper(a) + b\n  end\n  defp helper(x), do: x\nend\n");
+    f.write("W.sol", "contract Wallet {\n  function deposit(uint amt) public {}\n}\n");
+
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    for want in [
+        "Widget", "render", "topLevel", "compute", "Point",
+        "Math", "run", "helper", "Wallet", "deposit",
+    ] {
+        assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
+    }
+
+    // Elixir's def is a macro call, yet the call graph still resolves: Math.run
+    // calls helper.
+    let callees = field_set(&f.run(&["callees", "run", "--path", "app.ex"]), "name");
+    assert!(callees.contains(&"helper".to_string()), "{callees:?}");
+
+    // Solidity imports are real statements and are captured.
+    f.write("I.sol", "import \"./Token.sol\";\ncontract C {}\n");
+    let imports = field_set(&f.run(&["imports", "I.sol"]), "module");
+    assert!(imports.contains(&"./Token.sol".to_string()), "{imports:?}");
 }
 
 #[test]
