@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 15);
+    assert_eq!(v["index"]["schema"], 16);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -3977,8 +3977,10 @@ fn capabilities_reports_per_language_support() {
     assert_eq!(get("rust")["relations"], true);
     assert_eq!(get("go")["relations"], false, "Go is structurally typed");
     assert_eq!(get("c")["relations"], false, "C has no inheritance");
-    assert_eq!(get("ruby")["members"], false, "attr_accessor is a method call");
-    assert_eq!(get("bash")["imports"], false);
+    assert_eq!(get("ruby")["members"], true, "attr_accessor, read via a guard");
+    assert_eq!(get("bash")["imports"], true, "source ./lib.sh");
+    assert_eq!(get("zig")["relations"], false, "Zig has no inheritance");
+    assert_eq!(get("elixir")["members"], false, "no field declarations");
     assert_eq!(get("markdown")["definitions"], true, "headings");
     assert_eq!(get("markdown")["calls"], false);
     for lang in ["rust", "python", "go", "markdown"] {
@@ -4066,4 +4068,89 @@ fn api_diff_reports_the_exported_surface_only() {
     for k in ["removed", "added", "changed"] {
         assert!(!names(k).iter().any(|n| n == "internal"), "{k} leaked a private fn");
     }
+}
+
+// ---------------------------------------------------------------------------
+// coverage gaps closed
+// ---------------------------------------------------------------------------
+
+/// Inheritance for the languages that have it but codeq did not read. Each
+/// pattern was written against a dumped parse tree.
+#[test]
+fn relations_extracted_for_the_remaining_languages() {
+    let cases: &[(&str, &str)] = &[
+        ("a.scala", "class A extends B with C\n"),
+        ("a.kt", "class A : B(), C\n"),
+        ("a.swift", "class A: B, C {}\n"),
+        ("a.dart", "class A extends B implements C {}\n"),
+        ("a.sol", "contract A is B, C {}\n"),
+    ];
+    for (file, src) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let subs = field_set(&f.run(&["implementors", "B"]), "subtype");
+        assert_eq!(subs, ["A"], "{file}: A derives from B");
+        let supers = field_set(&f.run(&["supertypes", "A"]), "supertype");
+        assert!(supers.iter().any(|s| s == "B"), "{file}: {supers:?}");
+        assert!(supers.iter().any(|s| s == "C"), "{file}: {supers:?}");
+    }
+
+    // Dart is the one that distinguishes the two, so it must not flatten them.
+    let f = Fixture::new();
+    f.write("a.dart", "class A extends B implements C {}\n");
+    let rel = |name: &str| -> String {
+        f.run(&["implementors", name])["data"][0]["relation"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(rel("B"), "extends");
+    assert_eq!(rel("C"), "implements");
+}
+
+/// Imports expressed as calls rather than syntax, which is why they were missed.
+#[test]
+fn call_style_imports_are_extracted() {
+    let cases: &[(&str, &str, &str)] = &[
+        ("a.zig", "const std = @import(\"std\");\n", "std"),
+        ("a.lua", "local m = require(\"mod\")\n", "mod"),
+        ("a.sh", "source ./lib.sh\n", "./lib.sh"),
+        ("a.ex", "defmodule M do\n  alias Foo.Bar\nend\n", "Foo.Bar"),
+    ];
+    for (file, src, want) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let mods = field_set(&f.run(&["imports"]), "module");
+        assert!(mods.iter().any(|m| m == want), "{file}: {mods:?}");
+    }
+}
+
+/// Elixir spells a definition and an import the same way — both are macro calls —
+/// so the keyword has to be checked against what the match claims to be.
+#[test]
+fn elixir_tells_a_definition_from_an_import() {
+    let f = Fixture::new();
+    f.write("a.ex", "defmodule M do\n  alias Foo.Bar\n  def run do\n    :ok\n  end\nend\n");
+
+    let mods = field_set(&f.run(&["imports"]), "module");
+    assert_eq!(mods, ["Foo.Bar"], "defmodule defines, it does not import: {mods:?}");
+    let defs = field_set(&f.run(&["symbols"]), "name");
+    assert!(defs.iter().any(|d| d == "M"), "the module is a definition: {defs:?}");
+    assert!(defs.iter().any(|d| d == "run"));
+}
+
+/// Ruby declares fields through a method call, so `attr_accessor` needed the same
+/// guard mechanism as `require` — and the leading `:` is symbol syntax, not part
+/// of the field's name.
+#[test]
+fn ruby_attr_accessors_are_fields() {
+    let f = Fixture::new();
+    f.write("a.rb", "class C\n  attr_accessor :a, :b\n  attr_reader :c\n  def m; end\nend\n");
+
+    let mut fields = field_set(&f.run(&["members", "C", "--kind", "field"]), "name");
+    fields.sort();
+    assert_eq!(fields, ["a", "b", "c"], "no leading colons");
+    // Requires still work; the two share the call shape.
+    f.write("b.rb", "require 'json'\n");
+    assert!(field_set(&f.run(&["imports"]), "module").iter().any(|m| m == "json"));
 }

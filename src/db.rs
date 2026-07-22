@@ -21,7 +21,9 @@ use rusqlite::Connection;
 // declare them, so existing indexes must rebuild to populate members.
 // v15: added markdown extraction (`heading` facts, code-fence/prose spans, and
 // local link/image targets as imports) — rebuild to populate them.
-pub const SCHEMA_VERSION: i64 = 15;
+// v16: relations for Scala/Kotlin/Swift/Dart/Solidity, imports for Zig/Elixir/
+// Lua/Bash, and Ruby attr_* fields — rebuild to populate them.
+pub const SCHEMA_VERSION: i64 = 16;
 
 pub struct Db {
     pub conn: Connection,

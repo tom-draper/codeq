@@ -4,6 +4,55 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 34: filling the coverage gaps the matrix exposed
+
+Session 33's support matrix made the holes legible, which made them worth
+closing. Relations went from 12 languages to 17, imports from 17 to 21, and Ruby
+gained fields.
+
+- **Relations for Scala, Kotlin, Swift, Dart, Solidity.** Each has inheritance
+  syntax codeq simply never read. Dart is the only one of the five that
+  distinguishes `extends` from `implements`; Kotlin and Swift do not separate a
+  base class from an interface syntactically, so both report `extends`, which is
+  what the source actually says.
+- **Imports for Zig, Elixir, Lua, Bash.** All four express imports as *calls*
+  (`@import("std")`, `alias Foo.Bar`, `require("mod")`, `source ./lib.sh`), which
+  is exactly why they were missed: the existing patterns look for import syntax.
+  Reused the `@guard` mechanism built for Ruby's `require`.
+- **Ruby `attr_accessor :a, :b` as fields**, same mechanism again.
+
+Two bugs worth recording, both caught in seconds rather than shipped:
+
+**The guard allow-list was language-wide, not per-pattern.** In Elixir
+`defmodule M` and `alias M` are the *same shape* of call — a macro call with an
+alias argument — and only the keyword distinguishes them. With one list per
+language, `defmodule M` was extracted as an import *of* M. The fix is to check the
+keyword against what the match claims to be (`kind == "import"` or not), which is
+the honest formulation anyway: the keyword is what makes it an import.
+
+**I used the wrong capture convention for relations** and got silence rather than
+an error — five queries that compiled fine and matched nothing. The existing
+convention is `@sub` on the subtype and `@extends`/`@implements` on the
+*supertype node*; I wrote `@subtype`/`@supertype` with the relation on the whole
+match. Nothing failed, there were just no relations. A reminder that a query
+compiling is not evidence it matches.
+
+The up-front extractor validation from session 25 paid for itself again: a bad
+field name in the Elixir pattern surfaced as `Invalid field name "arguments"`
+instead of an index that silently came back empty.
+
+Also of note: `capabilities_reports_per_language_support` failed, correctly. It
+asserted `ruby.members == false` and `bash.imports == false`, which had just
+stopped being true. A test that breaks when the tool gets better is the test
+working.
+
+Remaining gaps are genuine language facts, not omissions: Go (structural typing),
+C and Zig have no inheritance; Bash, Lua and Elixir declare no fields. The matrix
+reports those as absent and the empty-result note explains them.
+
+Schema 15 -> 16. 199 tests (+4, 1 updated). differential 4185/4185, textmode ALL
+PASS.
+
 ## 2026-07-22 - session 33: making codeq's own limits queryable
 
 Three capabilities, and the first came out of a bug in the second-to-last commit.

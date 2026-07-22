@@ -225,15 +225,32 @@ impl LangSpec {
                     }
                 }
                 if let Some(g) = guard {
+                    let is_import = kind == Some("import");
                     // A guarded match is only valid when the token is a known
                     // keyword. Elixir definitions are macro calls (`def`/`defp`/
                     // `defmodule`); every other language guards call-style imports.
-                    let ok = if self.lang == "elixir" {
-                        matches!(g, "def" | "defp" | "defmacro" | "defmacrop"
-                            | "defmodule" | "defprotocol" | "defimpl" | "defguard")
-                    } else {
-                        matches!(g, "require" | "require_relative"
-                            | "require_dependency" | "load" | "autoload")
+                    // The allow-list depends on what the match claims to be, not
+                    // just the language: in Elixir `defmodule M` and `alias M`
+                    // are the same shape of call, and only the keyword says
+                    // whether it defines a module or imports one. Checking the
+                    // keyword against the *kind* keeps them apart.
+                    let ok = match (self.lang, is_import) {
+                        ("elixir", false) => matches!(g, "def" | "defp" | "defmacro"
+                            | "defmacrop" | "defmodule" | "defprotocol" | "defimpl"
+                            | "defguard"),
+                        ("elixir", true) => matches!(g, "alias" | "import" | "use" | "require"),
+                        ("bash", _) => matches!(g, "source" | "."),
+                        ("lua", _) => matches!(g, "require" | "dofile" | "loadfile"),
+                        ("zig", _) => matches!(g, "@import" | "@cImport"),
+                        // Ruby uses method calls for both requires and field
+                        // declarations; the callee name says which.
+                        ("ruby", true) => matches!(g, "require" | "require_relative"
+                            | "require_dependency" | "load" | "autoload"),
+                        ("ruby", false) => {
+                            matches!(g, "attr_accessor" | "attr_reader" | "attr_writer")
+                        }
+                        _ => matches!(g, "require" | "require_relative"
+                            | "require_dependency" | "load" | "autoload"),
                     };
                     if !ok {
                         continue;
@@ -245,6 +262,10 @@ impl LangSpec {
                     let name = if kind == "import" {
                         name.trim_matches(|c: char| "\"'`<>".contains(c))
                             .to_string()
+                    } else if kind == "field" {
+                        // A Ruby `attr_accessor :a` declares the field `a`; the
+                        // colon is symbol syntax, not part of the name.
+                        name.trim_start_matches(':').to_string()
                     } else {
                         name
                     };
@@ -455,7 +476,7 @@ impl Extractor {
                 tree_sitter_scala::LANGUAGE.into(),
                 SCALA_QUERY,
                 SCALA_SPANS,
-                "",
+                SCALA_REL,
                 "treesitter/scala",
                 "scala",
             )?,
@@ -463,7 +484,7 @@ impl Extractor {
                 tree_sitter_kotlin_ng::LANGUAGE.into(),
                 KOTLIN_QUERY,
                 KOTLIN_SPANS,
-                "",
+                KOTLIN_REL,
                 "treesitter/kotlin",
                 "kotlin",
             )?,
@@ -471,7 +492,7 @@ impl Extractor {
                 tree_sitter_swift::LANGUAGE.into(),
                 SWIFT_QUERY,
                 SWIFT_SPANS,
-                "",
+                SWIFT_REL,
                 "treesitter/swift",
                 "swift",
             )?,
@@ -479,7 +500,7 @@ impl Extractor {
                 tree_sitter_dart::LANGUAGE.into(),
                 DART_QUERY,
                 DART_SPANS,
-                "",
+                DART_REL,
                 "treesitter/dart",
                 "dart",
             )?,
@@ -503,7 +524,7 @@ impl Extractor {
                 tree_sitter_solidity::LANGUAGE.into(),
                 SOLIDITY_QUERY,
                 SOLIDITY_SPANS,
-                "",
+                SOLIDITY_REL,
                 "treesitter/solidity",
                 "solidity",
             )?,
@@ -904,13 +925,13 @@ fn queries_for(language: &str) -> Option<(String, String)> {
         "php" => pair(PHP_QUERY, PHP_REL),
         "bash" => pair(BASH_QUERY, ""),
         "lua" => pair(LUA_QUERY, ""),
-        "scala" => pair(SCALA_QUERY, ""),
-        "kotlin" => pair(KOTLIN_QUERY, ""),
-        "swift" => pair(SWIFT_QUERY, ""),
-        "dart" => pair(DART_QUERY, ""),
+        "scala" => pair(SCALA_QUERY, SCALA_REL),
+        "kotlin" => pair(KOTLIN_QUERY, KOTLIN_REL),
+        "swift" => pair(SWIFT_QUERY, SWIFT_REL),
+        "dart" => pair(DART_QUERY, DART_REL),
         "zig" => pair(ZIG_QUERY, ""),
         "elixir" => pair(ELIXIR_QUERY, ""),
-        "solidity" => pair(SOLIDITY_QUERY, ""),
+        "solidity" => pair(SOLIDITY_QUERY, SOLIDITY_REL),
         _ => None,
     }
 }
@@ -1316,6 +1337,12 @@ const RUBY_QUERY: &str = r#"
 (call
   method: (identifier) @guard
   arguments: (argument_list . (string (string_content) @name))) @import
+
+; `attr_accessor :a, :b` — Ruby declares fields through a method call, so each
+; symbol argument becomes a field. Guarded on the attr_* family.
+(call
+  method: (identifier) @guard
+  arguments: (argument_list (simple_symbol) @name)) @field
 "#;
 
 const RUBY_SPANS: &str = r#"
@@ -1539,6 +1566,11 @@ const PHP_REL: &str = r#"
 
 // Bash: functions only (source/. includes are plain commands, not captured).
 const BASH_QUERY: &str = r#"
+; `source ./lib.sh` and `. ./lib.sh` — a command, guarded on its name.
+(command
+  name: (command_name (word) @guard)
+  argument: (word) @name) @import
+
 (function_definition name: (word) @name body: (_) @body) @function
 "#;
 const BASH_SPANS: &str = r#"
@@ -1555,6 +1587,12 @@ const LUA_QUERY: &str = r#"
 (function_declaration name: (identifier) @name body: (block) @body) @function
 (function_declaration name: (dot_index_expression) @name body: (block) @body) @function
 (function_declaration name: (method_index_expression) @name body: (block) @body) @method
+
+; `require("mod")` is a call, not syntax, so it is guarded on the callee name the
+; same way Ruby's `require` is.
+(function_call
+  name: (identifier) @guard
+  arguments: (arguments . (string (string_content) @name))) @import
 "#;
 const LUA_SPANS: &str = r#"
 (comment) @comment
@@ -1562,6 +1600,16 @@ const LUA_SPANS: &str = r#"
 "#;
 
 // Scala: defs, classes/objects/traits/enums, type aliases, and imports.
+const SCALA_REL: &str = r#"
+; `class A extends B with C` — the extends clause lists every ancestor.
+(class_definition name: (identifier) @sub
+  (extends_clause (type_identifier) @extends))
+(trait_definition name: (identifier) @sub
+  (extends_clause (type_identifier) @extends))
+(object_definition name: (identifier) @sub
+  (extends_clause (type_identifier) @extends))
+"#;
+
 const SCALA_QUERY: &str = r#"
 (function_definition name: (identifier) @name body: (_) @body) @function
 (function_definition name: (identifier) @name !body) @function
@@ -1589,6 +1637,17 @@ const SCALA_SPANS: &str = r#"
 
 // Kotlin: classes/objects/functions and imports. The grammar exposes no body
 // field, so signatures are the (capped) declaration, like Ruby.
+const KOTLIN_REL: &str = r#"
+; `class A : B(), C` — a delegation specifier is a base class or interface;
+; Kotlin does not distinguish them syntactically, so both read as `extends`.
+(class_declaration name: (identifier) @sub
+  (delegation_specifiers (delegation_specifier
+    (constructor_invocation (user_type (identifier) @extends)))))
+(class_declaration name: (identifier) @sub
+  (delegation_specifiers (delegation_specifier
+    (user_type (identifier) @extends))))
+"#;
+
 const KOTLIN_QUERY: &str = r#"
 (class_declaration name: (_) @name) @class
 (object_declaration name: (_) @name) @class
@@ -1607,6 +1666,12 @@ const KOTLIN_SPANS: &str = r#"
 // Swift: functions, class/struct/enum/actor (all `class_declaration`), protocols,
 // and imports. `name:` is pinned to the identifier node because a
 // `function_declaration` also exposes its return type under a `name` field.
+const SWIFT_REL: &str = r#"
+; `class A: B, C` — a base class and a protocol look the same here.
+(class_declaration name: (type_identifier) @sub
+  (inheritance_specifier (user_type (type_identifier) @extends)))
+"#;
+
 const SWIFT_QUERY: &str = r#"
 (function_declaration name: (simple_identifier) @name body: (function_body) @body) @function
 (function_declaration name: (simple_identifier) @name !body) @function
@@ -1627,6 +1692,14 @@ const SWIFT_SPANS: &str = r#"
 "#;
 
 // Dart: top-level functions, methods, classes/mixins/enums, and imports.
+const DART_REL: &str = r#"
+; `class A extends B implements C` — the two *are* distinguishable.
+(class_declaration name: (identifier) @sub
+  (superclass (type (type_identifier) @extends)))
+(class_declaration name: (identifier) @sub
+  (interfaces (type (type_identifier) @implements)))
+"#;
+
 const DART_QUERY: &str = r#"
 (function_declaration signature: (function_signature name: (identifier) @name) body: (function_body) @body) @function
 (method_declaration (method_signature (function_signature name: (identifier) @name)) body: (function_body) @body) @method
@@ -1644,6 +1717,11 @@ const DART_SPANS: &str = r#"
 
 // Zig: functions, and the `const X = struct/enum/union {…}` type idiom.
 const ZIG_QUERY: &str = r#"
+; `@import("std")` — a builtin call, guarded on the builtin's name.
+(builtin_function
+  (builtin_identifier) @guard
+  (arguments (string (string_content) @name))) @import
+
 (function_declaration name: (identifier) @name body: (block) @body) @function
 (variable_declaration (identifier) @name (struct_declaration)) @struct
 (variable_declaration (identifier) @name (enum_declaration)) @enum
@@ -1658,6 +1736,12 @@ const ZIG_SPANS: &str = r#"
 
 // Solidity: contracts/interfaces/libraries, functions, modifiers, structs, enums,
 // events, and imports.
+const SOLIDITY_REL: &str = r#"
+; `contract A is B, C` — Solidity has no separate implements form.
+(contract_declaration name: (identifier) @sub
+  (inheritance_specifier (user_defined_type (identifier) @extends)))
+"#;
+
 const SOLIDITY_QUERY: &str = r#"
 (contract_declaration name: (identifier) @name body: (contract_body) @body) @class
 (interface_declaration name: (identifier) @name body: (contract_body) @body) @interface
@@ -1685,6 +1769,9 @@ const SOLIDITY_SPANS: &str = r#"
 // on (an ordinary call like `import Foo` is rejected). `defmodule` names an
 // `alias`; `def`/`defp` name the inner call's (or bare) identifier.
 const ELIXIR_QUERY: &str = r#"
+; `alias Foo.Bar`, `import Baz`, `use Mod` — macro calls, like the def* family.
+(call target: (identifier) @guard (arguments (alias) @name)) @import
+
 (call target: (identifier) @guard (arguments (alias) @name)) @module
 (call target: (identifier) @guard (arguments (call target: (identifier) @name))) @function
 (call target: (identifier) @guard (arguments (identifier) @name)) @function

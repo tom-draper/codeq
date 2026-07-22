@@ -97,11 +97,14 @@ benchmarks — not as a step you run before querying.
     where FROM calls … calls TO, shown step by step (empty if unreachable within
     `--max-depth`, default 8). Reachability *with the route*, vs `callees --depth`
     which only says whether/at what depth.
-- **Who implements / extends a type:** `codeq implementors NAME` — the types that
-  `impl T for X` (Rust), `extends`/`implements` (Java/TS/PHP/C#/C++), subclass
-  (`class X(Base)` Python, `class X < Y` Ruby). The inheritance edges the call
-  graph misses; `--relation implements|extends` to filter. Go (structural) / C
-  have none; name-based like the other graph commands.
+- **Who implements / extends a type:** `codeq implementors NAME` — the inheritance
+  edges the call graph misses, across 17 languages (`impl T for X` in Rust,
+  `extends`/`implements` in Java/TS/PHP/C#/C++/Dart, `class X : B` in
+  Kotlin/Swift, `extends ... with` in Scala, `contract A is B` in Solidity,
+  `class X(Base)` in Python, `class X < Y` in Ruby). `--relation
+  implements|extends` to filter. Go (structural typing), C and Zig have no
+  inheritance at all — `capabilities.language_support` says which, and an empty
+  result there says so rather than implying none exist. Name-based.
   - **The reverse — what a type derives from:** `codeq supertypes NAME` — the
     traits / interfaces / base classes NAME extends or implements (as written at
     the declaration, not transitively resolved).
