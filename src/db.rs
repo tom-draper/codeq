@@ -17,7 +17,9 @@ use rusqlite::Connection;
 // non-extracted "shell" label to "bash"), so existing indexes must rebuild to
 // populate facts/spans for these files.
 // v13: added Dart/Zig/Elixir/Solidity extraction — rebuild to populate them.
-pub const SCHEMA_VERSION: i64 = 13;
+// v14: added member extraction (`field`/`variant` facts) for the languages that
+// declare them, so existing indexes must rebuild to populate members.
+pub const SCHEMA_VERSION: i64 = 14;
 
 pub struct Db {
     pub conn: Connection,

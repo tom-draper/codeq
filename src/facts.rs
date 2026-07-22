@@ -353,7 +353,7 @@ impl Extractor {
             )?,
             javascript: LangSpec::new(
                 tree_sitter_javascript::LANGUAGE.into(),
-                JS_QUERY,
+                &format!("{JS_QUERY}\n{JS_EXTRA}"),
                 JS_SPANS,
                 JS_REL,
                 "treesitter/javascript",
@@ -780,6 +780,10 @@ const RUST_QUERY: &str = r#"
 ; file-level dependency edge, so treat it as an import for reachability. Inline
 ; `mod foo { … }` (has a body) is not a separate file, so exclude it via `!body`.
 (mod_item name: (identifier) @name !body) @import
+; Members: struct/union fields and enum variants. Contained in their parent's
+; byte range, which is how `members` and `outline` recover the relationship.
+(field_declaration name: (field_identifier) @name) @field
+(enum_variant name: (identifier) @name) @variant
 "#;
 
 const PYTHON_QUERY: &str = r#"
@@ -802,6 +806,11 @@ const PYTHON_QUERY: &str = r#"
 ; module string (no specific name to qualify with).
 (import_from_statement module_name: (dotted_name) @name (wildcard_import)) @import
 (import_from_statement module_name: (relative_import) @name) @import
+; Class-level attributes: annotated (`a: int = 1`) or plain (`b = 2`). Scoped to
+; a class body so ordinary local assignments aren't members. Instance attributes
+; assigned in `__init__` (`self.x = …`) are not declarations and are not covered.
+(class_definition body: (block (expression_statement
+  (assignment left: (identifier) @name) @field)))
 "#;
 
 /// JavaScript definitions and ES imports. Node types here also exist in the
@@ -831,11 +840,25 @@ const JS_QUERY: &str = r#"
   arguments: (arguments . (string (string_fragment) @name))) @import
 "#;
 
+/// JavaScript-only definitions, appended to `JS_QUERY` for .js/.jsx.
+///
+/// A class field is `field_definition` in the JavaScript grammar but
+/// `public_field_definition` in TypeScript's, so it cannot live in the shared
+/// query: a node type absent from a grammar fails the whole query to compile.
+const JS_EXTRA: &str = r#"
+(field_definition property: (property_identifier) @name) @field
+(field_definition property: (private_property_identifier) @name) @field
+"#;
+
 /// TypeScript-only definitions, appended to `JS_QUERY` for TS and TSX.
 const TS_EXTRA: &str = r#"
 (interface_declaration name: (_) @name) @interface
 (type_alias_declaration name: (_) @name) @type
 (enum_declaration name: (_) @name) @enum
+; Typed class fields, interface properties, and enum members.
+(public_field_definition name: (property_identifier) @name) @field
+(property_signature name: (property_identifier) @name) @field
+(enum_assignment name: (property_identifier) @name) @variant
 "#;
 
 /// Go definitions and imports.
@@ -847,6 +870,8 @@ const GO_QUERY: &str = r#"
 (type_declaration (type_spec name: (type_identifier) @name type: (type_identifier)) @type)
 (type_declaration (type_alias name: (type_identifier) @name) @type)
 (import_spec path: (interpreted_string_literal) @name) @import
+; Struct fields. Embedded fields (no name) carry no identifier, so are skipped.
+(field_declaration name: (field_identifier) @name) @field
 "#;
 
 const GO_SPANS: &str = r#"
@@ -865,6 +890,9 @@ const JAVA_QUERY: &str = r#"
 (method_declaration name: (identifier) @name !body) @method
 (constructor_declaration name: (identifier) @name body: (constructor_body) @body) @method
 (import_declaration (scoped_identifier) @name) @import
+; Fields and enum constants.
+(field_declaration declarator: (variable_declarator name: (identifier) @name)) @field
+(enum_constant name: (identifier) @name) @variant
 "#;
 
 const JAVA_SPANS: &str = r#"
@@ -903,6 +931,10 @@ const C_QUERY: &str = r#"
 (enum_specifier name: (type_identifier) @name body: (enumerator_list) @body) @enum
 (preproc_include path: (system_lib_string) @name) @import
 (preproc_include path: (string_literal) @name) @import
+; Struct/union fields, including pointer declarators (`char *b`).
+(field_declaration declarator: (field_identifier) @name) @field
+(field_declaration declarator: (pointer_declarator declarator: (field_identifier) @name)) @field
+(enumerator name: (identifier) @name) @variant
 "#;
 
 const C_SPANS: &str = r#"
@@ -929,6 +961,9 @@ const CPP_QUERY: &str = r#"
 (namespace_definition name: (namespace_identifier) @name body: (declaration_list) @body) @namespace
 (preproc_include path: (system_lib_string) @name) @import
 (preproc_include path: (string_literal) @name) @import
+(field_declaration declarator: (field_identifier) @name) @field
+(field_declaration declarator: (pointer_declarator declarator: (field_identifier) @name)) @field
+(enumerator name: (identifier) @name) @variant
 "#;
 
 const CPP_SPANS: &str = r#"
@@ -950,6 +985,10 @@ const CSHARP_QUERY: &str = r#"
 (namespace_declaration name: (_) @name body: (_) @body) @namespace
 (using_directive (identifier) @name) @import
 (using_directive (qualified_name) @name) @import
+; Fields, auto/expression properties, and enum members.
+(field_declaration (variable_declaration (variable_declarator (identifier) @name))) @field
+(property_declaration name: (identifier) @name) @field
+(enum_member_declaration name: (identifier) @name) @variant
 "#;
 
 const CSHARP_SPANS: &str = r#"
@@ -974,6 +1013,9 @@ const PHP_QUERY: &str = r#"
 (require_once_expression [(string) (encapsed_string)] @name) @import
 (include_expression [(string) (encapsed_string)] @name) @import
 (include_once_expression [(string) (encapsed_string)] @name) @import
+; Typed and untyped properties, and enum cases.
+(property_declaration (property_element (variable_name (name) @name))) @field
+(enum_case name: (name) @name) @variant
 "#;
 
 const PHP_SPANS: &str = r#"
@@ -1132,6 +1174,10 @@ const SCALA_QUERY: &str = r#"
 (enum_definition name: (identifier) @name) @enum
 (type_definition name: (identifier) @name) @type
 (import_declaration path: (_) @name) @import
+; `val`/`var` members and case-class parameters (which are fields).
+(val_definition pattern: (identifier) @name) @field
+(var_definition pattern: (identifier) @name) @field
+(class_parameter name: (identifier) @name) @field
 "#;
 const SCALA_SPANS: &str = r#"
 (comment) @comment
@@ -1147,6 +1193,9 @@ const KOTLIN_QUERY: &str = r#"
 (object_declaration name: (_) @name) @class
 (function_declaration name: (_) @name) @function
 (import [(identifier) (qualified_identifier)] @name) @import
+; `val`/`var` properties and primary-constructor parameters.
+(property_declaration (variable_declaration (identifier) @name)) @field
+(class_parameter (identifier) @name) @field
 "#;
 const KOTLIN_SPANS: &str = r#"
 (line_comment) @comment
@@ -1166,6 +1215,8 @@ const SWIFT_QUERY: &str = r#"
 (protocol_declaration name: (type_identifier) @name body: (protocol_body) @body) @interface
 (protocol_declaration name: (type_identifier) @name !body) @interface
 (import_declaration (identifier) @name) @import
+; Stored properties (`var`/`let` in a type body).
+(property_declaration (pattern (simple_identifier) @name)) @field
 "#;
 const SWIFT_SPANS: &str = r#"
 (comment) @comment
@@ -1182,6 +1233,8 @@ const DART_QUERY: &str = r#"
 (mixin_declaration name: (identifier) @name body: (class_body) @body) @class
 (enum_declaration name: (identifier) @name body: (_) @body) @enum
 (library_import (import_specification uri: (configurable_uri (uri (string_literal) @name)))) @import
+; Instance/class fields.
+(declaration (initialized_identifier_list (initialized_identifier (identifier) @name))) @field
 "#;
 const DART_SPANS: &str = r#"
 (comment) @comment
@@ -1194,6 +1247,8 @@ const ZIG_QUERY: &str = r#"
 (variable_declaration (identifier) @name (struct_declaration)) @struct
 (variable_declaration (identifier) @name (enum_declaration)) @enum
 (variable_declaration (identifier) @name (union_declaration)) @union
+; Struct/union/enum members are all `container_field`.
+(container_field (identifier) @name) @field
 "#;
 const ZIG_SPANS: &str = r#"
 (comment) @comment
@@ -1213,6 +1268,11 @@ const SOLIDITY_QUERY: &str = r#"
 (enum_declaration name: (identifier) @name) @enum
 (event_definition name: (identifier) @name) @type
 (import_directive source: (string) @name) @import
+; Contract state variables, and enum values.
+(state_variable_declaration name: (identifier) @name) @field
+; A Solidity `enum_value` is itself the identifier leaf, not a wrapper, so the
+; name and the definition are the same node.
+(enum_value) @name @variant
 "#;
 const SOLIDITY_SPANS: &str = r#"
 (comment) @comment

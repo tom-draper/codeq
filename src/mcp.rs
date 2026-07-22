@@ -225,6 +225,13 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             optn(&mut args, a, "max_depth", "--max-depth");
             opt(&mut args, a, "path", "--path");
         }
+        "codeq_members" => {
+            args.push("members".into());
+            args.push(s(a, "name")?.into());
+            opt(&mut args, a, "path", "--path");
+            opt(&mut args, a, "kind", "--kind");
+            optn(&mut args, a, "limit", "--limit");
+        }
         "codeq_outline" => {
             args.push("outline".into());
             args.push(s(a, "file")?.into());
@@ -408,6 +415,9 @@ fn tools() -> Value {
         tool("codeq_path",
             "The shortest call chain from one symbol to another (from calls … calls to), if one exists — reachability with the route shown, e.g. how an entry point reaches a low-level function. Name-based; empty when unreachable within max_depth (default 8). path scopes the start symbol to matching files, to disambiguate a common/cross-language `from` like `main`.",
             json!({ "from": str_, "to": str_, "max_depth": num_, "path": str_ }), &["from", "to"]),
+        tool("codeq_members",
+            "What a type contains: its fields, enum variants, and methods, in source order. Use it to learn a struct/class/enum's shape before constructing or destructuring it, instead of reading the file. Unlike the call-graph commands this is structural, not name-based: a member is a definition nested directly inside the type's byte range, so there are no same-name false positives. kind filters to one of field/variant/method/function; path disambiguates a common type name. Languages that don't declare members (Ruby attr_accessor, Python self.x in __init__) return nothing rather than a guess, and in Rust a struct's methods live in a separate impl block so only its fields are returned.",
+            json!({ "name": str_, "path": str_, "kind": str_, "limit": int_ }), &["name"]),
         tool("codeq_outline",
             "The structure of a file top to bottom: its definitions with signatures and nesting depth.",
             json!({ "file": str_, "docs": bool_ }), &["file"]),

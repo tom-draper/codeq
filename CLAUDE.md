@@ -36,7 +36,18 @@ benchmarks — not as a step you run before querying.
   read-the-region → strip-prefixes dance. With `--symbol` it requires a single
   match (a clean anchor); scope with `--lines A-B` if a name is ambiguous.
 - **Understand a symbol before editing:** `codeq about NAME` (definition +
-  callers + callees, one call)
+  callers + callees + members, one call). Definition rows carry the symbol's own
+  doc comment as `  // <doc>`, so `about`/`definitions`/`explore` answer "what
+  does this do" without opening the file; `outline --docs` adds them per file.
+- **What a type contains:** `codeq members NAME` — its fields, enum variants and
+  methods, in source order (`--kind field|variant|function` to narrow). Read this
+  instead of opening the file to see a struct's shape. Unlike the other graph
+  commands it is **structural, not name-based**: a member is a definition nested
+  directly inside NAME's byte range, so there are no same-name false positives.
+  `about NAME` already includes it, so a struct's dossier is one call. Limits:
+  in Rust a struct's methods live in a separate `impl` block, so only fields come
+  back; Ruby (`attr_accessor`) and Python instance attributes (`self.x = …` in
+  `__init__`) aren't declarations, so they yield nothing rather than a guess.
 - **Learn a module's public API (how to call it):** `codeq api <path>` — only the
   *exported* definitions, with signatures, instead of reading whole files. "Public"
   is each language's own notion (Rust `pub`, JS/TS `export`, Go capitalization,
@@ -96,6 +107,11 @@ benchmarks — not as a step you run before querying.
 - **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
   - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
     templates. codeq's own SQL lives in string literals, so `--in code` finds none.
+  - **Piped input:** `CMD | codeq search PAT --stdin` scans the pipe instead of the
+    index, so codeq replaces grep in a pipeline too (no repo or index needed). Add
+    `--language rust` to also get `--in` and the enclosing `[symbol]` on each match.
+    `--stdin` is required — it is never inferred, so an open pipe can't hijack a
+    normal query.
 - **Structural (AST) search:** `codeq astgrep '$X.unwrap()' --language rust` — match
   syntax, not text. `$VAR`/`$_` = one node (repeated `$VAR` binds the same);
   `$$$` = any run of siblings, so `foo($$$)` matches any arg count. For "all calls

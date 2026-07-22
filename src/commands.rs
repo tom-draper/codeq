@@ -15,8 +15,8 @@ use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
 use crate::index::{language_for, refresh};
 use crate::repo::Repo;
 use crate::search::{
-    innermost, like_of, load_file_defs, regex_prefilter, run_search, FileDef, Hit,
-    InFilter, OutMode, ScanOpts, SearchData,
+    self, innermost, like_of, load_file_defs, regex_prefilter, run_search, scan_stdin,
+    FileDef, Hit, InFilter, OutMode, ScanOpts, SearchData,
 };
 
 /// Output rendering options parsed from global CLI flags.
@@ -206,8 +206,14 @@ struct ChangedRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     /// Whether this path is present in the current index (i.e. not ignored /
-    /// still exists in the tree).
+    /// still exists in the tree). True for almost every row, so it is only
+    /// emitted when false, that being the case that carries information.
+    #[serde(skip_serializing_if = "is_true")]
     indexed: bool,
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 #[derive(Serialize)]
@@ -365,14 +371,19 @@ pub fn cmd_symbols(
     let param_refs: Vec<&dyn rusqlite::ToSql> =
         args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
     let rows = stmt.query_map(param_refs.as_slice(), |r| {
+        let kind: String = r.get(1)?;
         Ok(SymbolRow {
             name: r.get(0)?,
-            kind: r.get(1)?,
             path: r.get(2)?,
             language: r.get(3)?,
             start_line: r.get(4)?,
             end_line: r.get(5)?,
-            signature: if signatures { r.get(6)? } else { None },
+            signature: if signatures {
+                declaration_header(&kind, r.get(6)?)
+            } else {
+                None
+            },
+            kind,
         })
     })?;
     let data: Vec<SymbolRow> = rows.collect::<std::result::Result<_, _>>()?;
@@ -415,9 +426,9 @@ fn definitions_of(
     );
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map(params_with(&[&symbol], &filters).as_slice(), |r| {
+        let kind: String = r.get(1)?;
         Ok(DefinitionRow {
             name: r.get(0)?,
-            kind: r.get(1)?,
             path: r.get(2)?,
             language: r.get(3)?,
             start_line: r.get(4)?,
@@ -426,8 +437,9 @@ fn definitions_of(
             end_col: r.get(7)?,
             start_byte: r.get(8)?,
             end_byte: r.get(9)?,
-            signature: r.get(10)?,
+            signature: declaration_header(&kind, r.get(10)?),
             doc: r.get(11)?,
+            kind,
         })
     })?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -478,27 +490,41 @@ pub fn cmd_api(
     );
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
+        let kind: String = r.get(1)?;
         Ok(ApiRow {
             name: r.get(0)?,
-            kind: r.get(1)?,
             path: r.get(2)?,
             line: r.get(3)?,
-            signature: r.get::<_, Option<String>>(4)?.map(|s| api_signature(&s)),
+            signature: declaration_header(&kind, r.get(4)?),
+            kind,
         })
     })?;
     let data: Vec<ApiRow> = rows.collect::<std::result::Result<_, _>>()?;
     s.emit(data)
 }
 
-/// The declaration header for an API listing: a struct/enum/class signature is
-/// stored as the whole body (every field), but the surface only needs the header
-/// — cut at the body opener so `pub struct Edge { … }` becomes `pub struct Edge`.
-/// Function signatures already stop before their body, so they're unaffected.
-fn api_signature(sig: &str) -> String {
-    sig.split_once('{')
-        .map(|(head, _)| head.trim_end())
-        .unwrap_or(sig)
-        .to_string()
+/// Container kinds whose extracted `signature` is the whole declaration, body
+/// and all, because the grammar has no separate body capture for them.
+const CONTAINER_KINDS: &[&str] = &[
+    "struct", "enum", "union", "trait", "class", "interface", "record",
+    "namespace", "module", "type", "typealias",
+];
+
+/// The declaration header of a definition: for a container kind the stored
+/// signature is the entire body (every field, doc comment and attribute), but a
+/// listing only needs the header, so it is cut at the body opener:
+/// `pub struct Edge { pub to: String, … }` becomes `pub struct Edge`. Functions
+/// and methods already stop before their body, and a constant's value *is* its
+/// content, so both are left alone.
+fn declaration_header(kind: &str, sig: Option<String>) -> Option<String> {
+    let sig = sig?;
+    if !CONTAINER_KINDS.contains(&kind) {
+        return Some(sig);
+    }
+    Some(match sig.split_once('{') {
+        Some((head, _)) => head.trim_end().to_string(),
+        None => sig,
+    })
 }
 
 #[derive(Serialize)]
@@ -1026,6 +1052,11 @@ pub fn cmd_path(
 #[derive(Serialize)]
 struct About {
     definitions: Vec<DefinitionRow>,
+    /// What the symbol contains (fields, variants, methods). Omitted entirely
+    /// for a function or anything else with no members, so the dossier does not
+    /// grow an empty section for the common case.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    members: Vec<MemberRow>,
     callers: Vec<Caller>,
     callees: Vec<Callee>,
 }
@@ -1039,6 +1070,7 @@ pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result
     let s = Session::open(cwd, false, out)?;
     let data = About {
         definitions: definitions_of(&s, name, path, 0)?,
+        members: members_of(&s, name, path, None, 0)?,
         callers: callers_of(&s, name, None, false, None, false)?,
         callees: callees_of(&s, name, path, false)?,
     };
@@ -1056,6 +1088,11 @@ struct ExploreNode {
     line: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     signature: Option<String>,
+    /// Only carried on the focus: what the symbol says it does, which is the
+    /// point of exploring it. Callers and callees stay bare so the neighbourhood
+    /// listing does not turn into prose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    doc: Option<String>,
 }
 
 /// The one-call answer: the symbol's definition, who calls it, what it calls, and
@@ -1102,6 +1139,7 @@ pub fn cmd_explore(
             path: d.path.clone(),
             line: d.start_line,
             signature: d.signature.clone(),
+            doc: d.doc.clone(),
         })
         .collect();
     let caller_nodes: Vec<ExploreNode> = callers
@@ -1113,6 +1151,7 @@ pub fn cmd_explore(
                 path: c.path.clone(),
                 line: c.line as i64,
                 signature: None,
+                doc: None,
             })
         })
         .collect();
@@ -1124,6 +1163,7 @@ pub fn cmd_explore(
             path: c.path.clone(),
             line: c.line,
             signature: None,
+            doc: None,
         })
         .collect();
 
@@ -1194,9 +1234,9 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
          ORDER BY (end_byte - start_byte) ASC, path",
     )?;
     let rows = stmt.query_map((path, &suffix, line), |r| {
+        let kind: String = r.get(1)?;
         Ok(DefinitionRow {
             name: r.get(0)?,
-            kind: r.get(1)?,
             path: r.get(2)?,
             language: r.get(3)?,
             start_line: r.get(4)?,
@@ -1205,8 +1245,9 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
             end_col: r.get(7)?,
             start_byte: r.get(8)?,
             end_byte: r.get(9)?,
-            signature: r.get(10)?,
+            signature: declaration_header(&kind, r.get(10)?),
             doc: r.get(11)?,
+            kind,
         })
     })?;
     let data: Vec<DefinitionRow> = rows.collect::<std::result::Result<_, _>>()?;
@@ -1238,6 +1279,153 @@ struct OutlineDef {
     doc: Option<String>,
 }
 
+/// One definition in an owner's file, as loaded for containment resolution.
+struct FileFact {
+    name: String,
+    kind: String,
+    start_byte: i64,
+    end_byte: i64,
+    line: i64,
+    signature: Option<String>,
+    doc: Option<String>,
+}
+
+#[derive(Serialize)]
+struct MemberRow {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    doc: Option<String>,
+    /// Which definition of NAME this member belongs to. Only emitted when NAME
+    /// resolves to more than one definition, where it is the disambiguator.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
+}
+
+/// `members <name>` — what a type contains: its fields, enum variants, and
+/// methods, in source order.
+///
+/// Containment is structural, not name-based: a member is a definition whose
+/// byte range sits inside NAME's, with no other definition in between (so a
+/// method's locals are not members of the class). That makes this the one graph
+/// command with no name-matching caveat — the relationship comes from the parse
+/// tree.
+///
+/// Languages that do not declare members (Ruby's `attr_accessor`, Python's
+/// `self.x = …` in `__init__`, Go interface methods) yield nothing rather than
+/// a guess.
+pub fn cmd_members(
+    cwd: &Path,
+    name: &str,
+    path: Option<&str>,
+    kind: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let data = members_of(&s, name, path, kind, limit)?;
+    s.emit(data)
+}
+
+fn members_of(
+    s: &Session,
+    name: &str,
+    path: Option<&str>,
+    kind: Option<&str>,
+    limit: usize,
+) -> Result<Vec<MemberRow>> {
+    // The owners: every definition of NAME (scoped by --path), each of which
+    // contributes the members inside its own byte range.
+    let mut owner_stmt = s.db.conn.prepare(
+        "SELECT path, start_byte, end_byte FROM facts
+         WHERE name = ?1 AND kind <> 'import'
+         ORDER BY path, start_byte",
+    )?;
+    let owners: Vec<(String, i64, i64)> = owner_stmt
+        .query_map([name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(p, _, _): &(String, i64, i64)| path.is_none_or(|f| p.contains(f)))
+        .collect();
+    let multiple_owners = owners.len() > 1;
+
+    // Every definition in an owner's file, so containment can be resolved
+    // without a second query per candidate.
+    let mut in_file = s.db.conn.prepare(
+        "SELECT name, kind, start_byte, end_byte, start_line, signature, doc
+         FROM facts WHERE path = ?1 AND kind <> 'import'
+         ORDER BY start_byte, end_byte DESC",
+    )?;
+
+    let mut data: Vec<MemberRow> = Vec::new();
+    for (owner_path, owner_start, owner_end) in &owners {
+        let defs: Vec<FileFact> = in_file
+            .query_map([owner_path], |r| {
+                Ok(FileFact {
+                    name: r.get(0)?,
+                    kind: r.get(1)?,
+                    start_byte: r.get(2)?,
+                    end_byte: r.get(3)?,
+                    line: r.get(4)?,
+                    signature: r.get(5)?,
+                    doc: r.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+
+        // Strictly inside the owner, and not the owner itself.
+        let inside = |start: i64, end: i64| {
+            start >= *owner_start
+                && end <= *owner_end
+                && (start != *owner_start || end != *owner_end)
+        };
+
+        for d in &defs {
+            if !inside(d.start_byte, d.end_byte) {
+                continue;
+            }
+            // Direct members only: skip anything nested inside another definition
+            // that is itself inside the owner (a method's locals, the fields of
+            // an inline struct).
+            let nested = defs.iter().any(|o| {
+                inside(o.start_byte, o.end_byte)
+                    && o.start_byte <= d.start_byte
+                    && o.end_byte >= d.end_byte
+                    && (o.start_byte != d.start_byte || o.end_byte != d.end_byte)
+            });
+            if nested {
+                continue;
+            }
+            if let Some(k) = kind {
+                if d.kind != k {
+                    continue;
+                }
+            }
+            data.push(MemberRow {
+                name: d.name.clone(),
+                kind: d.kind.clone(),
+                path: owner_path.clone(),
+                line: d.line,
+                signature: declaration_header(&d.kind, d.signature.clone()),
+                doc: d.doc.clone(),
+                owner: multiple_owners.then(|| format!("{owner_path}:{owner_start}")),
+            });
+            if limit > 0 && data.len() >= limit {
+                break;
+            }
+        }
+        if limit > 0 && data.len() >= limit {
+            break;
+        }
+    }
+
+    Ok(data)
+}
+
 /// `outline <file>` — the structure of a file top to bottom: every definition
 /// in source order, with its signature and a nesting depth so containment
 /// (methods within a class, nested functions) is visible.
@@ -1253,14 +1441,15 @@ pub fn cmd_outline(cwd: &Path, file: &str, docs: bool, out: Out) -> Result<()> {
     let suffix = format!("%/{file}");
     let defs: Vec<OutlineDef> = stmt
         .query_map((file, &suffix), |r| {
+            let kind: String = r.get(1)?;
             Ok(OutlineDef {
                 name: r.get(0)?,
-                kind: r.get(1)?,
                 start_byte: r.get(2)?,
                 end_byte: r.get(3)?,
                 start_line: r.get(4)?,
                 end_line: r.get(5)?,
-                signature: r.get(6)?,
+                signature: declaration_header(&kind, r.get(6)?),
+                kind,
                 doc: r.get(7)?,
             })
         })?
@@ -1434,7 +1623,9 @@ fn print_folded(lines: &[&str], folded: &[bool]) {
                 i += 1;
             }
             let count = i - start;
-            println!("        ⋮  {count} lines ({}–{})", start + 1, i);
+            // Range printed in the exact syntax `--lines` accepts, so the marker
+            // is a copy-pasteable next command rather than something to retype.
+            println!("        ... {count} lines ({}-{})", start + 1, i);
         } else {
             println!("{:6}  {}", i + 1, lines[i]);
             i += 1;
@@ -1966,6 +2157,9 @@ pub struct SearchArgs<'a> {
     pub files_with_matches: bool,
     pub count: bool,
     pub limit: usize,
+    /// Search a buffer piped in on stdin instead of the repository index.
+    /// Explicit only, never inferred from whether stdin is a TTY.
+    pub stdin: bool,
 }
 
 /// `search <pattern>` — content search over indexed, non-binary files, with each
@@ -1973,8 +2167,6 @@ pub struct SearchArgs<'a> {
 /// no catastrophic backtracking); `--fixed` for a literal string. A strict
 /// superset of grep: same regex engine, plus structure grep cannot see.
 pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
-    let s = Session::open(cwd, false, out)?;
-
     let mut expr = if args.fixed {
         regex::escape(args.pattern)
     } else {
@@ -2034,6 +2226,16 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         call_only: false,
         qualifier: None,
     };
+
+    // Piped input never touches the index: no repo discovery, no refresh, no
+    // database. That keeps codeq usable as a plain filter outside a repository,
+    // and keeps this branch entirely off the indexed path the MCP server uses.
+    if args.stdin {
+        let data = scan_stdin(&re, &opts, args.language, search::STDIN_LABEL)?;
+        return emit_sessionless(&data, out);
+    }
+
+    let s = Session::open(cwd, false, out)?;
     let data = run_search(
         &s.db.conn,
         &re,
@@ -2745,8 +2947,6 @@ struct FileDefs {
 
 #[derive(Serialize)]
 struct RepoMap {
-    /// How each ordered list is sorted, stated plainly so results are predictable.
-    ordering: &'static str,
     totals: MapTotals,
     languages: Vec<MapLang>,
     directories: Vec<DirStat>,
@@ -2886,7 +3086,6 @@ pub fn cmd_map(cwd: &Path, limit: usize, out: Out) -> Result<()> {
     manifests.truncate(cap);
 
     let data = RepoMap {
-        ordering: "lists ordered by their visible count (files/importers/definitions) desc, ties by name/path",
         totals,
         languages,
         directories,
@@ -2939,11 +3138,15 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
     let data = serde_json::json!({
         "result_schema": RESULT_SCHEMA,
         "index_schema": SCHEMA_VERSION,
+        // Kept in step with the CLI's own command list: a stale entry here is
+        // worse than none, because an agent takes it as the contract.
         "commands": [
-            "index", "files", "changed", "stats", "map",
-            "symbols", "definitions", "callers", "callees", "about",
-            "references", "outline", "at", "read", "search",
-            "imports", "importers", "astgrep", "tests", "context", "capabilities", "mcp",
+            "index", "files", "changed", "affected", "stats", "map",
+            "symbols", "definitions", "api", "members", "outline", "at", "read",
+            "callers", "callees", "path", "about", "explore", "references",
+            "implementors", "supertypes", "unused", "tests",
+            "imports", "importers", "deps", "astgrep", "search", "context",
+            "capabilities", "mcp", "install",
         ],
         // Languages with symbol + import extraction.
         "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity"],
@@ -2957,6 +3160,8 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "fact_kinds": [
             "function", "method", "struct", "enum", "union", "trait", "module",
             "constant", "typealias", "macro", "class", "interface", "type", "import",
+            "field", "variant",
+            "field", "variant",
         ],
         "notes": {
             "imports": "raw syntactic module strings; not resolved",
@@ -2964,8 +3169,14 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "freshness": "every command refreshes changed files before answering",
         },
     });
-    // Honor the global output mode like every other command: JSON on
-    // --json/--meta/--pretty, otherwise codeq's compact text.
+    emit_sessionless(&data, out)
+}
+
+/// Emit a result that has no session behind it — `capabilities`, and anything
+/// scanning piped input rather than the index. Honors the global output mode
+/// like every other command: JSON on --json/--meta/--pretty, otherwise codeq's
+/// compact text. There is no `repo`/`index` block because no index was read.
+fn emit_sessionless<T: Serialize>(data: &T, out: Out) -> Result<()> {
     if out.json || out.meta || out.pretty {
         let value = serde_json::json!({ "schema": RESULT_SCHEMA, "data": data });
         if out.pretty {
@@ -2974,7 +3185,10 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             println!("{}", serde_json::to_string(&value)?);
         }
     } else {
-        print!("{}", crate::envelope::render_data_text(&data));
+        print!(
+            "{}",
+            crate::envelope::render_data_text(&serde_json::to_value(data)?)
+        );
     }
     Ok(())
 }

@@ -64,6 +64,10 @@ refresh the index — every command auto-refreshes changed files first.
 
 **API surface / cleanup**
 - `codeq api <path>` — the public/exported definitions of a file or directory.
+- `codeq members NAME` — a type's fields, enum variants and methods (`--kind` to
+  narrow). Structural, not name-based, so no same-name false positives. Already
+  included in `about`. Rust struct methods live in a separate `impl`, so a Rust
+  struct returns fields only.
 - `codeq unused [<path>]` — definitions with no references (candidate dead code; empty
   output = none found). Conservative and name-based, so it under-reports.
 - `codeq implementors <TYPE>` / `codeq supertypes <TYPE>` — who implements/extends a
@@ -72,6 +76,8 @@ refresh the index — every command auto-refreshes changed files first.
 **Search**
 - `codeq search <REGEX>` — content search; each match annotated with its enclosing
   symbol. `--in code|comments|strings` to scope. A superset of grep.
+  `CMD | codeq search PAT --stdin [--language L]` scans piped text instead of the
+  index, for grep-in-a-pipeline over output that isn't in the repo.
 - `codeq astgrep '<PATTERN>' --language <lang>` — structural (AST) search, e.g.
   `codeq astgrep '$X.unwrap()' --language rust`. Scope to files with `--path <substr>`.
   Each match is annotated with the `[symbol]` it sits inside.

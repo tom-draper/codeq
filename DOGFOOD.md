@@ -4,6 +4,167 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 26: docs in text output (a flag that did nothing)
+
+Asked "can an agent get a function's documentation", checked, and found the data
+was already there and the default output threw it away. `doc` sat in the
+renderer's `CONSUMED` list, so every doc comment codeq extracts was visible only
+under `--json`.
+
+The sharp end of that: **`outline --docs` was a silent no-op in text mode.** The
+flag parsed, the query fetched docs, the JSON contained them, and the default
+output was byte-identical with and without it. Same shape as the en-dash range
+bug from session 24: a documented affordance that quietly doesn't work in the
+mode everyone actually uses. Both were invisible because nothing asserted on text
+output, which is why session 24's contract test now has company.
+
+Docs are stored already collapsed to one line and capped at 240 chars, so they
+render inline as `  // <doc>` on the definition's own row and the one-row-one-line
+rule survives. `definitions`, `about`, `explore` and `members` fetch docs anyway,
+so they now show them by default, which is the right default for symbol-focused
+commands (a dossier that omits what the author wrote about the symbol is a poor
+dossier). `explore`'s focus node gained a `doc` field; its callers and callees
+deliberately stay bare so the neighbourhood listing doesn't turn into prose.
+
+New rule in the output contract, generalising the bug: **a flag must change the
+text output.** If it only shows up under `--json`, it is a no-op from the
+default's point of view.
+
+167 tests (+3), one of which asserts that `--docs` changes the text output and
+does not add a line, and one that an undocumented field carries no empty marker.
+
+## 2026-07-22 - session 25: `members` (a type's fields and variants)
+
+The gap: `about ScanOpts` told you the struct existed and who used it, but not
+what was in it. The extractor captured 16 kinds and **none of them were fields**,
+so "what does this struct contain" had no answer short of `read --symbol`, which
+is the whole-file-read habit codeq exists to replace. Session 24 made it more
+visible by cutting container bodies out of signatures, which removed the
+accidental way of half-seeing fields through a truncated body dump.
+
+`codeq members NAME` returns fields, enum variants and methods in source order.
+The property worth stating: it is the **one graph command with no name-matching
+caveat**. Containment comes from the parse tree (a member is a definition nested
+directly inside NAME's byte range), so a same-named type elsewhere cannot leak
+in, and a local inside a method is not a member of the class. `about` now
+includes it, omitting the section entirely when there are none, so a struct's
+dossier is still one call.
+
+Followed the dump-real-parse-trees rule again, and it earned its keep. Two things
+no amount of reading docs would have given:
+
+- **JS and TS disagree on the node name.** A class field is `field_definition`
+  in the JavaScript grammar and `public_field_definition` in TypeScript's. The
+  shared `JS_QUERY` compiles against both, and a node type absent from a grammar
+  fails the *whole* query, so the JS capture had to move to a new `JS_EXTRA`,
+  mirroring the existing `TS_EXTRA`.
+- **Solidity's `enum_value` is the identifier**, a leaf, not a wrapper around
+  one. `(enum_value (identifier) @name)` is an "impossible pattern"; the fix is
+  two captures on one node, `(enum_value) @name @variant`.
+
+The real find, though, was the failure mode those two bugs exposed. A query that
+fails to compile makes `Extractor::new()` return Err, and each worker did
+`Err(_) => return`. So a malformed query produced **an index with zero files, no
+error, and exit 0**. `codeq stats` reported `files: 0` in a repo full of Rust.
+That is indistinguishable from an empty directory, and it cost a while to spot
+because the obvious suspects (a corrupt db, a bad walk, an ignore rule) all
+present identically. Now the extractor is built once up front purely to validate
+and the error propagates with context, so a malformed query says so:
+
+    codeq: building the fact extractor (malformed query?): compiling query:
+    Query error at 14:13. Impossible pattern: (enum_value (identifier) @name)
+
+Worth generalising: an error swallowed in a worker is far more expensive than one
+that crashes, because the empty result looks like a legitimate answer. There is
+now a test that simply asserts indexing a normal repo yields facts.
+
+Also noticed while adding the command: `capabilities` listed 22 commands and the
+CLI had 31. `explore`, `api`, `unused`, `deps`, `path`, `implementors`,
+`supertypes`, `affected` and `install` were all missing, some for many sessions.
+A stale capabilities list is worse than none, since an agent reads it as the
+contract. It is now cross-checked against `--help` in the test suite.
+
+Honest limits, all documented rather than guessed around: in Rust a struct's
+methods live in a separate `impl` block, so `members` on a Rust struct returns
+fields only; Ruby's `attr_accessor` is a method call, not a declaration; Python
+instance attributes (`self.x = ...` in `__init__`) are assignments, not
+declarations, so only class-level attributes are covered. Verified across 16
+languages for fields and 6 for variants.
+
+Schema 13 -> 14. 164 tests (+13).
+
+## 2026-07-22 - session 24: output-format audit + piped input (`--stdin`)
+
+Two jobs. First, an audit of what codeq actually prints, on the theory that its
+whole value is emitting only what an agent needs.
+
+Found one outright bug: the `read` fold marker printed its range with an en dash,
+`21 lines (44–64)`, but `--lines` only parses ASCII hyphens. So the marker
+advertised a next command that codeq itself rejects. Copying it verbatim errors.
+Fixed to `... 21 lines (44-64)`, and the assertion now pins the exact string.
+
+The rest was accumulated noise, all of it per-row or per-call:
+
+- Container signatures (`struct`/`enum`/`interface`) were stored as the whole
+  declaration, so `symbols --signatures`, `definitions`, `outline`, `about` and
+  `explore` each dumped the full field list plus doc comments and attributes,
+  truncated mid-token at 180 chars. `api` already had `api_signature()` to cut
+  this. It was applied in exactly one of six places. Generalised to
+  `declaration_header(kind, sig)`, kind-aware so a constant's value (which *is*
+  its content) survives, and applied everywhere.
+- `map` printed a 25-token sentence explaining its own sort order on every call.
+  Moved to `--help`, where it costs nothing per query.
+- `changed` printed `indexed=true` on every row. Only `false` is information.
+- `callers/callees --depth` and `deps` indented every row including depth 1, so
+  the shallowest results carried indentation that meant nothing. The renderer now
+  normalises depth against the minimum in the list, which fixes both without
+  touching `outline` (already 0-based).
+- Callers at file scope rendered as `src/commands.rs:14: ` , a locator, a
+  separator, and then nothing.
+- A multi-line `use a::{\n b,\n}` import spilled one row across four lines,
+  quietly breaking the one-row-per-line contract that makes the output greppable.
+
+21% fewer characters across a 7-command workload with nothing lost. The lesson is
+that none of these were decisions anyone made; they accreted one command at a
+time, which is exactly why the contract is now written down in the README and
+enforced by `text_output_stays_plain_ascii_rows`.
+
+Second job: `search --stdin`, so codeq covers the case where an agent would
+otherwise fall back to grep, output that isn't in the repo at all (`git log |`,
+`curl |`, a build log). Refactored the per-file match loop out of `run_search`
+into `scan_doc`, so piped and indexed scans share one implementation and cannot
+drift; only the source of spans and defs differs. With `--language` the buffer is
+parsed once, which is what makes this more than a slower grep: `--in
+code|comments|strings` and the enclosing `[symbol]` both work on a stream.
+
+The design constraint that mattered: **`--stdin` is never inferred**. The obvious
+implementation is "if stdin isn't a TTY, read it", and it would have been a
+disaster. An agent's shell hands the process an open pipe, so every ordinary
+`codeq search` would have silently become a scan of an empty buffer, and the MCP
+server would have answered nothing for every query while looking perfectly
+healthy. There is a test named for exactly this. A related discovery while
+testing: an `IsTerminal` guard does *not* save you, because in that same agent
+shell stdin is a pipe, not a terminal. `codeq search x --stdin` with nothing
+piped in hangs, same as `grep x` would.
+
+Also worth recording, because it cost real time twice in one session: a
+`cargo build --release` that gets interrupted leaves a **0-byte
+`target/release/codeq`**, and cargo then reports `Finished` without relinking. An
+empty executable file runs as an empty script, so every command exits 0 printing
+nothing. `stats` returning nothing looks exactly like a corrupt index. The same
+artifact instability caused the MCP server to fail at session start with ENOENT,
+because the binary was mid-rebuild when Claude Code spawned it. Pointing the MCP
+config at a stable installed path rather than the cargo target dir avoids the
+whole class.
+
+Minor friction, not fixed: `codeq api src/search.rs` returns nothing because
+every item there is `pub(crate)`, which is `restricted`, not `public`. That is
+correct and documented, but an empty result is indistinguishable from a wrong
+command, and there is no hint that N restricted definitions were filtered out.
+Also `api` takes its scope as a positional while most commands take `--path`.
+
+157 tests (+7).
+
 ## 2026-07-14 — session 19: tests-linkage (`codeq tests NAME`)
 
 The 3rd capability wish: "which tests exercise X". New `codeq tests <name>` reuses

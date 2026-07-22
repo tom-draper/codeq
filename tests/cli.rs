@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 13);
+    assert_eq!(v["index"]["schema"], 14);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -1810,7 +1810,9 @@ fn read_folds_bodies_and_expands_verbatim() {
     // Default: big's body folded, small shown, signatures visible.
     let out = String::from_utf8(f.raw(&["read", "a.rs"]).stdout).unwrap();
     assert!(out.contains("fn big()"), "signature shown: {out}");
-    assert!(out.contains('⋮'), "body folded: {out}");
+    // The marker states the hidden range in the exact syntax `--lines` accepts,
+    // so it doubles as the next command rather than something to retype.
+    assert!(out.contains("... 11 lines (3-13)"), "body folded: {out}");
     assert!(!out.contains("let v5"), "folded body must be hidden: {out}");
     assert!(out.contains("fn small()"), "short fn stays inline");
 
@@ -1822,6 +1824,59 @@ fn read_folds_bodies_and_expands_verbatim() {
     let sym = String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "big"]).stdout).unwrap();
     assert!(sym.contains("let v5"), "symbol body verbatim: {sym}");
     assert!(sym.contains("2  fn big()"), "line-numbered from the def start: {sym}");
+}
+
+/// The text output contract (README "Output contract"): plain ASCII rows, no
+/// decoration, no prose, one row per line. Guards against decorative drift.
+#[test]
+fn text_output_stays_plain_ascii_rows() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "use std::collections::{\n    HashMap,\n    HashSet,\n};\n\
+         pub struct Edge {\n    pub to: String,\n    pub module: String,\n}\n\
+         pub fn go() -> Edge { Edge { to: String::new(), module: String::new() } }\n",
+    );
+
+    for args in [
+        vec!["map"],
+        vec!["symbols", "--signatures"],
+        vec!["definitions", "Edge"],
+        vec!["outline", "a.rs"],
+        vec!["about", "Edge"],
+        vec!["api"],
+        vec!["imports"],
+        vec!["callers", "Edge", "--depth", "2"],
+    ] {
+        let out = String::from_utf8(f.raw(&args).stdout).unwrap();
+        assert!(
+            out.is_ascii(),
+            "{args:?} must emit ASCII only (no arrows, ellipses, dashes): {out}"
+        );
+        for line in out.lines() {
+            assert!(
+                !line.trim_end().ends_with(':'),
+                "{args:?} emitted a locator with an empty payload: {line:?}"
+            );
+        }
+        // Indentation is depth, and the shallowest row shown is flush left.
+        if out.lines().any(|l| !l.is_empty()) {
+            assert!(
+                out.lines().any(|l| !l.starts_with(' ') && !l.is_empty()),
+                "{args:?} indented every row: {out}"
+            );
+        }
+    }
+
+    // A container's signature is its header, never its field list.
+    let defs = String::from_utf8(f.raw(&["definitions", "Edge"]).stdout).unwrap();
+    assert!(defs.contains("pub struct Edge"), "header shown: {defs}");
+    assert!(!defs.contains("pub to:"), "body must be cut: {defs}");
+
+    // A multi-line import fact still occupies exactly one row.
+    let imports = String::from_utf8(f.raw(&["imports"]).stdout).unwrap();
+    assert_eq!(imports.lines().count(), 1, "one row per line: {imports}");
+    assert!(imports.contains("HashMap, HashSet"), "collapsed: {imports}");
 }
 
 // ---------------------------------------------------------------------------
@@ -2819,4 +2874,423 @@ fn context_accepts_multiple_seed_symbols() {
     assert!(names.contains(&"aa".to_string()) && names.contains(&"bb".to_string()),
             "both seeds should be returned: {names:?}");
     assert!(!names.contains(&"cc".to_string()), "unrequested symbol leaked: {names:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Piped input (--stdin)
+// ---------------------------------------------------------------------------
+
+/// Run codeq with `input` on stdin.
+fn piped(dir: &Path, args: &[&str], input: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::cargo_bin("codeq")
+        .unwrap()
+        .current_dir(dir)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn codeq");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().expect("run codeq")
+}
+
+/// The property that protects every other use of codeq: `--stdin` is opt-in and
+/// never inferred. An agent's shell hands the process a pipe rather than a TTY,
+/// so auto-detection would silently turn ordinary searches into a scan of an
+/// empty buffer, and the MCP server would answer nothing for every query.
+#[test]
+fn piped_input_is_never_inferred_only_opt_in() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub fn indexed_only() {}\n");
+
+    // Stdin is a pipe carrying text that does NOT contain the pattern; without
+    // --stdin the search must still come from the index and find the file.
+    let out = piped(f.path(), &["search", "indexed_only"], "nothing to see here\n");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success(), "search must not fail on a stray pipe");
+    assert!(text.contains("a.rs:1"), "must read the index, not stdin: {text}");
+    assert!(!text.contains("(stdin)"), "must not label rows stdin: {text}");
+}
+
+#[test]
+fn piped_input_searches_the_buffer_not_the_index() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub fn from_the_index() {}\n");
+
+    let out = piped(
+        f.path(),
+        &["search", "needle"],
+        "no match on this line\nhere is a needle\n",
+    );
+    assert!(out.status.success());
+    // Without --stdin the pipe is ignored entirely: nothing in the index matches.
+    assert!(String::from_utf8(out.stdout).unwrap().is_empty());
+
+    let out = piped(
+        f.path(),
+        &["search", "needle", "--stdin"],
+        "no match on this line\nhere is a needle\n",
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert_eq!(text.lines().count(), 1, "one row per matching line: {text}");
+    assert!(text.starts_with("(stdin):2:"), "located in the buffer: {text}");
+    assert!(!text.contains("from_the_index"), "index not consulted: {text}");
+}
+
+/// What piped input buys over grep: with --language the buffer is parsed, so
+/// matches carry their enclosing symbol and --in can separate code from prose.
+#[test]
+fn piped_input_with_language_annotates_and_filters() {
+    let f = Fixture::new();
+    let src = "// target lives in a comment\nfn holder() {\n    let s = \"target in a string\";\n    target();\n}\n";
+
+    let annotated = String::from_utf8(
+        piped(f.path(), &["search", "target", "--stdin", "--language", "rust"], src).stdout,
+    )
+    .unwrap();
+    assert!(
+        annotated.contains("[holder]"),
+        "match annotated with its enclosing definition: {annotated}"
+    );
+
+    for (filter, want, unwanted) in [
+        ("comments", "// target lives", "target()"),
+        ("strings", "target in a string", "// target lives"),
+        ("code", "target()", "// target lives"),
+    ] {
+        let out = String::from_utf8(
+            piped(
+                f.path(),
+                &["search", "target", "--stdin", "--language", "rust", "--in", filter],
+                src,
+            )
+            .stdout,
+        )
+        .unwrap();
+        assert!(out.contains(want), "--in {filter} keeps {want}: {out}");
+        assert!(!out.contains(unwanted), "--in {filter} drops {unwanted}: {out}");
+    }
+}
+
+/// `--in` needs spans, which need a language. Say so rather than silently
+/// returning everything (or nothing).
+#[test]
+fn piped_input_rejects_in_filter_without_a_language() {
+    let f = Fixture::new();
+    let out = piped(f.path(), &["search", "x", "--stdin", "--in", "code"], "x\n");
+    assert!(!out.status.success());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("--language"), "actionable message: {err}");
+}
+
+/// Piped input needs no repository and reads no index, so codeq works as a
+/// plain filter anywhere.
+#[test]
+fn piped_input_needs_no_repository() {
+    let empty = TempDir::new().unwrap();
+    let out = piped(empty.path(), &["search", "hit", "--stdin"], "a hit here\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8(out.stdout).unwrap().contains("(stdin):1:"));
+    assert!(
+        !empty.path().join(".codeq").exists(),
+        "must not create an index for a piped scan"
+    );
+}
+
+/// The other output modes work on a buffer too, so `--stdin` is a drop-in.
+#[test]
+fn piped_input_supports_count_and_context() {
+    let f = Fixture::new();
+    let input = "one\ntwo hit\nthree\nfour hit\n";
+
+    let counted =
+        String::from_utf8(piped(f.path(), &["search", "hit", "--stdin", "-c"], input).stdout)
+            .unwrap();
+    assert!(counted.contains("count=2"), "per-buffer count: {counted}");
+
+    let ctx = String::from_utf8(
+        piped(f.path(), &["search", "hit", "--stdin", "-C", "1"], input).stdout,
+    )
+    .unwrap();
+    assert!(ctx.contains("(stdin)-1- one"), "context before: {ctx}");
+    assert!(ctx.contains("(stdin)-3- three"), "context after: {ctx}");
+}
+
+// ---------------------------------------------------------------------------
+// members
+// ---------------------------------------------------------------------------
+
+#[test]
+fn members_lists_fields_and_variants() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "pub struct S {\n    pub a: u32,\n    b: String,\n}\npub enum E { A, B(u32) }\n",
+    );
+
+    let mut fields = field_set(&f.run(&["members", "S"]), "name");
+    fields.sort();
+    assert_eq!(fields, ["a", "b"], "struct fields");
+
+    let mut variants = field_set(&f.run(&["members", "E"]), "name");
+    variants.sort();
+    assert_eq!(variants, ["A", "B"], "enum variants");
+
+    // Kinds are distinguishable, and a field carries its declaration.
+    let rows = f.run(&["members", "S"]);
+    let row = &rows["data"][0];
+    assert_eq!(row["kind"], "field");
+    assert_eq!(row["path"], "a.rs");
+    assert!(
+        row["signature"].as_str().unwrap().contains("pub a: u32"),
+        "signature is the declaration: {row}"
+    );
+}
+
+/// Containment is structural, so unlike the name-based graph commands a member
+/// cannot be a false positive from a same-named symbol elsewhere, and a local
+/// inside a method is not a member of the class.
+#[test]
+fn members_are_structural_not_name_based() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "class C:\n    a: int = 1\n    def m(self):\n        local = 3\n",
+    );
+    // An unrelated class of the same name elsewhere, with different members.
+    f.write("b.py", "class C:\n    zzz = 9\n");
+
+    let scoped = field_set(&f.run(&["members", "C", "--path", "a.py"]), "name");
+    let has = |v: &[String], n: &str| v.iter().any(|x| x == n);
+    assert!(has(&scoped, "a"), "class attribute is a member: {scoped:?}");
+    assert!(
+        !has(&scoped, "local"),
+        "a local inside a method is not a member of the class: {scoped:?}"
+    );
+    assert!(!has(&scoped, "zzz"), "--path scopes to one owner: {scoped:?}");
+    // Methods are members of the class body they sit in.
+    assert!(has(&scoped, "m"), "method is a member: {scoped:?}");
+
+    // Unscoped, both same-named classes contribute, each tagged with its owner.
+    let both = f.run(&["members", "C"]);
+    let names = field_set(&both, "name");
+    assert!(has(&names, "a") && has(&names, "zzz"), "{names:?}");
+    assert!(
+        both["data"][0]["owner"].is_string(),
+        "owner disambiguates when the name resolves to several types: {both}"
+    );
+}
+
+#[test]
+fn members_kind_filter_separates_fields_from_methods() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "class C:\n    a = 1\n    def m(self):\n        pass\n",
+    );
+    assert_eq!(
+        field_set(&f.run(&["members", "C", "--kind", "field"]), "name"),
+        ["a"]
+    );
+    assert_eq!(
+        field_set(&f.run(&["members", "C", "--kind", "function"]), "name"),
+        ["m"]
+    );
+}
+
+/// `about` on a type answers "what is this and what's in it" in one call; on a
+/// function the section is absent rather than empty.
+#[test]
+fn about_includes_members_only_when_there_are_some() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct S { pub a: u32 }\npub fn go() {}\n");
+
+    let about_type = f.run(&["about", "S"]);
+    let members: Vec<&str> = about_type["data"]["members"]
+        .as_array()
+        .expect("members section present for a type")
+        .iter()
+        .map(|m| m["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(members, ["a"]);
+
+    let about_fn = f.run(&["about", "go"]);
+    assert!(
+        about_fn["data"].get("members").is_none(),
+        "no empty section for a symbol with no members: {about_fn}"
+    );
+}
+
+/// Members are declared syntax in many languages; each of these is verified
+/// against a real parse tree, not documentation.
+#[test]
+fn members_extracted_across_languages() {
+    let cases: &[(&str, &str, &str, &[&str])] = &[
+        ("a.go", "type S struct { A int; b string }", "S", &["A", "b"]),
+        (
+            "a.ts",
+            "class C { a: number = 1; private b: string; }",
+            "C",
+            &["a", "b"],
+        ),
+        ("a.js", "class C { a = 1; #b = 2; }", "C", &["a", "#b"]),
+        (
+            "a.java",
+            "class C { public int a; private String b; }",
+            "C",
+            &["a", "b"],
+        ),
+        ("a.c", "struct S { int a; char *b; };", "S", &["a", "b"]),
+        (
+            "a.cs",
+            "class C { public int A; public string B {get;set;} }",
+            "C",
+            &["A", "B"],
+        ),
+        (
+            "a.php",
+            "<?php class C { public int $a; private $b; }",
+            "C",
+            &["a", "b"],
+        ),
+        ("a.kt", "class C(val a: Int) { var b: String = \"\" }", "C", &["a", "b"]),
+        ("a.swift", "struct S { var a: Int\nlet b: String }", "S", &["a", "b"]),
+        ("a.scala", "case class C(a: Int) { val c: Int = 1 }", "C", &["a", "c"]),
+        ("a.dart", "class C { int a = 1; }", "C", &["a"]),
+        ("a.zig", "const P = struct { x: i32, y: i32 };", "P", &["x", "y"]),
+        ("a.sol", "contract C { uint a; }", "C", &["a"]),
+    ];
+
+    for (file, src, ty, want) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let got = field_set(&f.run(&["members", ty]), "name");
+        for w in *want {
+            assert!(
+                got.iter().any(|g| g == w),
+                "{file}: expected member {w}, got {got:?}"
+            );
+        }
+    }
+}
+
+/// Enum variants, where the language declares them.
+#[test]
+fn variants_extracted_across_languages() {
+    let cases: &[(&str, &str, &str, &[&str])] = &[
+        ("a.rs", "enum E { A, B }", "E", &["A", "B"]),
+        ("a.java", "enum E { X, Y }", "E", &["X", "Y"]),
+        ("a.cs", "enum E { X }", "E", &["X"]),
+        ("a.c", "enum E { X, Y };", "E", &["X", "Y"]),
+        ("a.php", "<?php enum E { case X; }", "E", &["X"]),
+        ("a.ts", "enum E { X = 1 }", "E", &["X"]),
+    ];
+    for (file, src, ty, want) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let got = field_set(&f.run(&["members", ty, "--kind", "variant"]), "name");
+        for w in *want {
+            assert!(
+                got.iter().any(|g| g == w),
+                "{file}: expected variant {w}, got {got:?}"
+            );
+        }
+    }
+}
+
+/// A malformed extraction query would make every worker bail, leaving an index
+/// that is empty and silent — indistinguishable from a repo with no code. The
+/// extractor is validated up front so that surfaces as an error instead.
+#[test]
+fn indexing_a_normal_repo_yields_facts() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct S { pub a: u32 }\n");
+    let stats = f.run(&["stats"]);
+    assert!(
+        stats["data"]["files"].as_i64().unwrap() > 0,
+        "index must not come back silently empty: {stats}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// docs in text output
+// ---------------------------------------------------------------------------
+
+/// `--docs` used to populate the JSON and be a silent no-op in the default text
+/// mode, so the flag looked broken unless you also passed `--json`. A flag that
+/// changes nothing visible is worse than a missing one.
+#[test]
+fn docs_are_visible_in_text_output_not_just_json() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "/// Adds two numbers.\npub fn add(a: u32, b: u32) -> u32 { a + b }\n",
+    );
+
+    let plain = String::from_utf8(f.raw(&["outline", "a.rs"]).stdout).unwrap();
+    assert!(plain.contains("pub fn add"), "signature shown: {plain}");
+    assert!(
+        !plain.contains("Adds two numbers"),
+        "docs stay off by default: {plain}"
+    );
+
+    let with_docs = String::from_utf8(f.raw(&["outline", "a.rs", "--docs"]).stdout).unwrap();
+    assert!(
+        with_docs.contains("// Adds two numbers."),
+        "--docs must change the text output, not only the JSON: {with_docs}"
+    );
+    assert_eq!(
+        with_docs.lines().count(),
+        plain.lines().count(),
+        "a doc rides on its definition's row, one row per line: {with_docs}"
+    );
+}
+
+/// The symbol-focused commands carry the doc, since "what does this do" is the
+/// question they exist to answer.
+#[test]
+fn symbol_dossiers_show_the_doc() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "/// Adds two numbers.\npub fn add(a: u32, b: u32) -> u32 { a + b }\n",
+    );
+
+    for args in [
+        vec!["definitions", "add"],
+        vec!["about", "add"],
+        vec!["explore", "add"],
+    ] {
+        let out = String::from_utf8(f.raw(&args).stdout).unwrap();
+        assert!(
+            out.contains("// Adds two numbers."),
+            "{args:?} should surface the doc: {out}"
+        );
+    }
+}
+
+/// A field's doc comment is part of understanding the type.
+#[test]
+fn members_carry_their_doc_comments() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "pub struct S {\n    /// How many times.\n    pub count: u32,\n    pub other: u32,\n}\n",
+    );
+    let out = String::from_utf8(f.raw(&["members", "S"]).stdout).unwrap();
+    assert!(out.contains("pub count: u32  // How many times."), "{out}");
+    assert!(
+        out.lines().any(|l| l.contains("other") && !l.contains("//")),
+        "an undocumented field carries no empty marker: {out}"
+    );
 }

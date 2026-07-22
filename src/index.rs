@@ -223,6 +223,12 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     // regardless of which worker finished first. A bounded channel bounds the
     // parsed bodies held in flight.
     let tx = db.conn.unchecked_transaction()?;
+    // Build one extractor up front purely to validate: each worker constructs its
+    // own (a Parser is not Sync), and a failure there is a malformed query, i.e. a
+    // bug in codeq rather than anything about this repo. Without this check the
+    // workers would each bail and the index would come back empty and *silent* —
+    // indistinguishable from a repo with no source files.
+    Extractor::new().context("building the fact extractor (malformed query?)")?;
     let parse_failures = AtomicU64::new(0);
     let reindexed = {
         let workers = std::thread::available_parallelism()

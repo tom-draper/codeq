@@ -4,12 +4,18 @@
 //! as matches / files / counts. No filesystem reads — everything comes from the
 //! index. Commands in [`crate::commands`] drive it; it depends only on a
 //! `rusqlite::Connection`, not the whole session.
+//!
+//! [`scan_stdin`] is the one exception: it scans a buffer piped in on stdin
+//! rather than the index, so codeq can also stand in for grep in a pipeline.
+//! It shares [`scan_doc`] with the indexed path, so both answer identically.
+
+use std::io::{IsTerminal, Read};
 
 use anyhow::{anyhow, Result};
 use regex_syntax::hir::literal::{ExtractKind, Extractor as LiteralExtractor};
 use serde::Serialize;
 
-use crate::facts::{has_spans, Span};
+use crate::facts::{has_spans, Extractor, Span};
 
 const MAX_LINE: usize = 240;
 
@@ -261,10 +267,7 @@ pub(crate) fn run_search(
         "SELECT start_byte, end_byte, kind FROM spans WHERE path = ?1 ORDER BY start_byte",
     )?;
 
-    let mut files: Vec<String> = Vec::new();
-    let mut counts: Vec<FileCount> = Vec::new();
-    let mut hits: Vec<Hit> = Vec::new();
-    let mut truncated = false;
+    let mut acc = ScanAcc::default();
 
     let mut fts_stmt = conn.prepare(&sql)?;
     let mut rows = fts_stmt.query(params.as_slice())?;
@@ -305,109 +308,227 @@ pub(crate) fn run_search(
         } else {
             Vec::new()
         };
-        let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(&spans, off));
-        // Line starts are only needed once there's a match (Files mode never
-        // needs them). Compute lazily, so a non-matching candidate — and every
-        // candidate in Files mode — skips the full-body newline scan.
-        let mut starts: Option<Vec<usize>> = None;
+        // Defs are only loaded once a match survives the filters, so a candidate
+        // that matches the substring but not `\bword\b` (or is filtered by
+        // --calls/--on) costs neither a body scan nor a defs query.
+        let mut load_defs =
+            |path: &str| load_file_defs(&mut def_stmt, path).unwrap_or_default();
+        if scan_doc(rel, body, &spans, &mut load_defs, re, opts, cap, &mut acc) {
+            break 'outer;
+        }
+    }
 
-        match opts.out {
-            OutMode::Files => {
-                if re.find_iter(body).any(|m| accept(m.start())) {
-                    files.push(rel.to_string());
-                    if files.len() >= cap {
-                        truncated = true;
-                        break 'outer;
-                    }
+    Ok(acc.finish(opts.out))
+}
+
+/// Results accumulated across the documents a scan visits.
+#[derive(Default)]
+pub(crate) struct ScanAcc {
+    files: Vec<String>,
+    counts: Vec<FileCount>,
+    hits: Vec<Hit>,
+    truncated: bool,
+}
+
+impl ScanAcc {
+    pub(crate) fn finish(self, out: OutMode) -> SearchData {
+        let ScanAcc {
+            files,
+            counts,
+            hits,
+            truncated,
+        } = self;
+        match out {
+            OutMode::Files => SearchData::Files { files, truncated },
+            OutMode::Count => SearchData::Counts { counts, truncated },
+            OutMode::Matches => SearchData::Matches {
+                matches: hits,
+                truncated,
+            },
+        }
+    }
+}
+
+/// Scan one document — an indexed file, or a buffer piped in on stdin — for
+/// `re`, applying every [`ScanOpts`] filter and appending to `acc`. Returns true
+/// when the limit is reached and the caller should stop.
+///
+/// This is the single place matching happens, so a piped buffer and an indexed
+/// file are guaranteed to answer identically: same regex semantics, same
+/// `--in`/`--calls`/`--on` filters, same one-row-per-line rule, same context
+/// lines. The only difference is where `spans` and `defs` come from.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scan_doc(
+    path: &str,
+    body: &str,
+    spans: &[(usize, usize, Span)],
+    load_defs: &mut dyn FnMut(&str) -> Vec<FileDef>,
+    re: &regex::Regex,
+    opts: &ScanOpts,
+    cap: usize,
+    acc: &mut ScanAcc,
+) -> bool {
+    let filtering = opts.in_filter != InFilter::Any;
+    let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(spans, off));
+    // Line starts are only needed once there's a match (Files mode never needs
+    // them). Compute lazily, so a non-matching candidate — and every candidate
+    // in Files mode — skips the full-body newline scan.
+    let mut starts: Option<Vec<usize>> = None;
+
+    match opts.out {
+        OutMode::Files => {
+            if re.find_iter(body).any(|m| accept(m.start())) {
+                acc.files.push(path.to_string());
+                if acc.files.len() >= cap {
+                    acc.truncated = true;
+                    return true;
                 }
             }
-            OutMode::Count => {
-                let mut last = usize::MAX;
-                let mut n = 0usize;
-                for m in re.find_iter(body) {
-                    if !accept(m.start()) {
-                        continue;
-                    }
-                    let s = starts.get_or_insert_with(|| line_starts_of(body));
-                    let li = s.partition_point(|&x| x <= m.start()) - 1;
-                    if li != last {
-                        last = li;
-                        n += 1;
-                    }
+        }
+        OutMode::Count => {
+            let mut last = usize::MAX;
+            let mut n = 0usize;
+            for m in re.find_iter(body) {
+                if !accept(m.start()) {
+                    continue;
                 }
-                if n > 0 {
-                    counts.push(FileCount {
-                        path: rel.to_string(),
-                        count: n,
-                    });
-                    if counts.len() >= cap {
-                        truncated = true;
-                        break 'outer;
-                    }
+                let s = starts.get_or_insert_with(|| line_starts_of(body));
+                let li = s.partition_point(|&x| x <= m.start()) - 1;
+                if li != last {
+                    last = li;
+                    n += 1;
                 }
             }
-            OutMode::Matches => {
-                let bytes = body.as_bytes();
-                // Both the line index and the file's defs are only needed once a
-                // match survives the filters — load them lazily so a candidate
-                // that matches the substring but not `\bword\b` (or is filtered
-                // by --calls/--on) costs neither a body scan nor a defs query.
-                let mut defs: Option<Vec<FileDef>> = None;
-                let mut last_line = usize::MAX;
-                for m in re.find_iter(body) {
-                    let off = m.start();
-                    if !accept(off) {
+            if n > 0 {
+                acc.counts.push(FileCount {
+                    path: path.to_string(),
+                    count: n,
+                });
+                if acc.counts.len() >= cap {
+                    acc.truncated = true;
+                    return true;
+                }
+            }
+        }
+        OutMode::Matches => {
+            let bytes = body.as_bytes();
+            let mut defs: Option<Vec<FileDef>> = None;
+            let mut last_line = usize::MAX;
+            for m in re.find_iter(body) {
+                let off = m.start();
+                if !accept(off) {
+                    continue;
+                }
+                if opts.call_only && !is_call_position(bytes, m.end()) {
+                    continue;
+                }
+                if let Some(recv) = &opts.qualifier {
+                    if !has_qualifier(bytes, off, recv) {
                         continue;
                     }
-                    if opts.call_only && !is_call_position(bytes, m.end()) {
-                        continue;
-                    }
-                    if let Some(recv) = &opts.qualifier {
-                        if !has_qualifier(bytes, off, recv) {
-                            continue;
-                        }
-                    }
-                    let s = starts.get_or_insert_with(|| line_starts_of(body));
-                    let line_idx = s.partition_point(|&x| x <= off) - 1;
-                    if line_idx == last_line {
-                        continue; // one row per line
-                    }
-                    last_line = line_idx;
+                }
+                let s = starts.get_or_insert_with(|| line_starts_of(body));
+                let line_idx = s.partition_point(|&x| x <= off) - 1;
+                if line_idx == last_line {
+                    continue; // one row per line
+                }
+                last_line = line_idx;
 
-                    let d = defs
-                        .get_or_insert_with(|| load_file_defs(&mut def_stmt, rel).unwrap_or_default());
-                    let enclosing = innermost(d, off);
-                    hits.push(Hit {
-                        path: rel.to_string(),
-                        line: line_idx + 1,
-                        col: off - s[line_idx],
-                        symbol: enclosing.map(|d| d.name.clone()),
-                        kind: enclosing.map(|d| d.kind.clone()),
-                        text: line_text(body, s, line_idx),
-                        before: context_lines(
-                            body,
-                            s,
-                            line_idx.saturating_sub(opts.before)..line_idx,
-                        ),
-                        after: context_lines(body, s, (line_idx + 1)..(line_idx + 1 + opts.after)),
-                    });
-                    if hits.len() >= cap {
-                        truncated = true;
-                        break 'outer;
-                    }
+                let d = defs.get_or_insert_with(|| load_defs(path));
+                let enclosing = innermost(d, off);
+                acc.hits.push(Hit {
+                    path: path.to_string(),
+                    line: line_idx + 1,
+                    col: off - s[line_idx],
+                    symbol: enclosing.map(|d| d.name.clone()),
+                    kind: enclosing.map(|d| d.kind.clone()),
+                    text: line_text(body, s, line_idx),
+                    before: context_lines(body, s, line_idx.saturating_sub(opts.before)..line_idx),
+                    after: context_lines(body, s, (line_idx + 1)..(line_idx + 1 + opts.after)),
+                });
+                if acc.hits.len() >= cap {
+                    acc.truncated = true;
+                    return true;
                 }
             }
         }
     }
+    false
+}
 
-    Ok(match opts.out {
-        OutMode::Files => SearchData::Files { files, truncated },
-        OutMode::Count => SearchData::Counts { counts, truncated },
-        OutMode::Matches => SearchData::Matches {
-            matches: hits,
-            truncated,
-        },
-    })
+/// The label used for the piped buffer where a result would otherwise carry a
+/// path. Parenthesized like `map`'s `(root)`, so it can't be mistaken for a
+/// file named `stdin` and stays greppable.
+pub(crate) const STDIN_LABEL: &str = "(stdin)";
+
+/// Scan a buffer piped in on stdin instead of the index.
+///
+/// Never inferred from whether stdin is a TTY: an agent's shell usually has
+/// stdin closed or on /dev/null, so auto-detection would silently turn every
+/// ordinary `codeq search` into a search of an empty buffer. The caller must
+/// opt in explicitly, and this is the only way to reach this function.
+///
+/// `language` is what buys anything over grep: with it, the buffer is parsed
+/// once with Tree-sitter, which gives `--in code|comments|strings` and the
+/// enclosing `[symbol]` on each match. Without it the scan is still exact, but
+/// those two are unavailable, and `--in` is rejected rather than silently
+/// ignored.
+pub(crate) fn scan_stdin(
+    re: &regex::Regex,
+    opts: &ScanOpts,
+    language: Option<&str>,
+    label: &str,
+) -> Result<SearchData> {
+    // Nothing is piped in, so reading would block forever. grep would hang here;
+    // for an agent a hang is worse than an error, so say what went wrong.
+    if std::io::stdin().is_terminal() {
+        return Err(anyhow!(
+            "--stdin given but nothing is piped in (stdin is a terminal)"
+        ));
+    }
+    let mut buf = Vec::new();
+    std::io::stdin().read_to_end(&mut buf)?;
+    // Lossy rather than an error: piped input is often a log or a mixed-encoding
+    // file, and a stray byte shouldn't lose the whole search.
+    let body = String::from_utf8_lossy(&buf).into_owned();
+
+    let filtering = opts.in_filter != InFilter::Any;
+    let (mut defs, spans) = match language {
+        Some(lang) => {
+            if filtering && !has_spans(lang) {
+                return Err(anyhow!(
+                    "--in needs comment/string spans, which codeq does not extract for '{lang}'"
+                ));
+            }
+            let mut ex = Extractor::new()?;
+            let (facts, spans, _) = ex.extract(lang, body.as_bytes());
+            let defs: Vec<FileDef> = facts
+                .into_iter()
+                .filter(|f| f.kind != "import")
+                .map(|f| FileDef {
+                    name: f.name,
+                    kind: f.kind,
+                    start_byte: f.start_byte,
+                    end_byte: f.end_byte,
+                })
+                .collect();
+            (defs, spans)
+        }
+        None => {
+            if filtering {
+                return Err(anyhow!(
+                    "--in needs to know the language of piped input: add --language <lang>"
+                ));
+            }
+            (Vec::new(), Vec::new())
+        }
+    };
+
+    let cap = if opts.limit == 0 { usize::MAX } else { opts.limit };
+    let mut acc = ScanAcc::default();
+    let mut load_defs = |_: &str| std::mem::take(&mut defs);
+    scan_doc(label, &body, &spans, &mut load_defs, re, opts, cap, &mut acc);
+    Ok(acc.finish(opts.out))
 }
 
 /// A `%literal%` LIKE pattern for the content index — trigram needs >= 3 chars,

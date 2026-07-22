@@ -41,7 +41,9 @@ buys a few things a byte scan cannot:
   this module, what breaks if I change it. `callers`, `callees`, `implementors`,
   `importers`, and `about` answer these directly.
 - Less to read. `outline` and `api` show a file or module from signatures and docstrings
-  alone, no bodies, so an agent grasps the shape for a fraction of the tokens.
+  alone, no bodies, so an agent grasps the shape for a fraction of the tokens. `members`
+  gives a type's fields and variants without opening the file, and is structural rather
+  than name-based, so it has none of the same-name ambiguity the call graph does.
 - Computed once, kept fresh. Each file is parsed once; only changed files (by size and
   mtime) are reparsed. The cost is amortized across a session of many queries against a
   mostly stable tree, which is the agent workload. For a single one-off text search a cold
@@ -52,6 +54,23 @@ Rust `regex` crate), adds the flags you would reach for `rg` to get (`-A`/`-B`/`
 `-c`, `-w`, `-g`), and does one thing grep cannot: `--in code|comments|strings` restricts
 matches by syntactic class, so you can find a TODO only in comments, or a literal only in
 real code.
+
+That extends to a pipeline. `--stdin` scans text piped in instead of the index, so codeq
+also stands in for grep where there is no repository to index:
+
+```bash
+git log --oneline -20 | codeq search '^fix' --stdin
+curl -s $URL | codeq search 'apiKey' --stdin --language javascript --in strings
+```
+
+Add `--language` and the buffer is parsed once, which gives the two things grep still
+cannot do on a stream: `--in code|comments|strings`, and the enclosing `[symbol]` on every
+match. Without it the scan is exact but has neither, and `--in` is rejected rather than
+silently ignored. A piped scan opens no index and needs no repo.
+
+`--stdin` is explicit and never inferred from whether stdin is a TTY. That is deliberate:
+an agent's shell usually hands the process an open pipe, so auto-detection would silently
+turn every ordinary `codeq search` into a scan of an empty buffer.
 
 The honest boundary: codeq's facts are syntactic, not deeply semantic. It knows an
 identifier is a function definition. It does not resolve a call to its definition across
@@ -158,9 +177,9 @@ whole structure (imports, signatures, docstrings) cheaply, then open only what y
 ```
   20  impl Repo {
   23      pub fn discover(start: &Path) -> Result<Repo> {
-          ⋮  8 lines (24-31)
+          ... 8 lines (24-31)
   33      pub fn vcs(&self) -> &'static str {
-          ⋮  6 lines (34-39)
+          ... 6 lines (34-39)
 ```
 
 - `codeq read <file> --lines 24-31` for a verbatim, line-numbered slice.
@@ -205,9 +224,36 @@ result. Start with `codeq_map` to orient.
 
 ## Output contract
 
-Every result is `{"schema": "codeq.result.v1", "data": ...}`. Facts carry byte ranges,
-1-based line and column ranges, an extraction source (e.g. `treesitter/rust`), and a
-confidence.
+The default output is compact grep-style text; `--json` gives the envelope.
+
+**Text.** One result per line, `path:line:col: payload`, and nothing else. The rules,
+which apply to every command:
+
+- **No decoration.** No box drawing, dividers, banners, colour, or arrow glyphs. The
+  only structural marker is `# <key>` above each list when a result has several
+  (`about`, `map`, `affected`); a single-list result has no header at all.
+- **ASCII only.** Any range codeq prints is written in the syntax codeq accepts
+  (`44-64`, not `44–64`), so output is a copy-pasteable next command.
+- **No prose.** No explanation of how results were ordered or produced. Ordering
+  guarantees live in `--help`; provenance lives in `--json`.
+- **A field earns its place.** A column that is the same on every row (or derivable
+  from the path) is omitted; booleans are emitted only in the informative case
+  (`indexed=false` shows up, `indexed=true` does not).
+- **A flag must change the text output.** Anything that only shows up under
+  `--json` is a no-op from the default's point of view. A doc comment rides on its
+  definition's row as `  // <doc>`, so `--docs` visibly does something.
+- **Signatures are declaration headers**, not bodies: `pub struct Edge`, never the
+  field list.
+- **One row is one line.** Multi-line facts are collapsed to a single space.
+  Verbatim source (`read`, `explore`, `context`) is the one exception and is always
+  introduced by a locator line.
+- **Indentation only means depth**, two spaces per hop, relative to the shallowest
+  row shown.
+- **Stdout is pure data.** Index/staleness notes go to stderr, so a pipe stays clean.
+
+**JSON.** Every result is `{"schema": "codeq.result.v1", "data": ...}`. Facts carry byte
+ranges, 1-based line and column ranges, an extraction source (e.g. `treesitter/rust`),
+and a confidence.
 
 codeq refreshes on read, so answers are almost always fresh and the metadata envelope is
 omitted unless it carries signal. Pass `--meta` to always include the `repo` and `index`

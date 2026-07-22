@@ -116,6 +116,25 @@ enum Command {
         #[arg(long, default_value_t = 200)]
         limit: usize,
     },
+    /// What a type contains: its fields, enum variants, and methods.
+    ///
+    /// Containment comes from the parse tree, not from name matching: a member is
+    /// a definition nested directly inside NAME's byte range. Languages that do
+    /// not declare members (Ruby `attr_accessor`, Python `self.x` in `__init__`)
+    /// yield nothing rather than a guess.
+    Members {
+        /// The type whose members to list.
+        name: String,
+        /// Restrict to definitions in paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Restrict to one member kind (field, variant, method, function).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
     /// The structure of a file top to bottom: definitions, signatures, nesting.
     Outline {
         /// File to outline (repo-relative path or basename).
@@ -444,6 +463,13 @@ enum Command {
         /// Maximum results to return (0 = unlimited).
         #[arg(long, default_value_t = 100)]
         limit: usize,
+        /// Search text piped in on stdin instead of the repository index.
+        ///
+        /// Requires no repo and reads no index. Pass --language to also get
+        /// --in code|comments|strings and the enclosing [symbol] on each match;
+        /// without it the scan is exact but has neither.
+        #[arg(long)]
+        stdin: bool,
     },
     /// Assemble token-budgeted context from explicit seeds.
     Context {
@@ -478,6 +504,9 @@ enum Command {
     Stats {
     },
     /// Factual aggregation of the index for orientation (grouped counts).
+    ///
+    /// Each list is ordered by its visible count (files/importers/definitions)
+    /// descending, ties broken by name/path.
     Map {
         /// Max rows per list (0 = unlimited).
         #[arg(long, default_value_t = 20)]
@@ -720,6 +749,7 @@ fn main() -> ExitCode {
             files_with_matches,
             count,
             limit,
+            stdin,
         } => commands::cmd_search(
             &cwd,
             commands::SearchArgs {
@@ -736,6 +766,7 @@ fn main() -> ExitCode {
                 files_with_matches,
                 count,
                 limit,
+                stdin,
             },
             out,
         ),
@@ -762,6 +793,12 @@ fn main() -> ExitCode {
             },
             out,
         ),
+        Command::Members {
+            name,
+            path,
+            kind,
+            limit,
+        } => commands::cmd_members(&cwd, &name, path.as_deref(), kind.as_deref(), limit, out),
         Command::Stats {} => commands::cmd_stats(&cwd, out),
         Command::Map { limit } => commands::cmd_map(&cwd, limit, out),
         Command::Capabilities {} => commands::cmd_capabilities(out),
