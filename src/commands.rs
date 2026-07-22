@@ -2572,6 +2572,11 @@ pub fn cmd_references(
             let definition = defsites.contains(&(h.path.clone(), h.line as i64));
             ReferenceRow { hit: h, definition, via: None }
         })
+        // A definition is not a call. `fn foo(` and `def foo(` are followed by
+        // `(` just as a call is, so the byte-level test cannot tell them apart —
+        // but the definition sites are already known exactly, so drop them.
+        // Same for `--on`: a declaration is not a qualified use.
+        .filter(|r| !((call_only || qualifier.is_some()) && r.definition))
         .collect();
     let references = resolve_rows(
         &s,

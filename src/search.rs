@@ -157,13 +157,33 @@ fn is_call_position(bytes: &[u8], end: usize) -> bool {
 
 /// Whether the match starting at byte `off` is qualified by `recv` — preceded by
 /// `recv.` / `recv::` / `recv->` at a word boundary.
+///
+/// Whitespace, including newlines, is skipped on both sides of the separator, so
+/// a wrapped method chain reads the same as a single-line call:
+///
+/// ```text
+/// db.query()          db . query()          db
+///                                               .query()
+/// ```
+///
+/// Still textual rather than a parsed receiver expression: `a.b.query()` counts
+/// for `--on b` (the nearest qualifier is what is tested) and a call-valued
+/// receiver like `conn().query()` is not matched at all.
 fn has_qualifier(bytes: &[u8], off: usize, recv: &str) -> bool {
+    let skip_ws_back = |mut i: usize| {
+        while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+            i -= 1;
+        }
+        i
+    };
+
     let q = recv.as_bytes();
+    let sep_end = skip_ws_back(off);
     for sep in [b"::".as_slice(), b"->".as_slice(), b".".as_slice()] {
-        if off < sep.len() || &bytes[off - sep.len()..off] != sep {
+        if sep_end < sep.len() || &bytes[sep_end - sep.len()..sep_end] != sep {
             continue;
         }
-        let qend = off - sep.len();
+        let qend = skip_ws_back(sep_end - sep.len());
         if qend >= q.len()
             && &bytes[qend - q.len()..qend] == q
             && (qend == q.len() || !is_ident_byte(bytes[qend - q.len() - 1]))

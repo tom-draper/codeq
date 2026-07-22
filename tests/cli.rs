@@ -3665,3 +3665,76 @@ fn callees_ignores_calls_written_in_comments_and_strings() {
     let called = field_set(&f.run(&["callees", "really_calls"]), "name");
     assert_eq!(called, ["helper"], "a real call is still found");
 }
+
+/// `fn foo(` and `def foo(` are followed by `(` exactly as a call is, so the
+/// byte-level test cannot tell a definition from a call. The definition sites
+/// are known exactly, so they are dropped from the position filters.
+#[test]
+fn a_definition_is_not_a_call_site() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn parse_range(s: &str) -> u32 { 0 }\nfn user() { parse_range(\"x\"); }\n",
+    );
+
+    let calls = f.run(&["references", "parse_range", "--calls"]);
+    let lines: Vec<i64> = calls["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["line"].as_i64().unwrap())
+        .collect();
+    assert_eq!(lines, [2], "only the call site, not the declaration");
+
+    // Unfiltered, the definition is still reported and still flagged.
+    let all = f.run(&["references", "parse_range"]);
+    assert!(
+        all["data"]["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["definition"] == true),
+        "plain references still shows the definition: {all}"
+    );
+}
+
+/// A wrapped method chain is the same call as a single-line one. Whitespace,
+/// including newlines, must not decide whether `--on` finds it.
+#[test]
+fn on_receiver_survives_formatting() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct Db;\nimpl Db { fn query(&self) {} }\n\
+         fn f(db: Db) {\n    db.query();\n    db\n        .query();\n    db . query();\n}\n",
+    );
+    let lines: Vec<i64> = f.run(&["references", "query", "--on", "db"])["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["line"].as_i64().unwrap())
+        .collect();
+    assert_eq!(lines, [4, 6, 7], "same call, three formattings: {lines:?}");
+}
+
+/// Skipping whitespace must not loosen the receiver match itself.
+#[test]
+fn on_receiver_still_rejects_the_wrong_receiver() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct Db;\nimpl Db { fn query(&self) {} }\n\
+         fn g(db: Db, other: Db, mydb: Db) {\n    db.query();\n    other.query();\n    mydb.query();\n    db.inner.query();\n}\n",
+    );
+    let lines: Vec<i64> = f.run(&["references", "query", "--on", "db"])["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["line"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        lines, [4],
+        "a different receiver, a longer name ending in it, and a nested field \
+         must all be excluded: {lines:?}"
+    );
+}

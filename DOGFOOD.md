@@ -4,6 +4,48 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 30: a declaration is not a call
+
+The two textual heuristics left over from session 29, both in `references`.
+
+**`--calls` matched the definition site.** `fn parse_range(` is followed by `(`
+exactly as `parse_range(x)` is, so `is_call_position` — which peeks past
+whitespace for a `(` — cannot tell a declaration from a call. Every
+`references NAME --calls` therefore reported the declaration as a call site.
+
+No cleverness needed: `references` already computes `defsites` and flags each row
+`definition: true`, purely so the output can show it. The information was sitting
+right there; the filter just never consulted it. Same for `--on`, since a
+declaration is not a qualified use either. Plain `references` still reports the
+definition and still flags it — only the position filters drop it.
+
+**`--on RECV` was defeated by a line break.** `has_qualifier` compared the bytes
+immediately before the match, so of these three identical calls:
+
+    db.query();
+    db
+        .query();
+    db . query();
+
+only the first was found. Two false negatives caused purely by rustfmt. Skipping
+whitespace on both sides of the separator fixes it, and the receiver test itself
+stays exact: `other.query()`, `mydb.query()` (longer name ending in `db`) and
+`db.inner.query()` are all still correctly excluded from `--on db`.
+
+Honest about what this is: still textual, not a parsed receiver expression.
+`a.b.query()` matches `--on b` because the nearest qualifier is what gets tested,
+and a call-valued receiver like `conn().query()` matches nothing at all. Both are
+now documented rather than discovered.
+
+The pattern across sessions 29 and 30 is worth naming. Every one of these four
+bugs was a byte-level test standing in for something codeq already knew: spans
+for "is this a comment", the facts table for "is this a declaration". The
+heuristic was not compensating for missing information, it was ignoring
+information already in the index. Worth checking for that before reaching for a
+parser — the structural answer may already be one query away.
+
+186 tests (+3).
+
 ## 2026-07-22 - session 29: comments are not uses
 
 Asked where codeq still matches characters for something the structure already
