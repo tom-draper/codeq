@@ -29,6 +29,11 @@ pub(crate) struct Hit {
     /// The innermost definition enclosing this match, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) symbol: Option<String>,
+    /// For a call site, the receiver it is called on, as written: `db` in
+    /// `db.query()`, `helpers` in `helpers::stem()`. Only populated when a
+    /// position filter had the file parsed anyway.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) receiver: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) kind: Option<String>,
     /// The matched line, trailing whitespace trimmed and capped.
@@ -524,6 +529,7 @@ pub(crate) fn scan_doc(
                     line: line_idx + 1,
                     col: off - s[line_idx],
                     symbol: enclosing.map(|d| d.name.clone()),
+                    receiver: calls.and_then(|m| m.get(&off).cloned()).flatten(),
                     kind: enclosing.map(|d| d.kind.clone()),
                     text: line_text(body, s, line_idx),
                     before: context_lines(body, s, line_idx.saturating_sub(opts.before)..line_idx),

@@ -4228,3 +4228,54 @@ fn rust_trait_method_declarations_are_extracted() {
         "and it is a member of the trait"
     );
 }
+
+/// A receiver disambiguates which same-named definition a call means, but codeq
+/// shows it rather than filtering on it: a receiver can be a value (`db.query()`)
+/// or a module path (`helpers::stem()`), and telling those apart needs name
+/// resolution codeq does not do. Pruning "a call with a receiver is not calling a
+/// free function" would discard the module case, which is a real call.
+#[test]
+fn call_sites_report_the_receiver_they_are_called_on() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "mod helpers { pub fn stem(s: &str) -> &str { s } }\n\
+         struct Db;\n\
+         impl Db { fn stem(&self) -> u32 { 0 } }\n\
+         fn use_them(db: Db) {\n    let a = helpers::stem(\"x\");\n    let b = db.stem();\n}\n",
+    );
+
+    // Both kinds exist, which is exactly when the receiver matters.
+    let mut kinds = field_set(&f.run(&["definitions", "stem"]), "kind");
+    kinds.sort();
+    assert_eq!(kinds, ["function", "method"]);
+
+    let rows = f.run(&["references", "stem", "--calls"]);
+    let by_line = |line: i64| -> String {
+        rows["data"]["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["line"] == line)
+            .and_then(|r| r["receiver"].as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    assert_eq!(by_line(5), "helpers", "a module path is a receiver too");
+    assert_eq!(by_line(6), "db", "and so is a value");
+
+    // Visible in text mode, not just JSON.
+    let text = String::from_utf8(f.raw(&["references", "stem", "--calls"]).stdout).unwrap();
+    assert!(text.contains("on=helpers") && text.contains("on=db"), "{text}");
+
+    // An unfiltered query parses nothing, so it reports no receiver.
+    let plain = f.run(&["references", "stem"]);
+    assert!(
+        plain["data"]["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r.get("receiver").is_none()),
+        "no receiver without a position filter: {plain}"
+    );
+}

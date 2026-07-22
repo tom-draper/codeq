@@ -85,6 +85,11 @@ benchmarks — not as a step you run before querying.
       it is wrapped, and *not* `mydb.query()` or `a.inner.query()`; for those use
       `--on a.inner`, and a call-valued receiver works too (`--on 'conn()'`).
       Receivers are as the language writes them — PHP needs `--on '$db'`.
+    - With either filter, each row also carries **`on=<receiver>`**, the thing the
+      call was made on. codeq shows it rather than filtering on it: a receiver may
+      be a value (`db.stem()`) or a module path (`helpers::stem()`), and telling
+      those apart needs name resolution codeq doesn't do. So when a name is both a
+      method and a free function, read `on=` and decide — don't expect codeq to.
     - `--examples` (callers) — surface the actual call expression at each site (one
       representative per caller): the row becomes `path:line:col:` the source line,
       so one command answers "who calls it *and how*". For every call site rather

@@ -4,6 +4,50 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 36: the prune I said was safe, isn't
+
+Session 35 made method/function kinds accurate specifically so the receiver-based
+prune could be built "on real facts rather than on a guess". Built the test case
+first, and the premise collapsed:
+
+    mod helpers { pub fn stem(s: &str) -> &str { s } }
+    impl Db { fn stem(&self) -> u32 { 0 } }
+
+    helpers::stem("x")   // receiver: helpers  -> a FREE FUNCTION
+    db.stem()            // receiver: db       -> a METHOD
+
+The rule was "a call with a receiver is not calling a free function". It is
+wrong, because **a receiver can be a module path rather than a value**. Rust
+`helpers::stem()`, Python `module.func()`, Go `pkg.Func()` and JS `mod.fn()` are
+all qualified calls to free functions. Accurate kinds do not help: distinguishing
+a module receiver from a value receiver *is* name resolution, which is the exact
+boundary codeq declines to cross. Two sessions of work whose stated purpose was
+to unblock this, and the honest outcome is that it stays unbuilt.
+
+The kinds work was still worth doing on its own — `--kind method` is meaningful,
+`members` is sharper, trait declarations are extracted — but I should record that
+I asserted the prune was "now safe" before checking, and it took one fixture to
+disprove.
+
+What shipped instead is the version that adds information rather than removing
+it: `--calls`/`--on` rows now carry **`on=<receiver>`**.
+
+    a.rs:5:21: let a = helpers::stem("x");  [use_them]  on=helpers
+    a.rs:6:15: let b = db.stem();           [use_them]  on=db
+
+Same facts codeq was already computing (the call map is built for those filters
+anyway, so this costs nothing new), presented so the reader can make the call
+codeq cannot. When a name is both a method and a free function — precisely the
+case where `callers` is noisiest — `on=` is what tells them apart. Unfiltered
+queries parse nothing and report no receiver, so nobody pays for it who did not
+ask.
+
+This is the same lesson as `unused` counting string mentions, and as the
+`--resolved` heuristics being opt-in: where resolution genuinely cannot be done,
+surface the evidence instead of guessing, and say which it is.
+
+204 tests (+1), textmode ALL PASS.
+
 ## 2026-07-22 - session 35: a method is not a function
 
 Session 34 ended by declining to build receiver-based `--resolved` because the

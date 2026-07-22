@@ -224,7 +224,14 @@ fn render_row(row: &Value, base_depth: i64, out: &mut String) {
         let enclosing = str_of("symbol")
             .map(|s| format!("  [{s}]"))
             .unwrap_or_default();
-        let match_line = format!("{pad}{loc}{}{enclosing}\n", t.trim());
+        // The receiver a call is made on. Shown rather than used to filter: a
+        // receiver can be a value (`db.query()`) or a module path
+        // (`helpers::stem()`), and telling those apart needs name resolution
+        // codeq does not do. Surfacing it lets the reader judge.
+        let on = str_of("receiver")
+            .map(|r| format!("  on={r}"))
+            .unwrap_or_default();
+        let match_line = format!("{pad}{loc}{}{enclosing}{on}\n", t.trim());
 
         // -A/-B/-C context lines: render grep-style (`path-line- content`) with
         // computed line numbers, so the flag isn't a silent no-op in text mode.
@@ -287,7 +294,7 @@ fn render_row(row: &Value, base_depth: i64, out: &mut String) {
     }
     const CONSUMED: &[&str] = &[
         "path", "line", "col", "start_line", "end_line", "start_col", "end_col",
-        "start_byte", "end_byte", "depth", "text", "signature", "doc", "source",
+        "start_byte", "end_byte", "depth", "text", "signature", "doc", "source", "receiver",
         "id", "confidence", "language", "kind", "name", "module", "symbol", "subtype",
         "supertype", "dir",
     ];
