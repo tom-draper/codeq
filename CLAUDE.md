@@ -128,6 +128,21 @@ benchmarks — not as a step you run before querying.
   forms stay coarse. Verify via the edge's module string.
 - **Trim tokens on list output:** append `--fields a,b`
 
+## When a query comes back empty
+
+codeq tells you why, on stderr (or in the `note` field under `--json`):
+
+- `no symbol named 'ScanOpt'; closest: ScanOpts` — a typo, with the fix.
+- `'X' is defined at a.rs:2 but has no callers` — the symbol is real, the
+  relation is genuinely empty.
+- `'X' is defined at a.rs:2 but nothing matches --path zzz` — your filter, not
+  the code.
+- `no public definitions in 'src/search.rs' (34 private, 40 restricted)` — the
+  defs exist, none are public (`pub(crate)` is restricted, not public).
+- `no unused definitions ...` — a clean result, not a failed one.
+
+So read stderr before assuming a command doesn't work or a symbol doesn't exist.
+
 ## Known limitations (found by dogfooding — don't be misled)
 
 - **Symbol commands match by NAME across the whole repo.** For a common name

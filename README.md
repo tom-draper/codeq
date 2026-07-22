@@ -250,6 +250,12 @@ which apply to every command:
 - **Indentation only means depth**, two spaces per hop, relative to the shallowest
   row shown.
 - **Stdout is pure data.** Index/staleness notes go to stderr, so a pipe stays clean.
+- **An empty result explains itself.** "No results" is ambiguous between no such
+  symbol, no such relation, and a filter that removed everything, so codeq says
+  which, with a near-miss suggestion when the name looks mistyped. The note goes to
+  stderr in text mode and into the envelope's `note` field under `--json` (the MCP
+  server captures only stdout). It is diagnostic, never data: `data` stays empty and
+  the exit status stays 0.
 
 **JSON.** Every result is `{"schema": "codeq.result.v1", "data": ...}`. Facts carry byte
 ranges, 1-based line and column ranges, an extraction source (e.g. `treesitter/rust`),

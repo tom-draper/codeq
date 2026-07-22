@@ -32,11 +32,26 @@ pub struct Envelope<T: Serialize> {
     repo: RepoMeta,
     index: IndexMeta,
     data: T,
+    /// Why an empty result is empty. Carried in the envelope rather than only on
+    /// stderr because the MCP server captures stdout alone, and the agent behind
+    /// it is exactly who needs to know the difference between "none" and "you
+    /// asked the wrong question".
+    note: Option<String>,
 }
 
 impl<T: Serialize> Envelope<T> {
     pub fn new(repo: RepoMeta, index: IndexMeta, data: T) -> Self {
-        Envelope { repo, index, data }
+        Envelope {
+            repo,
+            index,
+            data,
+            note: None,
+        }
+    }
+
+    pub fn note(mut self, note: Option<String>) -> Self {
+        self.note = note;
+        self
     }
 
     /// Whether the meta blocks carry signal worth the tokens.
@@ -58,6 +73,9 @@ impl<T: Serialize> Envelope<T> {
             let include_meta = r.meta || r.pretty || self.noteworthy();
             let mut out = serde_json::Map::new();
             out.insert("schema".into(), Value::from(RESULT_SCHEMA));
+            if let Some(n) = &self.note {
+                out.insert("note".into(), Value::from(n.as_str()));
+            }
             if include_meta {
                 out.insert("repo".into(), serde_json::to_value(&self.repo)?);
                 out.insert("index".into(), serde_json::to_value(&self.index)?);
@@ -89,6 +107,11 @@ impl<T: Serialize> Envelope<T> {
         let mut s = String::new();
         render_value(&data, &mut s);
         print!("{s}");
+        // Text mode keeps stdout pure data, so the note goes to stderr where it
+        // is visible to a person and invisible to a pipe.
+        if let Some(n) = &self.note {
+            eprintln!("# codeq: {n}");
+        }
         Ok(())
     }
 }

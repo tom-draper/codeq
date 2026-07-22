@@ -4,6 +4,59 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 27: an empty result now says why it is empty
+
+Not a new command. codeq already has 31, and the next-best thing was not a 32nd
+but making the ones there fail informatively.
+
+The problem, from this session's own transcript rather than theory. Seven
+commands, five silent:
+
+    api src/search.rs        -> (empty)
+    tests declaration_header -> (empty)
+    unused src/deps.rs       -> (empty)
+    implementors Serialize   -> (empty)
+    callers nonexistent_xyz  -> (empty)
+    about ScanOpt            -> "# definitions" and nothing under it
+
+Every one is ambiguous between four different things: the name doesn't exist,
+the name exists but has none of that relation, the language has no such concept,
+or a `--path` filter removed everything. I lost real time to `api src/search.rs`
+before remembering `pub(crate)` is `restricted`, not `public`. And `about
+ScanOpt` is the worst of the set, because a typo returns valid headers with
+nothing under them, which reads like a fact about a real symbol.
+
+Now each explains itself:
+
+    no symbol named 'ScanOpt'; closest: ScanOpts
+    'declaration_header' is defined at src/commands.rs:671 but has no tests referencing it
+    'ScanOpts' is defined at src/search.rs:110 but nothing matches --path zzz
+    no public definitions in 'src/search.rs' (34 private, 40 restricted)
+    no unused definitions in 'src/deps.rs' (every one is referenced somewhere)
+
+Three design points worth keeping:
+
+- **The note is diagnostic, never data.** `data` stays empty, the exit status
+  stays 0, and stdout stays pure in text mode (the note goes to stderr). A parser
+  that ignored it before ignores it still.
+- **It has to reach MCP.** `call_tool` shells out with `--json` and captures
+  *stdout only*, so a stderr-only note would be invisible to exactly the consumer
+  that needs it most. Hence a `note` field in the envelope as well.
+- **Suggestions are deliberately tight.** The first cut allowed edit distance up
+  to 3, which turned `Serialize` into "closest: normalize" — an unrelated word
+  offered as a fix, which invites a second wrong query. Now the budget is
+  `len/4`, capped at 2, and names sharing a prefix rank first, since a truncated
+  or extended name is the commonest real typo. `Serialize` now correctly offers
+  nothing; `renderrow` offers `render_row, render_rows`.
+
+One test of mine was wrong rather than the code: I asserted `unused` on a file
+with a `main` would be clean, forgetting that nothing calls the root, so `main`
+is legitimately reported. Scoping the assertion to a file whose only definition
+is called from elsewhere fixed it. Worth noting because the failure was the tool
+being right.
+
+172 tests (+5).
+
 ## 2026-07-22 - session 26: docs in text output (a flag that did nothing)
 
 Asked "can an agent get a function's documentation", checked, and found the data

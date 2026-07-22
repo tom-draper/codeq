@@ -65,6 +65,12 @@ impl Session {
 
     /// Build the envelope and print it honoring the caller's render options.
     fn emit<T: Serialize>(&self, data: T) -> Result<()> {
+        self.emit_noted(data, None)
+    }
+
+    /// Emit with a note explaining an empty result. The note is only ever
+    /// diagnostic: it never changes `data`, so a parser can keep ignoring it.
+    fn emit_noted<T: Serialize>(&self, data: T, note: Option<String>) -> Result<()> {
         let repo = RepoMeta {
             root: self.repo.root.to_string_lossy().into_owned(),
             vcs: self.repo.vcs(),
@@ -78,7 +84,7 @@ impl Session {
             partial_failures: self.partial_failures,
             elapsed_ms: self.started.elapsed().as_millis() as u64,
         };
-        Envelope::new(repo, index, data).print(Render {
+        Envelope::new(repo, index, data).note(note).print(Render {
             json: self.out.json,
             meta: self.out.meta,
             pretty: self.out.pretty,
@@ -91,6 +97,131 @@ impl Session {
 struct IndexReport {
     indexed_files: i64,
     reindexed: u64,
+}
+
+// --- empty-result diagnosis --------------------------------------------------
+//
+// An empty result is ambiguous: the name may not exist, it may exist with none
+// of the relation asked for, or a `--path` filter may have removed everything.
+// Left unexplained, all three look like "no" — and a typo looks like a fact.
+// These helpers turn the empty case into one line saying which it was.
+
+/// Levenshtein distance, bailing out once it cannot beat `best`.
+fn edit_distance(a: &str, b: &str, best: usize) -> usize {
+    if a.len().abs_diff(b.len()) > best {
+        return best + 1;
+    }
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        cur[0] = i;
+        let mut row_best = cur[0];
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+            row_best = row_best.min(cur[j]);
+        }
+        if row_best > best {
+            return best + 1; // no cell in this row can still win
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// The closest defined symbol names to `name`, nearest first. Case-insensitive,
+/// and tolerant in proportion to the name's length.
+fn nearest_names(s: &Session, name: &str) -> Result<Vec<String>> {
+    // Deliberately tight: a suggestion has to be plausibly the same name
+    // mistyped. Two edits on a long name already reaches unrelated words, and a
+    // bad suggestion is worse than none because it invites a second wrong query.
+    let budget = (name.chars().count() / 4).clamp(1, 2);
+    let needle = name.to_lowercase();
+    let mut stmt = s
+        .db
+        .conn
+        .prepare("SELECT DISTINCT name FROM facts WHERE kind <> 'import'")?;
+    let mut scored: Vec<(usize, String)> = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .filter_map(|n| n.ok())
+        .filter_map(|n| {
+            let d = edit_distance(&needle, &n.to_lowercase(), budget);
+            (d <= budget).then_some((d, n))
+        })
+        .collect();
+    scored.sort_by(|a, b| {
+        let affix = |n: &str| {
+            let n = n.to_lowercase();
+            !(n.starts_with(&needle) || needle.starts_with(&n))
+        };
+        affix(&a.1)
+            .cmp(&affix(&b.1))
+            .then(a.0.cmp(&b.0))
+            .then(a.1.cmp(&b.1))
+    });
+    scored.dedup_by(|a, b| a.1 == b.1);
+    Ok(scored.into_iter().take(3).map(|(_, n)| n).collect())
+}
+
+/// Where a symbol is defined: `(path, line)` per definition.
+fn definition_sites(s: &Session, name: &str) -> Result<Vec<(String, i64)>> {
+    let mut stmt = s.db.conn.prepare(
+        "SELECT path, start_line FROM facts
+         WHERE name = ?1 AND kind <> 'import' ORDER BY path, start_line",
+    )?;
+    let sites = stmt
+        .query_map([name], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(sites)
+}
+
+/// Explain an empty result for a command keyed on a symbol name.
+///
+/// `relation` names what was being looked for ("callers", "members", …) and is
+/// used verbatim in the message. Returns `None` when the result was not empty.
+fn note_if_empty<T>(
+    s: &Session,
+    rows: &[T],
+    name: &str,
+    relation: &str,
+    path: Option<&str>,
+) -> Result<Option<String>> {
+    if !rows.is_empty() {
+        return Ok(None);
+    }
+    let sites = definition_sites(s, name)?;
+    if sites.is_empty() {
+        let near = nearest_names(s, name)?;
+        let hint = if near.is_empty() {
+            String::new()
+        } else {
+            format!("; closest: {}", near.join(", "))
+        };
+        return Ok(Some(format!("no symbol named '{name}'{hint}")));
+    }
+    if let Some(filter) = path {
+        if !sites.iter().any(|(p, _)| p.contains(filter)) {
+            let where_ = sites
+                .iter()
+                .map(|(p, l)| format!("{p}:{l}"))
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Ok(Some(format!(
+                "'{name}' is defined at {where_} but nothing matches --path {filter}"
+            )));
+        }
+    }
+    let (p, l) = &sites[0];
+    let more = if sites.len() > 1 {
+        format!(" (+{} more definitions)", sites.len() - 1)
+    } else {
+        String::new()
+    };
+    Ok(Some(format!(
+        "'{name}' is defined at {p}:{l}{more} but has no {relation}"
+    )))
 }
 
 pub fn cmd_index(cwd: &Path, rebuild: bool, out: Out) -> Result<()> {
@@ -454,7 +585,8 @@ pub fn cmd_definitions(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let data = definitions_of(&s, symbol, path, limit)?;
-    s.emit(data)
+    let note = note_if_empty(&s, &data, symbol, "definition", path)?;
+    s.emit_noted(data, note)
 }
 
 #[derive(Serialize)]
@@ -500,7 +632,39 @@ pub fn cmd_api(
         })
     })?;
     let data: Vec<ApiRow> = rows.collect::<std::result::Result<_, _>>()?;
-    s.emit(data)
+    // Empty almost always means "the definitions are there, none are public" —
+    // Rust `pub(crate)` and `protected` count as restricted, not public. Say so
+    // with the counts, so it can't be mistaken for an empty or wrong path.
+    let note = if data.is_empty() {
+        let scope = path.unwrap_or("");
+        let mut counts = s.db.conn.prepare(
+            "SELECT COALESCE(visibility, 'unknown'), COUNT(*) FROM facts
+             WHERE kind <> 'import' AND path LIKE ?1 GROUP BY 1 ORDER BY 1",
+        )?;
+        let like = format!("%{scope}%");
+        let rows: Vec<(String, i64)> = counts
+            .query_map([&like], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        let total: i64 = rows.iter().map(|(_, n)| n).sum();
+        let where_ = if scope.is_empty() {
+            "this repo".to_string()
+        } else {
+            format!("'{scope}'")
+        };
+        Some(if total == 0 {
+            format!("no definitions at all in {where_}")
+        } else {
+            let breakdown = rows
+                .iter()
+                .map(|(v, n)| format!("{n} {v}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("no public definitions in {where_} ({breakdown})")
+        })
+    } else {
+        None
+    };
+    s.emit_noted(data, note)
 }
 
 /// Container kinds whose extracted `signature` is the whole declaration, body
@@ -836,7 +1000,8 @@ pub fn cmd_callers(
         let rows = resolve_rows(&s, name, resolved, callers, |c| c.path.as_str(), |c, v| {
             c.via = v;
         })?;
-        return s.emit(rows);
+        let note = note_if_empty(&s, &rows, name, "callers", path)?;
+        return s.emit_noted(rows, note);
     }
     // Breadth-first up the call tree: each hop expands the newly-found callers by
     // their enclosing symbol name. Deterministic; each caller reported once at its
@@ -881,7 +1046,8 @@ pub fn cmd_callers(
             .then(a.path.cmp(&b.path))
             .then(a.line.cmp(&b.line))
     });
-    s.emit(hops)
+    let note = note_if_empty(&s, &hops, name, "callers", path)?;
+    s.emit_noted(hops, note)
 }
 
 /// `callees <name>` — what this symbol references (by name).
@@ -895,7 +1061,9 @@ pub fn cmd_callees(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
-        return s.emit(callees_of(&s, name, path, resolved)?);
+        let rows = callees_of(&s, name, path, resolved)?;
+        let note = note_if_empty(&s, &rows, name, "callees", path)?;
+        return s.emit_noted(rows, note);
     }
     // Breadth-first down the call tree by callee name.
     let mut reported: HashSet<(String, String)> = HashSet::new();
@@ -935,7 +1103,8 @@ pub fn cmd_callees(
             .then(a.path.cmp(&b.path))
             .then(a.line.cmp(&b.line))
     });
-    s.emit(hops)
+    let note = note_if_empty(&s, &hops, name, "callees", path)?;
+    s.emit_noted(hops, note)
 }
 
 #[derive(Serialize)]
@@ -1074,7 +1243,14 @@ pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result
         callers: callers_of(&s, name, None, false, None, false)?,
         callees: callees_of(&s, name, path, false)?,
     };
-    s.emit(data)
+    // A typo is the dangerous case here: every section comes back empty under
+    // valid headers, which reads like a real answer about a real symbol.
+    let note = if data.definitions.is_empty() {
+        note_if_empty(&s, &data.definitions, name, "definition", path)?
+    } else {
+        None
+    };
+    s.emit_noted(data, note)
 }
 
 /// A node in an `explore` graph: a definition (focus) or one of its immediate
@@ -1202,14 +1378,18 @@ pub fn cmd_explore(
     let (budget, source, omitted) =
         crate::context::source_for(&s.db, &s.repo, &seeds, max_tokens)?.into_source();
 
-    s.emit(ExploreResult {
-        focus,
-        callers: caller_nodes,
-        callees: callee_nodes,
-        source,
-        budget,
-        omitted,
-    })
+    let note = note_if_empty(&s, &focus, name, "definition", path)?;
+    s.emit_noted(
+        ExploreResult {
+            focus,
+            callers: caller_nodes,
+            callees: callee_nodes,
+            source,
+            budget,
+            omitted,
+        },
+        note,
+    )
 }
 
 /// `at <path>:<line>` — the definition(s) enclosing a location, innermost first.
@@ -1328,7 +1508,12 @@ pub fn cmd_members(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let data = members_of(&s, name, path, kind, limit)?;
-    s.emit(data)
+    let relation = match kind {
+        Some(k) => format!("members of kind '{k}'"),
+        None => "members (fields, variants or methods)".to_string(),
+    };
+    let note = note_if_empty(&s, &data, name, &relation, path)?;
+    s.emit_noted(data, note)
 }
 
 fn members_of(
@@ -2340,7 +2525,8 @@ pub fn cmd_references(
         |r, v| r.via = v,
     )?;
 
-    s.emit(ReferencesResult { references, truncated })
+    let note = note_if_empty(&s, &references, name, "references", path)?;
+    s.emit_noted(ReferencesResult { references, truncated }, note)
 }
 
 #[derive(Serialize)]
@@ -2388,7 +2574,8 @@ pub fn cmd_implementors(
         })
     })?;
     let data: Vec<ImplementorRow> = rows.collect::<std::result::Result<_, _>>()?;
-    s.emit(data)
+    let note = note_if_empty(&s, &data, name, "implementors or subtypes", path)?;
+    s.emit_noted(data, note)
 }
 
 #[derive(Serialize)]
@@ -2434,7 +2621,8 @@ pub fn cmd_supertypes(
         })
     })?;
     let data: Vec<SupertypeRow> = rows.collect::<std::result::Result<_, _>>()?;
-    s.emit(data)
+    let note = note_if_empty(&s, &data, name, "supertypes (it extends nothing)", path)?;
+    s.emit_noted(data, note)
 }
 
 #[derive(Serialize)]
@@ -2560,7 +2748,13 @@ pub fn cmd_unused(
             }
         }
     }
-    s.emit(data)
+    // Nothing unused is a real answer, not a miss: say so, so an empty result is
+    // not read as "the command didn't work".
+    let note = data.is_empty().then(|| match path {
+        Some(p) => format!("no unused definitions in '{p}' (every one is referenced somewhere)"),
+        None => "no unused definitions (every one is referenced somewhere)".to_string(),
+    });
+    s.emit_noted(data, note)
 }
 
 /// Whether a path looks like a test file, across common frameworks. Heuristic —
@@ -2715,10 +2909,14 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         truncated: bool,
     }
-    s.emit(TestsData {
-        tests: rows,
-        truncated,
-    })
+    let note = note_if_empty(&s, &rows, name, "tests referencing it", path)?;
+    s.emit_noted(
+        TestsData {
+            tests: rows,
+            truncated,
+        },
+        note,
+    )
 }
 
 /// A definition pulled into the blast radius: a transitive caller of a changed

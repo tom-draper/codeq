@@ -64,6 +64,9 @@ refresh the index — every command auto-refreshes changed files first.
 
 **API surface / cleanup**
 - `codeq api <path>` — the public/exported definitions of a file or directory.
+- **Empty result?** codeq says why on stderr (`no symbol named 'X'; closest: Y`,
+  `'X' ... has no callers`, `nothing matches --path Z`), or in `note` under
+  `--json`. Read it before concluding the symbol or the command is wrong.
 - `codeq members NAME` — a type's fields, enum variants and methods (`--kind` to
   narrow). Structural, not name-based, so no same-name false positives. Already
   included in `about`. Rust struct methods live in a separate `impl`, so a Rust

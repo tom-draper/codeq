@@ -3294,3 +3294,115 @@ fn members_carry_their_doc_comments() {
         "an undocumented field carries no empty marker: {out}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// empty-result diagnosis
+// ---------------------------------------------------------------------------
+
+/// stderr of a run, for the diagnostic note (stdout stays pure data).
+fn note_of(f: &Fixture, args: &[&str]) -> String {
+    String::from_utf8(f.raw(args).stderr).unwrap()
+}
+
+/// An empty result is ambiguous between "no such symbol", "no such relation",
+/// and "your filter removed everything". Each must say which it was.
+#[test]
+fn empty_results_explain_themselves() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct ScanOpts { pub limit: usize }\npub fn lonely() {}\n");
+
+    // 1. The name does not exist, and the near-miss is offered.
+    let note = note_of(&f, &["definitions", "ScanOpt"]);
+    assert!(note.contains("no symbol named 'ScanOpt'"), "{note}");
+    assert!(note.contains("closest: ScanOpts"), "suggests the real name: {note}");
+
+    // 2. The name exists but has none of the relation asked for.
+    let note = note_of(&f, &["callers", "lonely"]);
+    assert!(
+        note.contains("'lonely' is defined at a.rs:2") && note.contains("no callers"),
+        "{note}"
+    );
+
+    // 3. A --path filter removed every definition.
+    let note = note_of(&f, &["members", "ScanOpts", "--path", "nowhere"]);
+    assert!(
+        note.contains("nothing matches --path nowhere"),
+        "the filter is the reason, not the symbol: {note}"
+    );
+
+    // A name with no plausible neighbour gets no invented suggestion.
+    let note = note_of(&f, &["definitions", "zzzzzzzzzz"]);
+    assert!(note.contains("no symbol named"), "{note}");
+    assert!(!note.contains("closest:"), "no far-fetched guess: {note}");
+}
+
+/// The note must never be mistaken for data, and never pollute a pipe.
+#[test]
+fn the_note_is_diagnostic_not_data() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub fn lonely() {}\n");
+
+    let out = f.raw(&["callers", "nope_xyz"]);
+    assert!(out.status.success(), "an empty result is not an error");
+    assert!(
+        String::from_utf8(out.stdout).unwrap().is_empty(),
+        "stdout stays pure data in text mode"
+    );
+
+    // JSON carries it in the envelope, because the MCP server captures only
+    // stdout and the agent behind it is who needs to know.
+    let v = f.run(&["callers", "nope_xyz"]);
+    assert!(
+        v["note"].as_str().unwrap().contains("no symbol named 'nope_xyz'"),
+        "{v}"
+    );
+    assert!(v["data"].as_array().unwrap().is_empty(), "data is still empty");
+
+    // A non-empty result carries no note at all.
+    let v = f.run(&["definitions", "lonely"]);
+    assert!(v.get("note").is_none(), "no note when there are results: {v}");
+}
+
+/// `api` returning nothing almost always means "nothing here is public", which
+/// is very different from "wrong path".
+#[test]
+fn api_explains_an_empty_surface() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub(crate) fn restricted() {}\nfn private_fn() {}\n");
+
+    let note = note_of(&f, &["api", "a.rs"]);
+    assert!(note.contains("no public definitions"), "{note}");
+    assert!(
+        note.contains("restricted") && note.contains("private"),
+        "breaks down what is there instead: {note}"
+    );
+}
+
+/// Finding no dead code is a real answer, not a failure.
+#[test]
+fn unused_says_so_when_there_is_no_dead_code() {
+    let f = Fixture::new();
+    // Scoped to a.rs, whose only definition is called from b.rs. (Unscoped, the
+    // caller itself would be reported: nothing calls the root.)
+    f.write("a.rs", "pub fn used() {}\n");
+    f.write("b.rs", "fn root() { used(); }\n");
+    let note = note_of(&f, &["unused", "a.rs"]);
+    assert!(
+        note.contains("no unused definitions"),
+        "an empty result here means clean, and should say so: {note}"
+    );
+}
+
+/// The worst case: a typo gives valid-looking empty sections under real headers.
+#[test]
+fn about_and_explore_flag_a_misspelled_symbol() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct ScanOpts { pub limit: usize }\n");
+    for cmd in ["about", "explore"] {
+        let note = note_of(&f, &[cmd, "ScanOpt"]);
+        assert!(
+            note.contains("no symbol named 'ScanOpt'") && note.contains("ScanOpts"),
+            "{cmd}: empty sections must not read as a real answer: {note}"
+        );
+    }
+}
