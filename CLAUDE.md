@@ -26,6 +26,14 @@ benchmarks — not as a step you run before querying.
   callee). Replaces the `about` → `read` → `read` sequence; `--max-tokens` caps it (the
   definition is always kept, the rest fill the budget, drops are listed under `omitted`).
 - **Orient:** `codeq map`
+- **Docs are indexed too.** A markdown heading is a definition, so `outline
+  README.md` is a table of contents, `read README.md` folds to that ToC with each
+  section's line range, `read README.md --symbol "Output contract"` returns just
+  that section (read this instead of the whole file), and `at README.md:230` says
+  which section a line is in. Search hits carry their `[Section]`. `--in strings`
+  searches fenced examples, `--in comments` searches prose (`--in code` is
+  correctly empty: markdown has no code). Local links and images are file
+  references, so `deps`/`importers` work across docs and assets.
 - **Understand a file cheaply:** `codeq read <file>` — folds long function bodies
   to signatures; read this instead of ingesting a whole large file.
 - **Read one definition / range (verbatim, line-numbered):**

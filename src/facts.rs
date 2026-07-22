@@ -74,6 +74,10 @@ impl Fact {
 
 /// Holds a parser + compiled query per supported language, reused across files
 /// within a single refresh pass.
+/// What one parse of a file yields: its definitions, its comment/string spans,
+/// and its type relations.
+pub type Extraction = (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>);
+
 pub struct Extractor {
     rust: LangSpec,
     python: LangSpec,
@@ -151,7 +155,7 @@ impl LangSpec {
     }
 
     /// One parse yields definition facts, comment/string spans, and type relations.
-    fn extract(&mut self, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>) {
+    fn extract(&mut self, src: &[u8]) -> Extraction {
         let tree = match self.parser.parse(src, None) {
             Some(t) => t,
             None => return (Vec::new(), Vec::new(), Vec::new()),
@@ -512,7 +516,7 @@ impl Extractor {
         &mut self,
         language: &str,
         src: &[u8],
-    ) -> (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>) {
+    ) -> Extraction {
         match language {
             "rust" => self.rust.extract(src),
             "python" => self.python.extract(src),
@@ -535,9 +539,273 @@ impl Extractor {
             "zig" => self.zig.extract(src),
             "elixir" => self.elixir.extract(src),
             "solidity" => self.solidity.extract(src),
+            "markdown" => markdown_facts(src),
             _ => (Vec::new(), Vec::new(), Vec::new()),
         }
     }
+}
+
+// --- Markdown ----------------------------------------------------------------
+
+/// Markdown structure, parsed line-wise rather than with a grammar.
+///
+/// Docs are the first thing read in an unfamiliar repo and the last thing codeq
+/// knew anything about. Treating a **heading as a definition** is the whole
+/// feature: a heading has a name, a byte range (down to the next heading of the
+/// same or higher level) and a nesting depth, which is exactly the fact model
+/// every other language produces. `outline`, `at`, `read --symbol`, the folded
+/// `read`, and the enclosing-`[symbol]` annotation on search hits all then work
+/// on prose for free.
+///
+/// Deliberately not Tree-sitter: headings are unambiguous line-wise as long as
+/// fenced blocks are tracked (so a `# comment` inside a shell example is not a
+/// heading), and this avoids a grammar dependency for the one format where the
+/// structure is trivial. `source` records which was used.
+///
+/// Also emitted:
+/// - **Spans.** A fenced code block is `Str`, prose is `Comment`, so
+///   `--in strings` searches the examples and `--in comments` searches the prose.
+///   Markdown has no "code" in the `--in code` sense, so that filter is
+///   correctly empty here rather than quietly matching everything.
+/// - **Imports.** A link or image with a local target (`](./x.md)`,
+///   `![](assets/logo.png)`, and reference definitions `[l]: ./x.md`) becomes an
+///   import, so `deps`, `importers` and cycle detection cover documentation and
+///   its assets. External URLs and bare `#anchor` links are not file references
+///   and are skipped.
+fn markdown_facts(src: &[u8]) -> Extraction {
+    let text = String::from_utf8_lossy(src);
+    let mut facts: Vec<Fact> = Vec::new();
+    let mut spans: Vec<(usize, usize, Span)> = Vec::new();
+
+    // (line_index, byte_start, byte_end_excluding_newline, text)
+    let mut lines: Vec<(usize, usize, &str)> = Vec::new();
+    let mut off = 0usize;
+    for l in text.split_inclusive('\n') {
+        let trimmed = l.strip_suffix('\n').unwrap_or(l);
+        let trimmed = trimmed.strip_suffix('\r').unwrap_or(trimmed);
+        lines.push((off, off + trimmed.len(), trimmed));
+        off += l.len();
+    }
+
+    // A heading found in the scan: (line index, level, name, byte start).
+    struct Head {
+        line: usize,
+        level: usize,
+        name: String,
+        start: usize,
+    }
+    let mut heads: Vec<Head> = Vec::new();
+
+    // Prose/code classification, accumulated as runs and merged at the end.
+    let mut classes: Vec<Option<Span>> = vec![None; lines.len()];
+
+    let mut fence: Option<(char, usize)> = None; // (char, run length)
+    let mut in_frontmatter = false;
+
+    for (i, (start, end, raw)) in lines.iter().enumerate() {
+        let t = raw.trim_start();
+        let indent = raw.len() - t.len();
+
+        // YAML/TOML frontmatter at the very top is metadata, not prose or
+        // headings; its `---` must not be read as a setext underline.
+        if i == 0 && (t == "---" || t == "+++") {
+            in_frontmatter = true;
+            classes[i] = Some(Span::Str);
+            continue;
+        }
+        if in_frontmatter {
+            classes[i] = Some(Span::Str);
+            if t == "---" || t == "+++" {
+                in_frontmatter = false;
+            }
+            continue;
+        }
+
+        // Fenced code blocks. A closing fence is the same character, at least as
+        // long as the opener, and carries no info string.
+        let fence_run = |s: &str, c: char| s.chars().take_while(|&x| x == c).count();
+        if let Some((fc, flen)) = fence {
+            classes[i] = Some(Span::Str);
+            let run = fence_run(t, fc);
+            if run >= flen && t[run..].trim().is_empty() {
+                fence = None;
+            }
+            continue;
+        }
+        if indent < 4 && (t.starts_with("```") || t.starts_with("~~~")) {
+            let fc = t.chars().next().unwrap();
+            fence = Some((fc, fence_run(t, fc)));
+            classes[i] = Some(Span::Str);
+            continue;
+        }
+
+        classes[i] = Some(Span::Comment); // ordinary prose
+
+        // ATX heading: up to 3 spaces of indent, 1-6 `#`, then a space.
+        if indent < 4 && t.starts_with('#') {
+            let level = t.chars().take_while(|&c| c == '#').count();
+            let rest = &t[level..];
+            if (1..=6).contains(&level) && (rest.is_empty() || rest.starts_with(' ')) {
+                // A trailing run of `#` is decoration, not part of the name.
+                let name = rest.trim().trim_end_matches('#').trim().to_string();
+                if !name.is_empty() {
+                    heads.push(Head { line: i, level, name, start: *start });
+                }
+                continue;
+            }
+        }
+
+        // Setext underline: `===` or `---` directly under paragraph text. The
+        // preceding line must be ordinary prose, otherwise `---` is a thematic
+        // break (or a list marker), not a heading.
+        if indent < 4 && !t.is_empty() && (t.chars().all(|c| c == '=') || t.chars().all(|c| c == '-'))
+        {
+            if let Some(prev) = i.checked_sub(1) {
+                let prev_raw = lines[prev].2.trim();
+                let prev_is_prose = !prev_raw.is_empty()
+                    && classes[prev] == Some(Span::Comment)
+                    && !heads.iter().any(|h| h.line == prev)
+                    && !prev_raw.starts_with(['-', '*', '+', '>', '#']);
+                if prev_is_prose {
+                    let level = if t.starts_with('=') { 1 } else { 2 };
+                    heads.push(Head {
+                        line: prev,
+                        level,
+                        name: prev_raw.to_string(),
+                        start: lines[prev].0,
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // File references: inline links/images and reference definitions.
+        collect_md_links(raw, *start, i + 1, &mut facts);
+        let _ = end;
+    }
+
+    // A heading owns everything down to the next heading of the same or higher
+    // level, which is what makes containment (and therefore outline nesting)
+    // work without tracking a stack.
+    let eof = text.len();
+    for (idx, h) in heads.iter().enumerate() {
+        let end_byte = heads[idx + 1..]
+            .iter()
+            .find(|o| o.level <= h.level)
+            .map(|o| o.start)
+            .unwrap_or(eof);
+        let end_line = heads[idx + 1..]
+            .iter()
+            .find(|o| o.level <= h.level)
+            .map(|o| o.line)
+            .unwrap_or(lines.len());
+        // The section's first prose line doubles as its summary, the way a
+        // docstring does for a function.
+        let doc = lines[(h.line + 1).min(lines.len())..end_line]
+            .iter()
+            .map(|(_, _, t)| t.trim())
+            .find(|t| !t.is_empty())
+            .map(|t| cap(&collapse_ws(t), MAX_DOC));
+        facts.push(Fact {
+            kind: "heading".to_string(),
+            name: h.name.clone(),
+            start_byte: h.start,
+            end_byte: end_byte.max(h.start),
+            start_line: h.line + 1,
+            start_col: 0,
+            end_line: end_line.max(h.line + 1),
+            end_col: 0,
+            signature: cap(&collapse_ws(lines[h.line].2.trim()), MAX_SIG),
+            doc,
+            source: "lines/markdown".to_string(),
+            confidence: 1.0,
+            visibility: None,
+        });
+    }
+
+    // Merge the per-line classes into runs.
+    let mut i = 0usize;
+    while i < lines.len() {
+        let c = classes[i];
+        if c.is_none() {
+            i += 1;
+            continue;
+        }
+        let start = lines[i].0;
+        let mut j = i;
+        while j + 1 < lines.len() && classes[j + 1] == c {
+            j += 1;
+        }
+        let end = if j + 1 < lines.len() { lines[j + 1].0 } else { eof };
+        spans.push((start, end, c.unwrap()));
+        i = j + 1;
+    }
+
+    facts.sort_by_key(|f| (f.start_byte, f.end_byte));
+    (facts, spans, Vec::new())
+}
+
+/// Local file references on one markdown line: inline `[t](path)` / `![a](path)`
+/// and reference definitions `[label]: path`. External URLs and pure `#anchor`
+/// links name no file, so they carry no edge.
+fn collect_md_links(raw: &str, line_start: usize, line_no: usize, facts: &mut Vec<Fact>) {
+    let mut push = |target: &str, at: usize| {
+        let t = target.trim();
+        // Strip an optional title: `(path "Title")`.
+        let t = t.split_whitespace().next().unwrap_or(t);
+        let t = t.trim_matches(|c| c == '<' || c == '>');
+        // Drop any anchor, keeping the file part (`./x.md#section` -> `./x.md`).
+        let file = t.split('#').next().unwrap_or(t);
+        if file.is_empty() || is_external_url(t) {
+            return;
+        }
+        facts.push(Fact {
+            kind: "import".to_string(),
+            name: file.to_string(),
+            start_byte: line_start + at,
+            end_byte: line_start + at + target.len(),
+            start_line: line_no,
+            start_col: at,
+            end_line: line_no,
+            end_col: at + target.len(),
+            signature: String::new(),
+            doc: None,
+            source: "lines/markdown".to_string(),
+            confidence: 1.0,
+            visibility: None,
+        });
+    };
+
+    let bytes = raw.as_bytes();
+    // Reference definition: `[label]: target`.
+    if let Some(rest) = raw.trim_start().strip_prefix('[') {
+        if let Some((_, after)) = rest.split_once("]:") {
+            push(after, raw.len() - after.len());
+            return;
+        }
+    }
+    // Inline `](target)`, which covers both links and images.
+    let mut i = 0usize;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b']' && bytes[i + 1] == b'(' {
+            if let Some(close) = raw[i + 2..].find(')') {
+                push(&raw[i + 2..i + 2 + close], i + 2);
+                i += 2 + close;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+fn is_external_url(t: &str) -> bool {
+    let lower = t.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:")
+        || lower.starts_with("ftp://")
+        || lower.starts_with("//")
+        || t.starts_with('#')
 }
 
 /// Whether codeq can classify comment/string spans for this language (i.e. it
@@ -567,6 +835,7 @@ pub fn has_spans(language: &str) -> bool {
             | "zig"
             | "elixir"
             | "solidity"
+            | "markdown"
     )
 }
 

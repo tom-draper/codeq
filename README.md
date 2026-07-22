@@ -168,6 +168,36 @@ Cross-cutting flags: `--path <substr>` scopes a name-based lookup to matching fi
 `--fields a,b` trims output to the fields you want, and `--json` switches to the structured
 envelope.
 
+## Markdown is indexed like code
+
+A heading is a definition: it has a name, a byte range (down to the next heading of
+the same or higher level) and a nesting depth, which is exactly the model the code
+extractors produce. So the existing commands work on documentation with nothing new
+to learn:
+
+```
+$ codeq outline README.md          # the table of contents
+$ codeq read README.md             # folded to that ToC, with each section's range
+$ codeq read README.md --symbol "Output contract"   # just that section, verbatim
+$ codeq at README.md:230           # which section is this line in
+```
+
+Reading one section instead of a whole README is a large saving on exactly the files
+that are pure prose and do not compress.
+
+Fenced code blocks are `strings` and prose is `comments`, so `--in strings` searches
+the documented examples and `--in comments` searches the surrounding text (`--in code`
+is empty for markdown, which has none). Search hits carry their enclosing `[Section]`.
+
+Local links and images (`[g](./guide.md)`, `![logo](assets/logo.png)`) are file
+references, so `deps` and `importers` cover documentation and its assets; external
+URLs and bare `#anchor` links name no file and are skipped. Headings are excluded
+from `unused`, since nothing ever references prose by name.
+
+Parsed line-wise rather than with a grammar: headings are unambiguous once fenced
+blocks are tracked, so a `# comment` inside a shell example is not mistaken for a
+heading. The `source` field records this (`lines/markdown` vs `treesitter/rust`).
+
 ## read, a folding file reader
 
 `codeq read <file>` is built for a token budget. It returns the file with long function

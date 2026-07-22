@@ -67,6 +67,10 @@ refresh the index — every command auto-refreshes changed files first.
 - **Empty result?** codeq says why on stderr (`no symbol named 'X'; closest: Y`,
   `'X' ... has no callers`, `nothing matches --path Z`), or in `note` under
   `--json`. Read it before concluding the symbol or the command is wrong.
+- **Markdown**: headings are definitions. `outline doc.md` = table of contents;
+  `read doc.md --symbol "Section"` = one section (not the whole file); `--in
+  strings` = fenced examples, `--in comments` = prose; local links/images are
+  file references for `deps`/`importers`.
 - `codeq members NAME` — a type's fields, enum variants and methods (`--kind` to
   narrow). Structural, not name-based, so no same-name false positives. Already
   included in `about`. Rust struct methods live in a separate `impl`, so a Rust

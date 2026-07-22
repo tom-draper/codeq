@@ -19,7 +19,9 @@ use rusqlite::Connection;
 // v13: added Dart/Zig/Elixir/Solidity extraction — rebuild to populate them.
 // v14: added member extraction (`field`/`variant` facts) for the languages that
 // declare them, so existing indexes must rebuild to populate members.
-pub const SCHEMA_VERSION: i64 = 14;
+// v15: added markdown extraction (`heading` facts, code-fence/prose spans, and
+// local link/image targets as imports) — rebuild to populate them.
+pub const SCHEMA_VERSION: i64 = 15;
 
 pub struct Db {
     pub conn: Connection,

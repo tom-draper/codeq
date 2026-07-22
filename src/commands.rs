@@ -1402,18 +1402,20 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
     let line: i64 = line_str
         .parse()
         .map_err(|_| anyhow!("invalid line number in '{location}'"))?;
-    let suffix = format!("%/{path}");
+    // One file, resolved like `read`/`outline`: a bare `README.md` otherwise
+    // matched every README in the repo and mixed their definitions together.
+    let rel = resolve_file(&s, path)?;
 
     let mut stmt = s.db.conn.prepare(
         "SELECT name, kind, path, language,
                 start_line, start_col, end_line, end_col, start_byte, end_byte,
                 signature, doc
          FROM facts
-         WHERE kind <> 'import' AND (path = ?1 OR path LIKE ?2)
-           AND start_line <= ?3 AND end_line >= ?3
+         WHERE kind <> 'import' AND path = ?1
+           AND start_line <= ?2 AND end_line >= ?2
          ORDER BY (end_byte - start_byte) ASC, path",
     )?;
-    let rows = stmt.query_map((path, &suffix, line), |r| {
+    let rows = stmt.query_map((&rel, line), |r| {
         let kind: String = r.get(1)?;
         Ok(DefinitionRow {
             name: r.get(0)?,
@@ -1617,15 +1619,18 @@ fn members_of(
 pub fn cmd_outline(cwd: &Path, file: &str, docs: bool, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
+    // Resolve to one file the same way `read` does: exact path wins, else a
+    // unique suffix match. Matching `path LIKE '%/README.md'` as well as the
+    // exact path merged every README in the repo into one interleaved outline.
+    let rel = resolve_file(&s, file)?;
     let mut stmt = s.db.conn.prepare(
         "SELECT name, kind, start_byte, end_byte, start_line, end_line, signature, doc
          FROM facts
-         WHERE kind <> 'import' AND (path = ?1 OR path LIKE ?2)
+         WHERE kind <> 'import' AND path = ?1
          ORDER BY start_byte, end_byte DESC",
     )?;
-    let suffix = format!("%/{file}");
     let defs: Vec<OutlineDef> = stmt
-        .query_map((file, &suffix), |r| {
+        .query_map([&rel], |r| {
             let kind: String = r.get(1)?;
             Ok(OutlineDef {
                 name: r.get(0)?,
@@ -1763,6 +1768,29 @@ pub fn cmd_read(
                     if ln - 1 < n {
                         folded[ln - 1] = true;
                     }
+                }
+            }
+        }
+
+        // A markdown heading owns everything down to the next heading of the
+        // same or higher level, so folding its whole range would collapse the
+        // document to its title. Fold the prose *between* consecutive headings
+        // instead, which leaves the full heading tree visible: a table of
+        // contents with each section's length, and `--symbol` to open one.
+        let mut heads = s.db.conn.prepare(
+            "SELECT start_line FROM facts
+             WHERE path = ?1 AND kind = 'heading' ORDER BY start_line",
+        )?;
+        let starts: Vec<usize> = heads
+            .query_map([&rel], |r| r.get::<_, i64>(0))?
+            .filter_map(|r| r.ok())
+            .map(|l| l.max(1) as usize)
+            .collect();
+        for (i, &sl) in starts.iter().enumerate() {
+            let el = starts.get(i + 1).map(|&s| s - 1).unwrap_or(n);
+            if el > sl && el - sl >= MIN_FOLD {
+                for ln in (sl + 1)..=el.min(n) {
+                    folded[ln - 1] = true;
                 }
             }
         }
@@ -2702,11 +2730,18 @@ pub fn cmd_unused(
         }
     }
 
-    // The definitions eligible to be reported (scoped by path/kind).
+    // The definitions eligible to be reported (scoped by path/kind). A markdown
+    // heading is prose, not an API: nothing ever "calls" it, so every section in
+    // the repo would be reported as dead. Excluded unless asked for by --kind.
     let filters = Filters::new().like("path", path).eq("kind", kind);
+    let exclude_headings = if kind == Some("heading") {
+        ""
+    } else {
+        " AND kind <> 'heading'"
+    };
     let sql = format!(
         "SELECT name, kind, path, start_line, visibility FROM facts
-         WHERE kind <> 'import' AND name IS NOT NULL{} ORDER BY path, start_line",
+         WHERE kind <> 'import' AND name IS NOT NULL{exclude_headings}{} ORDER BY path, start_line",
         filters.sql(),
     );
     let candidates: Vec<UnusedRow> = {

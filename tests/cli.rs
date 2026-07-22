@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 14);
+    assert_eq!(v["index"]["schema"], 15);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -3405,4 +3405,188 @@ fn about_and_explore_flag_a_misspelled_symbol() {
             "{cmd}: empty sections must not read as a real answer: {note}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// markdown
+// ---------------------------------------------------------------------------
+
+const DOC: &str = "\
+# Title
+
+Intro prose.
+
+## Install
+
+Run it.
+
+```bash
+# not a heading: a shell comment inside a fence
+codeq index
+```
+
+### Details
+
+More prose about installing.
+
+## Usage
+
+See [the guide](./guide.md) and ![logo](assets/logo.png).
+Also [external](https://example.com) and [anchor](#usage).
+";
+
+#[test]
+fn markdown_headings_are_definitions() {
+    let f = Fixture::new();
+    f.write("doc.md", DOC);
+
+    let outline = f.run(&["outline", "doc.md"]);
+    let names = field_set(&outline, "name");
+    assert_eq!(names, ["Title", "Install", "Details", "Usage"], "in source order");
+
+    // Nesting comes from byte containment, as it does for every other language.
+    let depths: Vec<i64> = outline["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["depth"].as_i64().unwrap())
+        .collect();
+    assert_eq!(depths, [0, 1, 2, 1], "### nests under ##, which nests under #");
+
+    // A `#` line inside a fenced block is code, not structure.
+    assert!(
+        !names.iter().any(|n| n.contains("not a heading")),
+        "fenced content must not yield headings: {names:?}"
+    );
+}
+
+#[test]
+fn markdown_sections_are_readable_and_foldable() {
+    let f = Fixture::new();
+    f.write("doc.md", DOC);
+
+    // One section verbatim, instead of ingesting the whole document.
+    let section = String::from_utf8(f.raw(&["read", "doc.md", "--symbol", "Install"]).stdout).unwrap();
+    assert!(section.contains("## Install") && section.contains("Run it."), "{section}");
+    assert!(section.contains("### Details"), "a section includes its subsections");
+    assert!(!section.contains("## Usage"), "and stops at the next peer: {section}");
+
+    // Folded, a document becomes its table of contents: every heading visible,
+    // prose collapsed with a copy-pasteable line range.
+    let folded = String::from_utf8(f.raw(&["read", "doc.md"]).stdout).unwrap();
+    for h in ["# Title", "## Install", "### Details", "## Usage"] {
+        assert!(folded.contains(h), "heading {h} stays visible: {folded}");
+    }
+    assert!(!folded.contains("Run it."), "section prose folds: {folded}");
+    assert!(folded.contains("lines ("), "with a range marker: {folded}");
+}
+
+/// Fenced blocks are `strings` and prose is `comments`, so an agent can search
+/// the documented examples separately from the surrounding text.
+#[test]
+fn markdown_separates_examples_from_prose() {
+    let f = Fixture::new();
+    f.write("doc.md", DOC);
+
+    let in_code = String::from_utf8(
+        f.raw(&["search", "codeq", "--path", "doc.md", "--in", "strings"]).stdout,
+    )
+    .unwrap();
+    assert!(in_code.contains("codeq index"), "example found: {in_code}");
+
+    let in_prose = String::from_utf8(
+        f.raw(&["search", "prose", "--path", "doc.md", "--in", "comments"]).stdout,
+    )
+    .unwrap();
+    assert!(in_prose.contains("Intro prose"), "prose found: {in_prose}");
+    assert!(!in_prose.contains("codeq index"), "not the example: {in_prose}");
+
+    // Search hits carry the section they sit in, like code hits carry a function.
+    let hit = String::from_utf8(f.raw(&["search", "More prose", "--path", "doc.md"]).stdout).unwrap();
+    assert!(hit.contains("[Details]"), "annotated with its section: {hit}");
+}
+
+/// A link or image with a local target is a file reference, so the dependency
+/// commands cover documentation and its assets.
+#[test]
+fn markdown_local_links_and_images_are_file_references() {
+    let f = Fixture::new();
+    f.write("doc.md", DOC);
+    f.write("guide.md", "# Guide\n");
+
+    let imports = field_set(&f.run(&["imports", "doc.md"]), "module");
+    assert!(imports.iter().any(|i| i == "./guide.md"), "link: {imports:?}");
+    assert!(
+        imports.iter().any(|i| i == "assets/logo.png"),
+        "image: {imports:?}"
+    );
+    assert!(
+        !imports.iter().any(|i| i.contains("example.com")),
+        "an external URL names no file: {imports:?}"
+    );
+    assert!(
+        !imports.iter().any(|i| i.starts_with('#')),
+        "a bare anchor names no file: {imports:?}"
+    );
+
+    // Resolved into the dependency graph like any other import.
+    let deps = field_set(&f.run(&["deps", "doc.md"]), "path");
+    assert!(deps.iter().any(|p| p == "guide.md"), "{deps:?}");
+    assert!(
+        field_set(&f.run(&["importers", "guide.md"]), "path")
+            .iter()
+            .any(|p| p == "doc.md"),
+        "reverse direction works too"
+    );
+}
+
+/// Nothing ever references a heading by name, so without an exclusion every
+/// section in every document would be reported as dead code.
+#[test]
+fn unused_does_not_report_headings() {
+    let f = Fixture::new();
+    f.write("doc.md", DOC);
+    f.write("a.rs", "fn orphan() {}\n");
+
+    let kinds = field_set(&f.run(&["unused"]), "kind");
+    assert!(
+        !kinds.iter().any(|k| k == "heading"),
+        "prose is not dead code: {kinds:?}"
+    );
+    assert!(kinds.iter().any(|k| k == "function"), "real dead code still found");
+}
+
+/// A bare `README.md` used to match every README in the repo at once, merging
+/// their structures into one nonsensical outline.
+#[test]
+fn file_scoped_commands_resolve_to_one_file() {
+    let f = Fixture::new();
+    f.write("README.md", "# Root\n\nRoot prose.\n");
+    f.write("bench/README.md", "# Bench\n\nBench prose.\n");
+
+    let names = field_set(&f.run(&["outline", "README.md"]), "name");
+    assert_eq!(names, ["Root"], "the exact path wins: {names:?}");
+
+    let at = field_set(&f.run(&["at", "README.md:3"]), "name");
+    assert_eq!(at, ["Root"], "same resolution for at: {at:?}");
+}
+
+#[test]
+fn markdown_setext_headings_and_frontmatter() {
+    let f = Fixture::new();
+    f.write(
+        "doc.md",
+        "---\ntitle: meta\n---\n\nOld Style\n=========\n\nBody text.\n\nSub\n---\n\nMore.\n\nParagraph.\n\n---\n\nAfter a rule.\n",
+    );
+    let names = field_set(&f.run(&["outline", "doc.md"]), "name");
+    assert!(names.iter().any(|n| n == "Old Style"), "setext h1: {names:?}");
+    assert!(names.iter().any(|n| n == "Sub"), "setext h2: {names:?}");
+    assert!(
+        !names.iter().any(|n| n == "title: meta"),
+        "frontmatter is metadata, not a heading: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "Paragraph."),
+        "a --- after a blank line is a thematic break, not an underline: {names:?}"
+    );
 }

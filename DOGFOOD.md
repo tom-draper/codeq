@@ -4,6 +4,65 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 28: markdown is indexed like code
+
+Docs were the first thing an agent reads in an unfamiliar repo and the one thing
+codeq knew nothing about. Markdown was 9 files and 20% of this repo's bytes,
+indexed for content search and nothing else: no symbols, no outline, no folding,
+no `--in`, no enclosing-section annotation on hits. For a 291-line README, codeq
+offered nothing over `cat`.
+
+**A heading is a definition.** That single mapping is the whole feature. A
+heading has a name, a byte range (down to the next heading of the same or higher
+level) and a nesting depth, which is exactly the fact model the Tree-sitter
+extractors produce, so `outline`, `at`, `read --symbol`, folded `read`, `search`
+annotation, `symbols`, `context` and `changed --symbols` all started working on
+prose with no new commands at all.
+
+The `read --symbol "Output contract"` case is the real prize: 2,961 bytes instead
+of 17,987 for the whole README, on exactly the files that are pure prose and
+don't compress.
+
+Deliberately **not** Tree-sitter. Headings are unambiguous line-wise provided
+fenced blocks are tracked, so this avoids a grammar dependency for the one format
+where the structure is trivial, and the `source` field (`lines/markdown` vs
+`treesitter/rust`) already existed to record which was used.
+
+Three things that needed care, all of which would have looked broken on first run:
+
+- **Folding a document collapsed it to its title.** A level-1 heading owns the
+  whole file, so the generic "fold the definition's body" rule hid all 290
+  remaining lines behind one marker. Markdown folds the prose *between*
+  consecutive headings instead, which leaves the whole heading tree visible: a
+  table of contents where each entry carries its section's line range, ready to
+  paste into `--lines`.
+- **`unused` would have reported every section in every document.** Nothing ever
+  references prose by name. Headings are excluded unless explicitly asked for
+  with `--kind heading`, the same shape as the existing test-file exclusion.
+- **A `#` inside a fenced block is a shell comment, not a heading.** Fence
+  tracking handles it, as does frontmatter (`---` at the top is metadata, and
+  must not read as a setext underline), and a `---` after a blank line is a
+  thematic break rather than an underline.
+
+The spans mapping is worth stating: a fenced block is `Str` and prose is
+`Comment`, so `--in strings` searches the documented examples and `--in comments`
+searches the surrounding text. `--in code` is correctly empty for markdown, which
+has no code — consistent with the existing guidance that SQL-in-strings is found
+with `--in strings`, not `--in code`.
+
+Local links and images are file references (`import` facts), so `deps`,
+`importers` and cycle detection now cover documentation and its assets. External
+URLs and bare `#anchor` links name no file and carry no edge.
+
+**A latent bug this exposed:** `outline README.md` matched `path = ?1 OR path LIKE
+'%/README.md'`, so it merged the root README and `bench/README.md` into a single
+interleaved outline with nonsensical nesting. `at` had the same bug. It had been
+invisible because code files rarely share a basename, whereas every repo has
+several READMEs. Both now resolve to one file the way `read` always did (exact
+path wins, else a unique suffix).
+
+Schema 14 -> 15. 179 tests (+7).
+
 ## 2026-07-22 - session 27: an empty result now says why it is empty
 
 Not a new command. codeq already has 31, and the next-best thing was not a 32nd
