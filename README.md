@@ -99,26 +99,26 @@ How much does codeq actually save an agent? `bench/completion.py` runs, for each
 dozen realistic tasks, the exact tool sequence a competent agent would use to reach the
 same answer with generic tools (ripgrep to locate, then read a ~60-line window, never a
 strawman), and sums what the agent pays: tokens ingested (output bytes over 4) and tool
-calls. Across a corpus of 25 real open-source repositories, pinned by tag and spanning
+calls. Across a corpus of 20 real open-source repositories, pinned by tag and spanning
 every supported language:
 
 | Task | codeq tokens | generic tokens | saving | codeq calls | generic calls |
 | --- | --: | --: | --: | --: | --: |
-| explore a symbol (def + callers + callees, with source) | 107k | 161k | 1.5x | 25 | 243 |
-| understand a symbol before editing (`about`) | 16k | 70k | 4.3x | 25 | 99 |
-| read a function's body (`read --symbol`) | 9k | 35k | 3.9x | 25 | 50 |
-| who calls it, with context (`callers`) | 3k | 43k | 13.9x | 25 | 66 |
-| 2-hop blast radius (`callers --depth 2`) | 53k | 194k | 3.7x | 25 | 155 |
-| which tests exercise it (`tests`) | 2k | 27k | 15.0x | 25 | 72 |
-| a file's dead code (`unused`) | 18k | 1144k | 64.2x | 25 | 436 |
-| learn a file's structure (`outline`) | 75k | 751k | 10.0x | 25 | 25 |
-| a file's public API (`api`) | 80k | 25k | 0.3x | 25 | 25 |
-| a package's public API (`api <dir>`) | 378k | 1581k | 4.2x | 25 | 284 |
-| all references (`references`) | 38k | 40k | 1.1x | 25 | 25 |
-| a file's imports (`imports`) | 9k | 8k | 0.9x | 25 | 39 |
-| **all 12 tasks** | **788k** | **4.08M** | **5.2x** | **300** | **1519** |
+| explore a symbol (def + callers + callees, with source) | 105k | 125k | 1.2x | 20 | 200 |
+| understand a symbol before editing (`about`) | 25k | 61k | 2.4x | 20 | 79 |
+| read a function's body (`read --symbol`) | 6k | 28k | 4.5x | 20 | 40 |
+| who calls it, with context (`callers`) | 6k | 40k | 7.0x | 20 | 53 |
+| 2-hop blast radius (`callers --depth 2`) | 31k | 118k | 3.8x | 20 | 134 |
+| which tests exercise it (`tests`) | 1k | 22k | 14.8x | 20 | 61 |
+| a file's dead code (`unused`) | 12k | 1853k | 159.8x | 20 | 359 |
+| learn a file's structure (`outline`) | 51k | 526k | 10.3x | 20 | 20 |
+| a file's public API (`api`) | 55k | 18k | 0.3x | 20 | 20 |
+| a package's public API (`api <dir>`) | 352k | 992k | 2.8x | 20 | 230 |
+| all references (`references`) | 44k | 44k | 1.0x | 20 | 20 |
+| a file's imports (`imports`) | 6k | 7k | 1.2x | 20 | 34 |
+| **all 12 tasks** | **694k** | **3.83M** | **5.5x** | **240** | **1250** |
 
-Completing these tasks costs a generic-tool agent **5.2x the tokens and 5x the tool calls**.
+Completing these tasks costs a generic-tool agent **5.5x the tokens and 5x the tool calls**.
 The `explore` win is mostly in round-trips: one call instead of about ten. codeq is not
 ahead everywhere, and the harness is built to say so: on plain reference search and
 single-line imports it is near parity with ripgrep, and `api` deliberately "loses" on
@@ -205,7 +205,10 @@ is empty for markdown, which has none). Search hits carry their enclosing `[Sect
 
 Local links and images (`[g](./guide.md)`, `![logo](assets/logo.png)`) are file
 references, so `deps` and `importers` cover documentation and its assets; external
-URLs and bare `#anchor` links name no file and are skipped. Headings are excluded
+URLs and bare `#anchor` links name no file and are skipped, and link syntax inside
+inline code is an example rather than a link. `codeq deps --external` lists every
+import that resolves to nothing: the third-party dependency list, with broken local
+references flagged. Headings are excluded
 from `unused`, since nothing ever references prose by name.
 
 Parsed line-wise rather than with a grammar: headings are unambiguous once fenced
@@ -309,6 +312,20 @@ codeq refreshes on read, so answers are almost always fresh and the metadata env
 omitted unless it carries signal. Pass `--meta` to always include the `repo` and `index`
 blocks; they also appear on their own when something is noteworthy, like files being
 reparsed or a parse partially failing.
+
+## Reading a dependency
+
+A dependency tree is gitignored, so it stays out of the repo's own index — but that
+also made "how do I call this library function" unanswerable. `--root` points codeq
+at any directory and takes it literally: no walking up to a Git toplevel, and no
+consulting the parent repository's ignore rules.
+
+```
+$ codeq --root node_modules/lodash api
+$ codeq --root node_modules/lodash read chunk.js --symbol chunk
+```
+
+Every command works there, and the index lives in a `.codeq` inside that directory.
 
 ## How it works
 

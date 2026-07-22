@@ -748,6 +748,11 @@ fn markdown_facts(src: &[u8]) -> Extraction {
 /// Local file references on one markdown line: inline `[t](path)` / `![a](path)`
 /// and reference definitions `[label]: path`. External URLs and pure `#anchor`
 /// links name no file, so they carry no edge.
+///
+/// Anything inside an inline code span is an *example* of a link, not a link:
+/// documentation about markdown is full of `` `[t](./guide.md)` `` that must not
+/// become a dependency edge (or a broken one). Found by dogfooding, when
+/// `deps --external` reported this repo's own README as having two dead links.
 fn collect_md_links(raw: &str, line_start: usize, line_no: usize, facts: &mut Vec<Fact>) {
     let mut push = |target: &str, at: usize| {
         let t = target.trim();
@@ -776,11 +781,18 @@ fn collect_md_links(raw: &str, line_start: usize, line_no: usize, facts: &mut Ve
         });
     };
 
+    // Byte ranges covered by inline code spans on this line.
+    let code_spans = inline_code_spans(raw);
+    let in_code = |at: usize| code_spans.iter().any(|(s, e)| at >= *s && at < *e);
+
     let bytes = raw.as_bytes();
     // Reference definition: `[label]: target`.
     if let Some(rest) = raw.trim_start().strip_prefix('[') {
         if let Some((_, after)) = rest.split_once("]:") {
-            push(after, raw.len() - after.len());
+            let at = raw.len() - after.len();
+            if !in_code(at) {
+                push(after, at);
+            }
             return;
         }
     }
@@ -789,13 +801,46 @@ fn collect_md_links(raw: &str, line_start: usize, line_no: usize, facts: &mut Ve
     while i + 1 < bytes.len() {
         if bytes[i] == b']' && bytes[i + 1] == b'(' {
             if let Some(close) = raw[i + 2..].find(')') {
-                push(&raw[i + 2..i + 2 + close], i + 2);
+                if !in_code(i) {
+                    push(&raw[i + 2..i + 2 + close], i + 2);
+                }
                 i += 2 + close;
                 continue;
             }
         }
         i += 1;
     }
+}
+
+/// Byte ranges of inline code spans (`` `x` ``, ``` ``x`` ```) on one line.
+fn inline_code_spans(raw: &str) -> Vec<(usize, usize)> {
+    let bytes = raw.as_bytes();
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let ticks = bytes[i..].iter().take_while(|&&b| b == b'`').count();
+        let open = i;
+        let mut j = i + ticks;
+        // The closing run must be the same length, as in CommonMark.
+        while j < bytes.len() {
+            if bytes[j] == b'`' {
+                let run = bytes[j..].iter().take_while(|&&b| b == b'`').count();
+                if run == ticks {
+                    spans.push((open, j + run));
+                    break;
+                }
+                j += run;
+            } else {
+                j += 1;
+            }
+        }
+        i = if j < bytes.len() { j + ticks } else { bytes.len() };
+    }
+    spans
 }
 
 fn is_external_url(t: &str) -> bool {

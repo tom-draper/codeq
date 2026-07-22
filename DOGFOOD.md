@@ -4,6 +4,60 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 32: the loose ends, and reading a dependency
+
+Five things, two of them overdue verification rather than features.
+
+**The correctness harnesses had not been run.** Six commits touching the
+renderer, the search engine, extraction and the schema, verified with `cargo
+test` alone, while previous sessions record running the differential and
+text-mode harnesses before committing. Run now: `textmode` ALL PASS,
+`differential` **20 repos / 4185 assertions, 4185 PASS, 0 FAIL, 0 ERROR**
+(search 600, fuzz 1200, invariant 2385). Nothing had broken. That is a relief
+rather than a vindication — the gap was real and I would not have known.
+
+**MCP tool descriptions had drifted out of date.** They still described `--on`
+as `RECV.NAME / RECV::NAME` byte matching, still said `unused` counts comment
+mentions as uses, and never mentioned markdown. MCP is the primary agent path,
+so those strings *are* the contract; a stale one is worse than a missing feature.
+
+**`callees` now reads the call map** (session 31's `callsite.rs`) instead of
+scanning identifiers for a following `(`, closing the last textual gap in the
+call graph.
+
+**`deps --external`** lists imports that resolve to no file. For code that is the
+third-party dependency list; for markdown, whose links are always local paths, an
+unresolved one is a broken reference, flagged `broken=true` and sorted first.
+
+Dogfooding earned its keep immediately: the first run reported **two dead links
+in this repo's own README**, both in documentation written in session 28. They
+were `` `[g](./guide.md)` `` — link syntax inside inline code, i.e. an *example*
+of a link. Documentation about markdown is full of those. Inline code spans are
+now excluded from link extraction. A feature finding a bug in the docs that
+introduced the feature is a good argument for shipping the check.
+
+**`--root DIR`** closes the dependency-source hole. A dependency tree is
+gitignored, so it stays out of the repo's own index (correct — it is not this
+repo's code), but that made "how do I call this library function" unanswerable.
+`--root` takes a directory literally: no walking up to a Git toplevel, and
+`parents(false)` on the walker so the *outer* repo's ignore rules do not erase
+every file inside it. Then every command works there:
+
+    codeq --root node_modules/lodash api
+    codeq --root node_modules/lodash read chunk.js --symbol chunk
+
+Also refreshed the published benchmark table, which predated the session's
+changes and was stated as current. New: **5.5x tokens** over 20 repos (was 5.2x
+over 25). The interesting movement is `unused`, 64x -> 160x, a direct consequence
+of session 29: comments no longer mask dead code, so codeq reports more of it
+while the generic-tool baseline stays where it was.
+
+One test failed for an instructive reason: `.gitignore` is only honoured inside a
+real Git repository, and the test fixture is a bare temp directory. Switched to
+`.ignore`, which the walker honours anywhere and exercises the same filter path.
+
+191 tests (+3).
+
 ## 2026-07-22 - session 31: `--calls` and `--on` read the parse tree
 
 The structural version of the two filters sessions 29 and 30 patched textually.

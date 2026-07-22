@@ -299,6 +299,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             }
             optn(&mut args, a, "depth", "--depth");
             flag(&mut args, a, "cycles", "--cycles");
+            flag(&mut args, a, "external", "--external");
         }
         "codeq_astgrep" => {
             args.push("astgrep".into());
@@ -446,8 +447,8 @@ fn tools() -> Value {
             "The public API surface of a file or directory: the definitions it exports for outside use, with signatures. \"Public\" is each language's own notion (Rust pub, JS/TS export, Go capitalization, Python non-underscore, a public modifier in Java/C#/PHP, non-static in C/C++); pub(crate)/protected are excluded. Use it to learn how to call an unfamiliar module without reading whole files. path scopes to a file/dir substring; kind filters to one kind (function, struct, class, …).",
             json!({ "path": str_, "kind": str_, "limit": num_ }), &[]),
         tool("codeq_deps",
-            "Internal files a file depends on, resolved from its imports (raw import strings matched to file stems — heuristic, not a real module resolver). depth (default 1) walks transitive dependencies. cycles=true reports every import cycle in the repo instead (omit file).",
-            json!({ "file": str_, "depth": num_, "cycles": bool_ }), &[]),
+            "Internal files a file depends on, resolved from its imports (raw import strings matched to file stems — heuristic, not a real module resolver). depth (default 1) walks transitive dependencies. cycles=true reports every import cycle in the repo instead (omit file). external=true instead lists imports that resolve to no file in the repo: the third-party dependency list, plus broken local references (a markdown link or ./path pointing at nothing) flagged broken=true.",
+            json!({ "file": str_, "depth": num_, "cycles": bool_, "external": bool_ }), &[]),
         tool("codeq_astgrep",
             "Structural (AST) search: match a code pattern with $NAME / $_ metavariables (and $$$ for any run of siblings, e.g. foo($$$)), parsed with the language's own grammar so it matches syntax not text — e.g. '$X.unwrap()' finds every .unwrap() call whatever the receiver. Deterministic; a repeated $NAME must bind identically. Cannot see inside macro invocations. language is required.",
             json!({ "pattern": str_, "language": str_, "path": str_, "limit": int_ }), &["pattern", "language"]),

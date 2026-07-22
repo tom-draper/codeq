@@ -14,19 +14,34 @@ pub struct Repo {
     /// Absolute repository root (the Git toplevel, or CWD for non-Git trees).
     pub root: PathBuf,
     pub is_git: bool,
+    /// The root was named explicitly with `--root`, so the walk must not consult
+    /// a parent repository's ignore files.
+    pub pinned: bool,
 }
 
 impl Repo {
-    /// Discover the repo containing `start`. Prefers the Git toplevel; falls
-    /// back to `start` itself when there is no Git repository.
-    pub fn discover(start: &Path) -> Result<Repo> {
+    /// Discover the repo containing `start` — preferring the Git toplevel and
+    /// falling back to `start` itself — or, when `pinned`, treat `start` as the
+    /// root without walking up at all.
+    ///
+    /// Pinning is what makes a dependency readable: `node_modules/lodash` sits
+    /// inside the outer repo and is ignored by it, so discovery would otherwise
+    /// resolve to the parent and the walk would skip every file.
+    pub fn at(start: &Path, pinned: bool) -> Result<Repo> {
+        if pinned {
+            let root = start
+                .canonicalize()
+                .map_err(|e| anyhow!("cannot resolve {}: {e}", start.display()))?;
+            let is_git = git_toplevel(&root).is_some_and(|t| t == root);
+            return Ok(Repo { root, is_git, pinned: true });
+        }
         if let Some(root) = git_toplevel(start) {
-            return Ok(Repo { root, is_git: true });
+            return Ok(Repo { root, is_git: true, pinned: false });
         }
         let root = start
             .canonicalize()
             .map_err(|e| anyhow!("cannot resolve {}: {e}", start.display()))?;
-        Ok(Repo { root, is_git: false })
+        Ok(Repo { root, is_git: false, pinned: false })
     }
 
     pub fn vcs(&self) -> &'static str {

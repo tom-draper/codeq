@@ -1,0 +1,62 @@
+{
+  "timestamp": "2026-07-22T19:57:14+00:00",
+  "codeq_commit": "eda1ba8c4604",
+  "repos": 20,
+  "totals": {
+    "codeq_tokens": 694486,
+    "baseline_tokens": 3833429,
+    "token_ratio": 5.52,
+    "codeq_calls": 240,
+    "baseline_calls": 1250
+  },
+  "per_task": {
+    "read-impl": {
+      "codeq_tokens": 6190,
+      "baseline_tokens": 27553
+    },
+    "understand-sym": {
+      "codeq_tokens": 25039,
+      "baseline_tokens": 61213
+    },
+    "explore": {
+      "codeq_tokens": 104722,
+      "baseline_tokens": 124799
+    },
+    "callsites": {
+      "codeq_tokens": 5618,
+      "baseline_tokens": 39582
+    },
+    "blast-radius": {
+      "codeq_tokens": 31147,
+      "baseline_tokens": 117924
+    },
+    "which-tests": {
+      "codeq_tokens": 1468,
+      "baseline_tokens": 21799
+    },
+    "dead-code": {
+      "codeq_tokens": 11597,
+      "baseline_tokens": 1852735
+    },
+    "file-structure": {
+      "codeq_tokens": 50942,
+      "baseline_tokens": 526317
+    },
+    "public-api": {
+      "codeq_tokens": 55359,
+      "baseline_tokens": 18204
+    },
+    "package-api": {
+      "codeq_tokens": 352067,
+      "baseline_tokens": 991520
+    },
+    "usages": {
+      "codeq_tokens": 43943,
+      "baseline_tokens": 44289
+    },
+    "file-imports": {
+      "codeq_tokens": 6390,
+      "baseline_tokens": 7490
+    }
+  }
+}

@@ -168,6 +168,14 @@ So read stderr before assuming a command doesn't work or a symbol doesn't exist.
   narrows them using the import graph (see above), but it's a heuristic filter,
   not real type resolution.
 
+## Reading a dependency
+
+Dependency trees are gitignored, so `node_modules`, `vendor` and friends are
+invisible to the normal index (correctly: they are not this repo's code). To read
+one, point codeq at it: `codeq --root node_modules/lodash api`. `--root` takes the
+directory literally — no walking up to a Git toplevel, no parent ignore rules — so
+every command works there. It writes a `.codeq` index inside that directory.
+
 ## Build / test
 
 - `cargo build --release` · `cargo test` (integration tests in `tests/cli.rs`)

@@ -32,6 +32,17 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 
+    /// Run against this directory as the repository root, instead of discovering
+    /// one from the current directory.
+    ///
+    /// Takes the directory literally: it does not walk up to a Git toplevel, and
+    /// it ignores the *parent* repository's ignore rules. That is what makes a
+    /// dependency readable — `--root node_modules/lodash`, a vendored tree, or a
+    /// checkout outside the current repo. The index is written to `.codeq`
+    /// inside that directory, as it is anywhere else.
+    #[arg(long, global = true, value_name = "DIR")]
+    root: Option<PathBuf>,
+
     /// Emit JSON (the `codeq.result.v1` envelope). Default is compact grep-style
     /// text — fewer tokens. Use this for programmatic consumers.
     #[arg(long, global = true)]
@@ -403,6 +414,10 @@ enum Command {
         /// Report every import cycle in the repo instead of one file's deps.
         #[arg(long)]
         cycles: bool,
+        /// Imports that resolve to no file in the repo: third-party dependencies,
+        /// and broken local references (a markdown link or ./path to nothing).
+        #[arg(long)]
+        external: bool,
     },
     /// Structural (AST) search: match a code pattern with `$VAR` metavariables.
     /// Parsed with the language's grammar, so it matches syntax, not text —
@@ -551,6 +566,15 @@ fn main() -> ExitCode {
     reset_sigpipe();
     let cli = Cli::parse();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // `--root` pins the tree; `PINNED_ROOT` carries that to `Repo::at` without
+    // threading a parameter through every command signature.
+    let cwd = match &cli.root {
+        Some(r) => {
+            commands::pin_root();
+            if r.is_absolute() { r.clone() } else { cwd.join(r) }
+        }
+        None => cwd,
+    };
 
     let out = commands::Out {
         json: cli.json,
@@ -728,7 +752,8 @@ fn main() -> ExitCode {
             file,
             depth,
             cycles,
-        } => commands::cmd_deps(&cwd, file.as_deref(), depth, cycles, out),
+            external,
+        } => commands::cmd_deps(&cwd, file.as_deref(), depth, cycles, external, out),
         Command::Astgrep {
             pattern,
             language,

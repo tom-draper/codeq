@@ -39,10 +39,18 @@ struct Session {
     out: Out,
 }
 
+/// Set by `--root`: the tree was named explicitly, so discovery must take it
+/// literally rather than resolving to an enclosing repository.
+static PINNED_ROOT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn pin_root() {
+    PINNED_ROOT.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 impl Session {
     fn open(cwd: &Path, rebuild: bool, out: Out) -> Result<Session> {
         let started = Instant::now();
-        let repo = Repo::discover(cwd)?;
+        let repo = Repo::at(cwd, PINNED_ROOT.load(std::sync::atomic::Ordering::Relaxed))?;
         let db = Db::open(&repo.root)?;
         if rebuild {
             db.conn.execute("DELETE FROM files", [])?; // cascades to facts
@@ -849,10 +857,21 @@ fn callees_of(
             let Some(slice) = b.get(*sb..(*eb).min(b.len())) else {
                 continue;
             };
-            // `helper()` written inside a string literal or a comment is not a
-            // call, so the identifier scan must skip those regions. Spans are
-            // already in the index; a language without them yields none and the
-            // whole body counts, as before.
+            // Prefer the parse tree: it knows exactly which identifiers are
+            // being called, so a declaration, a macro name, a type in call
+            // position and prose are all handled without guessing. One parse per
+            // file that actually defines the symbol, which is at most a handful.
+            let lang = language_for(path).unwrap_or("");
+            if let Some(calls) = crate::callsite::calls_in(lang, &b) {
+                for (off, _) in calls.iter().filter(|(off, _)| **off >= *sb && **off < *eb) {
+                    if let Some(word) = ident_at(&b, *off) {
+                        idents.insert(word);
+                    }
+                }
+                continue;
+            }
+            // No grammar for this language: fall back to the identifier scan,
+            // still skipping comment and string spans.
             let prose: Vec<(usize, usize)> = span_stmt
                 .query_map([path], |r| {
                     Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize))
@@ -940,6 +959,19 @@ fn callees_of(
 /// main source of callee noise. Real callees are always called, so nothing that
 /// is genuinely a callee is lost. (Still name-based, not type-resolved: a std
 /// `.remove()` can't be told apart from a local `remove`.)
+/// The identifier beginning at byte `off`, if any.
+fn ident_at(text: &str, off: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    if off >= bytes.len() {
+        return None;
+    }
+    let mut end = off;
+    while end < bytes.len() && (bytes[end] == b'_' || bytes[end].is_ascii_alphanumeric()) {
+        end += 1;
+    }
+    (end > off).then(|| text[off..end].to_string())
+}
+
 /// Identifiers in call position within `text`, skipping any that fall inside a
 /// comment or string. `base` is `text`'s byte offset within its file, so the
 /// sorted `prose` ranges (which are file-absolute) line up.
@@ -2114,15 +2146,75 @@ fn resolve_rows<T>(
 
 /// `deps <file> [--depth N]` — the internal files a file depends on, resolved
 /// from its imports; `--cycles` reports every import cycle in the repo instead.
+/// An import that resolved to no file in the repo.
+#[derive(Serialize)]
+struct ExternalRow {
+    module: String,
+    importers: usize,
+    /// An example importing file, so the claim is checkable.
+    path: String,
+    line: i64,
+    /// True when the module names a path that should have existed: a relative
+    /// reference (`./guide.md`, `../src/x`) or any markdown link. Those are
+    /// broken references, not third-party dependencies.
+    #[serde(skip_serializing_if = "is_false")]
+    broken: bool,
+}
+
 pub fn cmd_deps(
     cwd: &Path,
     file: Option<&str>,
     depth: usize,
     cycles: bool,
+    external: bool,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let graph = load_dep_graph(&s)?;
+
+    // Imports that resolve to nothing inside the repo. For code that is the
+    // third-party dependency list; for a markdown link, whose target is always a
+    // local file, it is a broken reference.
+    if external {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT f.path, f.name, f.start_line, files.language
+             FROM facts f JOIN files ON files.path = f.path
+             WHERE f.kind = 'import' ORDER BY f.path, f.start_line",
+        )?;
+        let rows: Vec<(String, String, i64, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+
+        let mut by_module: BTreeMap<String, ExternalRow> = BTreeMap::new();
+        for (path, module, line, lang) in rows {
+            if graph.resolves(&path, &module) {
+                continue;
+            }
+            let looks_like_a_path = module.starts_with("./")
+                || module.starts_with("../")
+                || lang.as_deref() == Some("markdown");
+            let entry = by_module.entry(module.clone()).or_insert(ExternalRow {
+                module,
+                importers: 0,
+                path,
+                line,
+                broken: looks_like_a_path,
+            });
+            entry.importers += 1;
+        }
+        let mut data: Vec<ExternalRow> = by_module.into_values().collect();
+        // Broken references first: they are defects, third-party imports are not.
+        data.sort_by(|a, b| {
+            b.broken
+                .cmp(&a.broken)
+                .then(b.importers.cmp(&a.importers))
+                .then(a.module.cmp(&b.module))
+        });
+        let note = data
+            .is_empty()
+            .then(|| "every import resolves to a file in this repo".to_string());
+        return s.emit_noted(data, note);
+    }
 
     if cycles {
         let data: Vec<CycleRow> = graph

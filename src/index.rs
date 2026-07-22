@@ -154,8 +154,12 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     // (re)processing — unchanged files short-circuit on the size+mtime fast path.
     let now = now_ns();
     let mut work: Vec<(String, PathBuf, i64, i64)> = Vec::new();
+    // `parents(false)` when the root was pinned with --root: a dependency
+    // directory is ignored *by its parent repo*, and consulting that would make
+    // every file in it invisible. Ignore files inside the root still apply.
     let walker = WalkBuilder::new(repo_root)
         .standard_filters(true) // .gitignore, .ignore, hidden, parents
+        .parents(!repo.pinned)
         .build();
     for dent in walker {
         let dent = match dent {

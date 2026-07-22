@@ -3838,3 +3838,115 @@ fn call_sites_resolve_across_languages() {
         assert!(hits > 0, "{file}: --on {recv} found no call in:\n{src}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// deps --external
+// ---------------------------------------------------------------------------
+
+/// An import that resolves to no file in the repo is either a third-party
+/// dependency (code) or a broken reference (a local path that should exist).
+#[test]
+fn external_deps_separate_third_party_from_broken_links() {
+    let f = Fixture::new();
+    f.write("other.md", "# Other\n");
+    f.write("assets/real.png", "x");
+    f.write(
+        "doc.md",
+        "# Doc\n\nSee [good](./other.md) and ![img](assets/real.png).\n\
+         See [dead](./missing.md) and ![gone](assets/nope.png).\n\
+         An example of the syntax: `[x](./not-a-link.md)`.\n\
+         External [site](https://example.com) is fine.\n",
+    );
+    f.write("a.rs", "use serde::Serialize;\nfn f() {}\n");
+
+    let rows = f.run(&["deps", "--external"]);
+    let modules = field_set(&rows, "module");
+    let broken: Vec<&str> = rows["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["broken"] == true)
+        .map(|r| r["module"].as_str().unwrap())
+        .collect();
+
+    assert_eq!(
+        broken,
+        ["./missing.md", "assets/nope.png"],
+        "only the links that point at nothing: {modules:?}"
+    );
+    assert!(
+        !modules.iter().any(|m| m == "./other.md" || m == "assets/real.png"),
+        "a link that resolves is not external: {modules:?}"
+    );
+    assert!(
+        !modules.iter().any(|m| m.contains("example.com")),
+        "an external URL names no file, so it is not an import at all: {modules:?}"
+    );
+    // A third-party import is external but is not a defect.
+    assert!(
+        rows["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["module"] == "serde::Serialize" && r["broken"] != true),
+        "third-party imports are listed, unflagged: {modules:?}"
+    );
+}
+
+/// Documentation *about* markdown is full of link syntax inside backticks. An
+/// example is not a link. (Found by running `deps --external` on this repo, which
+/// reported its own README as having two dead links.)
+#[test]
+fn a_link_inside_inline_code_is_an_example_not_a_link() {
+    let f = Fixture::new();
+    f.write(
+        "doc.md",
+        "# Doc\n\nLinks (`[g](./guide.md)`, `![logo](assets/logo.png)`) are file references.\n",
+    );
+    let modules = field_set(&f.run(&["imports", "doc.md"]), "module");
+    assert!(
+        modules.is_empty(),
+        "inline code must not produce dependency edges: {modules:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// --root: reading a dependency
+// ---------------------------------------------------------------------------
+
+/// Dependency trees are gitignored, so their source is invisible to codeq: "how
+/// do I call this library function" could not be answered at all. `--root` takes
+/// a directory literally — no walking up to a Git toplevel, and no consulting
+/// the parent repo's ignore rules — so a dependency can be read like any repo.
+#[test]
+fn root_makes_an_ignored_dependency_readable() {
+    let f = Fixture::new();
+    // `.ignore` rather than `.gitignore`: gitignore semantics need a real .git
+    // directory, and both go through the same walker filters.
+    f.write(".ignore", "node_modules/\n");
+    f.write(
+        "node_modules/lodash/chunk.js",
+        "export function chunk(array, size) { return []; }\nexport function head(a) { return a[0]; }\n",
+    );
+    f.write("src/app.js", "import { chunk } from \"lodash\";\nchunk([1, 2], 1);\n");
+
+    // The dependency stays out of the ordinary index: it is not this repo's code.
+    let own = field_set(&f.run(&["definitions", "chunk"]), "path");
+    assert!(
+        !own.iter().any(|p| p.contains("node_modules")),
+        "an ignored tree must not leak into the repo's own index: {own:?}"
+    );
+
+    // Pointed at directly, it indexes and answers like any other tree.
+    let api = field_set(&f.run(&["--root", "node_modules/lodash", "api"]), "name");
+    let mut api = api;
+    api.sort();
+    assert_eq!(api, ["chunk", "head"], "the dependency's public API");
+
+    let src = String::from_utf8(
+        f.raw(&["--root", "node_modules/lodash", "read", "chunk.js", "--symbol", "chunk"])
+            .stdout,
+    )
+    .unwrap();
+    assert!(src.contains("export function chunk"), "its source: {src}");
+}
