@@ -81,7 +81,7 @@ benchmarks — not as a step you run before querying.
       so one command answers "who calls it *and how*". For every call site rather
       than one per caller, use `references NAME --calls`. Composes with the filters.
   - **`callees` is already call-position only** (a bare mention of a name isn't a
-    callee), so it needs no `--calls`; it does take `--resolved`, which keeps only
+    callee, and `helper()` written inside a string or comment isn't either), so it needs no `--calls`; it does take `--resolved`, which keeps only
     callees whose definition file NAME's *own* file can reach through imports (tags
     each `via` same-file / imported) — pruning the name-based over-match where a
     common callee name (`new`, `open`) matches unrelated same-named defs in
@@ -108,9 +108,11 @@ benchmarks — not as a step you run before querying.
   *files* to re-run. Composes `changed --symbols` + a caller BFS + `tests`; name-based,
   so it over-includes rather than misses.
 - **Find dead code:** `codeq unused [<path>]` — definitions with no reference
-  anywhere outside their own definition site. Conservative (a comment/string
-  mention counts as a use; name-based, so a same-named symbol elsewhere masks it)
-  so it under-reports rather than mislead. Shows `visibility` (a `public` hit may
+  anywhere outside their own definition site. A mention in a **comment** is not a
+  use (a stale TODO can't mask dead code), but a mention in a **string** still is,
+  because reflection, serde renames, config keys and SQL identifiers are real uses
+  that live in string literals. Still name-based, so a same-named symbol elsewhere
+  masks it; it under-reports rather than mislead. Shows `visibility` (a `public` hit may
   be external API, not dead); test-file defs excluded unless `--include-tests`.
 - **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
   - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,

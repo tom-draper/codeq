@@ -840,13 +840,25 @@ fn callees_of(
     let mut idents: HashSet<String> = HashSet::new();
     {
         let mut body_stmt = s.db.conn.prepare("SELECT body FROM content_fts WHERE path = ?1")?;
+        let mut span_stmt = s.db.conn.prepare(
+            "SELECT start_byte, end_byte FROM spans WHERE path = ?1 ORDER BY start_byte",
+        )?;
         for (path, sb, eb) in &targets {
             let body: Option<String> = body_stmt.query_row([path], |r| r.get(0)).ok();
-            if let Some(b) = body {
-                if let Some(slice) = b.get(*sb..(*eb).min(b.len())) {
-                    collect_idents(slice, &mut idents);
-                }
-            }
+            let Some(b) = body else { continue };
+            let Some(slice) = b.get(*sb..(*eb).min(b.len())) else {
+                continue;
+            };
+            // `helper()` written inside a string literal or a comment is not a
+            // call, so the identifier scan must skip those regions. Spans are
+            // already in the index; a language without them yields none and the
+            // whole body counts, as before.
+            let prose: Vec<(usize, usize)> = span_stmt
+                .query_map([path], |r| {
+                    Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize))
+                })?
+                .collect::<std::result::Result<_, _>>()?;
+            collect_idents(slice, *sb, &prose, &mut idents);
         }
     }
     idents.remove(name);
@@ -928,23 +940,40 @@ fn callees_of(
 /// main source of callee noise. Real callees are always called, so nothing that
 /// is genuinely a callee is lost. (Still name-based, not type-resolved: a std
 /// `.remove()` can't be told apart from a local `remove`.)
-fn collect_idents(text: &str, out: &mut HashSet<String>) {
-    let chars: Vec<char> = text.chars().collect();
-    let n = chars.len();
+/// Identifiers in call position within `text`, skipping any that fall inside a
+/// comment or string. `base` is `text`'s byte offset within its file, so the
+/// sorted `prose` ranges (which are file-absolute) line up.
+fn collect_idents(
+    text: &str,
+    base: usize,
+    prose: &[(usize, usize)],
+    out: &mut HashSet<String>,
+) {
+    let in_prose = |off: usize| {
+        let abs = base + off;
+        let idx = prose.partition_point(|(s, _)| *s <= abs);
+        idx > 0 && prose[idx - 1].1 > abs
+    };
+
+    let bytes = text.as_bytes();
+    let is_word = |b: u8| b == b'_' || b.is_ascii_alphanumeric();
+    let n = bytes.len();
     let mut i = 0;
     while i < n {
-        if chars[i] == '_' || chars[i].is_alphanumeric() {
+        // Non-ASCII bytes are never part of an identifier codeq reports, and
+        // stepping by byte keeps offsets aligned with the span ranges.
+        if is_word(bytes[i]) {
             let start = i;
-            while i < n && (chars[i] == '_' || chars[i].is_alphanumeric()) {
+            while i < n && is_word(bytes[i]) {
                 i += 1;
             }
             // Peek past whitespace for a '(' — the mark of a call.
             let mut j = i;
-            while j < n && chars[j].is_whitespace() {
+            while j < n && bytes[j].is_ascii_whitespace() {
                 j += 1;
             }
-            if j < n && chars[j] == '(' && i - start >= 2 {
-                out.insert(chars[start..i].iter().collect());
+            if j < n && bytes[j] == b'(' && i - start >= 2 && !in_prose(start) {
+                out.insert(text[start..i].to_string());
             }
         } else {
             i += 1;
@@ -2679,7 +2708,11 @@ fn name_is_used(
         before: 0,
         after: 0,
         out: OutMode::Matches,
-        in_filter: InFilter::Any,
+        // A name mentioned only in a comment ("TODO: wire up foo later") used to
+        // count as a use and mask genuinely dead code. A comment is never a use.
+        // String mentions still count: reflection, serde renames, config keys and
+        // SQL identifiers are real uses that live in string literals.
+        in_filter: InFilter::NotComment,
         limit: 0,
         call_only: false,
         qualifier: None,

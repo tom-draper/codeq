@@ -1246,15 +1246,16 @@ fn unused_reports_only_definitions_with_no_use() {
 }
 
 #[test]
-fn unused_is_conservative_about_comment_mentions() {
-    // A symbol mentioned only in a comment is NOT dead-code-flagged: `unused`
-    // counts any mention (code/comment/string) as a use, so it under-reports
-    // rather than risk flagging something an agent might delete.
+fn unused_is_conservative_about_string_mentions() {
+    // `unused` under-reports rather than risk flagging something an agent might
+    // delete, so a mention in a *string* counts as a use: it may be reflection,
+    // a serde rename, a config key or a SQL identifier. (A mention in a comment
+    // does not count — see `a_comment_mention_no_longer_masks_dead_code`.)
     let f = Fixture::new();
-    f.write("a.rs", "fn ghost() {}\n// ghost is referenced here in prose\n");
+    f.write("a.rs", "fn ghost() {}\nfn main() { log(\"ghost is named here\"); }\nfn log(_: &str) {}\n");
     let names = field_set(&f.run(&["unused"]), "name");
     assert!(!names.contains(&"ghost".to_string()),
-            "a comment mention should count as a use: {names:?}");
+            "a string mention should count as a use: {names:?}");
 }
 
 #[test]
@@ -3589,4 +3590,78 @@ fn markdown_setext_headings_and_frontmatter() {
         !names.iter().any(|n| n == "Paragraph."),
         "a --- after a blank line is a thematic break, not an underline: {names:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// comments and strings are not uses
+// ---------------------------------------------------------------------------
+
+/// A stale `// TODO: wire up foo later` used to count as a use and hide genuinely
+/// dead code. A comment is never a use.
+#[test]
+fn a_comment_mention_no_longer_masks_dead_code() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn actually_dead() {}\n// TODO: wire up actually_dead later\nfn main() {}\n",
+    );
+    let names = field_set(&f.run(&["unused"]), "name");
+    assert!(
+        names.iter().any(|n| n == "actually_dead"),
+        "a comment must not mask dead code: {names:?}"
+    );
+}
+
+/// But a *string* mention can be a real use — reflection, `getattr`, serde
+/// renames, DI registration, SQL identifiers, config keys — so it still counts.
+/// `unused` under-reports rather than misleads, and deleting live code is the
+/// expensive mistake.
+#[test]
+fn a_string_mention_still_counts_as_a_use() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn kept_by_reflection() {}\nfn main() { dispatch(\"kept_by_reflection\"); }\nfn dispatch(_: &str) {}\n",
+    );
+    let names = field_set(&f.run(&["unused"]), "name");
+    assert!(
+        !names.iter().any(|n| n == "kept_by_reflection"),
+        "a string mention may be a real use: {names:?}"
+    );
+}
+
+/// A file codeq cannot parse has no spans, so nothing in it is *known* to be a
+/// comment. Those occurrences must still count, or the exclusion would report
+/// live code as dead.
+#[test]
+fn occurrences_in_unparsed_files_still_count_as_uses() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn referenced_from_config() {}\nfn main() {}\n");
+    f.write("config.toml", "handler = \"referenced_from_config\"\n");
+    let names = field_set(&f.run(&["unused"]), "name");
+    assert!(
+        !names.iter().any(|n| n == "referenced_from_config"),
+        "an unclassifiable file must not lose its occurrences: {names:?}"
+    );
+}
+
+/// `helper()` written inside a string or a comment is not a call.
+#[test]
+fn callees_ignores_calls_written_in_comments_and_strings() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn helper() {}\n\
+         fn only_mentions() {\n    let s = \"helper() in a string\";\n    // helper() in a comment\n}\n\
+         fn really_calls() { helper(); }\n",
+    );
+
+    let mentioned = field_set(&f.run(&["callees", "only_mentions"]), "name");
+    assert!(
+        mentioned.is_empty(),
+        "a mention in prose is not a callee: {mentioned:?}"
+    );
+
+    let called = field_set(&f.run(&["callees", "really_calls"]), "name");
+    assert_eq!(called, ["helper"], "a real call is still found");
 }

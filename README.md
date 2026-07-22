@@ -72,6 +72,14 @@ silently ignored. A piped scan opens no index and needs no repo.
 an agent's shell usually hands the process an open pipe, so auto-detection would silently
 turn every ordinary `codeq search` into a scan of an empty buffer.
 
+Where structure is available, codeq uses it instead of matching characters. A name
+mentioned in a comment is not a use, so a stale `// TODO: wire up foo later` cannot
+hide dead code from `unused`; `helper()` written inside a string or a comment is not
+a call, so it is not a callee. A mention in a *string* still counts as a use, because
+reflection, serde renames, config keys and SQL identifiers are real uses that live in
+string literals, and a file codeq cannot parse keeps all of its occurrences rather
+than losing them.
+
 The honest boundary: codeq's facts are syntactic, not deeply semantic. It knows an
 identifier is a function definition. It does not resolve a call to its definition across
 module aliases, generics, or build systems. The graph commands match by name, with opt-in

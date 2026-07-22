@@ -4,6 +4,60 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 29: comments are not uses
+
+Asked where codeq still matches characters for something the structure already
+knows. Four places; two fixed here, both with span data the index already had.
+
+**`unused` was masked by comment mentions.**
+
+    fn never_called_anywhere() {}
+    // TODO: wire up never_called_anywhere later
+
+Not reported. Delete the comment and it is. So a stale TODO hid real dead code —
+and stale TODOs are exactly the kind of thing that mentions a function nobody
+calls any more. The docstring called this conservatism, but it was buying
+nothing: codeq extracts comment/string spans and `--in code` already filters on
+them. The conservatism was accidental, not chosen.
+
+**`callees` reported mentions in strings and comments as calls.** A function
+whose body contains only `"helper() in a string"` and `// helper() in a comment`
+listed `helper` as a callee, despite `callees` being documented as call-position
+only. `collect_idents` scanned the body's characters with no idea where the
+literals were.
+
+The interesting decision was **not** applying the same rule to both. A comment is
+never a use, so excluding comments is free. A *string* often is: reflection,
+`getattr`, serde renames, DI registration by name, SQL identifiers, config keys.
+Excluding strings from `unused` would make it report live code as dead, inverting
+the command's whole stance — and deleting live code is the expensive mistake,
+where a missed dead function is cheap. So:
+
+- `unused` excludes **comments only**; string mentions still count as uses.
+- `callees` excludes **comments and strings**, because in the languages codeq
+  parses, a call written inside a string literal is not a call.
+
+That needed a new internal `InFilter::NotComment`, and a distinction that had not
+existed before: a `--in` filter is a positive claim ("this match is in a
+comment") and cannot be made without spans, so it skips unparsable files; an
+*exclusion* is not, so it must keep them. Without that, a symbol named only in
+`config.toml` would have been reported as dead the moment the filter was applied,
+since TOML has no spans. There is a test for exactly that.
+
+One existing test failed, correctly: `unused_is_conservative_about_comment_mentions`
+asserted the old contract in its name. Rewritten as
+`..._about_string_mentions`, which is the part of the conservatism actually worth
+keeping.
+
+Still textual, deliberately unfixed for now: `references --calls` matches the
+definition site (`fn foo(` is followed by `(` too, though the row is already
+flagged `definition: true`, so the fix is cheap), and `--on RECV` scans bytes
+immediately before the match, so `db\n    .query()` is missed while `db.query()`
+is found. Both want real call-expression structure; `astgrep` already exists and
+could supply it as an opt-in precision mode.
+
+183 tests (+4, 1 rewritten).
+
 ## 2026-07-22 - session 28: markdown is indexed like code
 
 Docs were the first thing an agent reads in an unfamiliar repo and the one thing

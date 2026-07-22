@@ -70,6 +70,13 @@ pub(crate) enum InFilter {
     Code,
     Comments,
     Strings,
+    /// Everything except a comment. Not exposed as a `--in` value: it exists for
+    /// `unused`, where a mention in a comment must not count as a use, but a
+    /// mention in a *string* still can — reflection, `getattr`, serde renames,
+    /// DI registration, SQL identifiers and config keys are all real uses that
+    /// live in string literals. Excluding comments removes the clearly-wrong
+    /// masking without making the command guess about the ambiguous case.
+    NotComment,
 }
 
 impl InFilter {
@@ -89,7 +96,20 @@ impl InFilter {
             InFilter::Code => cls.is_none(),
             InFilter::Comments => cls == Some(Span::Comment),
             InFilter::Strings => cls == Some(Span::Str),
+            InFilter::NotComment => cls != Some(Span::Comment),
         }
+    }
+
+    /// Whether a file codeq cannot classify must be skipped entirely.
+    ///
+    /// True for the `--in` filters, which are a positive claim ("this match is
+    /// in a comment") that cannot be made without spans. False for
+    /// [`InFilter::NotComment`], which is an exclusion: with no spans nothing is
+    /// known to be a comment, so every match stands. That keeps `unused` reading
+    /// occurrences in JSON, TOML and other unparsed files as uses, rather than
+    /// silently dropping them and reporting live code as dead.
+    fn requires_spans(self) -> bool {
+        matches!(self, InFilter::Code | InFilter::Comments | InFilter::Strings)
     }
 }
 
@@ -295,16 +315,22 @@ pub(crate) fn run_search(
         // Load cached spans if filtering; skip files in a language we can't parse.
         let spans = if filtering {
             if !has_spans(lang.as_deref().unwrap_or("")) {
-                continue;
+                if opts.in_filter.requires_spans() {
+                    continue;
+                }
+                // Unclassifiable: treat every position as code rather than drop
+                // the file, so an exclusion filter cannot lose real matches.
+                Vec::new()
+            } else {
+                let srows = span_stmt.query_map([rel], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)? as usize,
+                        r.get::<_, i64>(1)? as usize,
+                        Span::from_i64(r.get::<_, i64>(2)?).unwrap_or(Span::Str),
+                    ))
+                })?;
+                srows.collect::<std::result::Result<Vec<_>, _>>()?
             }
-            let srows = span_stmt.query_map([rel], |r| {
-                Ok((
-                    r.get::<_, i64>(0)? as usize,
-                    r.get::<_, i64>(1)? as usize,
-                    Span::from_i64(r.get::<_, i64>(2)?).unwrap_or(Span::Str),
-                ))
-            })?;
-            srows.collect::<std::result::Result<Vec<_>, _>>()?
         } else {
             Vec::new()
         };
