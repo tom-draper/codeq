@@ -195,10 +195,46 @@ fn note_if_empty<T>(
     relation: &str,
     path: Option<&str>,
 ) -> Result<Option<String>> {
+    note_if_empty_feat(s, rows, name, relation, path, None)
+}
+
+/// As [`note_if_empty`], but `feature` names the extraction a command depends on
+/// ("relations", "members"). When the symbol's own language does not support it,
+/// the answer is "codeq cannot see this here", which is a different fact from
+/// "there are none" — and the one an agent needs, because otherwise it takes an
+/// unsupported language as evidence of absence.
+fn note_if_empty_feat<T>(
+    s: &Session,
+    rows: &[T],
+    name: &str,
+    relation: &str,
+    path: Option<&str>,
+    feature: Option<&str>,
+) -> Result<Option<String>> {
     if !rows.is_empty() {
         return Ok(None);
     }
     let sites = definition_sites(s, name)?;
+    if let (Some(feature), Some((p, _))) = (feature, sites.first()) {
+        if let Some(lang) = language_for(p) {
+            let unsupported = crate::facts::support(lang).is_some_and(|sup| match feature {
+                "relations" => !sup.relations,
+                "members" => !sup.members,
+                _ => false,
+            });
+            if unsupported {
+                let why = match feature {
+                    "relations" => format!(
+                        "codeq extracts no inheritance edges for {lang}; this is not evidence that '{name}' has none"
+                    ),
+                    _ => format!(
+                        "codeq extracts no field or variant declarations for {lang}, so only methods would be reported for '{name}', and it has none"
+                    ),
+                };
+                return Ok(Some(why));
+            }
+        }
+    }
     if sites.is_empty() {
         let near = nearest_names(s, name)?;
         let hint = if near.is_empty() {
@@ -617,10 +653,14 @@ pub fn cmd_api(
     cwd: &Path,
     path: Option<&str>,
     kind: Option<&str>,
+    compare_to: Option<&str>,
     limit: usize,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
+    if let Some(reference) = compare_to {
+        return api_diff(&s, reference, path);
+    }
     let filters = Filters::new().like("path", path).eq("kind", kind);
     let sql = format!(
         "SELECT name, kind, path, start_line, signature
@@ -681,6 +721,151 @@ const CONTAINER_KINDS: &[&str] = &[
     "struct", "enum", "union", "trait", "class", "interface", "record",
     "namespace", "module", "type", "typealias",
 ];
+
+#[derive(Serialize)]
+struct ApiChangeRow {
+    /// "added", "removed", or "changed"; also the section this row appears in.
+    #[serde(skip_serializing)]
+    change: String,
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+    /// The previous signature, when it changed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    was: Option<String>,
+}
+
+/// `api --compare-to <ref>` — how the exported surface differs from `ref`.
+///
+/// "Does this change break anyone" is the question a review actually asks, and
+/// it is not answerable from a diff: a diff shows every edited line, most of
+/// which are internal. This reports only the exported declarations that appeared,
+/// disappeared, or changed shape.
+///
+/// Diff-shaped, not history-shaped: it compares two trees, the same thing
+/// `changed` and `affected` already do, and needs Git for exactly that reason.
+fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
+    let changed = s.repo.changed_since(compare_to)?;
+    let mut ex = crate::facts::Extractor::new()?;
+    let mut data: Vec<ApiChangeRow> = Vec::new();
+
+    for file in changed {
+        if path.is_some_and(|p| !file.contains(p)) {
+            continue;
+        }
+        let Some(lang) = language_for(&file) else {
+            continue;
+        };
+
+        // The exported surface as of `compare_to`.
+        let old: HashMap<String, (String, String)> = match s.repo.file_at(compare_to, &file) {
+            Some(bytes) => ex
+                .extract(lang, &bytes)
+                .0
+                .into_iter()
+                .filter(|f| f.visibility.as_deref() == Some("public") && f.kind != "import")
+                .map(|f| {
+                    (
+                        f.name.clone(),
+                        (f.kind.clone(), declaration_header(&f.kind, Some(f.signature)).unwrap_or_default()),
+                    )
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+
+        // ...and as of now, from the index (already fresh).
+        let mut stmt = s.db.conn.prepare(
+            "SELECT name, kind, start_line, signature FROM facts
+             WHERE path = ?1 AND visibility = 'public' AND kind <> 'import'
+             ORDER BY start_line",
+        )?;
+        let now: Vec<(String, String, i64, Option<String>)> = stmt
+            .query_map([&file], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+        for (name, kind, line, sig) in now {
+            let sig = declaration_header(&kind, sig);
+            seen.insert(name.clone());
+            match old.get(&name) {
+                None => data.push(ApiChangeRow {
+                    change: "added".into(),
+                    name,
+                    kind,
+                    path: file.clone(),
+                    line,
+                    signature: sig,
+                    was: None,
+                }),
+                Some((_, before)) if Some(before.as_str()) != sig.as_deref() => {
+                    data.push(ApiChangeRow {
+                        change: "changed".into(),
+                        name,
+                        kind,
+                        path: file.clone(),
+                        line,
+                        signature: sig,
+                        was: Some(before.clone()),
+                    })
+                }
+                Some(_) => {}
+            }
+        }
+        for (name, (kind, before)) in &old {
+            if !seen.contains(name) {
+                data.push(ApiChangeRow {
+                    change: "removed".into(),
+                    name: name.clone(),
+                    kind: kind.clone(),
+                    path: file.clone(),
+                    line: 0,
+                    signature: None,
+                    was: Some(before.clone()),
+                });
+            }
+        }
+    }
+
+    data.sort_by(|a, b| a.path.cmp(&b.path).then(a.name.cmp(&b.name)));
+
+    // Grouped rather than one flat list with a `change` column: the text
+    // renderer shows a signature *instead of* the other fields, so a flat list
+    // would print an added and a removed row identically. Removals first — they
+    // are the breaking ones.
+    #[derive(Serialize)]
+    struct ApiDiff {
+        removed: Vec<ApiChangeRow>,
+        changed: Vec<ApiChangeRow>,
+        added: Vec<ApiChangeRow>,
+    }
+    let take = |data: &mut Vec<ApiChangeRow>, which: &str| -> Vec<ApiChangeRow> {
+        data.iter()
+            .filter(|r| r.change == which)
+            .map(|r| ApiChangeRow {
+                change: r.change.clone(),
+                name: r.name.clone(),
+                kind: r.kind.clone(),
+                path: r.path.clone(),
+                line: r.line,
+                signature: r.signature.clone(),
+                was: r.was.clone(),
+            })
+            .collect()
+    };
+    let out = ApiDiff {
+        removed: take(&mut data, "removed"),
+        changed: take(&mut data, "changed"),
+        added: take(&mut data, "added"),
+    };
+    let note = data
+        .is_empty()
+        .then(|| format!("the exported surface is unchanged since {compare_to}"));
+    s.emit_noted(out, note)
+}
 
 /// The declaration header of a definition: for a container kind the stored
 /// signature is the entire body (every field, doc comment and attribute), but a
@@ -1575,7 +1760,7 @@ pub fn cmd_members(
         Some(k) => format!("members of kind '{k}'"),
         None => "members (fields, variants or methods)".to_string(),
     };
-    let note = note_if_empty(&s, &data, name, &relation, path)?;
+    let note = note_if_empty_feat(&s, &data, name, &relation, path, Some("members"))?;
     s.emit_noted(data, note)
 }
 
@@ -2728,7 +2913,7 @@ pub fn cmd_implementors(
         })
     })?;
     let data: Vec<ImplementorRow> = rows.collect::<std::result::Result<_, _>>()?;
-    let note = note_if_empty(&s, &data, name, "implementors or subtypes", path)?;
+    let note = note_if_empty_feat(&s, &data, name, "implementors or subtypes", path, Some("relations"))?;
     s.emit_noted(data, note)
 }
 
@@ -2775,7 +2960,7 @@ pub fn cmd_supertypes(
         })
     })?;
     let data: Vec<SupertypeRow> = rows.collect::<std::result::Result<_, _>>()?;
-    let note = note_if_empty(&s, &data, name, "supertypes (it extends nothing)", path)?;
+    let note = note_if_empty_feat(&s, &data, name, "supertypes (it extends nothing)", path, Some("relations"))?;
     s.emit_noted(data, note)
 }
 
@@ -3061,6 +3246,90 @@ fn resolve_test_rows(
         rows.truncate(limit);
     }
     Ok((rows, truncated))
+}
+
+#[derive(Serialize)]
+struct UntestedRow {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+}
+
+/// `untested [<path>]` — exported definitions no test refers to.
+///
+/// `api` composed with `tests`, which an agent otherwise has to do one symbol at
+/// a time: a call per public definition just to learn which are uncovered.
+///
+/// Public only, because an unexported helper is usually covered through the
+/// exported thing that calls it, and reporting every private function would bury
+/// the answer. Heuristic in exactly the way `tests` is (a test is recognised by
+/// test-like path or name) and name-based like the rest of the graph, so it
+/// over-reports coverage rather than under-report it: a test that reaches the
+/// code without naming it is invisible here.
+pub fn cmd_untested(
+    cwd: &Path,
+    path: Option<&str>,
+    kind: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    let filters = Filters::new().like("path", path).eq("kind", kind);
+    let sql = format!(
+        "SELECT name, kind, path, start_line, signature FROM facts
+         WHERE visibility = 'public' AND kind <> 'import' AND kind <> 'heading'{}
+         ORDER BY path, start_line",
+        filters.sql(),
+    );
+    let candidates: Vec<UntestedRow> = {
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
+            let kind: String = r.get(1)?;
+            Ok(UntestedRow {
+                name: r.get(0)?,
+                path: r.get(2)?,
+                line: r.get(3)?,
+                signature: declaration_header(&kind, r.get(4)?),
+                kind,
+            })
+        })?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+
+    // One lookup per distinct name, not per definition.
+    let mut covered: HashMap<String, bool> = HashMap::new();
+    let mut data: Vec<UntestedRow> = Vec::new();
+    for cand in candidates {
+        // A definition that lives in a test file is test scaffolding, not
+        // production code that needs covering.
+        if is_test_path(&cand.path) {
+            continue;
+        }
+        let has_test = match covered.get(&cand.name) {
+            Some(&c) => c,
+            None => {
+                let c = !test_sites(&s, &cand.name, None)?.is_empty();
+                covered.insert(cand.name.clone(), c);
+                c
+            }
+        };
+        if !has_test {
+            data.push(cand);
+            if limit > 0 && data.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    let note = data.is_empty().then(|| match path {
+        Some(p) => format!("every public definition in '{p}' is referenced by a test"),
+        None => "every public definition is referenced by a test".to_string(),
+    });
+    s.emit_noted(data, note)
 }
 
 pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: Out) -> Result<()> {
@@ -3509,8 +3778,13 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "callers", "callees", "path", "about", "explore", "references",
             "implementors", "supertypes", "unused", "tests",
             "imports", "importers", "deps", "astgrep", "search", "context",
-            "capabilities", "mcp", "install",
+            "untested", "capabilities", "mcp", "install",
         ],
+        // Per-language support, so "no results" can be told from "not supported".
+        "language_support": crate::facts::LANGUAGES
+            .iter()
+            .filter_map(|l| crate::facts::support(l))
+            .collect::<Vec<_>>(),
         // Languages with symbol + import extraction.
         "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity"],
         // Languages recognised for file classification (extraction may be absent).

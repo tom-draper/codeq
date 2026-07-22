@@ -4,6 +4,61 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 33: making codeq's own limits queryable
+
+Three capabilities, and the first came out of a bug in the second-to-last commit.
+
+`capabilities` listed the fact kind `field, variant` **twice** and omitted
+`heading` — a hand-maintained list that drifted the moment two sessions edited
+it. That is the same class of failure as everything else this week: a claim
+maintained by hand next to the thing it claims to describe.
+
+**`capabilities.language_support`** is therefore *derived*, not declared. For each
+language it reads that language's own query text and reports which of
+definitions / imports / members / relations / spans / calls exist. It cannot
+drift, because the queries are the source of truth:
+
+    language   defs imp mem rel spa cal
+    go         y    y   y   .   y   y
+    ruby       y    y   .   y   y   y
+    bash       y    .   .   .   y   y
+    markdown   y    y   .   .   y   .
+
+This matters because support has always been uneven and flat lists implied it was
+not. Go and C have no inheritance edges *at all*; Ruby declares no fields. An
+agent asking `implementors` about a Go interface got "none", which is true and
+completely misleading. Now:
+
+    codeq extracts no inheritance edges for go; this is not evidence that 'Reader' has none
+
+The empty-result work from session 27 answered "why is this empty" at the command
+level; this answers it at the capability level, which is where the remaining
+misreadings lived.
+
+**`untested`** is `api` composed with `tests`. Measured on this repo before
+building it: 99 of 129 public functions have no test naming them — and finding
+that out took ~130 subprocess calls, one per symbol. Now one call. Public only,
+since a private helper is usually covered through whatever exported thing calls
+it, and it over-reports coverage (a test that reaches code without naming it is
+invisible) rather than claiming coverage that is not there.
+
+**`api --compare-to <ref>`** answers "does this break anyone", which a diff
+cannot: a diff shows every edited line and most are internal. It extracts the
+exported surface from the old blob via `git show` and compares with the current
+index, reporting removed / changed / added. Diff-shaped, not history-shaped, so
+it sits with `changed` and `affected` rather than opening the door to a history
+tool.
+
+One design correction while building it. The first version returned a flat list
+with a `change` column, which text mode rendered *identically* for an added and a
+removed row — because the renderer prints a signature instead of the other
+fields, exactly as session 24's contract says it should. Grouping into
+`# removed` / `# changed` / `# added` sections uses the existing convention and
+makes the distinction visible. A reminder that output shape is part of the
+feature, not a wrapper around it.
+
+195 tests (+4). differential and textmode re-run: ALL PASS.
+
 ## 2026-07-22 - session 32: the loose ends, and reading a dependency
 
 Five things, two of them overdue verification rather than features.

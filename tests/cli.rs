@@ -3950,3 +3950,120 @@ fn root_makes_an_ignored_dependency_readable() {
     .unwrap();
     assert!(src.contains("export function chunk"), "its source: {src}");
 }
+
+// ---------------------------------------------------------------------------
+// language support, untested, api diff
+// ---------------------------------------------------------------------------
+
+/// codeq's support is uneven and always has been. Presenting flat lists made
+/// "no results" and "not supported" look identical; the matrix makes the
+/// difference queryable, and is derived from the queries so it cannot drift.
+#[test]
+fn capabilities_reports_per_language_support() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn x() {}\n");
+    let rows = f.run(&["capabilities"])["data"]["language_support"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let get = |lang: &str| {
+        rows.iter()
+            .find(|r| r["language"] == lang)
+            .unwrap_or_else(|| panic!("{lang} missing from the support matrix"))
+            .clone()
+    };
+
+    // Known-true and known-false cases, each documented in DOGFOOD.
+    assert_eq!(get("rust")["relations"], true);
+    assert_eq!(get("go")["relations"], false, "Go is structurally typed");
+    assert_eq!(get("c")["relations"], false, "C has no inheritance");
+    assert_eq!(get("ruby")["members"], false, "attr_accessor is a method call");
+    assert_eq!(get("bash")["imports"], false);
+    assert_eq!(get("markdown")["definitions"], true, "headings");
+    assert_eq!(get("markdown")["calls"], false);
+    for lang in ["rust", "python", "go", "markdown"] {
+        assert_eq!(get(lang)["spans"], true, "{lang} classifies comments/strings");
+    }
+}
+
+/// An unsupported feature is not evidence of absence, and must not read as one.
+#[test]
+fn an_unsupported_feature_says_so_instead_of_none() {
+    let f = Fixture::new();
+    f.write("a.go", "package m\ntype Reader interface { Read() }\n");
+    f.write("a.rs", "pub trait T {}\n");
+
+    let go = String::from_utf8(f.raw(&["implementors", "Reader"]).stderr).unwrap();
+    assert!(
+        go.contains("no inheritance edges for go") && go.contains("not evidence"),
+        "must distinguish unsupported from none: {go}"
+    );
+
+    let rust = String::from_utf8(f.raw(&["implementors", "T"]).stderr).unwrap();
+    assert!(
+        rust.contains("has no implementors"),
+        "Rust supports relations, so this is a real none: {rust}"
+    );
+}
+
+/// `api` composed with `tests`, which otherwise costs one call per public symbol.
+#[test]
+fn untested_reports_public_definitions_no_test_names() {
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "pub fn covered() {}\npub fn bare() {}\nfn private_helper() {}\n",
+    );
+    f.write("tests/t.rs", "#[test]\nfn works() { covered(); }\n");
+
+    let names = field_set(&f.run(&["untested"]), "name");
+    assert!(names.iter().any(|n| n == "bare"), "uncovered public fn: {names:?}");
+    assert!(!names.iter().any(|n| n == "covered"), "covered: {names:?}");
+    assert!(
+        !names.iter().any(|n| n == "private_helper"),
+        "private definitions are out of scope: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "works"),
+        "the test itself is not production code needing cover: {names:?}"
+    );
+}
+
+/// "Does this break anyone" is not answerable from a diff, which shows every
+/// edited line. This reports only the exported declarations that moved.
+#[test]
+fn api_diff_reports_the_exported_surface_only() {
+    let f = Fixture::new();
+    f.write(
+        "lib.rs",
+        "pub fn kept() {}\npub fn doomed() {}\npub fn shape(a: u32) {}\nfn internal() {}\n",
+    );
+    f.git_init_commit();
+
+    f.write(
+        "lib.rs",
+        "pub fn kept() {}\npub fn shape(a: u32, b: u32) {}\npub fn fresh() {}\nfn internal(x: u32) {}\n",
+    );
+
+    let d = f.run(&["api", "--compare-to", "HEAD"]);
+    let names = |k: &str| -> Vec<String> {
+        d["data"][k]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(names("removed"), ["doomed"]);
+    assert_eq!(names("added"), ["fresh"]);
+    assert_eq!(names("changed"), ["shape"], "same name, different signature");
+    let changed = &d["data"]["changed"][0];
+    assert!(
+        changed["was"].as_str().unwrap().contains("a: u32)"),
+        "the previous signature is shown: {changed}"
+    );
+    // An unexported change is not an API change, however much the diff shows.
+    for k in ["removed", "added", "changed"] {
+        assert!(!names(k).iter().any(|n| n == "internal"), "{k} leaked a private fn");
+    }
+}

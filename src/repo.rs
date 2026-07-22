@@ -81,6 +81,21 @@ impl Repo {
 
     /// Paths changed relative to `reference` (a ref, or the working tree vs a
     /// ref). Returns repo-relative paths.
+    /// The contents of `path` as of `reference`, or `None` when the file did not
+    /// exist there (which is how an added file is recognised).
+    pub fn file_at(&self, reference: &str, path: &str) -> Option<Vec<u8>> {
+        let base = git(&self.root, &["merge-base", reference, "HEAD"])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| reference.to_string());
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&self.root)
+            .args(["show", &format!("{base}:{path}")])
+            .output()
+            .ok()?;
+        out.status.success().then_some(out.stdout)
+    }
+
     pub fn changed_since(&self, reference: &str) -> Result<Vec<String>> {
         if !self.is_git {
             return Err(anyhow!("`changed` requires a Git repository"));

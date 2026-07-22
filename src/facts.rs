@@ -853,6 +853,93 @@ fn is_external_url(t: &str) -> bool {
         || t.starts_with('#')
 }
 
+/// Every language codeq extracts from.
+pub const LANGUAGES: &[&str] = &[
+    "rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby",
+    "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift",
+    "dart", "zig", "elixir", "solidity", "markdown",
+];
+
+/// What codeq can extract for one language.
+///
+/// Support is uneven and always has been — Go has no inheritance edges, Ruby
+/// declares no fields, several languages have no import syntax codeq reads — but
+/// `capabilities` presented flat lists, so "no results" and "not supported"
+/// looked identical. This makes the difference queryable.
+///
+/// Derived from each language's own query text rather than a hand-kept table,
+/// because the hand-kept list is exactly what drifted (it listed `field`/
+/// `variant` twice and omitted `heading`).
+#[derive(serde::Serialize)]
+pub struct Support {
+    pub language: String,
+    /// Definitions: functions, types, and so on.
+    pub definitions: bool,
+    /// Import statements, so `deps`/`importers` work.
+    pub imports: bool,
+    /// Fields and enum variants, for `members`.
+    pub members: bool,
+    /// Inheritance edges, for `implementors`/`supertypes`.
+    pub relations: bool,
+    /// Comment/string spans, for `search --in`.
+    pub spans: bool,
+    /// Call sites, for the `--calls`/`--on` precision filters.
+    pub calls: bool,
+}
+
+/// The raw query text for a language: (definitions, relations).
+fn queries_for(language: &str) -> Option<(String, String)> {
+    let pair = |q: &str, r: &str| Some((q.to_string(), r.to_string()));
+    match language {
+        "rust" => pair(RUST_QUERY, RUST_REL),
+        "python" => pair(PYTHON_QUERY, PYTHON_REL),
+        "javascript" => pair(&format!("{JS_QUERY}\n{JS_EXTRA}"), JS_REL),
+        "typescript" | "tsx" => pair(&format!("{JS_QUERY}\n{TS_EXTRA}"), TS_REL),
+        "go" => pair(GO_QUERY, GO_REL),
+        "java" => pair(JAVA_QUERY, JAVA_REL),
+        "ruby" => pair(RUBY_QUERY, RUBY_REL),
+        "c" => pair(C_QUERY, C_REL),
+        "cpp" => pair(CPP_QUERY, CPP_REL),
+        "csharp" => pair(CSHARP_QUERY, CSHARP_REL),
+        "php" => pair(PHP_QUERY, PHP_REL),
+        "bash" => pair(BASH_QUERY, ""),
+        "lua" => pair(LUA_QUERY, ""),
+        "scala" => pair(SCALA_QUERY, ""),
+        "kotlin" => pair(KOTLIN_QUERY, ""),
+        "swift" => pair(SWIFT_QUERY, ""),
+        "dart" => pair(DART_QUERY, ""),
+        "zig" => pair(ZIG_QUERY, ""),
+        "elixir" => pair(ELIXIR_QUERY, ""),
+        "solidity" => pair(SOLIDITY_QUERY, ""),
+        _ => None,
+    }
+}
+
+pub fn support(language: &str) -> Option<Support> {
+    // Markdown is extracted by hand, not by a query, so it is described directly.
+    if language == "markdown" {
+        return Some(Support {
+            language: language.to_string(),
+            definitions: true, // headings
+            imports: true,     // local links and images
+            members: false,
+            relations: false,
+            spans: true, // fenced code vs prose
+            calls: false,
+        });
+    }
+    let (query, rel) = queries_for(language)?;
+    Some(Support {
+        language: language.to_string(),
+        definitions: query.contains(") @") || query.contains("@function"),
+        imports: query.contains("@import"),
+        members: query.contains("@field") || query.contains("@variant"),
+        relations: !rel.trim().is_empty(),
+        spans: has_spans(language),
+        calls: crate::astgrep::ts_language(language).is_some(),
+    })
+}
+
 /// Whether codeq can classify comment/string spans for this language (i.e. it
 /// has a parser). `search --in` excludes files in other languages rather than
 /// guess.

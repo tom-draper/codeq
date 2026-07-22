@@ -176,6 +176,10 @@ enum Command {
         /// Only this kind (e.g. function, struct, class, interface).
         #[arg(long)]
         kind: Option<String>,
+        /// Report how the exported surface differs from this Git ref instead:
+        /// what was added, removed, or changed shape.
+        #[arg(long, value_name = "REF")]
+        compare_to: Option<String>,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
@@ -347,6 +351,20 @@ enum Command {
         include_tests: bool,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
+    /// Exported definitions that no test refers to — `api` composed with `tests`.
+    ///
+    /// Public only, and heuristic in the same way `tests` is, so it over-reports
+    /// coverage rather than under-report it.
+    Untested {
+        /// Restrict to paths containing this substring.
+        path: Option<String>,
+        /// Restrict to one kind (function, struct, class, …).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 200)]
         limit: usize,
     },
     /// Test functions that reference a symbol — "which tests exercise X".
@@ -632,8 +650,20 @@ fn main() -> ExitCode {
             path,
             limit,
         } => commands::cmd_definitions(&cwd, &symbol, path.as_deref(), limit, out),
-        Command::Api { path, kind, limit } => {
-            commands::cmd_api(&cwd, path.as_deref(), kind.as_deref(), limit, out)
+        Command::Api {
+            path,
+            kind,
+            compare_to,
+            limit,
+        } => {
+            commands::cmd_api(
+                &cwd,
+                path.as_deref(),
+                kind.as_deref(),
+                compare_to.as_deref(),
+                limit,
+                out,
+            )
         }
         Command::Callers {
             name,
@@ -825,6 +855,9 @@ fn main() -> ExitCode {
             kind,
             limit,
         } => commands::cmd_members(&cwd, &name, path.as_deref(), kind.as_deref(), limit, out),
+        Command::Untested { path, kind, limit } => {
+            commands::cmd_untested(&cwd, path.as_deref(), kind.as_deref(), limit, out)
+        }
         Command::Stats {} => commands::cmd_stats(&cwd, out),
         Command::Map { limit } => commands::cmd_map(&cwd, limit, out),
         Command::Capabilities {} => commands::cmd_capabilities(out),

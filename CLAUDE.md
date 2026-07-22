@@ -105,6 +105,17 @@ benchmarks — not as a step you run before querying.
   - **The reverse — what a type derives from:** `codeq supertypes NAME` — the
     traits / interfaces / base classes NAME extends or implements (as written at
     the declaration, not transitively resolved).
+- **Check what codeq supports before trusting an empty answer:** `codeq
+  capabilities` includes `language_support`, a per-language matrix of which
+  extractions exist. Go and C have **no** inheritance edges, Ruby declares no
+  fields, Bash/Lua/Zig/Elixir have no imports — for those, "none found" is not
+  evidence of absence, and the empty-result note says so.
+- **Public API with no tests:** `codeq untested [<path>]` — `api` composed with
+  `tests` in one call instead of one per symbol. Public only; over-reports
+  coverage (a test that never names the symbol is invisible).
+- **Did this change the public surface:** `codeq api <path> --compare-to <ref>` —
+  exported declarations added, removed, or changed shape, grouped and with the
+  previous signature. The review question a raw diff can't answer.
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
   reference NAME (by test-file path or test-like name). For the edit→find-the-test loop.
 - **What a diff affects:** `codeq affected --compare-to <ref>` — the definitions the

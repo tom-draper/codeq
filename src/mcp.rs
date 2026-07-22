@@ -232,6 +232,14 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "kind", "--kind");
             optn(&mut args, a, "limit", "--limit");
         }
+        "codeq_untested" => {
+            args.push("untested".into());
+            if let Some(v) = s(a, "path") {
+                args.push(v.into());
+            }
+            opt(&mut args, a, "kind", "--kind");
+            optn(&mut args, a, "limit", "--limit");
+        }
         "codeq_outline" => {
             args.push("outline".into());
             args.push(s(a, "file")?.into());
@@ -416,6 +424,9 @@ fn tools() -> Value {
         tool("codeq_path",
             "The shortest call chain from one symbol to another (from calls … calls to), if one exists — reachability with the route shown, e.g. how an entry point reaches a low-level function. Name-based; empty when unreachable within max_depth (default 8). path scopes the start symbol to matching files, to disambiguate a common/cross-language `from` like `main`.",
             json!({ "from": str_, "to": str_, "max_depth": num_, "path": str_ }), &["from", "to"]),
+        tool("codeq_untested",
+            "Exported definitions that no test refers to — api composed with tests, which otherwise costs one call per public symbol. Public only (a private helper is usually covered through the exported thing that calls it). Heuristic in the same way tests is, so it over-reports coverage rather than under-report it: a test that reaches the code without naming it is invisible.",
+            json!({ "path": str_, "kind": str_, "limit": int_ }), &[]),
         tool("codeq_members",
             "What a type contains: its fields, enum variants, and methods, in source order. Use it to learn a struct/class/enum's shape before constructing or destructuring it, instead of reading the file. Unlike the call-graph commands this is structural, not name-based: a member is a definition nested directly inside the type's byte range, so there are no same-name false positives. kind filters to one of field/variant/method/function; path disambiguates a common type name. Languages that don't declare members (Ruby attr_accessor, Python self.x in __init__) return nothing rather than a guess, and in Rust a struct's methods live in a separate impl block so only its fields are returned.",
             json!({ "name": str_, "path": str_, "kind": str_, "limit": int_ }), &["name"]),
@@ -444,7 +455,7 @@ fn tools() -> Value {
             "Definitions with no reference anywhere outside their own definition site — candidate dead code. A mention in a comment is not a use, so a stale TODO cannot mask dead code; a mention in a string still is, because reflection, serde renames, config keys and SQL identifiers are real uses. Name-based, so a same-named symbol elsewhere masks it; it under-reports rather than misleads. visibility is shown so a public symbol (maybe external API, not dead) is distinguishable from a private one. Test-file definitions are excluded by default (framework entry points look unused); set include_tests to include them. path/kind scope what is reported; the usage check is always repo-wide.",
             json!({ "path": str_, "kind": str_, "include_tests": bool_, "limit": num_ }), &[]),
         tool("codeq_api",
-            "The public API surface of a file or directory: the definitions it exports for outside use, with signatures. \"Public\" is each language's own notion (Rust pub, JS/TS export, Go capitalization, Python non-underscore, a public modifier in Java/C#/PHP, non-static in C/C++); pub(crate)/protected are excluded. Use it to learn how to call an unfamiliar module without reading whole files. path scopes to a file/dir substring; kind filters to one kind (function, struct, class, …).",
+            "The public API surface of a file or directory. compare_to=<git ref> instead reports how that surface differs from the ref — what was added, removed, or changed shape — which is the review question a raw diff cannot answer, since most edited lines are internal. Otherwise: the definitions it exports for outside use, with signatures. \"Public\" is each language's own notion (Rust pub, JS/TS export, Go capitalization, Python non-underscore, a public modifier in Java/C#/PHP, non-static in C/C++); pub(crate)/protected are excluded. Use it to learn how to call an unfamiliar module without reading whole files. path scopes to a file/dir substring; kind filters to one kind (function, struct, class, …).",
             json!({ "path": str_, "kind": str_, "limit": num_ }), &[]),
         tool("codeq_deps",
             "Internal files a file depends on, resolved from its imports (raw import strings matched to file stems — heuristic, not a real module resolver). depth (default 1) walks transitive dependencies. cycles=true reports every import cycle in the repo instead (omit file). external=true instead lists imports that resolve to no file in the repo: the third-party dependency list, plus broken local references (a markdown link or ./path pointing at nothing) flagged broken=true.",
@@ -471,7 +482,7 @@ fn tools() -> Value {
             "Index summary: file/symbol/import counts by language and total bytes.",
             json!({}), &[]),
         tool("codeq_capabilities",
-            "Describe what codeq supports: commands, languages, fact kinds, schema.",
+            "Describe what codeq supports: commands, languages, fact kinds, schema, and language_support — a per-language matrix of which extractions exist (definitions, imports, members, relations, spans, calls). Check it before reading an empty result as evidence of absence: Go and C have no inheritance edges at all, Ruby declares no fields, and several languages have no import syntax codeq reads.",
             json!({}), &[]),
     ])
 }

@@ -86,6 +86,13 @@ reflection, serde renames, config keys and SQL identifiers are real uses that li
 string literals, and a file codeq cannot parse keeps all of its occurrences rather
 than losing them.
 
+Support is uneven across the 21 languages, so `capabilities` reports a
+`language_support` matrix — which of definitions, imports, members, relations, spans
+and calls each language actually has, derived from the extraction queries rather than
+a hand-kept list. Go and C have no inheritance edges at all; Ruby declares no fields.
+When a command comes back empty for that reason it says so, rather than letting an
+unsupported language read as evidence of absence.
+
 The honest boundary: codeq's facts are syntactic, not deeply semantic. It knows an
 identifier is a function definition. It does not resolve a call to its definition across
 module aliases, generics, or build systems. The graph commands match by name, with opt-in
