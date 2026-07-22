@@ -43,6 +43,11 @@ benchmarks — not as a step you run before querying.
   into the Edit tool's `old_string`, so you skip the grep-for-the-line →
   read-the-region → strip-prefixes dance. With `--symbol` it requires a single
   match (a clean anchor); scope with `--lines A-B` if a name is ambiguous.
+- **`--kind method` vs `--kind function` is meaningful.** A function declared
+  inside a type body is a `method` (it can be called on a value); a nested
+  function or closure is not, however deep the class above it. Rust needs a
+  `self` parameter, so `S::assoc()` stays a `function` while `s.meth()` is a
+  `method`. Elixir `def`s are module functions, so they stay `function`.
 - **Understand a symbol before editing:** `codeq about NAME` (definition +
   callers + callees + members, one call). Definition rows carry the symbol's own
   doc comment as `  // <doc>`, so `about`/`definitions`/`explore` answer "what

@@ -23,7 +23,9 @@ use rusqlite::Connection;
 // local link/image targets as imports) — rebuild to populate them.
 // v16: relations for Scala/Kotlin/Swift/Dart/Solidity, imports for Zig/Elixir/
 // Lua/Bash, and Ruby attr_* fields — rebuild to populate them.
-pub const SCHEMA_VERSION: i64 = 16;
+// v17: functions declared inside a type body are now `method`, not `function`
+// (Rust needs a self parameter) — rebuild to reclassify them.
+pub const SCHEMA_VERSION: i64 = 17;
 
 pub struct Db {
     pub conn: Connection,

@@ -4,6 +4,52 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 35: a method is not a function
+
+Session 34 ended by declining to build receiver-based `--resolved` because the
+prerequisite was missing: codeq could not tell a method from a free function.
+
+    $ codeq definitions query --fields kind,name   # impl method + free fn
+    function query
+    function query
+
+Rust's `function_item` and Python's `function_definition` are the same node
+whether or not they sit inside an `impl` or a `class`, so the queries cannot tell
+them apart and every method came back as `function`. Measured across the
+languages first, rather than assumed: **8 of 16 were wrong** — Rust, Python,
+Kotlin, Swift, Scala, Solidity, Zig (Java, Go, JS/TS, C++, C#, PHP, Ruby, Dart
+already had distinct nodes and were right).
+
+The rule is structural: walk outward from the definition and stop at the first
+enclosing definition. A function ancestor means this is nested — a closure or an
+inner `def` — and not a member, however deep the class above it. A type body
+means it is a method.
+
+Rust needs one more condition, and it is the interesting one. An `impl` block
+holds methods *and* associated functions, and only a `self` parameter says which
+can be called on a value. So `S::assoc()` stays a `function` while `s.meth()` is
+a `method` — which is exactly the distinction the whole exercise exists to serve.
+Elixir `def`s stay functions too: they are module functions, called qualified,
+not on a value.
+
+Poking at nesting surfaced a **pre-existing gap I had not gone looking for**:
+`trait T { fn required(&self); }` was extracted as nothing at all. The Rust
+pattern requires `body: (block)`, and a trait method declaration has no body — so
+the one thing `implementors` sends you to look at was invisible. Added as
+`function_signature_item`.
+
+Two existing tests failed, both correctly: they asserted `kind == "function"` for
+a Python method and filtered `members --kind function` to find one. Tests
+encoding the old, wrong classification. That is twice in two sessions that a test
+broke because the tool got better, which is the good failure mode.
+
+Schema 16 -> 17. 203 tests (+4, 2 updated). differential **4188/4188**
+(three more assertions than before, all passing), textmode ALL PASS.
+
+The prune this unblocks — a call with a receiver is not calling a free function —
+is now safe to build on real facts rather than on a guess, but is deliberately
+left for its own change.
+
 ## 2026-07-22 - session 34: filling the coverage gaps the matrix exposed
 
 Session 33's support matrix made the holes legible, which made them worth

@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 16);
+    assert_eq!(v["index"]["schema"], 17);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -1416,7 +1416,7 @@ fn at_resolves_innermost_enclosing_definition() {
     let v = f.run(&["at", "m.py:3"]);
     let rows = v["data"].as_array().unwrap();
     assert_eq!(rows[0]["name"], "meth");
-    assert_eq!(rows[0]["kind"], "function");
+    assert_eq!(rows[0]["kind"], "method", "declared inside a class");
 }
 
 #[test]
@@ -3104,8 +3104,9 @@ fn members_kind_filter_separates_fields_from_methods() {
         ["a"]
     );
     assert_eq!(
-        field_set(&f.run(&["members", "C", "--kind", "function"]), "name"),
-        ["m"]
+        field_set(&f.run(&["members", "C", "--kind", "method"]), "name"),
+        ["m"],
+        "a def inside a class is a method, not a function"
     );
 }
 
@@ -4153,4 +4154,77 @@ fn ruby_attr_accessors_are_fields() {
     // Requires still work; the two share the call shape.
     f.write("b.rb", "require 'json'\n");
     assert!(field_set(&f.run(&["imports"]), "module").iter().any(|m| m == "json"));
+}
+
+// ---------------------------------------------------------------------------
+// method vs function
+// ---------------------------------------------------------------------------
+
+/// Several grammars use one node for both (Rust `function_item`, Python
+/// `function_definition`), so every method used to be reported as a plain
+/// function and `--kind method` was near-useless.
+#[test]
+fn functions_inside_a_type_are_methods() {
+    let cases: &[(&str, &str)] = &[
+        ("a.py", "class C:\n    def meth(self): pass\n"),
+        ("a.kt", "class C { fun meth() {} }\n"),
+        ("a.swift", "class C { func meth() {} }\n"),
+        ("a.scala", "class C {\n  def meth() = {}\n}\n"),
+        ("a.sol", "contract C {\n  function meth() public {}\n}\n"),
+        ("a.zig", "const C = struct {\n  fn meth(self: C) void {}\n};\n"),
+        ("a.rs", "struct S;\nimpl S { fn meth(&self) {} }\n"),
+    ];
+    for (file, src) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let kinds = field_set(&f.run(&["definitions", "meth"]), "kind");
+        assert_eq!(kinds, ["method"], "{file}: {src}");
+    }
+}
+
+/// Rust's `impl` holds methods *and* associated functions, and only a `self`
+/// parameter says which can be called on a value.
+#[test]
+fn rust_associated_functions_are_not_methods() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct S;\nimpl S {\n  fn meth(&self) {}\n  fn assoc() {}\n}\nfn free() {}\n",
+    );
+    let kind = |n: &str| field_set(&f.run(&["definitions", n]), "kind").join(",");
+    assert_eq!(kind("meth"), "method", "takes self, so s.meth()");
+    assert_eq!(kind("assoc"), "function", "no self: called as S::assoc()");
+    assert_eq!(kind("free"), "function");
+}
+
+/// A function nested inside a method is not itself a member of the type,
+/// however deeply the class sits above it.
+#[test]
+fn a_function_nested_in_a_method_is_not_a_method() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "class C:\n    def meth(self):\n        def inner():\n            pass\n",
+    );
+    assert_eq!(field_set(&f.run(&["definitions", "meth"]), "kind"), ["method"]);
+    assert_eq!(
+        field_set(&f.run(&["definitions", "inner"]), "kind"),
+        ["function"],
+        "nested, not a member"
+    );
+}
+
+/// A trait method declaration has no body, so the pattern requiring one missed
+/// it — yet it is the whole point of the trait.
+#[test]
+fn rust_trait_method_declarations_are_extracted() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub trait T {\n    fn required(&self);\n}\n");
+    let rows = f.run(&["definitions", "required"]);
+    assert_eq!(field_set(&rows, "kind"), ["method"]);
+    assert_eq!(
+        field_set(&f.run(&["members", "T", "--kind", "method"]), "name"),
+        ["required"],
+        "and it is a member of the trait"
+    );
 }

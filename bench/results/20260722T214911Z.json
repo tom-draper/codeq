@@ -1,0 +1,253 @@
+{
+  "timestamp": "2026-07-22T21:49:11+00:00",
+  "codeq_commit": "cfa3e1bfa252",
+  "per_command": {
+    "read": {
+      "pass": 400,
+      "total": 400,
+      "time_x": 1.818,
+      "bytes_x": 0.014
+    },
+    "definitions": {
+      "pass": 400,
+      "total": 400,
+      "time_x": 1.061,
+      "bytes_x": 5.048
+    },
+    "outline": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.327,
+      "bytes_x": 3.885
+    },
+    "callers": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 1.558,
+      "bytes_x": 0.979
+    },
+    "imports": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.618,
+      "bytes_x": 4.381
+    },
+    "references": {
+      "pass": 800,
+      "total": 800,
+      "time_x": 1.484,
+      "bytes_x": 2.364
+    },
+    "search": {
+      "pass": 1800,
+      "total": 1800,
+      "time_x": 1.881,
+      "bytes_x": 1.762
+    },
+    "at": {
+      "pass": 788,
+      "total": 788,
+      "time_x": null,
+      "bytes_x": null
+    }
+  },
+  "summary": {
+    "repos": 20,
+    "total_correctness_tests": 4188,
+    "correctness_pass": 4188,
+    "correctness_fail": 0,
+    "search_total": 600,
+    "search_fail": 0,
+    "errors": 0,
+    "invariant_total": 2388,
+    "invariant_fail": 0,
+    "fuzz_total": 1200,
+    "fuzz_fail": 0,
+    "actions_total": 600,
+    "median_codeq_over_rg_time": 1.881,
+    "median_codeq_over_rg_bytes": 1.762
+  },
+  "per_repo": {
+    "flask": {
+      "lang": "python",
+      "index_ms": 2155.14,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "requests": {
+      "lang": "python",
+      "index_ms": 2985.57,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "rich": {
+      "lang": "python",
+      "index_ms": 5207.84,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "httpie": {
+      "lang": "python",
+      "index_ms": 3435.02,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "gin": {
+      "lang": "go",
+      "index_ms": 3197.48,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "cobra": {
+      "lang": "go",
+      "index_ms": 2868.37,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "mux": {
+      "lang": "go",
+      "index_ms": 2326.63,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "express": {
+      "lang": "javascript",
+      "index_ms": 2906.41,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "lodash": {
+      "lang": "javascript",
+      "index_ms": 4111.82,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "zod": {
+      "lang": "typescript",
+      "index_ms": 3418.11,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "dayjs": {
+      "lang": "typescript",
+      "index_ms": 3219.96,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "ripgrep": {
+      "lang": "rust",
+      "index_ms": 3507.6,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "serde": {
+      "lang": "rust",
+      "index_ms": 2885.55,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "clap": {
+      "lang": "rust",
+      "index_ms": 4128.99,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "sinatra": {
+      "lang": "ruby",
+      "index_ms": 2763.68,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "rack": {
+      "lang": "ruby",
+      "index_ms": 2788.22,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "gson": {
+      "lang": "java",
+      "index_ms": 3470.5,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "jq": {
+      "lang": "c",
+      "index_ms": 3379.46,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "redis": {
+      "lang": "c",
+      "index_ms": 8291.15,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "json": {
+      "lang": "cpp",
+      "index_ms": 5686.29,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    }
+  },
+  "failures": []
+}

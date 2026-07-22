@@ -269,6 +269,16 @@ impl LangSpec {
                     } else {
                         name
                     };
+                    // A function declared inside a type body is a method: it
+                    // can be called on a value. Several grammars use the same
+                    // node for both (Rust `function_item`, Python
+                    // `function_definition`), so the queries cannot tell them
+                    // apart and every method came back as `function`.
+                    let kind = if kind == "function" && is_method(self.lang, node) {
+                        "method"
+                    } else {
+                        kind
+                    };
                     let visibility = if kind == "import" {
                         None
                     } else {
@@ -874,6 +884,60 @@ fn is_external_url(t: &str) -> bool {
         || t.starts_with('#')
 }
 
+/// Whether a function node is a method — declared inside a type body, so it can
+/// be called on a value.
+///
+/// Walks outward and stops at the first enclosing definition: a function ancestor
+/// means this is a nested function or closure, not a method, however deeply the
+/// class sits above it.
+///
+/// Rust is the exception that needs more than nesting. An `impl` block holds both
+/// methods and associated functions, and only a `self` parameter distinguishes
+/// `s.meth()` from `S::assoc()`, so Rust requires one.
+fn is_method(lang: &str, node: Node) -> bool {
+    if lang == "rust" && !has_self_parameter(node) {
+        return false;
+    }
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        let k = n.kind();
+        // A nearer function encloses this one: nested, not a member.
+        if k.contains("function_item")
+            || k.contains("function_definition")
+            || k.contains("function_declaration")
+            || k.contains("method")
+        {
+            return false;
+        }
+        if is_type_body(k) {
+            return true;
+        }
+        cur = n.parent();
+    }
+    false
+}
+
+/// Node kinds that introduce a type's body across the supported grammars.
+fn is_type_body(kind: &str) -> bool {
+    const TYPEISH: &[&str] = &[
+        "impl", "trait", "class", "struct", "contract", "object", "protocol",
+        "extension", "interface", "enum", "record",
+    ];
+    TYPEISH.iter().any(|t| kind.contains(t))
+}
+
+/// A Rust `fn` whose first parameter is `self` (`&self`, `&mut self`, `self`).
+fn has_self_parameter(node: Node) -> bool {
+    let Some(params) = node.child_by_field_name("parameters") else {
+        return false;
+    };
+    let mut c = params.walk();
+    let found = params
+        .named_children(&mut c)
+        .any(|p| p.kind() == "self_parameter");
+    found
+}
+
 /// Every language codeq extracts from.
 pub const LANGUAGES: &[&str] = &[
     "rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby",
@@ -1186,6 +1250,9 @@ fn cap(s: &str, max: usize) -> String {
 /// whole definition node, and optionally `@body` (stripped from signatures).
 const RUST_QUERY: &str = r#"
 (function_item name: (identifier) @name body: (block) @body) @function
+; A trait method declaration has no body, so the pattern above misses it — yet it
+; is the whole point of the trait, and what `implementors` sends you looking for.
+(function_signature_item name: (identifier) @name) @method
 (struct_item name: (type_identifier) @name) @struct
 (enum_item name: (type_identifier) @name) @enum
 (union_item name: (type_identifier) @name) @union

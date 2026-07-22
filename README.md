@@ -86,6 +86,13 @@ reflection, serde renames, config keys and SQL identifiers are real uses that li
 string literals, and a file codeq cannot parse keeps all of its occurrences rather
 than losing them.
 
+A function declared inside a type body is recorded as a `method` rather than a
+`function`, which several grammars do not distinguish for you: Rust's `function_item`
+and Python's `function_definition` are the same node whether or not they sit in an
+`impl` or a `class`. Rust additionally requires a `self` parameter, so an associated
+function called as `S::assoc()` stays a `function`. A nested function or closure is
+never a method, however deep the class above it.
+
 Support is uneven across the 21 languages, so `capabilities` reports a
 `language_support` matrix — which of definitions, imports, members, relations, spans
 and calls each language actually has, derived from the extraction queries rather than
