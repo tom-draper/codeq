@@ -72,7 +72,13 @@ silently ignored. A piped scan opens no index and needs no repo.
 an agent's shell usually hands the process an open pipe, so auto-detection would silently
 turn every ordinary `codeq search` into a scan of an empty buffer.
 
-Where structure is available, codeq uses it instead of matching characters. A name
+Where structure is available, codeq uses it instead of matching characters. The
+`--calls` and `--on` precision filters parse the candidate files and read call sites
+off the tree, so a declaration is not a call, formatting is irrelevant, and the
+receiver is the expression as written (`--on a.inner`, or even `--on 'conn()'`)
+rather than whichever identifier happens to sit before the dot. That parse happens
+only when those filters are used, so ordinary queries pay nothing and the index does
+not grow. A name
 mentioned in a comment is not a use, so a stale `// TODO: wire up foo later` cannot
 hide dead code from `unused`; `helper()` written inside a string or a comment is not
 a call, so it is not a callee. A mention in a *string* still counts as a use, because

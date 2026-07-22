@@ -4,6 +4,59 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-07-22 - session 31: `--calls` and `--on` read the parse tree
+
+The structural version of the two filters sessions 29 and 30 patched textually.
+New `src/callsite.rs`: parse the file, walk it, and build a map from the byte
+offset of each called identifier to its receiver. `--calls` is then a lookup and
+`--on` is a comparison against the receiver *expression*.
+
+The design choice that made this cheap: **verify, don't index.** The obvious
+implementation is a `call` fact kind emitted during indexing, but calls outnumber
+definitions by an order of magnitude and every query would pay for an index that
+only two opt-in filters read. Instead the textual pass narrows first (trigram
+index plus word-boundary regex, fast and never misses), and only the surviving
+candidate files are parsed. Measured on this repo: plain `references` 0.00s,
+`references --calls` 0.03s. Ordinary queries pay nothing and the index does not
+grow.
+
+What this buys beyond fixing the old bugs: the receiver is now the expression as
+written, so `--on a.inner` and even `--on 'conn()'` work, and `--on db` correctly
+excludes `a.inner.query()`. Text could not express any of that.
+
+Grammars disagree about node *kinds* but largely agree about **field names**, so
+the walk reads fields (`function`, `object`, `receiver`, `target`, `name`,
+`suffix`) rather than kind spellings. That got 14 of 17 languages working from
+one implementation. The three that needed help, each found by dumping the real
+tree:
+
+- **Ruby** puts the method in `method` and the receiver on the *call node*, not
+  on a member node, so a bare callee identifier can still be qualified. Also
+  `db.query` has no argument list at all, so requiring one rejected every
+  paren-less call.
+- **Solidity** wraps the callee in a transparent `expression` node with no
+  fields, so single-child wrappers need stepping through.
+- **Swift** keeps its arguments in a `call_suffix` rather than an argument list,
+  and names the method via `suffix: navigation_suffix > suffix: identifier`, one
+  level deeper than everyone else. Its `call_suffix` kind also contains "call",
+  so it had to be excluded from being treated as a call itself.
+
+All 17 are covered by a table-driven test that asserts the same call resolves in
+each, written against dumped trees rather than documentation.
+
+One test I wrote and then deleted rather than keep: a "falls back to text when
+there is no grammar" case. The fallback exists and is correct, but both filters
+already imply code-only, which excludes files codeq cannot parse *before* the
+fallback matters — so the test would have asserted a behaviour that cannot be
+reached. Better to say so in the module doc than to keep a test that implies
+otherwise.
+
+PHP is worth knowing about: receivers are as the language writes them, so it is
+`--on '$db'`. Documented rather than special-cased, since inventing a normalised
+form would be a lie about the source.
+
+188 tests (+2).
+
 ## 2026-07-22 - session 30: a declaration is not a call
 
 The two textual heuristics left over from session 29, both in `references`.

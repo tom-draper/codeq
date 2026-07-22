@@ -72,15 +72,14 @@ benchmarks — not as a step you run before querying.
       pkg import x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a`) all count
       as edges, so intra-crate, package-submodule, and named-binding reachability
       work.
-    - `--calls` — keep only call sites (`NAME(`), excluding a bare identifier,
-      field, or variable of the same name (code-only). The *declaration* is
-      excluded too: `fn NAME(` is followed by `(` just like a call, but it isn't one.
-    - `--on RECV` — keep only calls qualified by a receiver/type (`RECV.NAME`,
-      `RECV::NAME`, `RECV->NAME`) — disambiguates a common method name. Whitespace
-      and newlines around the separator are ignored, so a wrapped chain
-      (`db\n    .query()`) matches like `db.query()`. Still textual, not a parsed
-      receiver: `a.b.query()` matches `--on b` (nearest qualifier wins), and a
-      call-valued receiver like `conn().query()` matches nothing.
+    - `--calls` — keep only call sites. Answered from the **parse tree**, not the
+      surrounding bytes, so a declaration (`fn NAME(`) and a mention in a string or
+      comment are all excluded, and formatting never matters.
+    - `--on RECV` — keep only calls on that receiver, matched against the
+      **receiver expression as written**. So `--on db` gets `db.query()` however
+      it is wrapped, and *not* `mydb.query()` or `a.inner.query()`; for those use
+      `--on a.inner`, and a call-valued receiver works too (`--on 'conn()'`).
+      Receivers are as the language writes them — PHP needs `--on '$db'`.
     - `--examples` (callers) — surface the actual call expression at each site (one
       representative per caller): the row becomes `path:line:col:` the source line,
       so one command answers "who calls it *and how*". For every call site rather

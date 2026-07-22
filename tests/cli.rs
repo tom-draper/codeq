@@ -3738,3 +3738,103 @@ fn on_receiver_still_rejects_the_wrong_receiver() {
          must all be excluded: {lines:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// structural call sites
+// ---------------------------------------------------------------------------
+
+/// `--calls` and `--on` are answered from the parse tree, so the receiver is the
+/// expression as written rather than whatever bytes happen to precede the name.
+#[test]
+fn call_filters_use_the_parse_tree() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct Db;\nimpl Db { fn query(&self) {} }\n\
+         fn f(db: Db, other: Db, mydb: Db, a: Db) {\n\
+         \x20   db.query();\n\
+         \x20   db\n        .query();\n\
+         \x20   other.query();\n\
+         \x20   mydb.query();\n\
+         \x20   a.inner.query();\n\
+         \x20   conn().query();\n\
+         \x20   let s = \"db.query() in a string\";\n\
+         \x20   // db.query() in a comment\n}\n\
+         fn conn() -> Db { Db }\nfn query(x: u32) {}\n",
+    );
+
+    let lines = |args: &[&str]| -> Vec<i64> {
+        f.run(args)["data"]["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["line"].as_i64().unwrap())
+            .collect()
+    };
+
+    // Every call, and only calls: not the two declarations, not the string, not
+    // the comment.
+    assert_eq!(
+        lines(&["references", "query", "--calls"]),
+        [4, 6, 7, 8, 9, 10],
+        "call sites only"
+    );
+
+    // The receiver is `db` for exactly two of them; a longer name ending in
+    // `db`, a different receiver, and a nested field are all distinct.
+    assert_eq!(lines(&["references", "query", "--on", "db"]), [4, 6]);
+    assert_eq!(lines(&["references", "query", "--on", "other"]), [7]);
+    assert_eq!(lines(&["references", "query", "--on", "mydb"]), [8]);
+
+    // Receivers text could not express before: a nested field access and a
+    // call-valued receiver.
+    assert_eq!(
+        lines(&["references", "query", "--on", "a.inner"]),
+        [9],
+        "the receiver is the whole expression, not its last segment"
+    );
+    assert_eq!(
+        lines(&["references", "query", "--on", "conn()"]),
+        [10],
+        "a call-valued receiver resolves"
+    );
+    assert!(
+        lines(&["references", "query", "--on", "inner"]).is_empty(),
+        "`inner` is not the receiver of a.inner.query()"
+    );
+}
+
+/// The same call written across the grammars codeq knows. Each is checked
+/// against the real tree, not against documentation.
+#[test]
+fn call_sites_resolve_across_languages() {
+    let cases: &[(&str, &str, &str)] = &[
+        ("a.py", "def query(x): pass\ndb.query()\nother.query()\n", "db"),
+        ("a.js", "function query(x) {}\ndb.query();\nother.query();\n", "db"),
+        ("a.ts", "function query(x: number) {}\ndb.query();\n", "db"),
+        ("a.go", "package m\nfunc f() {\n\tdb.query()\n}\n", "db"),
+        ("A.java", "class T {\n  void query() {}\n  void f() {\n    db.query();\n  }\n}\n", "db"),
+        ("a.rb", "def query(x); end\ndb.query\n", "db"),
+        ("a.c", "void query(int x) {}\nvoid f() {\n  db->query();\n}\n", "db"),
+        ("a.cs", "class T {\n  void query() {}\n  void f() {\n    db.query();\n  }\n}\n", "db"),
+        ("a.php", "<?php\nfunction query($x) {}\n$db->query();\n", "$db"),
+        ("a.kt", "fun query() {}\nfun f() {\n  db.query()\n}\n", "db"),
+        ("a.swift", "func query() {}\nfunc f() {\n  db.query()\n}\n", "db"),
+        ("a.scala", "object M {\n  def query() = {}\n  def f() = {\n    db.query()\n  }\n}\n", "db"),
+        ("a.dart", "void query() {}\nvoid f() {\n  db.query();\n}\n", "db"),
+        ("a.zig", "fn query() void {}\nfn f() void {\n    db.query();\n}\n", "db"),
+        ("a.ex", "defmodule M do\n  def f do\n    db.query()\n  end\nend\n", "db"),
+        ("a.sol", "contract C {\n  function f() public {\n    db.query();\n  }\n}\n", "db"),
+        ("a.lua", "local function query() end\nlocal function f()\n  db.query()\nend\n", "db"),
+    ];
+
+    for (file, src, recv) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let hits = f.run(&["references", "query", "--on", recv])["data"]["references"]
+            .as_array()
+            .unwrap()
+            .len();
+        assert!(hits > 0, "{file}: --on {recv} found no call in:\n{src}");
+    }
+}

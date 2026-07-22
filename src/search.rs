@@ -15,6 +15,7 @@ use anyhow::{anyhow, Result};
 use regex_syntax::hir::literal::{ExtractKind, Extractor as LiteralExtractor};
 use serde::Serialize;
 
+use crate::callsite::{calls_in, CallMap};
 use crate::facts::{has_spans, Extractor, Span};
 
 const MAX_LINE: usize = 240;
@@ -357,9 +358,26 @@ pub(crate) fn run_search(
         // Defs are only loaded once a match survives the filters, so a candidate
         // that matches the substring but not `\bword\b` (or is filtered by
         // --calls/--on) costs neither a body scan nor a defs query.
+        // One parse per candidate file, and only when `--calls`/`--on` is in
+        // play: ordinary searches never reach this.
+        let calls = if opts.call_only || opts.qualifier.is_some() {
+            calls_in(lang.as_deref().unwrap_or(""), body)
+        } else {
+            None
+        };
         let mut load_defs =
             |path: &str| load_file_defs(&mut def_stmt, path).unwrap_or_default();
-        if scan_doc(rel, body, &spans, &mut load_defs, re, opts, cap, &mut acc) {
+        if scan_doc(
+            rel,
+            body,
+            &spans,
+            calls.as_ref(),
+            &mut load_defs,
+            re,
+            opts,
+            cap,
+            &mut acc,
+        ) {
             break 'outer;
         }
     }
@@ -408,6 +426,7 @@ pub(crate) fn scan_doc(
     path: &str,
     body: &str,
     spans: &[(usize, usize, Span)],
+    calls: Option<&CallMap>,
     load_defs: &mut dyn FnMut(&str) -> Vec<FileDef>,
     re: &regex::Regex,
     opts: &ScanOpts,
@@ -465,12 +484,30 @@ pub(crate) fn scan_doc(
                 if !accept(off) {
                     continue;
                 }
-                if opts.call_only && !is_call_position(bytes, m.end()) {
-                    continue;
-                }
-                if let Some(recv) = &opts.qualifier {
-                    if !has_qualifier(bytes, off, recv) {
-                        continue;
+                // With a parse of this file, "is this a call" and "what is it
+                // called on" are answered by the tree. Without one (no grammar
+                // for the language), fall back to the byte-level tests rather
+                // than drop every hit.
+                match calls {
+                    Some(map) => {
+                        if opts.call_only && !map.contains_key(&off) {
+                            continue;
+                        }
+                        if let Some(recv) = &opts.qualifier {
+                            if map.get(&off).and_then(|r| r.as_deref()) != Some(recv.as_str()) {
+                                continue;
+                            }
+                        }
+                    }
+                    None => {
+                        if opts.call_only && !is_call_position(bytes, m.end()) {
+                            continue;
+                        }
+                        if let Some(recv) = &opts.qualifier {
+                            if !has_qualifier(bytes, off, recv) {
+                                continue;
+                            }
+                        }
                     }
                 }
                 let s = starts.get_or_insert_with(|| line_starts_of(body));
@@ -571,9 +608,24 @@ pub(crate) fn scan_stdin(
     };
 
     let cap = if opts.limit == 0 { usize::MAX } else { opts.limit };
+    let calls = if opts.call_only || opts.qualifier.is_some() {
+        language.and_then(|l| calls_in(l, &body))
+    } else {
+        None
+    };
     let mut acc = ScanAcc::default();
     let mut load_defs = |_: &str| std::mem::take(&mut defs);
-    scan_doc(label, &body, &spans, &mut load_defs, re, opts, cap, &mut acc);
+    scan_doc(
+        label,
+        &body,
+        &spans,
+        calls.as_ref(),
+        &mut load_defs,
+        re,
+        opts,
+        cap,
+        &mut acc,
+    );
     Ok(acc.finish(opts.out))
 }
 

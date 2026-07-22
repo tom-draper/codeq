@@ -8,6 +8,7 @@
 //! guess intent or rank by opinion.
 
 mod astgrep;
+mod callsite;
 mod commands;
 mod context;
 mod db;
