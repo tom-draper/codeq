@@ -3523,8 +3523,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "fact_kinds": [
             "function", "method", "struct", "enum", "union", "trait", "module",
             "constant", "typealias", "macro", "class", "interface", "type", "import",
-            "field", "variant",
-            "field", "variant",
+            "field", "variant", "heading",
         ],
         "notes": {
             "imports": "raw syntactic module strings; not resolved",
