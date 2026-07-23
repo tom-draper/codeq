@@ -357,10 +357,17 @@ Every command works there, and the index lives in a `.codeq` inside that directo
 ## Development
 
 ```bash
-cargo test    # 148 integration tests drive the binary against fixture repos
+cargo test                     # 204 integration tests, driving the binary against fixtures
+python3 bench/textmode.py      # text output carries the same facts as --json
+python3 bench/differential.py  # ~4,200 assertions over 20 pinned real repos
 ```
 
 The tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,
 binary, unicode, and large files, non-git repos, deleted-file cascades), assert that `map`
 is byte-for-byte reproducible, and check the standing invariant that search always returns a
 superset of grep.
+
+`cargo test` uses small synthetic fixtures, so the two harnesses are part of the loop rather
+than an extra: `differential.py` runs the same invariants over 20 pinned open-source repos
+spanning every supported language, and writes each run to `bench/results/` so the trend lives
+in git.

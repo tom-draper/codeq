@@ -203,4 +203,27 @@ every command works there. It writes a `.codeq` index inside that directory.
 ## Build / test
 
 - `cargo build --release` · `cargo test` (integration tests in `tests/cli.rs`)
-- Benchmarks: `bench/bench.py` (single commands), `bench/tasks.py` (task-level).
+
+**Before committing, run the correctness harnesses too — `cargo test` alone is not
+enough.** It uses small synthetic fixtures; the harnesses run against real code and
+catch what fixtures cannot.
+
+```bash
+python3 bench/textmode.py      # seconds. Text output carries the same facts as --json
+python3 bench/differential.py  # ~10 min (clones 20 repos once, then cached)
+```
+
+`differential.py` is the important one: ~4,200 assertions over 20 pinned
+open-source repos, checking that `search` is a superset of ripgrep and that
+per-symbol invariants hold in every supported language. It writes a result to
+`bench/results/` (committed, so the trend lives in git). Expect
+`N PASS, 0 FAIL, 0 ERROR`.
+
+Run these whenever a change touches extraction, the search engine, the renderer,
+or the schema — which is most changes. Skipping them is how six commits once went
+in unverified: everything passed in the end, but nobody knew that at the time.
+
+- Token/benchmark numbers: `bench/bench.py` (single commands), `bench/tasks.py`
+  (task-level), `bench/completion.py` (the token-to-completion table in the
+  README — rerun it if a change moves those numbers, since they are published as
+  current).
