@@ -1299,3 +1299,34 @@ skipped; astgrep on Zig is finicky because a bare call isn't valid top-level Zig
 metavar pattern won't parse (inherent astgrep limit, grammar is wired). Verified end to end:
 outline, callers/callees, read, search + enclosing symbol, `--in` spans, imports (Dart/
 Solidity). Schema 12 -> 13. 150 tests (+1), differential search 2250/2250, textmode ALL PASS.
+
+## Svelte: the first embedded-language case (22 total)
+
+Svelte broke the shape every previous language fitted. The other 21 are "one file, one
+grammar"; a `.svelte` file is a *component* — markup, with the real code sealed inside
+`<script>`, which the Svelte grammar hands back as a single opaque `raw_text` token. Wiring
+the grammar alone would have indexed nothing an agent wants.
+
+- **Blank, don't slice.** Each `<script>` body is re-parsed with the JS or TS extractor
+  (chosen from the block's `lang` attribute) over a *copy of the whole file* with every byte
+  outside the block replaced by a space, newlines preserved. Byte offsets, rows and columns
+  therefore come back already in file coordinates — no offset arithmetic, so no class of
+  off-by-one bugs, and multiple blocks (`<script module>` + `<script>`) just work. Verified
+  the hard case: a definition sharing a line with the `<script>` tag lands at the right
+  column. `LangSpec::extract` was split into parse + `harvest` so the one Svelte parse feeds
+  both the markup queries and the script-region walk.
+- **The file is the definition.** A component has no declaration to capture — `Button.svelte`
+  is referenced as `<Button/>` after importing it. So the file itself yields a `component`
+  fact named for its stem, which is what makes `explore Button` return the component plus
+  everything it uses. This needed `Extractor::extract` to learn the path. Guard rail:
+  SvelteKit routes (`+page.svelte`) are skipped — convention-loaded, never named, so a fact
+  there could only ever surface as false dead code in `unused`.
+- **Spans are half-covered, on purpose.** Markup comments and quoted attribute values are
+  classified, script spans come from the nested pass — but `<style>` is another opaque token,
+  so CSS comments read as *code* to `search --in`. Documented rather than papered over.
+
+Honest v1 limits: `astgrep --language svelte` matches markup only (a `<script>` body is one
+token to that grammar, so JS patterns can't reach inside); relations are empty; Svelte 5
+runes (`let x = $state(0)`) aren't definitions, consistent with how plain JS treats a
+`variable_declarator` with a call value. Schema 13 -> 14. 151 tests (+1), full suite green.
+

@@ -77,7 +77,7 @@ fn parse_one(
 
     let (body, facts, spans, relations) = if content_changed && !is_binary {
         let (f, s, r) = match language {
-            Some(lang) => extractor.extract(lang, &bytes),
+            Some(lang) => extractor.extract(lang, rel, &bytes),
             None => (Vec::new(), Vec::new(), Vec::new()),
         };
         (Some(String::from_utf8_lossy(&bytes).into_owned()), f, s, r)
@@ -496,6 +496,7 @@ pub fn language_for(path: &str) -> Option<&'static str> {
         "zig" => "zig",
         "ex" | "exs" => "elixir",
         "sol" => "solidity",
+        "svelte" => "svelte",
         _ => return None,
     };
     Some(lang)

@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 13);
+    assert_eq!(v["index"]["schema"], 14);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -997,6 +997,75 @@ fn extracts_definitions_for_dart_zig_elixir_solidity() {
     f.write("I.sol", "import \"./Token.sol\";\ncontract C {}\n");
     let imports = field_set(&f.run(&["imports", "I.sol"]), "module");
     assert!(imports.contains(&"./Token.sol".to_string()), "{imports:?}");
+}
+
+#[test]
+fn extracts_svelte_components_scripts_and_snippets() {
+    let f = Fixture::new();
+    f.write(
+        "src/Button.svelte",
+        "<script lang=\"ts\">\n  import { formatLabel } from './labels';\n\n  \
+         interface Payload { at: number }\n\n  \
+         // fire upward\n  \
+         function handleClick(): Payload {\n    return { at: Date.now() };\n  }\n\n  \
+         const pretty = (s: string) => formatLabel(s);\n</script>\n\n\
+         <!-- markup comment -->\n\
+         <button class=\"primary\" on:click={handleClick}>{pretty('x')}</button>\n\n\
+         {#snippet badge(count)}\n  <span>{count}</span>\n{/snippet}\n\n\
+         <style>\n  .primary { color: red; }\n</style>\n",
+    );
+    f.write("src/labels.js", "export function formatLabel(s) {\n  return s;\n}\n");
+    // A SvelteKit route: convention-loaded, so it gets no component fact — but
+    // its script is still extracted.
+    f.write(
+        "src/routes/+page.svelte",
+        "<script>\n  import Button from '../Button.svelte';\n  function bump() {}\n</script>\n\n\
+         <Button on:click={bump} />\n",
+    );
+
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    // The file itself is the component; `lang=\"ts\"` routes the script to the
+    // TypeScript grammar (hence `interface`); snippets come from the markup.
+    for want in ["Button", "handleClick", "pretty", "Payload", "badge", "bump"] {
+        assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
+    }
+    assert!(!syms.contains(&"+page".to_string()), "route file: {syms:?}");
+
+    // Positions are the *file's*, not the script block's: line 7 of the file.
+    let def = &f.run(&["definitions", "handleClick"])["data"][0];
+    assert_eq!(def["start_line"], 7, "{def}");
+    assert_eq!(def["path"], "src/Button.svelte");
+
+    // The call graph crosses the component boundary in both directions.
+    let callees = field_set(&f.run(&["callees", "pretty"]), "path");
+    assert!(callees.contains(&"src/labels.js".to_string()), "{callees:?}");
+    let v = f.run(&["references", "Button"]);
+    let refs = v["data"]["references"].as_array().unwrap();
+    // Both the import and the `<Button …/>` markup usage.
+    assert_eq!(refs.len(), 2, "{refs:?}");
+    assert!(
+        refs.iter().all(|r| r["path"] == "src/routes/+page.svelte"),
+        "{refs:?}"
+    );
+
+    // Imports are captured, so the dependency graph resolves `.svelte` files.
+    let imports = field_set(&f.run(&["imports", "src/Button.svelte"]), "module");
+    assert!(imports.contains(&"./labels".to_string()), "{imports:?}");
+    let deps = field_set(&f.run(&["deps", "src/routes/+page.svelte"]), "path");
+    assert!(deps.contains(&"src/Button.svelte".to_string()), "{deps:?}");
+
+    // Spans: markup comments and script comments are both classified, and a
+    // literal attribute value counts as a string.
+    let count = |needle: &str, kind: &str| -> i64 {
+        f.run(&["search", needle, "--in", kind, "-c"])["data"]["counts"]
+            .as_array().unwrap().iter()
+            .map(|c| c["count"].as_i64().unwrap())
+            .sum()
+    };
+    assert_eq!(count("markup comment", "comments"), 1);
+    assert_eq!(count("fire upward", "comments"), 1); // from the nested TS pass
+    assert_eq!(count("fire upward", "code"), 0);
+    assert_eq!(count("primary", "strings"), 1);
 }
 
 #[test]

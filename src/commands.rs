@@ -2946,17 +2946,18 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "imports", "importers", "astgrep", "tests", "context", "capabilities", "mcp",
         ],
         // Languages with symbol + import extraction.
-        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity"],
+        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte"],
         // Languages recognised for file classification (extraction may be absent).
         "classified_languages": [
             "rust", "javascript", "typescript", "tsx", "python", "go", "java",
             "json", "yaml", "toml", "markdown", "sql", "bash", "lua", "scala",
-            "kotlin", "swift", "dart", "zig", "elixir", "solidity", "c", "cpp",
-            "csharp", "php", "ruby",
+            "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte",
+            "c", "cpp", "csharp", "php", "ruby",
         ],
         "fact_kinds": [
             "function", "method", "struct", "enum", "union", "trait", "module",
             "constant", "typealias", "macro", "class", "interface", "type", "import",
+            "component",
         ],
         "notes": {
             "imports": "raw syntactic module strings; not resolved",

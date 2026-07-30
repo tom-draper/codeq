@@ -14,7 +14,7 @@ agent that can trust the output has no reason to fall back to ad-hoc shell pipel
 
 > Status: working prototype. Symbol and import extraction covers Rust, Python, JavaScript,
 > TypeScript/TSX, Go, Java, Ruby, C, C++, C#, PHP, Bash, Lua, Scala, Kotlin, Swift, Dart, Zig,
-> Elixir, and Solidity. Other languages are indexed as files and stay fully searchable. See
+> Elixir, Solidity, and Svelte. Other languages are indexed as files and stay fully searchable. See
 > [DRAFT.md](./DRAFT.md) for the design rationale, and
 > [GEMINI.md](./GEMINI.md) / [GPT.md](./GPT.md) for the reviews that shaped it.
 
@@ -223,6 +223,13 @@ reparsed or a parse partially failing.
 - Tree-sitter extraction. Symbols and imports come from Tree-sitter queries, so a definition
   is distinguished from a mention. Import strings are kept raw; codeq does not resolve
   aliases or package roots.
+- Svelte is a component file, not a flat source file, so it is read that way: each `<script>`
+  block is re-parsed with the JavaScript or TypeScript extractor (per its `lang` attribute)
+  and reported at the *file's* own lines and columns, the markup contributes `{#snippet}`
+  definitions, and the file itself becomes a `component` definition named after its stem —
+  so `explore Button` returns the component and everything it uses. SvelteKit route files
+  (`+page.svelte`) get no component fact; they are loaded by convention, never by name.
+  `<style>` contents stay unclassified, so CSS comments read as code to `search --in`.
 - Index-backed search. File contents sit in an FTS5 trigram index. A query is narrowed by
   the index, then confirmed with a precise regex, so search never re-reads the filesystem
   and never drops a match grep would find.
@@ -230,7 +237,7 @@ reparsed or a parse partially failing.
 ## Development
 
 ```bash
-cargo test    # 148 integration tests drive the binary against fixture repos
+cargo test    # 151 integration tests drive the binary against fixture repos
 ```
 
 The tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,

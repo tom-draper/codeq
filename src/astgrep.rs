@@ -63,6 +63,9 @@ pub fn ts_language(name: &str) -> Option<tree_sitter::Language> {
         "zig" => tree_sitter_zig::LANGUAGE.into(),
         "elixir" => tree_sitter_elixir::LANGUAGE.into(),
         "solidity" => tree_sitter_solidity::LANGUAGE.into(),
+        // Markup only: a `<script>` body is one opaque token to this grammar, so
+        // JS/TS patterns can't reach inside a Svelte component.
+        "svelte" => tree_sitter_svelte_ng::LANGUAGE.into(),
         _ => return None,
     })
 }
