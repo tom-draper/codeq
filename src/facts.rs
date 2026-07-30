@@ -97,6 +97,7 @@ pub struct Extractor {
     elixir: LangSpec,
     solidity: LangSpec,
     svelte: LangSpec,
+    vue: LangSpec,
 }
 
 struct LangSpec {
@@ -521,6 +522,14 @@ impl Extractor {
                 "treesitter/svelte",
                 "svelte",
             )?,
+            vue: LangSpec::new(
+                tree_sitter_vue_next::LANGUAGE.into(),
+                VUE_QUERY,
+                VUE_SPANS,
+                "",
+                "treesitter/vue",
+                "vue",
+            )?,
         })
     }
 
@@ -555,11 +564,19 @@ impl Extractor {
             "zig" => self.zig.extract(src),
             "elixir" => self.elixir.extract(src),
             "solidity" => self.solidity.extract(src),
-            // A single-file component format: markup wrapping the real code.
-            // Disjoint field borrows let the markup and nested extractors be
+            // Single-file component formats: markup wrapping the real code. Both
+            // grammars name the nodes the same way, so one path serves both —
+            // disjoint field borrows let the markup and nested extractors be
             // held mutably at once.
             "svelte" => extract_component(
                 &mut self.svelte,
+                &mut self.javascript,
+                &mut self.typescript,
+                path,
+                src,
+            ),
+            "vue" => extract_component(
+                &mut self.vue,
                 &mut self.javascript,
                 &mut self.typescript,
                 path,
@@ -570,8 +587,8 @@ impl Extractor {
     }
 }
 
-/// A single-file component (Svelte `.svelte`). The code an agent cares about
-/// lives in `<script>`, which the grammar leaves as one opaque
+/// A single-file component (Svelte `.svelte`, Vue `.vue`). The code an agent
+/// cares about lives in `<script>`, which these grammars leave as one opaque
 /// `raw_text` token — so each block is re-parsed with the JavaScript or
 /// TypeScript extractor (per its `lang` attribute) over a copy of the file with
 /// everything *outside* the block blanked out. Blanking rather than slicing keeps
@@ -580,7 +597,7 @@ impl Extractor {
 /// definition.
 ///
 /// `markup` contributes whatever the template itself defines (Svelte's
-/// `{#snippet}`) plus comment/attribute spans;
+/// `{#snippet}`; Vue's template defines nothing) plus comment/attribute spans;
 /// `<style>` contents stay unclassified (no CSS grammar), and the file itself
 /// yields a `component` fact.
 fn extract_component(
@@ -734,6 +751,7 @@ pub fn has_spans(language: &str) -> bool {
             | "elixir"
             | "solidity"
             | "svelte"
+            | "vue"
     )
 }
 
@@ -1416,4 +1434,24 @@ const SVELTE_QUERY: &str = r#"
 const SVELTE_SPANS: &str = r#"
 (comment) @comment
 (quoted_attribute_value) @string
+"#;
+
+// Vue single-file components. Unlike Svelte's `{#snippet}`, a Vue `<template>`
+// declares nothing nameable — every definition comes from the nested `<script>`
+// pass (both `<script>` and `<script setup>`, which is just a second block) and
+// from the file's own `component` fact. Hence an empty definition query.
+const VUE_QUERY: &str = "";
+// Markup comments and literal attribute values. The `(attribute …)` scope is
+// load-bearing and the one real divergence from Svelte: Vue puts JavaScript in
+// *quoted* directive values (`@click="handleClick"`, `:prop="expr"`, `v-if="c"`),
+// which the grammar models as a `directive_attribute` with its own
+// `quoted_attribute_value`. Matching that bare would classify template
+// expressions as strings, and `callers`/`callees` — which read code only —
+// would go blind to every handler a template binds. Svelte needs no such scope
+// because it spells expressions with braces (`on:click={handleClick}`), which
+// are never quoted values. `{{ interpolation }}` holds code and stays
+// unclassified; `<style>` is opaque, as in Svelte.
+const VUE_SPANS: &str = r#"
+(comment) @comment
+(attribute (quoted_attribute_value) @string)
 "#;

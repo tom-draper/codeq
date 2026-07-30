@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 14);
+    assert_eq!(v["index"]["schema"], 15);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -1103,6 +1103,71 @@ fn extracts_svelte_components_scripts_and_snippets() {
     assert_eq!(count("fire upward", "comments"), 1); // from the nested TS pass
     assert_eq!(count("fire upward", "code"), 0);
     assert_eq!(count("primary", "strings"), 1);
+}
+
+#[test]
+fn extracts_vue_single_file_components() {
+    let f = Fixture::new();
+    f.write("lib/labels.ts", "export function fmt(s: string) {\n  return s\n}\n");
+    // `<script setup lang="ts">` plus a template that binds a handler.
+    f.write(
+        "Button.vue",
+        "<script setup lang=\"ts\">\nimport { fmt } from './lib/labels'\n\n\
+         interface Props { label: string }\n\n\
+         // bump it\n\
+         function handleClick() {\n  return fmt('x')\n}\n</script>\n\n\
+         <template>\n  <!-- markup note -->\n  \
+         <button class=\"primary\" @click=\"handleClick\">go</button>\n</template>\n\n\
+         <style scoped>\n.primary { color: red }\n</style>\n",
+    );
+    // Two script blocks (`<script>` + `<script setup>`) are both extracted.
+    f.write(
+        "App.vue",
+        "<script>\nexport default { name: 'App' }\n</script>\n\n\
+         <script setup>\nimport Button from './Button.vue'\n\
+         function onChange(n) { return n }\n</script>\n\n\
+         <template>\n  <Button @change=\"onChange\" />\n</template>\n",
+    );
+
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    for want in ["Button", "App", "handleClick", "Props", "onChange"] {
+        assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
+    }
+
+    // Positions are the file's: handleClick sits on line 7, not line 4 of the block.
+    let def = &f.run(&["definitions", "handleClick"])["data"][0];
+    assert_eq!(def["start_line"], 7, "{def}");
+
+    // A template binding is *code*, so the call graph sees it. Vue quotes its
+    // directive values (`@click="handleClick"`), which must not be classified as
+    // strings or callers/callees go blind to every handler a template binds.
+    let v = f.run(&["callers", "handleClick"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "template binding not seen as code: {rows:?}");
+    assert_eq!(rows[0]["path"], "Button.vue");
+    // A plain attribute value stays a string, though.
+    let count = |needle: &str, kind: &str| -> i64 {
+        f.run(&["search", needle, "--in", kind, "-c"])["data"]["counts"]
+            .as_array().unwrap().iter()
+            .map(|c| c["count"].as_i64().unwrap())
+            .sum()
+    };
+    assert_eq!(count("primary", "strings"), 1, "class=\"primary\" is a string");
+    assert_eq!(count("handleClick", "strings"), 0, "directive value is not a string");
+    assert_eq!(count("markup note", "comments"), 1);
+    assert_eq!(count("bump it", "comments"), 1); // from the nested TS pass
+
+    // Component usage anchors at the `<Button …/>`, not the import above it.
+    let v = f.run(&["callers", "Button"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["line"], 11, "anchor must be <Button />, not the import");
+
+    // Cross-file graph and dependency resolution both work through the SFC.
+    let callees = field_set(&f.run(&["callees", "handleClick"]), "path");
+    assert!(callees.contains(&"lib/labels.ts".to_string()), "{callees:?}");
+    let deps = field_set(&f.run(&["deps", "App.vue"]), "path");
+    assert!(deps.contains(&"Button.vue".to_string()), "{deps:?}");
 }
 
 #[test]

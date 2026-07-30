@@ -14,7 +14,8 @@ agent that can trust the output has no reason to fall back to ad-hoc shell pipel
 
 > Status: working prototype. Symbol and import extraction covers Rust, Python, JavaScript,
 > TypeScript/TSX, Go, Java, Ruby, C, C++, C#, PHP, Bash, Lua, Scala, Kotlin, Swift, Dart, Zig,
-> Elixir, Solidity, and Svelte. Other languages are indexed as files and stay fully searchable. See
+> Elixir, Solidity, Svelte, and Vue. Other languages are indexed as files and stay fully
+> searchable. See
 > [DRAFT.md](./DRAFT.md) for the design rationale, and
 > [GEMINI.md](./GEMINI.md) / [GPT.md](./GPT.md) for the reviews that shaped it.
 
@@ -223,11 +224,13 @@ reparsed or a parse partially failing.
 - Tree-sitter extraction. Symbols and imports come from Tree-sitter queries, so a definition
   is distinguished from a mention. Import strings are kept raw; codeq does not resolve
   aliases or package roots.
-- Svelte is a component file, not a flat source file, so it is read that way: each `<script>`
-  block is re-parsed with the JavaScript or TypeScript extractor (per its `lang` attribute)
-  and reported at the *file's* own lines and columns, the markup contributes `{#snippet}`
-  definitions, and the file itself becomes a `component` definition named after its stem —
-  so `explore Button` returns the component and everything it uses. SvelteKit route files
+- Single-file components (Svelte, Vue) are component files, not flat source files, so they
+  are read that way: each `<script>` block is re-parsed with the JavaScript or TypeScript
+  extractor (per its `lang` attribute) and reported at the *file's* own lines and columns,
+  the markup contributes what it declares (Svelte's `{#snippet}`), and the file itself
+  becomes a `component` definition named after its stem — so `explore Button` returns the
+  component and everything it uses. Template expressions count as code, so `callers` sees a
+  handler bound by `@click="handleClick"` or `on:click={handleClick}`. SvelteKit route files
   (`+page.svelte`) get no component fact; they are loaded by convention, never by name.
   `<style>` contents stay unclassified, so CSS comments read as code to `search --in`.
 - Index-backed search. File contents sit in an FTS5 trigram index. A query is narrowed by
@@ -237,7 +240,7 @@ reparsed or a parse partially failing.
 ## Development
 
 ```bash
-cargo test    # 152 integration tests drive the binary against fixture repos
+cargo test    # 153 integration tests drive the binary against fixture repos
 ```
 
 The tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,

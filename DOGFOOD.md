@@ -1348,3 +1348,34 @@ token to that grammar, so JS patterns can't reach inside); relations are empty; 
 runes (`let x = $state(0)`) aren't definitions, consistent with how plain JS treats a
 `variable_declarator` with a call value. Schema 13 -> 14. 152 tests (+2), full suite green.
 
+## Vue: the abstraction holds (23 total)
+
+Vue was the test of whether the Svelte work produced an abstraction or a one-off. It held:
+`tree-sitter-vue-next` names its nodes exactly as the Svelte grammar does (`script_element`,
+`raw_text`, `start_tag`, `comment`), so `script_regions`, `script_is_ts`, `blank_outside` and
+`component_fact` all applied unchanged. `extract_svelte` became `extract_component`, taking
+the markup `LangSpec` plus the JS and TS ones as three disjoint `&mut` field borrows — no
+`RefCell`, no cloning, and Svelte and Vue are now two arms of one path. `<script>` and
+`<script setup>` in the same file need no special case; they are simply two regions.
+`VUE_QUERY` is empty: a Vue `<template>` declares nothing nameable, so every definition comes
+from the nested script pass and the file's own component fact.
+
+**The one real divergence, and it was a bug I shipped into the working tree before catching
+it.** Vue puts JavaScript in *quoted* directive values — `@click="handleClick"`,
+`:disabled="d"`, `v-if="c"` — where Svelte uses braces (`on:click={handleClick}`), which are
+never quoted values. Copying `(quoted_attribute_value) @string` across therefore classified
+every template expression as a *string*, and `callers`/`callees` read code only: `callers
+handleClick` returned nothing at all for a handler the template plainly binds. The grammar
+does distinguish them (plain `attribute` vs `directive_attribute`, each with its own
+`quoted_attribute_value`), so scoping the span to `(attribute (quoted_attribute_value))`
+fixes it. Worth noting how it surfaced: not from a test, but from reading `callers
+handleClick` on a realistic fixture and asking why an obviously-bound handler had no callers.
+An empty result is the easiest kind of wrong answer to miss — nothing looks broken.
+
+Also confirmed the earlier anchor-ranking fix generalises for free: `callers Button` points at
+the `<Button …/>` in the template, not the `import` line above it. Honest v1 limits, same as
+Svelte: `astgrep --language vue` is markup-only; relations empty; `const x = computed(…)` and
+`ref(…)` aren't definitions, consistent with how plain JS treats a `variable_declarator`
+whose value is a call. Nuxt `pages/` files get a component fact named for the stem even
+though they are convention-routed (no `+` marker to detect, unlike SvelteKit). Schema
+14 -> 15. 153 tests (+1).

@@ -497,6 +497,7 @@ pub fn language_for(path: &str) -> Option<&'static str> {
         "ex" | "exs" => "elixir",
         "sol" => "solidity",
         "svelte" => "svelte",
+        "vue" => "vue",
         _ => return None,
     };
     Some(lang)
