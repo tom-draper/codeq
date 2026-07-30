@@ -237,7 +237,7 @@ reparsed or a parse partially failing.
 ## Development
 
 ```bash
-cargo test    # 151 integration tests drive the binary against fixture repos
+cargo test    # 152 integration tests drive the binary against fixture repos
 ```
 
 The tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,

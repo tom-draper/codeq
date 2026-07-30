@@ -803,6 +803,43 @@ fn callers_callees_and_about() {
 }
 
 #[test]
+fn callers_prefer_a_usage_site_over_an_import_as_the_anchor() {
+    let f = Fixture::new();
+    // A Svelte component's definition spans its whole file, so it encloses its
+    // own imports. Only one row survives per (file, enclosing symbol), so the
+    // import at line 2 and the `<Card />` at line 6 compete — and the import
+    // used to win by being first, hiding where the component is actually used.
+    f.write("Card.svelte", "<div><slot /></div>\n");
+    f.write(
+        "Page.svelte",
+        "<script>\n  import Card from './Card.svelte';\n</script>\n\n\
+         <main>\n  <Card />\n</main>\n",
+    );
+    let v = f.run(&["callers", "Card"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["path"], "Page.svelte");
+    assert_eq!(rows[0]["line"], 6, "anchor must be <Card />, not the import");
+
+    // But an import is still a valid last-resort anchor: the default `callers`
+    // is a textual superset (`--calls` is the way to narrow it), so a file that
+    // imports the name and never uses it stays listed.
+    f.write("lib.js", "export function helper() { return 1; }\n");
+    f.write(
+        "app.js",
+        "import { helper } from './lib';\n\nfunction run() {\n  return helper();\n}\n",
+    );
+    f.write("shelf.js", "import { helper } from './lib';\nexport const x = 1;\n");
+
+    let v = f.run(&["callers", "helper"]);
+    let rows = v["data"].as_array().unwrap();
+    let paths: Vec<&str> = rows.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    assert!(paths.contains(&"shelf.js"), "superset default lost a row: {paths:?}");
+    let run_row = rows.iter().find(|r| r["symbol"] == "run").expect("run caller");
+    assert_eq!(run_row["line"], 4);
+}
+
+#[test]
 fn callers_resolved_prunes_unreachable_and_tags_via() {
     let f = Fixture::new();
     f.write("def.rs", "pub fn target() {}\nfn self_caller() { target(); }\n");

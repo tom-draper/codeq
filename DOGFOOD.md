@@ -1325,8 +1325,26 @@ the grammar alone would have indexed nothing an agent wants.
   classified, script spans come from the nested pass — but `<style>` is another opaque token,
   so CSS comments read as *code* to `search --in`. Documented rather than papered over.
 
+**Follow-up, found by dogfooding on a real Svelte app:** `callers FormTiles` pointed at
+`CurrentForm.svelte:2` (the import) instead of `:116` (the `<FormTiles/>`) — right file,
+wrong line. The dedup keeps one row per (file, enclosing symbol) and the first hit wins;
+imports had always sat *outside* every definition, so this never bit. A component
+definition spans its whole file and therefore encloses its own imports, so the import won
+the tie and *shadowed* the usage — the line was silently lost.
+
+The instructive part was the fix I nearly shipped. Excluding import lines from `callers`
+outright fixed the symptom and read cleanly ("an import is a dependency edge, that's what
+`importers` is for") — but it quietly narrowed the default, and this repo's rule is the
+opposite: the default is a safe textual superset, with `--calls`/`--resolved`/`--on` as the
+opt-in narrowing filters. It would also have dropped every import-only file from `callers`
+across all 22 languages to fix a Svelte anchoring bug. Corrected to *rank* anchors instead
+of dropping rows: the representative site is the first real usage, falling back to the
+import when the file names the symbol nowhere else. Lesson: when a fix changes a default,
+check it against the documented contract before the tests — 152 green said nothing about
+this, because no test pinned the superset property.
+
 Honest v1 limits: `astgrep --language svelte` matches markup only (a `<script>` body is one
 token to that grammar, so JS patterns can't reach inside); relations are empty; Svelte 5
 runes (`let x = $state(0)`) aren't definitions, consistent with how plain JS treats a
-`variable_declarator` with a call value. Schema 13 -> 14. 151 tests (+1), full suite green.
+`variable_declarator` with a call value. Schema 13 -> 14. 152 tests (+2), full suite green.
 

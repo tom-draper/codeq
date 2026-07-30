@@ -565,15 +565,61 @@ fn callers_of(
         }
     }
 
-    let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
-    let mut out = Vec::new();
-    for mut h in hits {
+    // Import lines in the files that matched. An import names the symbol without
+    // using it, so it is a poor anchor for a caller row — it points at the
+    // dependency, not the usage. It went unnoticed while imports sat outside
+    // every definition (they surfaced as stray symbol-less rows), but a
+    // definition spanning its whole file (a Svelte component) encloses its own
+    // imports, and the dedup below then let the import line shadow the real
+    // usage site. These are used to *rank* anchors, not to drop rows: the
+    // default `callers` stays a textual superset, with `--calls` to narrow it.
+    let hit_paths: HashSet<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+    let mut importsites: HashSet<(String, i64)> = HashSet::new();
+    {
+        let mut st = s
+            .db
+            .conn
+            .prepare("SELECT path, start_line FROM facts WHERE kind = 'import'")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (p, line) = row?;
+            if hit_paths.contains(p.as_str()) {
+                importsites.insert((p, line));
+            }
+        }
+    }
+
+    // One row per (file, enclosing symbol). The representative site is the first
+    // real usage; an import site is only the anchor when the file names the
+    // symbol nowhere else, so a file that imports without using it is still
+    // reported (just anchored at its import).
+    let mut pick: HashMap<(String, Option<String>), (Hit, bool)> = HashMap::new();
+    let mut order: Vec<(String, Option<String>)> = Vec::new();
+    for h in hits {
         if defsites.contains(&(h.path.clone(), h.line as i64)) {
             continue; // the declaration itself
         }
-        if !seen.insert((h.path.clone(), h.symbol.clone())) {
-            continue; // one row per (file, enclosing symbol) — first call site wins
+        let is_import = importsites.contains(&(h.path.clone(), h.line as i64));
+        let key = (h.path.clone(), h.symbol.clone());
+        match pick.get(&key) {
+            None => {
+                pick.insert(key.clone(), (h, is_import));
+                order.push(key);
+            }
+            // Upgrade an import anchor to a real usage; otherwise the first wins.
+            Some((_, prev_import)) if *prev_import && !is_import => {
+                pick.insert(key, (h, is_import));
+            }
+            Some(_) => {}
         }
+    }
+
+    let mut out = Vec::new();
+    for key in order {
+        let (mut h, _) = match pick.remove(&key) {
+            Some(v) => v,
+            None => continue,
+        };
         let test = h.path.contains("test")
             || h.path.contains("spec")
             || h.symbol
