@@ -1424,3 +1424,34 @@ to stay identifiable and the caller carries other content — and it is bounded 
 the focus size. Also confirmed clean and left alone: `search` vs `rg` across 18
 patterns, the `--in` partition (both apparent mismatches were legitimate), and
 component byte ranges under CRLF, BOM, multibyte markup and `<script src=…>`.
+
+## astgrep's own documented example matched nothing
+
+Found by cross-checking, pre-existing, and returning a confident wrong answer with
+exit 0 — the failure mode codeq exists to eliminate. `fn $N($$$) { $$$ }` —
+the pattern written in `astgrep.rs`'s module doc — returned **0 matches against
+369 functions**, and the same in Python, JavaScript and Go. Not an error: zero
+results, exit 0, so an agent concludes the code doesn't exist.
+
+The cause took bisecting a pattern one component at a time. `def $N($$$): return
+$X` worked. `def $N(a, $$$): $$$` worked. `def $N($$$): $$$` did not. The rule
+turned out to be: *two* list nodes each holding a single `$$$`. `variadic_name`
+deliberately sees through single-child wrappers, because a `$$$` in statement
+position parses as an `expression_statement` around the sentinel — but that also
+makes a `parameters` node holding one `$$$` look like a variadic itself, when the
+absorption really belongs one level down inside it. Params and body both hit that,
+`match_children` saw two variadics, and its "more than one would need
+backtracking" guard rejected the whole pattern. So the single most natural thing
+anyone would write was the one shape that failed. Fixed by preferring a positional
+match when the arities already line up and letting the recursion absorb inside
+each child, falling back to absorbing at this level only when they don't (binds
+are trialled on a clone so a failed attempt can't pollute them). `fn $N($$$) {
+$$$ }` 0 -> 177 on codeq itself; `$X.unwrap()` unchanged at 198.
+
+Also swept clean this round and left alone: incremental-vs-full-rebuild after
+edit/add/delete/rename/move, `at` innermost-first ordering, `path` chain edges,
+`callers --depth` monotonicity, `unused` false positives (zero), the
+`imports`/`importers` inverse, `--resolved` on components (correctly tags
+same-file/imported and prunes same-named functions in unreachable files), and
+adversarial file shapes — no trailing newline, a 4000-statement single line,
+CR-only endings.

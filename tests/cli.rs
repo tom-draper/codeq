@@ -2900,6 +2900,38 @@ fn astgrep_variadic_matches_any_arguments() {
 }
 
 #[test]
+fn astgrep_variadic_works_in_parameter_and_body_positions_at_once() {
+    // `fn $N($$$) { $$$ }` — the module doc's own example, and the most natural
+    // way to ask for "any function". Both `$$$` sit inside a list node that holds
+    // nothing else, which used to read as two variadics at the declaration level
+    // and trip the single-variadic guard, returning zero matches with exit 0.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn none() { let a = 1; }\nfn two(x: i32, y: i32) { let b = x; }\n\
+         fn empty() {}\nfn typed() -> i32 { 3 }\n",
+    );
+    let m = f.run(&["astgrep", "fn $N($$$) { $$$ }", "--language", "rust"]);
+    let names: Vec<String> = m["data"]["matches"].as_array().unwrap().iter()
+        .map(|r| r["binds"][0]["value"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        m["data"]["matches"].as_array().unwrap().len(), 3,
+        "expected none/two/empty (typed() has a return type): {names:?}"
+    );
+
+    // Same shape in a language with untyped parameters.
+    f.write("p.py", "def one(a, b):\n    return a\ndef two():\n    return 1\n");
+    let py = f.run(&["astgrep", "def $N($$$): $$$", "--language", "python"]);
+    assert_eq!(py["data"]["matches"].as_array().unwrap().len(), 2, "{py}");
+
+    // The single-variadic behaviour it must not regress.
+    f.write("b.rs", "fn g() {\n    foo();\n    foo(1, 2);\n}\n");
+    let calls = f.run(&["astgrep", "foo($$$)", "--language", "rust"]);
+    assert_eq!(calls["data"]["matches"].as_array().unwrap().len(), 2, "{calls}");
+}
+
+#[test]
 fn callees_are_calls_not_field_or_type_references() {
     // callees is call-aware: a name counts only when it's actually called
     // (followed by `(`), so field accesses and type/variable references that

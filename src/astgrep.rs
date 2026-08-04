@@ -209,6 +209,28 @@ fn match_children(
     csrc: &[u8],
     binds: &mut HashMap<String, String>,
 ) -> bool {
+    // `variadic_name` deliberately sees through single-child wrappers, because a
+    // `$$$` in statement position parses as an `expression_statement` around the
+    // sentinel. That over-reaches for a *list* node holding one `$$$`: the
+    // `parameters` of `fn $N($$$)` looks like a variadic itself, when really the
+    // absorption belongs one level down, inside it. With two such lists in one
+    // pattern — `fn $N($$$) { $$$ }`, the single most natural thing to write —
+    // the >1-variadic guard below then rejected the whole pattern and reported
+    // no matches at all. So when the arities already line up, match positionally
+    // and let the recursion absorb inside each child; fall back to absorbing at
+    // this level only when they don't.
+    if pkids.len() == ckids.len() {
+        let mut trial = binds.clone();
+        if pkids
+            .iter()
+            .zip(ckids)
+            .all(|(p, c)| node_matches(*p, *c, psrc, csrc, &mut trial))
+        {
+            *binds = trial;
+            return true;
+        }
+    }
+
     let vpos: Vec<usize> = pkids
         .iter()
         .enumerate()
@@ -217,11 +239,7 @@ fn match_children(
         .collect();
 
     if vpos.is_empty() {
-        return pkids.len() == ckids.len()
-            && pkids
-                .iter()
-                .zip(ckids)
-                .all(|(p, c)| node_matches(*p, *c, psrc, csrc, binds));
+        return false; // arities differ and there is nothing to absorb the gap
     }
     // A single variadic per list is supported (the common case); more would need
     // backtracking, so treat it as no match rather than guess.
