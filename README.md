@@ -105,7 +105,10 @@ Understand a symbol in one call:
   fastest way to understand or change a function: structure and code in one call, instead of
   a `definitions` then `callers` then `read` then `read` sequence. `--max-tokens` caps the
   source (the definition is always included; callers and callees fill the rest, and anything
-  dropped is listed).
+  dropped is listed). A definition too big for the budget is *reduced*, never dropped and
+  never allowed to overrun: its nested bodies fold to signatures first, and its tail is
+  clipped only if folding isn't enough. Either way a `⋮` marker names the exact hidden line
+  range and the chunk is tagged `reduced`, so `read --lines` recovers the rest.
 
 Orient and read:
 - `codeq map` groups counts (languages, directories, imports, definitions) to get your bearings.

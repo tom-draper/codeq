@@ -1341,7 +1341,7 @@ pub fn cmd_outline(cwd: &Path, file: &str, docs: bool, out: Out) -> Result<()> {
 }
 
 /// Bodies of function/method definitions this many lines or longer are folded.
-const MIN_FOLD: usize = 4;
+pub(crate) const MIN_FOLD: usize = 4;
 
 /// `read <file>` — a folding file reader (text output, not JSON). By default it
 /// shows the file with long function/method bodies collapsed to their signature

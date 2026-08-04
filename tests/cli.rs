@@ -952,6 +952,71 @@ fn explore_forces_focus_source_under_a_tight_budget() {
 }
 
 #[test]
+fn explore_reduces_an_oversized_focus_instead_of_overrunning_the_budget() {
+    let f = Fixture::new();
+    // A focus far bigger than any budget we'll ask for. Its body is one long
+    // run of statements, so folding alone can't shrink it enough and the clip
+    // path has to engage.
+    let body = (0..400).map(|i| format!("    let v{i} = {i};\n")).collect::<String>();
+    f.write("a.rs", &format!("fn focus() {{\n{body}}}\n"));
+
+    for max in [20u64, 100, 400] {
+        let d = f.run(&["explore", "focus", "--max-tokens", &max.to_string()]);
+        let b = &d["data"]["budget"];
+        let used = b["used_tokens"].as_u64().unwrap();
+        assert!(
+            used <= max,
+            "--max-tokens {max} overrun: used {used} (budget must be a cap, not advice)"
+        );
+        // Reduced, not dropped: the focus is still there, tagged so a reader
+        // knows it is not the whole definition.
+        let src = d["data"]["source"].as_array().unwrap();
+        let focus = src.iter().find(|c| c["reason"] == "focus").expect("focus kept");
+        assert!(focus["reduced"].is_string(), "reduction must be declared: {focus}");
+        assert!(
+            focus["text"].as_str().unwrap().contains('⋮'),
+            "hidden lines must be marked: {focus}"
+        );
+    }
+
+    // A focus that fits is untouched — no marker, no `reduced` tag.
+    f.write("b.rs", "fn small() { let x = 1; }\n");
+    let d = f.run(&["explore", "small", "--max-tokens", "2000"]);
+    let src = d["data"]["source"].as_array().unwrap();
+    let focus = src.iter().find(|c| c["reason"] == "focus").unwrap();
+    assert!(focus["reduced"].is_null(), "a fitting focus must stay verbatim: {focus}");
+}
+
+#[test]
+fn explore_does_not_emit_source_already_inside_another_chunk() {
+    let f = Fixture::new();
+    // A class whose definition spans its methods: exploring it used to emit the
+    // whole class *and* each method again, paying twice for the same bytes.
+    f.write(
+        "svc.py",
+        "class Service:\n    def run(self):\n        return self.helper() + 1\n\n\
+             def helper(self):\n        return 41\n",
+    );
+    let d = f.run(&["explore", "Service", "--max-tokens", "4000"]);
+    let src = d["data"]["source"].as_array().unwrap();
+
+    for (i, b) in src.iter().enumerate() {
+        for (j, o) in src.iter().enumerate() {
+            if i == j || b["path"] != o["path"] || !o["reduced"].is_null() {
+                continue;
+            }
+            let (bs, be) = (b["start_byte"].as_u64().unwrap(), b["end_byte"].as_u64().unwrap());
+            let (os, oe) = (o["start_byte"].as_u64().unwrap(), o["end_byte"].as_u64().unwrap());
+            assert!(
+                !(os <= bs && be <= oe && (oe - os) > (be - bs)),
+                "{} is already inside {}, emitting both wastes budget",
+                b["symbol"], o["symbol"]
+            );
+        }
+    }
+}
+
+#[test]
 fn affected_reports_changed_blast_radius_and_test_files() {
     let f = Fixture::new();
     // core <- mid <- a test that only reaches core transitively (through mid).

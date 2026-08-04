@@ -1379,3 +1379,48 @@ Svelte: `astgrep --language vue` is markup-only; relations empty; `const x = com
 whose value is a call. Nuxt `pages/` files get a component fact named for the stem even
 though they are convention-routed (no `+` marker to detect, unlike SvelteKit). Schema
 14 -> 15. 153 tests (+1).
+
+## explore's budget was advice, not a limit
+
+Dogfooding the new component languages on a real Svelte app turned up a bug that
+had nothing to do with Svelte — it just made it impossible to miss.
+
+`explore App --max-tokens 200` returned **14,299 tokens**: 71x the budget asked for.
+The focus definition is never dropped (rightly — dropping the symbol you named is
+worse than overshooting), but "never dropped" had quietly come to mean "never
+measured", so any definition bigger than the whole budget sailed straight through
+it. Pre-existing and language-agnostic: codeq's own `explore refresh --max-tokens
+200` returned 2,911 tokens (14.6x). Components merely turned "occasionally
+overruns on a pathological function" into "always overruns by one whole file",
+because a component's definition *is* its file. Every component in that app cost
+~15k tokens to explore — `explore` degenerating into `cat`, which is the exact
+thing it exists to avoid.
+
+First fix was folding the focus (reuse `read`'s folded view). On a script-heavy
+component that works beautifully. On the real one it recovered **6%** — App.svelte
+is mostly template, and folding only collapses function/method bodies. Worth
+recording: the obvious fix was right in principle and nearly useless in practice,
+and only measuring it on real input showed that. So: fold first, then clip the
+tail if folding didn't get there. Both paths emit a `⋮` marker naming the exact
+hidden line range and tag the chunk `reduced: folded|clipped`, so nothing vanishes
+silently and `read --lines` recovers it. Budget is now 0.98–1.00x of whatever is
+asked, never over. `context` force-includes its seeds on identical reasoning and
+got the same treatment.
+
+A second, smaller find from the same session: `explore` emitted source it had
+already emitted. Exploring `App` produced the whole file *plus* 14 of its own
+functions again, each one a literal substring of the first chunk. Also
+language-agnostic — a Python class and a Rust trait both did it, and codeq's own
+`AstRow` wasted 13%. Now a chunk is skipped when an already-emitted *verbatim*
+chunk contains it; `App` went 17 blocks -> 3. The "verbatim" qualifier is
+load-bearing: a *folded* container has holes where its bodies were, so its members
+must still be emitted in full — you get the folded shape plus the specific
+functions you asked about, not a folded shape with gaps.
+
+Left deliberately: a small definition declared *inside* a larger one (codeq's own
+`AstData`, a struct inside `cmd_astgrep`) still appears twice, once as the focus
+and once inside the caller's body. That is the inverse direction — the focus has
+to stay identifiable and the caller carries other content — and it is bounded by
+the focus size. Also confirmed clean and left alone: `search` vs `rg` across 18
+patterns, the `--in` partition (both apparent mismatches were legitimate), and
+component byte ranges under CRLF, BOM, multibyte markup and `<script src=…>`.
