@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 15);
+    assert_eq!(v["index"]["schema"], 16);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -949,6 +949,44 @@ fn explore_forces_focus_source_under_a_tight_budget() {
     let omitted: Vec<&str> = d["data"]["omitted"].as_array().unwrap().iter()
         .filter_map(|o| o["symbol"].as_str()).collect();
     assert!(omitted.contains(&"caller"), "oversized caller should be reported omitted: {omitted:?}");
+}
+
+#[test]
+fn refresh_sees_an_edit_that_preserves_size_and_mtime() {
+    // The freshness fast path skips a file whose stat looks unchanged. mtime is
+    // settable from userspace (`touch -d`, `cp -p`, `rsync -a`, tar extraction),
+    // so an edit of identical length could restore it and stay invisible —
+    // every later query would then answer from a stale index. ctime moves on any
+    // write and cannot be set, which is what makes the skip safe.
+    let f = Fixture::new();
+    f.write("x.rs", "pub fn aaaa() {}\n");
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    assert!(syms.contains(&"aaaa".to_string()), "{syms:?}");
+
+    let p = f.path().join("x.rs");
+    let before = std::fs::metadata(&p).unwrap();
+    let (atime, mtime) = (before.accessed().unwrap(), before.modified().unwrap());
+
+    // Same byte length, so only the content differs.
+    f.write("x.rs", "pub fn bbbb() {}\n");
+    assert_eq!(std::fs::metadata(&p).unwrap().len(), before.len());
+
+    // Put mtime back exactly as it was.
+    let h = std::fs::File::options().write(true).open(&p).unwrap();
+    h.set_times(
+        std::fs::FileTimes::new()
+            .set_accessed(atime)
+            .set_modified(mtime),
+    )
+    .unwrap();
+    assert_eq!(std::fs::metadata(&p).unwrap().modified().unwrap(), mtime);
+
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    assert!(
+        syms.contains(&"bbbb".to_string()),
+        "stale index: mtime-preserving edit went unnoticed, got {syms:?}"
+    );
+    assert!(!syms.contains(&"aaaa".to_string()), "old symbol lingered: {syms:?}");
 }
 
 #[test]

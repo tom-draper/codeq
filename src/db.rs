@@ -20,7 +20,9 @@ use rusqlite::Connection;
 // v14: added Svelte extraction (nested `<script>` facts, component facts) —
 // rebuild to populate them.
 // v15: added Vue extraction — rebuild to populate them.
-pub const SCHEMA_VERSION: i64 = 15;
+// v16: freshness also compares inode ctime, so a size- and mtime-preserving edit
+// is no longer invisible; old rows have no ctime to compare, so rebuild.
+pub const SCHEMA_VERSION: i64 = 16;
 
 pub struct Db {
     pub conn: Connection,
@@ -76,6 +78,11 @@ impl Db {
                 language     TEXT,
                 size_bytes   INTEGER NOT NULL,
                 mtime_ns     INTEGER,
+                -- Inode change time. mtime is settable (`touch -d`, `cp -p`,
+                -- `rsync -a`, tar extraction), so size+mtime alone can miss a
+                -- real edit; ctime moves on any write and cannot be forged from
+                -- userspace, which closes that hole.
+                ctime_ns     INTEGER,
                 content_hash TEXT,
                 indexed_at   INTEGER NOT NULL
             );
@@ -167,6 +174,9 @@ impl Db {
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN visibility TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE files ADD COLUMN ctime_ns INTEGER", []);
 
         // On a schema version change, wipe derived data so the next refresh
         // rebuilds everything (including the FTS index) from scratch.

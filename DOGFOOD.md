@@ -1448,6 +1448,21 @@ each child, falling back to absorbing at this level only when they don't (binds
 are trialled on a clone so a failed attempt can't pollute them). `fn $N($$$) {
 $$$ }` 0 -> 177 on codeq itself; `$X.unwrap()` unchanged at 198.
 
+## A size- and mtime-preserving edit was invisible
+
+Same shape as the astgrep bug above: a confident wrong answer, indefinitely. The
+freshness fast path
+trusted `(size, mtime)`, so an edit of identical length that restored mtime left
+every later query answering from a stale index — the file said `bbbb`, codeq said
+`aaaa`, indefinitely. mtime is settable from userspace (`touch -d`, `cp -p`,
+`rsync -a`, tar extraction, restoring an older copy), so this is reachable without
+anything exotic. Fixed by also comparing inode ctime, which moves on any write and
+cannot be forged. Cost measured, not assumed: an unchanged tree still short-
+circuits at 4-6 ms, and the one operation that moves ctime without changing
+content (chmod) costs a single re-walk with **zero** reparses, because the content
+hash still matches. Schema 15 -> 16; unix-only, falling back to size+mtime
+elsewhere.
+
 Also swept clean this round and left alone: incremental-vs-full-rebuild after
 edit/add/delete/rename/move, `at` innermost-first ordering, `path` chain edges,
 `callers --depth` monotonicity, `unused` false positives (zero), the

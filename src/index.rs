@@ -1,7 +1,7 @@
 //! Ignore-aware walk, hashing, and incremental refresh.
 //!
 //! This is the daemonless freshness path: every query calls [`refresh`], which
-//! walks the tree, reparses only files whose size/mtime changed, and reports
+//! walks the tree, reparses only files whose size/mtime/ctime changed, and reports
 //! how many files it had to touch. A no-op refresh on an unchanged tree writes
 //! nothing.
 
@@ -28,6 +28,7 @@ pub struct RefreshStats {
 struct Stored {
     size: i64,
     mtime_ns: i64,
+    ctime_ns: i64,
     hash: Option<String>,
 }
 
@@ -39,6 +40,7 @@ struct Parsed {
     rel: String,
     size: i64,
     mtime_ns: i64,
+    ctime_ns: i64,
     hash: String,
     language: Option<&'static str>,
     content_changed: bool,
@@ -59,6 +61,7 @@ fn parse_one(
     abs: &Path,
     size: i64,
     mtime_ns: i64,
+    ctime_ns: i64,
 ) -> Option<Parsed> {
     let mut bytes = std::fs::read(abs).ok()?;
     // Strip a leading UTF-8 BOM so line-1 anchors match and byte offsets align.
@@ -89,6 +92,7 @@ fn parse_one(
         rel: rel.to_string(),
         size,
         mtime_ns,
+        ctime_ns,
         hash,
         language,
         content_changed,
@@ -101,7 +105,7 @@ fn parse_one(
 }
 
 /// Bring the index in line with the working tree. Returns how many files were
-/// (re)parsed. Incremental: unchanged files (same size + mtime) are skipped
+/// (re)parsed. Incremental: unchanged files (same size + mtime + ctime) are skipped
 /// without hashing. For git repos, a matching freshness token skips the walk
 /// entirely.
 pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
@@ -113,7 +117,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     //   * every cached directory's mtime is unchanged — a file added, removed or
     //     renamed bumps its parent dir's mtime, so this catches all *structural*
     //     changes (the untracked-cache trick git uses), and
-    //   * every cached file's (size, mtime) is unchanged — catches content edits.
+    //   * every cached file's (size, mtime, ctime) is unchanged — catches content
+    //     edits, including ones that restore mtime after writing.
     // Only a real change short-circuits it into the full walk below.
     if is_fresh(db, repo_root)? {
         return Ok(RefreshStats {
@@ -128,14 +133,15 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     {
         let mut stmt = db
             .conn
-            .prepare("SELECT path, size_bytes, mtime_ns, content_hash FROM files")?;
+            .prepare("SELECT path, size_bytes, mtime_ns, ctime_ns, content_hash FROM files")?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 Stored {
                     size: r.get::<_, i64>(1)?,
                     mtime_ns: r.get::<_, i64>(2).unwrap_or(0),
-                    hash: r.get::<_, Option<String>>(3)?,
+                    ctime_ns: r.get::<_, i64>(3).unwrap_or(0),
+                    hash: r.get::<_, Option<String>>(4)?,
                 },
             ))
         })?;
@@ -151,9 +157,9 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
     // Serial walk (stat-bound): record directory mtimes for the freshness cache,
     // build the `seen` set, and collect the files that actually need
-    // (re)processing — unchanged files short-circuit on the size+mtime fast path.
+    // (re)processing — unchanged files short-circuit on the stat fast path.
     let now = now_ns();
-    let mut work: Vec<(String, PathBuf, i64, i64)> = Vec::new();
+    let mut work: Vec<(String, PathBuf, i64, i64, i64)> = Vec::new();
     let walker = WalkBuilder::new(repo_root)
         .standard_filters(true) // .gitignore, .ignore, hidden, parents
         .build();
@@ -205,16 +211,19 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
+        let ctime_ns = ctime_ns_of(&meta);
 
         seen.insert(rel.clone(), ());
 
-        // Fast path: size + mtime unchanged => trust the stored hash, no read.
+        // Fast path: size + mtime + ctime unchanged => trust the stored hash, no
+        // read. ctime is what makes this safe: mtime alone can be restored after
+        // a write, so a same-size edit would otherwise slip through unnoticed.
         if let Some(prev) = existing.get(&rel) {
-            if prev.size == size && prev.mtime_ns == mtime_ns {
+            if prev.size == size && prev.mtime_ns == mtime_ns && prev.ctime_ns == ctime_ns {
                 continue;
             }
         }
-        work.push((rel, abs.to_path_buf(), size, mtime_ns));
+        work.push((rel, abs.to_path_buf(), size, mtime_ns, ctime_ns));
     }
 
     // Parse the changed files in parallel (read + hash + tree-sitter extraction
@@ -241,8 +250,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                         Ok(e) => e,
                         Err(_) => return,
                     };
-                    for (rel, abs, size, mtime) in c {
-                        match parse_one(existing, &mut ex, rel, abs, *size, *mtime) {
+                    for (rel, abs, size, mtime, ctime) in c {
+                        match parse_one(existing, &mut ex, rel, abs, *size, *mtime, *ctime) {
                             Some(p) => {
                                 if sender.send(p).is_err() {
                                     return; // writer went away (error) — stop
@@ -259,12 +268,13 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
             // Serial writer: owns the transaction and its prepared statements.
             let mut upsert = tx.prepare(
-                "INSERT INTO files(path, language, size_bytes, mtime_ns, content_hash, indexed_at)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO files(path, language, size_bytes, mtime_ns, ctime_ns, content_hash, indexed_at)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(path) DO UPDATE SET
                     language = excluded.language,
                     size_bytes = excluded.size_bytes,
                     mtime_ns = excluded.mtime_ns,
+                    ctime_ns = excluded.ctime_ns,
                     content_hash = excluded.content_hash,
                     indexed_at = excluded.indexed_at",
             )?;
@@ -291,7 +301,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
             let mut reindexed: u64 = 0;
             for p in res_rx {
-                upsert.execute((&p.rel, p.language, p.size, p.mtime_ns, &p.hash, now))?;
+                upsert.execute((&p.rel, p.language, p.size, p.mtime_ns, p.ctime_ns, &p.hash, now))?;
                 if !p.content_changed {
                     continue;
                 }
@@ -421,15 +431,16 @@ fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
     }
     let mut stmt = db
         .conn
-        .prepare("SELECT path, size_bytes, mtime_ns FROM files")?;
+        .prepare("SELECT path, size_bytes, mtime_ns, ctime_ns FROM files")?;
     let mut rows = stmt.query([])?;
     while let Some(r) = rows.next()? {
         let rel = r.get_ref(0)?.as_str()?;
         let size: i64 = r.get(1)?;
         let mtime: i64 = r.get::<_, Option<i64>>(2)?.unwrap_or(0);
+        let ctime: i64 = r.get::<_, Option<i64>>(3)?.unwrap_or(0);
         buf.truncate(base);
         buf.push_str(rel);
-        if file_size_mtime(std::path::Path::new(&buf)) != Some((size, mtime)) {
+        if file_stat_key(std::path::Path::new(&buf)) != Some((size, mtime, ctime)) {
             return Ok(false);
         }
     }
@@ -450,13 +461,36 @@ fn path_mtime(path: &std::path::Path) -> Option<i64> {
     mtime_ns_of(&std::fs::metadata(path).ok()?)
 }
 
-/// File `(size, mtime_ns)` for the freshness check, or `None` if not a file.
-fn file_size_mtime(path: &std::path::Path) -> Option<(i64, i64)> {
+/// Nanosecond inode-change time, the part of a stat that userspace cannot set.
+/// `mtime` can be restored after a write (`touch -d`, `cp -p`, `rsync -a`, tar
+/// extraction), so a same-size edit could otherwise leave (size, mtime) intact
+/// and the index silently stale; `ctime` moves on every write. Unix-only —
+/// elsewhere this contributes nothing and freshness falls back to size + mtime.
+#[cfg(unix)]
+fn ctime_ns_of(md: &std::fs::Metadata) -> i64 {
+    use std::os::unix::fs::MetadataExt;
+    md.ctime()
+        .saturating_mul(1_000_000_000)
+        .saturating_add(md.ctime_nsec())
+}
+
+#[cfg(not(unix))]
+fn ctime_ns_of(_md: &std::fs::Metadata) -> i64 {
+    0
+}
+
+/// File `(size, mtime_ns, ctime_ns)` for the freshness check, or `None` if not
+/// a file.
+fn file_stat_key(path: &std::path::Path) -> Option<(i64, i64, i64)> {
     let md = std::fs::metadata(path).ok()?;
     if !md.is_file() {
         return None;
     }
-    Some((md.len() as i64, mtime_ns_of(&md).unwrap_or(0)))
+    Some((
+        md.len() as i64,
+        mtime_ns_of(&md).unwrap_or(0),
+        ctime_ns_of(&md),
+    ))
 }
 
 fn looks_binary(bytes: &[u8]) -> bool {
