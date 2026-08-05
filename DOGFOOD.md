@@ -1507,3 +1507,32 @@ were `.git/objects` and a `.br` artifact — none indexed. The BOM half is the o
 that actually reaches users; the UTF-8 half needs genuinely latin-1 source, which
 older C/C++/PHP/Perl trees do have (no null bytes, so `looks_binary` passes them
 through as source). Worth stating plainly rather than leaving the inflated claim.
+
+## The MCP server turned caller values into flags
+
+The MCP server had never been swept. Driving it over JSON-RPC and calling all 28
+advertised tools found one failure and one real bug.
+
+Caller-supplied values are passed positionally to the CLI, and the CLI's parser
+reads a leading dash as a flag. An MCP client has no way to say "this is a
+literal" — a shell user types `--` themselves, but the protocol offers no
+equivalent. So `pattern: "--json"`, an entirely ordinary thing to search a
+codebase for, came back as "required argument not provided", and `symbol:
+"--help"` printed codeq's help page and exited 0 — `isError: false`, help text
+handed to an agent as a successful answer. Fixed by accumulating flags first,
+then `--`, then caller values. Also sharpened `codeq_deps`, whose schema said
+`required: []` while calling it with no arguments is an error.
+
+Two process notes, both about nearly-wrong conclusions:
+
+- I first cross-checked the schemas against `build_args` with a regex over the
+  match arms. It silently matched nothing and reported **103 properties never
+  forwarded** — i.e. every parameter of every tool broken, which is not a
+  plausible state for a tool in daily use. That implausibility was the tell, not
+  anything about the regex. Replaced it with an empirical sweep: call each
+  parameter, diff the output against the call without it. 20 exercised, 0 broken.
+- The fix itself was a mechanical rewrite routing positionals into a separate
+  vec, and it **broke `codeq_astgrep`** — `language` is a flag's *value*, not a
+  positional, so `--language` lost its argument. The compiler was happy; only
+  re-running the whole 28-tool sweep caught it. After a bulk edit, re-run the
+  sweep that found the bug, not just the case you were fixing.

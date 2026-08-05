@@ -137,7 +137,14 @@ fn flag(args: &mut Vec<String>, a: &Value, key: &str, flag: &str) {
 
 /// Map an MCP tool name + arguments to codeq CLI arguments.
 fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
+    // Flags accumulate in `args`; caller-supplied *values* go to `pos` and are
+    // emitted after a `--` separator. Without it a value that happens to start
+    // with a dash is read as a flag by the CLI's parser: `pattern: "--json"` —
+    // an entirely ordinary thing to search a codebase for — failed as "required
+    // argument not provided", and `symbol: "--help"` printed the help page and
+    // exited 0, handing an agent the help text as a successful answer.
     let mut args: Vec<String> = Vec::new();
+    let mut pos: Vec<String> = Vec::new();
     match tool {
         "codeq_map" => {
             args.push("map".into());
@@ -145,7 +152,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         }
         "codeq_search" => {
             args.push("search".into());
-            args.push(s(a, "pattern")?.into());
+            pos.push(s(a, "pattern")?.into());
             flag(&mut args, a, "fixed", "--fixed");
             flag(&mut args, a, "ignore_case", "-i");
             flag(&mut args, a, "word", "-w");
@@ -166,7 +173,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         "codeq_symbols" => {
             args.push("symbols".into());
             if let Some(p) = s(a, "pattern") {
-                args.push(p.into());
+                pos.push(p.into());
             }
             opt(&mut args, a, "kind", "--kind");
             opt(&mut args, a, "language", "--language");
@@ -176,13 +183,13 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         }
         "codeq_definitions" => {
             args.push("definitions".into());
-            args.push(s(a, "symbol")?.into());
+            pos.push(s(a, "symbol")?.into());
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "limit", "--limit");
         }
         "codeq_references" => {
             args.push("references".into());
-            args.push(s(a, "name")?.into());
+            pos.push(s(a, "name")?.into());
             opt(&mut args, a, "path", "--path");
             opt(&mut args, a, "language", "--language");
             optn(&mut args, a, "limit", "--limit");
@@ -192,7 +199,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         }
         "codeq_callers" => {
             args.push("callers".into());
-            args.push(s(a, "name")?.into());
+            pos.push(s(a, "name")?.into());
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "depth", "--depth");
             flag(&mut args, a, "resolved", "--resolved");
@@ -202,41 +209,41 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         }
         "codeq_callees" => {
             args.push("callees".into());
-            args.push(s(a, "name")?.into());
+            pos.push(s(a, "name")?.into());
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "depth", "--depth");
             flag(&mut args, a, "resolved", "--resolved");
         }
         "codeq_about" => {
             args.push("about".into());
-            args.push(s(a, "name")?.into());
+            pos.push(s(a, "name")?.into());
             opt(&mut args, a, "path", "--path");
         }
         "codeq_explore" => {
             args.push("explore".into());
-            args.push(s(a, "name")?.into());
+            pos.push(s(a, "name")?.into());
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "max_tokens", "--max-tokens");
         }
         "codeq_path" => {
             args.push("path".into());
-            args.push(s(a, "from")?.into());
-            args.push(s(a, "to")?.into());
+            pos.push(s(a, "from")?.into());
+            pos.push(s(a, "to")?.into());
             optn(&mut args, a, "max_depth", "--max-depth");
             opt(&mut args, a, "path", "--path");
         }
         "codeq_outline" => {
             args.push("outline".into());
-            args.push(s(a, "file")?.into());
+            pos.push(s(a, "file")?.into());
             flag(&mut args, a, "docs", "--docs");
         }
         "codeq_at" => {
             args.push("at".into());
-            args.push(s(a, "location")?.into());
+            pos.push(s(a, "location")?.into());
         }
         "codeq_read" => {
             args.push("read".into());
-            args.push(s(a, "file")?.into());
+            pos.push(s(a, "file")?.into());
             opt(&mut args, a, "lines", "--lines");
             opt(&mut args, a, "symbol", "--symbol");
             flag(&mut args, a, "full", "--full");
@@ -245,25 +252,25 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         "codeq_imports" => {
             args.push("imports".into());
             if let Some(p) = s(a, "path") {
-                args.push(p.into());
+                pos.push(p.into());
             }
             optn(&mut args, a, "limit", "--limit");
         }
         "codeq_importers" => {
             args.push("importers".into());
-            args.push(s(a, "query")?.into());
+            pos.push(s(a, "query")?.into());
             optn(&mut args, a, "limit", "--limit");
         }
         "codeq_implementors" => {
             args.push("implementors".into());
-            args.push(s(a, "name")?.into());
+            pos.push(s(a, "name")?.into());
             opt(&mut args, a, "relation", "--relation");
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "limit", "--limit");
         }
         "codeq_supertypes" => {
             args.push("supertypes".into());
-            args.push(s(a, "name")?.into());
+            pos.push(s(a, "name")?.into());
             opt(&mut args, a, "relation", "--relation");
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "limit", "--limit");
@@ -271,7 +278,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         "codeq_unused" => {
             args.push("unused".into());
             if let Some(p) = s(a, "path") {
-                args.push(p.into());
+                pos.push(p.into());
             }
             opt(&mut args, a, "kind", "--kind");
             flag(&mut args, a, "include_tests", "--include-tests");
@@ -280,7 +287,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         "codeq_api" => {
             args.push("api".into());
             if let Some(p) = s(a, "path") {
-                args.push(p.into());
+                pos.push(p.into());
             }
             opt(&mut args, a, "kind", "--kind");
             optn(&mut args, a, "limit", "--limit");
@@ -295,7 +302,9 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         }
         "codeq_astgrep" => {
             args.push("astgrep".into());
-            args.push(s(a, "pattern")?.into());
+            pos.push(s(a, "pattern")?.into());
+            // `language` is this flag's value, not a positional — it must stay
+            // attached to `--language`, ahead of the `--` separator.
             args.push("--language".into());
             args.push(s(a, "language")?.into());
             opt(&mut args, a, "path", "--path");
@@ -303,7 +312,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         }
         "codeq_tests" => {
             args.push("tests".into());
-            args.push(s(a, "name")?.into());
+            pos.push(s(a, "name")?.into());
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "limit", "--limit");
         }
@@ -342,7 +351,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         "codeq_files" => {
             args.push("files".into());
             if let Some(p) = s(a, "pattern") {
-                args.push(p.into());
+                pos.push(p.into());
             }
             opt(&mut args, a, "language", "--language");
             optn(&mut args, a, "limit", "--limit");
@@ -350,6 +359,12 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         "codeq_stats" => args.push("stats".into()),
         "codeq_capabilities" => args.push("capabilities".into()),
         _ => return None,
+    }
+    // `--` ends flag parsing, so every caller-supplied value after it is taken
+    // literally however it starts.
+    if !pos.is_empty() {
+        args.push("--".into());
+        args.extend(pos);
     }
     Some(args)
 }
@@ -436,7 +451,7 @@ fn tools() -> Value {
             "The public API surface of a file or directory: the definitions it exports for outside use, with signatures. \"Public\" is each language's own notion (Rust pub, JS/TS export, Go capitalization, Python non-underscore, a public modifier in Java/C#/PHP, non-static in C/C++); pub(crate)/protected are excluded. Use it to learn how to call an unfamiliar module without reading whole files. path scopes to a file/dir substring; kind filters to one kind (function, struct, class, …).",
             json!({ "path": str_, "kind": str_, "limit": num_ }), &[]),
         tool("codeq_deps",
-            "Internal files a file depends on, resolved from its imports (raw import strings matched to file stems — heuristic, not a real module resolver). depth (default 1) walks transitive dependencies. cycles=true reports every import cycle in the repo instead (omit file).",
+            "Internal files a file depends on, resolved from its imports (raw import strings matched to file stems — heuristic, not a real module resolver). Pass either file or cycles=true — calling with neither is an error. depth (default 1) walks transitive dependencies. cycles=true reports every import cycle in the repo instead (omit file).",
             json!({ "file": str_, "depth": num_, "cycles": bool_ }), &[]),
         tool("codeq_astgrep",
             "Structural (AST) search: match a code pattern with $NAME / $_ metavariables (and $$$ for any run of siblings, e.g. foo($$$)), parsed with the language's own grammar so it matches syntax not text — e.g. '$X.unwrap()' finds every .unwrap() call whatever the receiver. Deterministic; a repeated $NAME must bind identically. Cannot see inside macro invocations. language is required.",

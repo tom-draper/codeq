@@ -2206,6 +2206,68 @@ fn mcp_server_handshake_and_tool_call() {
     assert_eq!(data["data"][0]["kind"], "function");
 }
 
+/// An MCP caller has no way to say "this value is a literal, not a flag" — so
+/// the server must say it, by putting `--` ahead of every caller-supplied
+/// positional. Without it, searching a codebase for `--json` (an entirely
+/// ordinary thing to look for) failed as "required argument not provided", and
+/// `symbol: "--help"` printed codeq's help page and exited 0, handing an agent
+/// the help text as a successful answer.
+#[test]
+fn mcp_treats_flag_like_arguments_as_literals() {
+    use std::io::Write;
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    f.write("a.rs", "// mentions --json in a comment\nfn target() {}\n");
+
+    let mut child = PCommand::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let reqs = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"codeq_search","arguments":{"pattern":"--json"}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"codeq_definitions","arguments":{"symbol":"--help"}}}"#,
+        // A flag's *value* must stay attached to its flag, ahead of the `--`.
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"codeq_astgrep","arguments":{"pattern":"fn $N() {}","language":"rust"}}}"#,
+    ];
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        for r in reqs {
+            writeln!(stdin, "{r}").unwrap();
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    let msgs: Vec<Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(msgs.len(), 4, "{msgs:?}");
+
+    // `--json` is searched for literally, and finds the comment.
+    let r = &msgs[1]["result"];
+    assert!(r["isError"].as_bool() != Some(true), "search treated --json as a flag: {r}");
+    let data: Value = serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(data["data"]["matches"].as_array().unwrap().len(), 1, "{data}");
+
+    // `--help` is a symbol name with no definition, not a request for help.
+    let r = &msgs[2]["result"];
+    let text = r["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains("Usage:"), "help text returned as a result: {text}");
+    let data: Value = serde_json::from_str(text).unwrap();
+    assert!(data["data"].as_array().unwrap().is_empty(), "{data}");
+
+    // astgrep still works: its `language` is a flag value, not a positional.
+    let r = &msgs[3]["result"];
+    assert!(r["isError"].as_bool() != Some(true), "astgrep language broke: {r}");
+}
+
 /// Guards CLI↔MCP flag parity: `codeq_context` must forward the `path` and
 /// `no_text` arguments to the CLI (they were once absent from the MCP arm). The
 /// `no_text` check is the real regression catch — if the flag isn't forwarded,
