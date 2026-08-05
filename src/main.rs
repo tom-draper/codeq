@@ -82,14 +82,14 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
-    /// For a diff: the definitions it touched, their transitive callers (blast
-    /// radius), and the tests exercising any of them — what to re-check and re-run
-    /// for the change. Name-based.
+    /// For a diff: the definitions it touched, their transitive callers (the
+    /// impacted set), and the tests exercising any of them — what to re-check and
+    /// re-run for the change. Name-based.
     Affected {
         /// Ref to compare against, e.g. main.
         #[arg(long, default_value = "main")]
         compare_to: String,
-        /// How many hops up the call tree to include as blast radius.
+        /// How many hops up the call tree to include as impacted callers.
         #[arg(long, default_value_t = 3)]
         depth: usize,
         /// Maximum test rows to return (0 = unlimited).

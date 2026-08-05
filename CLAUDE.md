@@ -69,7 +69,7 @@ benchmarks — not as a step you run before querying.
     unreachable files.
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
-    with its `depth`; text output indents by hop. For blast-radius / reachability.
+    with its `depth`; text output indents by hop. For impact / reachability.
   - **Call chain between two symbols:** `codeq path FROM TO` — the shortest chain
     where FROM calls … calls TO, shown step by step (empty if unreachable within
     `--max-depth`, default 8). Reachability *with the route*, vs `callees --depth`
@@ -85,7 +85,7 @@ benchmarks — not as a step you run before querying.
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
   reference NAME (by test-file path or test-like name). For the edit→find-the-test loop.
 - **What a diff affects:** `codeq affected --compare-to <ref>` — the definitions the
-  diff touched, their transitive callers (blast radius, `--depth N`), and the test
+  diff touched, their transitive callers (impacted, `--depth N`), and the test
   *files* to re-run. Composes `changed --symbols` + a caller BFS + `tests`; name-based,
   so it over-includes rather than misses.
 - **Find dead code:** `codeq unused [<path>]` — definitions with no reference

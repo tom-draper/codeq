@@ -76,7 +76,7 @@ every supported language:
 | understand a symbol before editing (`about`) | 16k | 70k | 4.3x | 25 | 99 |
 | read a function's body (`read --symbol`) | 9k | 35k | 3.9x | 25 | 50 |
 | who calls it, with context (`callers`) | 3k | 43k | 13.9x | 25 | 66 |
-| 2-hop blast radius (`callers --depth 2`) | 53k | 194k | 3.7x | 25 | 155 |
+| 2-hop impacted set (`callers --depth 2`) | 53k | 194k | 3.7x | 25 | 155 |
 | which tests exercise it (`tests`) | 2k | 27k | 15.0x | 25 | 72 |
 | a file's dead code (`unused`) | 18k | 1144k | 64.2x | 25 | 436 |
 | learn a file's structure (`outline`) | 75k | 751k | 10.0x | 25 | 25 |
@@ -144,7 +144,7 @@ Repo state:
 - `codeq changed --compare-to <ref>` lists files changed vs a git ref (`--symbols` for the
   definitions touched).
 - `codeq affected --compare-to <ref>` takes a diff and reports the definitions it touched,
-  their transitive callers (the blast radius), and the test files that exercise any of them,
+  their transitive callers (the impacted set), and the test files that exercise any of them,
   so you know what to re-check and re-run.
 - `codeq files`, `codeq symbols`, and `codeq stats` list and count.
 - `codeq capabilities` self-describes: commands, languages, fact kinds, schema.

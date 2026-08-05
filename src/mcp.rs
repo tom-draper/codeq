@@ -463,7 +463,7 @@ fn tools() -> Value {
             "Files changed vs a git ref (default main); set symbols to get the definitions the change touched instead.",
             json!({ "compare_to": str_, "symbols": bool_, "limit": int_ }), &[]),
         tool("codeq_affected",
-            "For a diff (vs compare_to, default main): the definitions it touched, their transitive callers up to depth hops (the blast radius), and the tests that exercise any of them — 'what should I re-check and re-run for this change'. Returns changed, impacted, and tests. Name-based like the rest of the graph.",
+            "For a diff (vs compare_to, default main): the definitions it touched, their transitive callers up to depth hops (the impacted set), and the tests that exercise any of them — 'what should I re-check and re-run for this change'. Returns changed, impacted, and tests. Name-based like the rest of the graph.",
             json!({ "compare_to": str_, "depth": num_, "limit": int_ }), &[]),
         tool("codeq_context",
             "Assemble token-budgeted code context from explicit seeds: named symbols and/or changed files. path scopes the seeds to matching files. Set expand for one deterministic hop to referenced definitions; no_text returns provenance only (locations without source, for a cheap map).",

@@ -48,7 +48,7 @@ refresh the index — every command auto-refreshes changed files first.
 - `codeq tests <NAME>` — which tests exercise NAME *by name* (empty if only exercised
   indirectly, e.g. an internal fn tested through a CLI/public entry point).
 - `codeq affected --compare-to <ref>` — for a diff: the definitions it touched, their
-  transitive callers (blast radius), and the test *files* to re-run. Use after making
+  transitive callers (impacted), and the test *files* to re-run. Use after making
   changes to know what to re-check. Name-based, so it over-includes rather than misses.
 - Transitive: `codeq callers <NAME> --depth 3` (up the call tree),
   `codeq callees <NAME> --depth 3` (down).

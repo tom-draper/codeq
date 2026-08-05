@@ -2565,7 +2565,7 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
     })
 }
 
-/// A definition pulled into the blast radius: a transitive caller of a changed
+/// A definition pulled in as impacted: a transitive caller of a changed
 /// symbol, tagged with its hop distance from the change.
 #[derive(serde::Serialize)]
 struct ImpactNode {
@@ -2597,7 +2597,7 @@ struct AffectedResult {
 }
 
 /// `affected --compare-to <ref>` — for a diff: the definitions it touched, their
-/// transitive callers (the blast radius), and the tests exercising any of them —
+/// transitive callers (the impacted set), and the tests exercising any of them —
 /// "what should I re-check and re-run for this change". Composes `changed
 /// --symbols` + a caller BFS + `tests`; name-based like the rest of the graph.
 pub fn cmd_affected(
@@ -2654,7 +2654,7 @@ pub fn cmd_affected(
             .then(a.line.cmp(&b.line))
     });
 
-    // Test files exercising anything in scope (changed symbols ∪ blast radius),
+    // Test files exercising anything in scope (changed symbols ∪ impacted),
     // with a per-file count of matching test-like functions — the actionable
     // "what to run", without one row per individual test.
     let mut sites: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();

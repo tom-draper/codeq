@@ -952,6 +952,27 @@ fn explore_forces_focus_source_under_a_tight_budget() {
 }
 
 #[test]
+fn an_unresolvable_compare_to_ref_says_so_plainly() {
+    // `--compare-to` defaults to `main`, so a repo whose trunk is `master` hits
+    // this on its first `changed`. Git's own wording for an unknown ref advises
+    // using `--` to separate paths from revisions, which points at the wrong
+    // problem entirely.
+    let f = Fixture::new();
+    f.write("a.rs", "fn target() {}\n");
+    f.git_init_commit();
+
+    let out = f.raw(&["changed", "--compare-to", "definitely-not-a-ref"]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no such git ref: 'definitely-not-a-ref'"), "{err}");
+    assert!(!err.contains("separate paths from revisions"), "git's misleading advice leaked: {err}");
+
+    // A ref that exists still works.
+    let ok = f.raw(&["changed", "--compare-to", "HEAD"]);
+    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+}
+
+#[test]
 fn concurrent_invocations_all_succeed() {
     // Agents run codeq concurrently — parallel tool calls, or several agents on
     // one checkout — and every invocation refreshes, so contention is the normal
