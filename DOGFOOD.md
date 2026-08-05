@@ -1536,3 +1536,34 @@ Two process notes, both about nearly-wrong conclusions:
   positional, so `--language` lost its argument. The compiler was happy; only
   re-running the whole 28-tool sweep caught it. After a bulk edit, re-run the
   sweep that found the bug, not just the case you were fixing.
+
+## Two follow-ups: one real bug, one thing I had mislabelled
+
+**astgrep accepted patterns it had only partly parsed.** `if { }`, `match { }`
+and `garbage $$$` each returned zero matches and exit 0 — indistinguishable from
+"no such code exists". The existing `has_error()` guard could not catch them:
+`significant()` descends *past* an ERROR node (a bare expression is not a valid
+top-level item in several grammars and only survives via recovery), and whatever
+fragment survived is itself error-free. So `if { }` quietly became "an empty
+block" and was matched as such. Fixed by requiring the chosen node to span the
+whole pattern — recovery is precisely the thing that discards input, so a partial
+span is the signal. Verified the patterns that legitimately depend on recovery
+still work, and confirmed against the HEAD binary on the same tree that match
+counts are unchanged (an apparent 198 -> 216 drift in `$X.unwrap()` was the
+repository growing from earlier commits in this session, not the guard).
+
+**`--fields` dropping unknown names was not a bug.** I had listed it as one for
+several rounds: `--fields path,nonsense` returns just `path`, exit 0. Two things
+said otherwise. `via` appears only under `--resolved` and `col`/`text` only under
+`--examples`, so `--fields path,via` is a *working* query whose field is
+legitimately absent — erroring would break it. And `fields_ignores_unknown_columns`
+is a pre-existing test asserting exactly this behaviour, so it is a deliberate
+contract, not an oversight. What was genuinely missing is observability, so the
+projection now reports which requested names matched no row and lists the ones
+that were available (`line` -> "available: …, start_line, …", which is what the
+caller almost certainly meant). A note on stderr in text mode, a `notes` block in
+JSON; the projection itself is unchanged and the old test still passes.
+
+Worth recording as a pattern: the reflex on finding surprising behaviour is to fix
+it, and twice now the right move was to first ask whether it was intended. The
+existing test was better evidence than my own reasoning.

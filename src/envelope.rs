@@ -48,9 +48,13 @@ impl<T: Serialize> Envelope<T> {
 
     pub fn print(&self, r: Render) -> anyhow::Result<()> {
         let mut data = serde_json::to_value(&self.data)?;
-        if let Some(fields) = r.fields {
-            project(&mut data, fields);
-        }
+        // `(requested-but-absent, actually-available)`; empty when no rows came
+        // back, since there is then nothing to judge a field name against.
+        let (unmatched, available) = match r.fields {
+            Some(fields) => project(&mut data, fields),
+            None => (Vec::new(), Vec::new()),
+        };
+        let note_fields = !unmatched.is_empty() && !available.is_empty();
 
         // JSON is opt-in (`--json`); `--meta`/`--pretty` are JSON concepts so they
         // imply it. The default is compact grep-style text — far fewer tokens.
@@ -63,6 +67,15 @@ impl<T: Serialize> Envelope<T> {
                 out.insert("index".into(), serde_json::to_value(&self.index)?);
             }
             out.insert("data".into(), data);
+            if note_fields {
+                out.insert(
+                    "notes".into(),
+                    serde_json::json!({
+                        "unmatched_fields": unmatched,
+                        "available_fields": available,
+                    }),
+                );
+            }
             let value = Value::Object(out);
             if r.pretty {
                 println!("{}", serde_json::to_string_pretty(&value)?);
@@ -84,6 +97,13 @@ impl<T: Serialize> Envelope<T> {
                     String::new()
                 },
                 if self.index.fresh { "" } else { ", index stale" },
+            );
+        }
+        if note_fields {
+            eprintln!(
+                "# codeq: --fields {} matched no row; available: {}",
+                unmatched.join(","),
+                available.join(",")
             );
         }
         let mut s = String::new();
@@ -284,7 +304,16 @@ fn inline(v: &Value) -> String {
 /// (`matches` for `search`, `references`, `chunks` for `context`, the grouped
 /// lists in `map`). Scalar/metadata fields on the wrapper object (e.g.
 /// `truncated`) are left intact. Non-object rows are untouched.
-fn project(data: &mut Value, fields: &[String]) {
+/// Returns `(unmatched, available)`: the requested fields that appear on no row,
+/// and the field names that were actually there. A projection that silently
+/// yields a narrower row than asked for reads as "this record has no such value"
+/// rather than "you asked for a name that isn't a field", so the caller reports
+/// the difference. It is a note and not an error because a field can be
+/// *legitimately* absent — `via` only appears under `--resolved`, `col`/`text`
+/// only under `--examples` — and rejecting those would break working queries.
+fn project(data: &mut Value, fields: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut available: std::collections::BTreeSet<String> = Default::default();
+    collect_keys(data, &mut available);
     match data {
         Value::Array(rows) => {
             for row in rows {
@@ -296,6 +325,38 @@ fn project(data: &mut Value, fields: &[String]) {
                 if let Value::Array(rows) = value {
                     for row in rows {
                         project_obj(row, fields);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    let unmatched: Vec<String> = fields
+        .iter()
+        .filter(|f| !available.contains(f.as_str()))
+        .cloned()
+        .collect();
+    (unmatched, available.into_iter().collect())
+}
+
+/// Every key present on any row, in the same shapes `project` walks.
+fn collect_keys(data: &Value, out: &mut std::collections::BTreeSet<String>) {
+    let mut keys_of = |v: &Value, out: &mut std::collections::BTreeSet<String>| {
+        if let Value::Object(m) = v {
+            out.extend(m.keys().cloned());
+        }
+    };
+    match data {
+        Value::Array(rows) => {
+            for row in rows {
+                keys_of(row, out);
+            }
+        }
+        Value::Object(map) => {
+            for value in map.values() {
+                if let Value::Array(rows) = value {
+                    for row in rows {
+                        keys_of(row, out);
                     }
                 }
             }

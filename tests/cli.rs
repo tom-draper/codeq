@@ -952,6 +952,56 @@ fn explore_forces_focus_source_under_a_tight_budget() {
 }
 
 #[test]
+fn fields_reports_names_that_matched_no_row() {
+    // Projecting an unknown name silently yielded a narrower row, which reads as
+    // "this record has no such value" rather than "that isn't a field". `line` vs
+    // `start_line` is the easy wrong guess, since `search` rows do use `line`.
+    let f = Fixture::new();
+    f.write("a.rs", "fn target() {}\n");
+
+    let v = f.run(&["definitions", "target", "--fields", "path,line"]);
+    let notes = &v["notes"];
+    assert_eq!(notes["unmatched_fields"][0], "line", "{v}");
+    let avail: Vec<&str> = notes["available_fields"].as_array().unwrap().iter()
+        .map(|s| s.as_str().unwrap()).collect();
+    assert!(avail.contains(&"start_line"), "must name the real field: {avail:?}");
+    // The projection still happens — this is a note, not a failure.
+    assert_eq!(v["data"][0]["path"], "a.rs");
+
+    // A field that exists produces no note at all.
+    let ok = f.run(&["definitions", "target", "--fields", "path,start_line"]);
+    assert!(ok["notes"].is_null(), "clean projection must not be annotated: {ok}");
+}
+
+#[test]
+fn astgrep_rejects_a_pattern_it_could_only_partly_parse() {
+    // Error recovery discards what it can't use, and the descent past the ERROR
+    // lands on whatever fragment survived — so `if { }` silently became "an empty
+    // block". Reporting zero matches for that is indistinguishable from "no such
+    // code exists", which is the wrong answer to give an agent.
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() { let a = 1; }\nfn two() { one(); }\n");
+
+    for pat in ["if { }", "match { }", "garbage $$$", "let $X = ;"] {
+        let out = f.raw(&["astgrep", pat, "--language", "rust"]);
+        assert!(
+            !out.status.success(),
+            "malformed pattern {pat:?} reported success: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+    // Patterns that legitimately rely on error recovery still work: a bare
+    // expression is not a valid top-level item in Rust.
+    for (pat, want) in [("$X.unwrap()", 0usize), ("one($$$)", 1), ("fn $N($$$) { $$$ }", 2)] {
+        let v = f.run(&["astgrep", pat, "--language", "rust"]);
+        assert_eq!(
+            v["data"]["matches"].as_array().unwrap().len(), want,
+            "pattern {pat:?}: {v}"
+        );
+    }
+}
+
+#[test]
 fn offsets_stay_aligned_when_a_file_is_not_valid_utf8() {
     // Fact offsets and the searchable body have to be measured in the same text.
     // The body is decoded with invalid bytes replaced, and each replacement is

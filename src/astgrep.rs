@@ -300,6 +300,22 @@ where
             "pattern did not parse as valid {lang_name}; write it as a complete construct"
         ));
     }
+    // `significant` descends through ERROR nodes, because a bare expression is not
+    // a valid top-level item in some grammars and only survives via error
+    // recovery. The cost is that a genuinely malformed pattern also parses — the
+    // parser discards what it can't use, and the descent lands on whichever
+    // fragment survived, error-free. `if { }` quietly became "an empty block" and
+    // `garbage $$$` became a lone identifier: both then reported zero matches and
+    // exit 0, which reads as "no such code exists" rather than "your pattern is
+    // wrong". Requiring the chosen node to span the whole pattern separates the
+    // two, since recovery is exactly what drops part of the input.
+    let covered = std::str::from_utf8(&psrc[pat_node.start_byte()..pat_node.end_byte()])
+        .unwrap_or_default();
+    if covered.trim() != substituted.trim() {
+        return Err(anyhow!(
+            "pattern did not parse as valid {lang_name}; write it as a complete construct"
+        ));
+    }
     if metavar_name(pat_node, psrc).is_some() || variadic_name(pat_node, psrc).is_some() {
         return Err(anyhow!("pattern is a bare metavariable — it would match everything"));
     }
