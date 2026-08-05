@@ -952,6 +952,62 @@ fn explore_forces_focus_source_under_a_tight_budget() {
 }
 
 #[test]
+fn concurrent_invocations_all_succeed() {
+    // Agents run codeq concurrently — parallel tool calls, or several agents on
+    // one checkout — and every invocation refreshes, so contention is the normal
+    // case. This used to fail outright: 10 of 12 returned "database is locked".
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    for i in 0..12 {
+        f.write(&format!("src/m{i}.rs"), &format!("pub fn f{i}() {{ let v = {i}; }}\n"));
+    }
+
+    // Cold: no index yet, so all twelve want to build one at the same time.
+    let spawn_all = |f: &Fixture| -> Vec<String> {
+        let kids: Vec<_> = (0..12)
+            .map(|_| {
+                PCommand::cargo_bin("codeq")
+                    .unwrap()
+                    .args(["--json", "symbols", "--limit", "0"])
+                    .current_dir(f.path())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
+        kids.into_iter()
+            .map(|k| {
+                let out = k.wait_with_output().unwrap();
+                assert!(
+                    out.status.success(),
+                    "concurrent invocation failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                String::from_utf8(out.stdout).unwrap()
+            })
+            .collect()
+    };
+
+    for body in spawn_all(&f) {
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["data"].as_array().unwrap().len(), 12, "cold: {body}");
+    }
+
+    // Warm, and then warm-after-an-edit: the other two shapes of contention.
+    for body in spawn_all(&f) {
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["data"].as_array().unwrap().len(), 12, "warm: {body}");
+    }
+    f.write("src/extra.rs", "pub fn extra() {}\n");
+    for body in spawn_all(&f) {
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["data"].as_array().unwrap().len(), 13, "after edit: {body}");
+    }
+}
+
+#[test]
 fn fields_reports_names_that_matched_no_row() {
     // Projecting an unknown name silently yielded a narrower row, which reads as
     // "this record has no such value" rather than "that isn't a field". `line` vs

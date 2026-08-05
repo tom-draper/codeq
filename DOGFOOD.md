@@ -1567,3 +1567,43 @@ JSON; the projection itself is unchanged and the old test still passes.
 Worth recording as a pattern: the reflex on finding surprising behaviour is to fix
 it, and twice now the right move was to first ask whether it was intended. The
 existing test was better evidence than my own reasoning.
+
+## codeq could not be run concurrently at all
+
+The header of db.rs says WAL is enabled "so that a reindex by one process does not
+block reads by concurrent agent invocations". Twelve simultaneous invocations:
+
+    cold starts              10/12 failed   "database is locked"
+    warm, unchanged tree     11/12 failed   <- even pure readers
+    warm, after one edit     11/12 failed
+
+Concurrency is not an edge case here — it is the design target. Parallel tool
+calls, or two agents on one checkout, and every invocation refreshes.
+
+Three separate causes, each hiding the next:
+
+1. No `busy_timeout`, so SQLite gave up the instant it met a lock.
+2. `PRAGMA journal_mode = WAL` ran on every open and takes an exclusive lock even
+   when the database is already in WAL. That is why *readers* failed: they
+   contended before reading anything. Now the mode is read first and only written
+   when it differs.
+3. `BEGIN DEFERRED` (rusqlite's default). This was the one that mattered. A
+   deferred transaction takes its write lock lazily, and SQLite returns
+   SQLITE_BUSY **immediately, bypassing the busy handler**, because two readers
+   both upgrading would deadlock. Adding the timeout changed nothing at all until
+   the transaction became `BEGIN IMMEDIATE` — a good reminder that a fix which
+   "should" work and doesn't means the diagnosis is incomplete, not that the fix
+   needs to be bigger.
+
+Then, because the lock is taken before the parse, twelve processes each held it
+through their own copy of the same work. Re-checking freshness once the lock is
+held lets the waiters skip it: measured properly (remove the check, rebuild,
+re-run) that is 8.5s -> 0.9s for a one-file change across twelve processes.
+Warm and unchanged is 32ms for twelve.
+
+Two of my own measurements were wrong before they were right, both worth naming.
+The first "9.3 seconds for a one-file change" was an artefact of the test writing
+its output files *into the indexed repository*, so the tree really was changing
+under every process; the true figure was ~0.9s. And I nearly kept the
+double-checked refresh on the strength of it sounding obviously good — the
+before/after comparison is the only reason I know it earns its place.

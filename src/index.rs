@@ -241,7 +241,26 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     // transaction never crosses threads, so index content stays deterministic
     // regardless of which worker finished first. A bounded channel bounds the
     // parsed bodies held in flight.
-    let tx = db.conn.unchecked_transaction()?;
+    // BEGIN IMMEDIATE, not the default DEFERRED. A deferred transaction takes its
+    // write lock lazily, on the first write — and SQLite refuses to make a reader
+    // wait for that upgrade, returning SQLITE_BUSY *immediately* and bypassing the
+    // busy timeout entirely, because two readers both upgrading would deadlock.
+    // Taking the write lock up front is what lets the busy handler do its job, so
+    // concurrent refreshes queue instead of failing.
+    let tx = rusqlite::Transaction::new_unchecked(
+        &db.conn,
+        rusqlite::TransactionBehavior::Immediate,
+    )?;
+    // Whoever held the lock may have just done exactly this work: several agent
+    // invocations noticing the same edit at once all decide to refresh, then
+    // queue here. Re-check now that the lock is ours, and skip the parse and the
+    // writes rather than redo them. Dropping `tx` unwritten rolls back cleanly.
+    if is_fresh(db, repo_root)? {
+        return Ok(RefreshStats {
+            reindexed: 0,
+            partial_failures,
+        });
+    }
     let parse_failures = AtomicU64::new(0);
     let reindexed = {
         let workers = std::thread::available_parallelism()

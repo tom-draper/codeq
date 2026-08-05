@@ -47,7 +47,24 @@ impl Db {
         let conn = Connection::open(&path)
             .with_context(|| format!("opening {}", path.display()))?;
 
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        // Must come first: without it SQLite gives up the instant it meets a
+        // lock, and every pragma below can contend. Agents run codeq
+        // concurrently — several tool calls at once, or several agents on one
+        // checkout — and each invocation refreshes, so contention is the normal
+        // case, not an edge one. Waiting briefly is right where failing is not:
+        // the work being waited on is another process finishing the very refresh
+        // this one would otherwise do.
+        conn.busy_timeout(std::time::Duration::from_secs(15))?;
+        // `PRAGMA journal_mode = WAL` takes an exclusive lock even when the
+        // database is already in WAL, so setting it unconditionally made every
+        // concurrent *reader* contend on open for no reason. Read it first and
+        // only write when it differs.
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap_or_default();
+        if !mode.eq_ignore_ascii_case("wal") {
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+        }
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
