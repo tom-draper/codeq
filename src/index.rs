@@ -79,11 +79,21 @@ fn parse_one(
     let was_indexed = prev.is_some();
 
     let (body, facts, spans, relations) = if content_changed && !is_binary {
+        // Everything downstream shares one coordinate system: the file decoded as
+        // UTF-8 with invalid bytes replaced (and the BOM already stripped above).
+        // Extracting from the raw bytes instead would put fact offsets and the
+        // searchable body on different scales for any file that is not valid
+        // UTF-8 — each invalid byte becomes a three-byte U+FFFD — so every
+        // enclosing-symbol lookup past the first bad byte would name the wrong
+        // definition. For valid UTF-8, which is virtually every file, this is
+        // byte-identical and free: the string is materialised for the FTS body
+        // either way.
+        let text = String::from_utf8_lossy(&bytes).into_owned();
         let (f, s, r) = match language {
-            Some(lang) => extractor.extract(lang, rel, &bytes),
+            Some(lang) => extractor.extract(lang, rel, text.as_bytes()),
             None => (Vec::new(), Vec::new(), Vec::new()),
         };
-        (Some(String::from_utf8_lossy(&bytes).into_owned()), f, s, r)
+        (Some(text), f, s, r)
     } else {
         (None, Vec::new(), Vec::new(), Vec::new())
     };

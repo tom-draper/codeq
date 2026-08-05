@@ -180,7 +180,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
     defs.sort_by(|a, b| (a.path.as_str(), a.start_line).cmp(&(b.path.as_str(), b.start_line)));
     let seed_count = defs.len();
 
-    let mut file_cache: HashMap<String, Option<Vec<u8>>> = HashMap::new();
+    let mut file_cache: HashMap<String, Option<String>> = HashMap::new();
 
     // Read seed chunk texts (needed for expansion regardless of include_text).
     let mut seed_text: HashMap<usize, String> = HashMap::new();
@@ -348,7 +348,7 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
         (!fa, da.path.as_str(), da.start_line).cmp(&(!fb, db_.path.as_str(), db_.start_line))
     });
 
-    let mut file_cache: HashMap<String, Option<Vec<u8>>> = HashMap::new();
+    let mut file_cache: HashMap<String, Option<String>> = HashMap::new();
     let mut chunks = Vec::new();
     let mut omitted = Vec::new();
     let mut used: u64 = 0;
@@ -640,20 +640,35 @@ fn fold_bodies(db: &Db, d: &Def, text: &str) -> Option<String> {
     Some(out)
 }
 
+/// The source of one definition, sliced by its byte range.
+///
+/// The file is normalised exactly as the indexer normalised it before measuring
+/// those offsets — leading BOM stripped, then decoded as UTF-8 with invalid bytes
+/// replaced — because the offsets are positions in *that* text, not in the bytes
+/// on disk. Slicing the raw bytes instead shifted every chunk by three on a
+/// BOM-prefixed file, and by two per invalid byte on anything that wasn't valid
+/// UTF-8, yielding source that started mid-expression.
 fn chunk_text(
     root: &Path,
     d: &Def,
-    cache: &mut HashMap<String, Option<Vec<u8>>>,
+    cache: &mut HashMap<String, Option<String>>,
 ) -> Option<String> {
-    let bytes = cache
-        .entry(d.path.clone())
-        .or_insert_with(|| std::fs::read(root.join(&d.path)).ok());
-    let bytes = bytes.as_ref()?;
-    let end = d.end_byte.min(bytes.len());
+    let text = cache.entry(d.path.clone()).or_insert_with(|| {
+        let bytes = std::fs::read(root.join(&d.path)).ok()?;
+        let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+        Some(String::from_utf8_lossy(bytes).into_owned())
+    });
+    let text = text.as_ref()?;
+    let end = d.end_byte.min(text.len());
     if d.start_byte >= end {
         return None;
     }
-    Some(String::from_utf8_lossy(&bytes[d.start_byte..end]).into_owned())
+    // Byte ranges come from tree-sitter, so they land on char boundaries; guard
+    // anyway rather than risk a panic on a stale index.
+    if !text.is_char_boundary(d.start_byte) || !text.is_char_boundary(end) {
+        return None;
+    }
+    Some(text[d.start_byte..end].to_string())
 }
 
 /// Collect identifier-like tokens (len >= 2) from text.

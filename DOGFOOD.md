@@ -1470,3 +1470,40 @@ edit/add/delete/rename/move, `at` innermost-first ordering, `path` chain edges,
 same-file/imported and prunes same-named functions in unreachable files), and
 adversarial file shapes — no trailing newline, a 4000-statement single line,
 CR-only endings.
+
+## Byte offsets measured in one text, applied to another
+
+Probing a corner nothing had touched — files that aren't valid UTF-8 — turned up a
+wrong answer, and chasing it surfaced a second, likelier one with the same cause.
+
+The indexer normalises a file before measuring anything: strip a leading BOM,
+decode as UTF-8 with invalid bytes replaced. Fact offsets are positions in *that*
+text. But two consumers were applying those offsets to the bytes on disk, which is
+a different string whenever normalisation actually changed something.
+
+- **Invalid UTF-8.** Each bad byte becomes a three-byte U+FFFD, so the searchable
+  body runs two bytes ahead per bad byte. `search`, `references` and `callers`
+  compare a match's body offset against a fact's raw range, so past the first bad
+  byte the enclosing-symbol lookup drifts — first dropping the tag, then landing
+  on the *next* definition. The output contradicted itself: `z.rs:2:13: fn alpha()
+  { helper(); }  [bravo]`, and `callers helper` named `bravo` where `alpha` is the
+  caller, while `at z.rs:2` correctly said `alpha`. Two commands disagreeing is
+  what made it findable.
+- **A leading BOM.** Same shape, three bytes, and far likelier to meet in the wild
+  — any Windows-authored tree. `explore` on a BOM file returned source starting
+  mid-expression: focus text `'﻿fn alpha() { helper()'` (truncated), callee
+  `' }\nfn helper()'`. Garbled code handed straight to an agent.
+
+Fixed by making the normalised text the single coordinate system: facts are now
+extracted from it rather than the raw bytes, and source assembly normalises before
+slicing instead of after. For valid UTF-8 without a BOM — virtually every file —
+extraction is byte-identical and costs nothing, because that string is already
+materialised for the FTS body. `read` was never affected: it is line-based, and
+line numbers were right throughout.
+
+Honest scoping note: I first claimed this was reachable in a real repo, having
+found seven invalid-UTF-8 files in api-analytics. Checking them showed all seven
+were `.git/objects` and a `.br` artifact — none indexed. The BOM half is the one
+that actually reaches users; the UTF-8 half needs genuinely latin-1 source, which
+older C/C++/PHP/Perl trees do have (no null bytes, so `looks_binary` passes them
+through as source). Worth stating plainly rather than leaving the inflated claim.

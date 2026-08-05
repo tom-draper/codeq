@@ -952,6 +952,59 @@ fn explore_forces_focus_source_under_a_tight_budget() {
 }
 
 #[test]
+fn offsets_stay_aligned_when_a_file_is_not_valid_utf8() {
+    // Fact offsets and the searchable body have to be measured in the same text.
+    // The body is decoded with invalid bytes replaced, and each replacement is
+    // three bytes where the original was one — so extracting facts from the raw
+    // bytes instead shifts every later offset and the enclosing-symbol lookup
+    // names the wrong definition (or none).
+    let f = Fixture::new();
+    let mut src: Vec<u8> = b"// ".to_vec();
+    src.extend(std::iter::repeat(0xE9u8).take(16)); // latin-1 'e-acute': invalid UTF-8
+    src.extend_from_slice(
+        b"\nfn alpha() { helper(); }\nfn bravo() { let b = 2; }\n\
+          fn charlie() { let c = 3; }\nfn helper() {}\n",
+    );
+    f.write_bytes("z.rs", &src);
+
+    // alpha is the caller; bravo merely sits after it in the file.
+    let callers = f.run(&["callers", "helper"]);
+    let rows = callers["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["symbol"], "alpha", "wrong enclosing definition: {rows:?}");
+
+    // `search` and `at` must agree about which definition line 2 belongs to.
+    let v = f.run(&["search", "helper"]);
+    let m = v["data"]["matches"].as_array().unwrap();
+    let call = m.iter().find(|r| r["line"] == 2).expect("match on line 2");
+    assert_eq!(call["symbol"], "alpha", "{call}");
+    let at = f.run(&["at", "z.rs:2"]);
+    assert_eq!(at["data"][0]["name"], "alpha", "{at}");
+}
+
+#[test]
+fn chunk_text_slices_the_same_text_the_offsets_were_measured_in() {
+    // The indexer strips a leading BOM before measuring offsets, so source
+    // assembly has to strip it too — slicing the raw bytes shifted every chunk
+    // by three and returned code starting mid-expression.
+    let f = Fixture::new();
+    f.write_bytes(
+        "b.rs",
+        "\u{feff}fn alpha() { helper(); }\nfn helper() {}\n".as_bytes(),
+    );
+    let d = f.run(&["explore", "alpha"]);
+    let src = d["data"]["source"].as_array().unwrap();
+    let focus = src.iter().find(|c| c["reason"] == "focus").expect("focus");
+    assert_eq!(
+        focus["text"].as_str().unwrap(),
+        "fn alpha() { helper(); }",
+        "BOM-shifted chunk: {focus}"
+    );
+    let callee = src.iter().find(|c| c["reason"] == "callee").expect("callee");
+    assert_eq!(callee["text"].as_str().unwrap(), "fn helper() {}", "{callee}");
+}
+
+#[test]
 fn refresh_sees_an_edit_that_preserves_size_and_mtime() {
     // The freshness fast path skips a file whose stat looks unchanged. mtime is
     // settable from userspace (`touch -d`, `cp -p`, `rsync -a`, tar extraction),
