@@ -1607,3 +1607,48 @@ its output files *into the indexed repository*, so the tree really was changing
 under every process; the true figure was ~0.9s. And I nearly kept the
 double-checked refresh on the strength of it sounding obviously good — the
 before/after comparison is the only reason I know it earns its place.
+
+## Member-level facts: fields, properties, enum variants
+
+The gap that prompted this: `definitions retries` returned **nothing** for a
+struct field, and `callers retries` conflated a Rust field with an unrelated
+Python attribute of the same name while listing the struct declaration itself as
+a "caller". For an agent editing a type — a very ordinary task — "what fields does
+this have" and "who reads this field" were answerable only by noisy text search,
+with no definition for `--resolved` to resolve against.
+
+Members are now `field` and `variant` facts, each carrying an `owner`: the type
+that declares it, found by walking to the nearest *type* declaration rather than
+the nearest named node. The separate column was the design decision worth
+arguing. Qualifying the name as `Config.retries` would have been less code — no
+schema change, no column threaded through three queries — but it breaks exactly
+the question being asked: `definitions retries` would return nothing, and you
+would have to already know the type in order to ask which type it was. So:
+`name` stays the member name, `owner` says whose it is. Cost: a 17-column insert,
+which outgrew rusqlite's tuple `Params` impl and needed `params!`.
+
+Best side effect: `outline` now shows a type's shape, members nested under it.
+
+**A bug the feature exposed.** `api` on an exported TypeScript class reported
+`private secret` as public API. The JS/TS visibility rule only consulted
+accessibility modifiers for `method_definition`, so a class field fell through to
+"does the file export this?" — and since the class was exported, every field read
+as public. Members now consult their own modifier; verified that TS `private`,
+Java `private` and non-`pub` Rust fields are all excluded from `api`.
+
+**Two things checked rather than assumed.** Thousands of new field facts could
+have buried `unused` — it still reports exactly 3 on codeq itself, because fields
+are read somewhere. And text mode needed its own change: the renderer returns
+early on any row with a `signature`, so `owner` was invisible in the *default*
+output, which is where it matters most (`pub retries: u32` does not say whose it
+is). Now bracketed like `search`'s enclosing symbol.
+
+Honest scope: 5 of 23 languages (Rust, Go, Java, TypeScript/TSX, C#). Python gets
+nothing, and Python is plausibly the most common language here — its attributes
+are assignments inside `__init__`, not declarations, so they need a different
+extraction shape plus a judgement on class-level assignments and `@property`. C/C++
+was attempted and backed out when the query anchor did not match cleanly; better
+done deliberately than by a regex that half-worked. Five languages that are exactly
+right beats twenty that are approximately right, for a tool whose whole claim is
+that its output can be trusted — but `definitions retries` still returns nothing in
+a Python codebase, which is the same failure that started this. Schema 16 -> 17.

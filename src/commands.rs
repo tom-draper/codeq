@@ -320,6 +320,9 @@ struct SymbolRow {
     /// Only populated when the caller passes --signatures.
     #[serde(skip_serializing_if = "Option::is_none")]
     signature: Option<String>,
+    /// The type a `field`/`variant` belongs to; absent for everything else.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
 }
 
 pub fn cmd_symbols(
@@ -335,7 +338,7 @@ pub fn cmd_symbols(
     let s = Session::open(cwd, false, out)?;
 
     let mut sql = String::from(
-        "SELECT name, kind, path, language, start_line, end_line, signature
+        "SELECT name, kind, path, language, start_line, end_line, signature, owner
          FROM facts WHERE name IS NOT NULL AND kind <> 'import'",
     );
     let mut args: Vec<String> = Vec::new();
@@ -373,6 +376,7 @@ pub fn cmd_symbols(
             start_line: r.get(4)?,
             end_line: r.get(5)?,
             signature: if signatures { r.get(6)? } else { None },
+            owner: r.get(7)?,
         })
     })?;
     let data: Vec<SymbolRow> = rows.collect::<std::result::Result<_, _>>()?;
@@ -396,6 +400,10 @@ struct DefinitionRow {
     signature: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     doc: Option<String>,
+    /// For a `field`/`variant`, the type it belongs to. Absent otherwise — a
+    /// member name alone (`id`, `name`) does not identify anything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
 }
 
 fn definitions_of(
@@ -408,7 +416,7 @@ fn definitions_of(
     let sql = format!(
         "SELECT name, kind, path, language,
                 start_line, start_col, end_line, end_col, start_byte, end_byte,
-                signature, doc
+                signature, doc, owner
          FROM facts WHERE name = ? AND kind <> 'import'{} ORDER BY path, start_line{}",
         filters.sql(),
         limit_clause(limit),
@@ -428,6 +436,7 @@ fn definitions_of(
             end_byte: r.get(9)?,
             signature: r.get(10)?,
             doc: r.get(11)?,
+            owner: r.get(12)?,
         })
     })?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -1233,7 +1242,7 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
     let mut stmt = s.db.conn.prepare(
         "SELECT name, kind, path, language,
                 start_line, start_col, end_line, end_col, start_byte, end_byte,
-                signature, doc
+                signature, doc, owner
          FROM facts
          WHERE kind <> 'import' AND (path = ?1 OR path LIKE ?2)
            AND start_line <= ?3 AND end_line >= ?3
@@ -1253,6 +1262,7 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
             end_byte: r.get(9)?,
             signature: r.get(10)?,
             doc: r.get(11)?,
+            owner: r.get(12)?,
         })
     })?;
     let data: Vec<DefinitionRow> = rows.collect::<std::result::Result<_, _>>()?;
@@ -3003,10 +3013,11 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "fact_kinds": [
             "function", "method", "struct", "enum", "union", "trait", "module",
             "constant", "typealias", "macro", "class", "interface", "type", "import",
-            "component",
+            "component", "field", "variant",
         ],
         "notes": {
             "imports": "raw syntactic module strings; not resolved",
+            "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#",
             "context_tokenizer": "approx:4-bytes-per-token",
             "freshness": "every command refreshes changed files before answering",
         },

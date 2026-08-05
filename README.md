@@ -118,6 +118,9 @@ Orient and read:
 
 Find and understand a symbol:
 - `codeq definitions <name>` gives the definition(s), with signature, doc, and ranges.
+  Struct fields, class properties and enum variants are definitions too, each carrying the
+  type that declares it — so `definitions retries` answers *which* type's field it found
+  rather than leaving a bare name. `outline` nests them under their type.
 - `codeq about <name>` is a one-call dossier: definition plus callers plus callees.
 - `codeq at <path>:<line>` names the definition enclosing a location, e.g. from a stack trace.
 

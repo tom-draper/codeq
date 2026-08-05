@@ -241,7 +241,13 @@ fn render_row(row: &Value, out: &mut String) {
         return;
     }
     if let Some(sig) = str_of("signature") {
-        out.push_str(&format!("{pad}{loc}{sig}\n"));
+        // A member's signature (`pub retries: u32`) says nothing about which type
+        // it belongs to, and for a name like `id` or `name` that is the only part
+        // that identifies it. Bracketed like `search`'s enclosing symbol.
+        match str_of("owner") {
+            Some(owner) => out.push_str(&format!("{pad}{loc}{sig}  [{owner}]\n")),
+            None => out.push_str(&format!("{pad}{loc}{sig}\n")),
+        }
         return;
     }
     // An import cycle: the ordered file list, closed back to its first member so
@@ -341,7 +347,7 @@ fn project(data: &mut Value, fields: &[String]) -> (Vec<String>, Vec<String>) {
 
 /// Every key present on any row, in the same shapes `project` walks.
 fn collect_keys(data: &Value, out: &mut std::collections::BTreeSet<String>) {
-    let mut keys_of = |v: &Value, out: &mut std::collections::BTreeSet<String>| {
+    let keys_of = |v: &Value, out: &mut std::collections::BTreeSet<String>| {
         if let Value::Object(m) = v {
             out.extend(m.keys().cloned());
         }

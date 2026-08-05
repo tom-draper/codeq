@@ -22,7 +22,9 @@ use rusqlite::Connection;
 // v15: added Vue extraction — rebuild to populate them.
 // v16: freshness also compares inode ctime, so a size- and mtime-preserving edit
 // is no longer invisible; old rows have no ctime to compare, so rebuild.
-pub const SCHEMA_VERSION: i64 = 16;
+// v17: struct fields / class properties / enum variants are extracted as
+// `field` and `variant` facts carrying their owning type — rebuild to populate.
+pub const SCHEMA_VERSION: i64 = 17;
 
 pub struct Db {
     pub conn: Connection,
@@ -126,6 +128,8 @@ impl Db {
                 source     TEXT NOT NULL,
                 confidence REAL NOT NULL,
                 visibility TEXT,
+                -- The type a `field`/`variant` belongs to; NULL otherwise.
+                owner      TEXT,
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
             );
 
@@ -194,6 +198,9 @@ impl Db {
         let _ = self
             .conn
             .execute("ALTER TABLE files ADD COLUMN ctime_ns INTEGER", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE facts ADD COLUMN owner TEXT", []);
 
         // On a schema version change, wipe derived data so the next refresh
         // rebuilds everything (including the FTS index) from scratch.

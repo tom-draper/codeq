@@ -312,8 +312,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 "INSERT OR REPLACE INTO facts(
                     id, kind, name, path, language,
                     start_byte, end_byte, start_line, start_col, end_line, end_col,
-                    signature, doc, source, confidence, visibility)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+                    signature, doc, source, confidence, visibility, owner)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
             )?;
             let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
             let mut ins_fts =
@@ -350,7 +350,9 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 }
                 if let Some(lang) = p.language {
                     for f in &p.facts {
-                        ins_fact.execute((
+                        // `params!` rather than a tuple: rusqlite only implements
+                        // `Params` for tuples up to 16, and this is 17 columns.
+                        ins_fact.execute(rusqlite::params![
                             f.id(&p.rel),
                             &f.kind,
                             &f.name,
@@ -367,7 +369,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                             &f.source,
                             f.confidence,
                             &f.visibility,
-                        ))?;
+                            &f.owner,
+                        ])?;
                     }
                     for (sb, eb, sp) in &p.spans {
                         ins_span.execute((&p.rel, *sb as i64, *eb as i64, sp.as_i64()))?;

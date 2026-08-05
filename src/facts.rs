@@ -38,6 +38,11 @@ pub struct Fact {
     /// (module- or file-local), `restricted` (`pub(crate)`, `protected`). `None`
     /// for facts where it doesn't apply (imports) or can't be determined.
     pub visibility: Option<String>,
+    /// The type a member belongs to — the struct/class/enum enclosing a `field`
+    /// or `variant`. `None` for everything else. Members share names constantly
+    /// (`id`, `name`, `path`), so the owner is what makes one addressable:
+    /// without it `definitions retries` cannot say *which* type's field it found.
+    pub owner: Option<String>,
 }
 
 /// A type relation: `subtype` implements/extends `supertype`. Captures
@@ -227,6 +232,7 @@ impl LangSpec {
                                 source: self.source.clone(),
                                 confidence: 1.0,
                                 visibility: None,
+                                owner: None,
                             });
                         }
                     }
@@ -276,6 +282,7 @@ impl LangSpec {
                         source: self.source.clone(),
                         confidence: 1.0,
                         visibility,
+                        owner: owner_of(kind, node, src),
                     });
                 }
             }
@@ -720,6 +727,7 @@ fn component_fact(path: &str, src: &[u8]) -> Option<Fact> {
         source: "svelte/component".to_string(),
         confidence: 1.0,
         visibility: Some("public".to_string()), // importable by any other file
+        owner: None,
     })
 }
 
@@ -763,6 +771,63 @@ fn first_child_kind<'a>(node: Node, kind: &str, src: &'a [u8]) -> Option<&'a str
     let mut c = node.walk();
     let found = node.children(&mut c).find(|n| n.kind() == kind);
     found.and_then(|n| n.utf8_text(src).ok())
+}
+
+/// Node kinds that declare a type a member can belong to. Deliberately a fixed
+/// list rather than "anything with a name": a field's owner is the nearest
+/// *type*, not the nearest function or block that happens to enclose it.
+const TYPE_KINDS: &[&str] = &[
+    // Rust
+    "struct_item",
+    "enum_item",
+    "union_item",
+    // Go
+    "type_spec",
+    // Java / C# / TS / JS / Python / PHP / Swift / Kotlin
+    "class_declaration",
+    "class_definition",
+    "interface_declaration",
+    "struct_declaration",
+    "enum_declaration",
+    "record_declaration",
+    "object_declaration",
+    "protocol_declaration",
+    // C / C++
+    "struct_specifier",
+    "class_specifier",
+    "union_specifier",
+    "enum_specifier",
+];
+
+/// The name of the type enclosing a member, for `field` and `variant` facts.
+/// Walks up to the nearest type declaration and reads its name — the identifier
+/// child, whatever the grammar happens to call it. `None` for non-members, and
+/// for a member whose owner is anonymous (a bare `struct { … }` in C).
+fn owner_of(kind: &str, node: Node, src: &[u8]) -> Option<String> {
+    if kind != "field" && kind != "variant" {
+        return None;
+    }
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if TYPE_KINDS.contains(&n.kind()) {
+            // `name:` where the grammar has it; else the first identifier-ish
+            // child, which is where the rest put it.
+            if let Some(t) = n
+                .child_by_field_name("name")
+                .and_then(|c| c.utf8_text(src).ok())
+            {
+                return Some(t.to_string());
+            }
+            let mut c = n.walk();
+            return n
+                .children(&mut c)
+                .find(|ch| ch.kind().ends_with("identifier") || ch.kind() == "name")
+                .and_then(|ch| ch.utf8_text(src).ok())
+                .map(|t| t.to_string());
+        }
+        cur = n.parent();
+    }
+    None
 }
 
 /// Whether any ancestor of `node` has the given kind (walks up to the root).
@@ -821,7 +886,14 @@ fn visibility_of(lang: &str, name: &str, def: Node, src: &[u8]) -> Option<String
             }
         }
         "javascript" | "typescript" | "tsx" => {
-            if def.kind() == "method_definition" {
+            // Members carry their own modifier; only a *top-level* definition
+            // takes its visibility from whether the file exports it. Without the
+            // field kinds here, `private secret` in an exported class was
+            // reported as public API purely because the class was exported.
+            if matches!(
+                def.kind(),
+                "method_definition" | "public_field_definition" | "property_signature"
+            ) {
                 // Members are public by default; only a modifier or a #private
                 // name restricts them.
                 if name.starts_with('#') {
@@ -959,6 +1031,11 @@ const RUST_QUERY: &str = r#"
 (type_item name: (type_identifier) @name) @typealias
 (macro_definition name: (identifier) @name) @macro
 
+; Members. `field` and `variant` carry an `owner` (the enclosing type), because
+; member names collide constantly across types and mean little alone.
+(field_declaration name: (field_identifier) @name) @field
+(enum_variant name: (identifier) @name) @variant
+
 ; Raw syntactic imports: name is the module path as written in source.
 (use_declaration argument: (_) @name) @import
 ; An external `mod foo;` (no inline body) pulls in another file's module — a
@@ -1021,6 +1098,9 @@ const TS_EXTRA: &str = r#"
 (interface_declaration name: (_) @name) @interface
 (type_alias_declaration name: (_) @name) @type
 (enum_declaration name: (_) @name) @enum
+(public_field_definition name: (_) @name) @field
+(property_signature name: (_) @name) @field
+(enum_assignment name: (_) @name) @variant
 "#;
 
 /// Go definitions and imports.
@@ -1032,6 +1112,7 @@ const GO_QUERY: &str = r#"
 (type_declaration (type_spec name: (type_identifier) @name type: (type_identifier)) @type)
 (type_declaration (type_alias name: (type_identifier) @name) @type)
 (import_spec path: (interpreted_string_literal) @name) @import
+(field_declaration name: (field_identifier) @name) @field
 "#;
 
 const GO_SPANS: &str = r#"
@@ -1050,6 +1131,8 @@ const JAVA_QUERY: &str = r#"
 (method_declaration name: (identifier) @name !body) @method
 (constructor_declaration name: (identifier) @name body: (constructor_body) @body) @method
 (import_declaration (scoped_identifier) @name) @import
+(field_declaration declarator: (variable_declarator name: (identifier) @name)) @field
+(enum_constant name: (identifier) @name) @variant
 "#;
 
 const JAVA_SPANS: &str = r#"
@@ -1135,6 +1218,9 @@ const CSHARP_QUERY: &str = r#"
 (namespace_declaration name: (_) @name body: (_) @body) @namespace
 (using_directive (identifier) @name) @import
 (using_directive (qualified_name) @name) @import
+(field_declaration (variable_declaration (variable_declarator (identifier) @name))) @field
+(property_declaration name: (identifier) @name) @field
+(enum_member_declaration name: (identifier) @name) @variant
 "#;
 
 const CSHARP_SPANS: &str = r#"

@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 16);
+    assert_eq!(v["index"]["schema"], 17);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -949,6 +949,48 @@ fn explore_forces_focus_source_under_a_tight_budget() {
     let omitted: Vec<&str> = d["data"]["omitted"].as_array().unwrap().iter()
         .filter_map(|o| o["symbol"].as_str()).collect();
     assert!(omitted.contains(&"caller"), "oversized caller should be reported omitted: {omitted:?}");
+}
+
+#[test]
+fn members_are_definitions_and_name_the_type_that_declares_them() {
+    // A member name alone identifies nothing — `id`, `name` and `retries` recur
+    // across unrelated types — so a field fact is only useful with its owner.
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct Config { pub retries: u32, name: String }\npub enum Mode { Fast, Slow }\n");
+    f.write("g.go", "type Server struct { Host string }\n");
+    f.write("t.ts", "export class Widget { public width: number = 1; private secret: string = \"s\"; }\n");
+    f.write("J.java", "class Account { private int balance; public String holder; }\n");
+
+    // The case that used to return nothing at all.
+    let v = f.run(&["definitions", "retries"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{v}");
+    assert_eq!(rows[0]["kind"], "field");
+    assert_eq!(rows[0]["owner"], "Config", "a field must name its type: {v}");
+
+    // Enum variants likewise.
+    let v = f.run(&["definitions", "Fast"]);
+    assert_eq!(v["data"][0]["kind"], "variant", "{v}");
+    assert_eq!(v["data"][0]["owner"], "Mode", "{v}");
+
+    // Extraction reaches the other grammars, and each owner is the *nearest*
+    // type rather than whatever else encloses it.
+    for (name, owner) in [("Host", "Server"), ("width", "Widget"), ("balance", "Account")] {
+        let v = f.run(&["definitions", name]);
+        assert_eq!(v["data"][0]["owner"], owner, "{name}: {v}");
+    }
+
+    // A member's own modifier decides its visibility. Before, a private field in
+    // an *exported* class inherited the class's visibility and showed up as API.
+    let api: Vec<String> = field_set(&f.run(&["api", "t.ts"]), "name");
+    assert!(api.contains(&"width".to_string()), "{api:?}");
+    assert!(!api.contains(&"secret".to_string()), "private field leaked into api: {api:?}");
+    let api: Vec<String> = field_set(&f.run(&["api", "J.java"]), "name");
+    assert!(api.contains(&"holder".to_string()) && !api.contains(&"balance".to_string()), "{api:?}");
+
+    // Non-members must not sprout an owner.
+    let v = f.run(&["definitions", "Config"]);
+    assert!(v["data"][0]["owner"].is_null(), "a type has no owner: {v}");
 }
 
 #[test]

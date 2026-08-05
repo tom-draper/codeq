@@ -25,6 +25,10 @@ benchmarks — not as a step you run before querying.
   neighbourhood, budgeted and grouped by file (each source block tagged focus/caller/
   callee). Replaces the `about` → `read` → `read` sequence; `--max-tokens` caps it (the
   definition is always kept, the rest fill the budget, drops are listed under `omitted`).
+- **A type's members:** fields, properties and enum variants are facts too, tagged with
+  the `owner` type — `codeq definitions retries` says which type declares it, and
+  `codeq outline <file>` nests members under their type. Rust/Go/Java/TS/C# only;
+  other languages still return just the type.
 - **Orient:** `codeq map`
 - **Understand a file cheaply:** `codeq read <file>` — folds long function bodies
   to signatures; read this instead of ingesting a whole large file.
