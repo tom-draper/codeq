@@ -994,6 +994,41 @@ fn members_are_definitions_and_name_the_type_that_declares_them() {
 }
 
 #[test]
+fn python_attributes_are_members_despite_having_no_declaration_site() {
+    // Python declares an attribute by assigning it, so there is no single
+    // declaration to capture: the same attribute is assigned in whichever methods
+    // touch it, and an assignment through some *other* object is not a
+    // declaration at all.
+    let f = Fixture::new();
+    f.write(
+        "p.py",
+        "class Config:\n    DEFAULT = 3\n    timeout: float = 1.5\n\
+         \n    def __init__(self):\n        self.retries = 3\n\
+         \n    def reset(self):\n        self.retries = 0\n\
+         \ndef helper(other):\n    other.retries = 99\n",
+    );
+
+    let members = field_set(&f.run(&["symbols", "--kind", "field", "--limit", "0"]), "name");
+    for want in ["DEFAULT", "timeout", "retries"] {
+        assert!(members.contains(&want.to_string()), "missing {want}: {members:?}");
+    }
+
+    // Assigned in two methods, but it is one member — reported at the earliest.
+    let v = f.run(&["definitions", "retries"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "one member per (name, owner): {v}");
+    assert_eq!(rows[0]["start_line"], 6, "earliest declaration wins: {v}");
+    assert_eq!(rows[0]["owner"], "Config");
+
+    // `other.retries = 99` sits in a plain function: not self-qualified, and no
+    // enclosing type, so it is not a member.
+    assert!(
+        rows.iter().all(|r| r["start_line"] != 11),
+        "an assignment through another object is not a declaration: {v}"
+    );
+}
+
+#[test]
 fn an_unresolvable_compare_to_ref_says_so_plainly() {
     // `--compare-to` defaults to `main`, so a repo whose trunk is `master` hits
     // this on its first `changed`. Git's own wording for an unknown ref advises

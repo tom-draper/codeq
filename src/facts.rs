@@ -241,7 +241,12 @@ impl LangSpec {
                     // A guarded match is only valid when the token is a known
                     // keyword. Elixir definitions are macro calls (`def`/`defp`/
                     // `defmodule`); every other language guards call-style imports.
-                    let ok = if self.lang == "elixir" {
+                    // Python instance attributes are assignments, and only a
+                    // `self.`-qualified one declares a member; `other.x = 1`
+                    // mutates somebody else's object.
+                    let ok = if self.lang == "python" {
+                        g == "self"
+                    } else if self.lang == "elixir" {
                         matches!(g, "def" | "defp" | "defmacro" | "defmacrop"
                             | "defmodule" | "defprotocol" | "defimpl" | "defguard")
                     } else {
@@ -268,6 +273,14 @@ impl LangSpec {
                     };
                     let start = node.start_position();
                     let end = node.end_position();
+                    // A member with no declaring type is not addressable — an
+                    // anonymous C struct's field, or a `self.x =` in a plain
+                    // function — and an owner-less `field` is exactly the bare
+                    // name this fact kind exists to avoid.
+                    let owner = owner_of(kind, node, src);
+                    if matches!(kind, "field" | "variant") && owner.is_none() {
+                        continue;
+                    }
                     facts.push(Fact {
                         kind: kind.to_string(),
                         name,
@@ -282,10 +295,38 @@ impl LangSpec {
                         source: self.source.clone(),
                         confidence: 1.0,
                         visibility,
-                        owner: owner_of(kind, node, src),
+                        owner,
                     });
                 }
             }
+        }
+
+        // A member can be declared more than once — Python assigns `self.x` in
+        // whichever methods touch it first — but it is still one member. Keep the
+        // earliest declaration per (name, owner) so `definitions` shows a single
+        // place rather than implying several. Names cannot repeat within one type
+        // in any of these languages, so this cannot merge distinct members.
+        {
+            let mut seen: std::collections::HashSet<(String, String)> = Default::default();
+            let mut keep: Vec<bool> = Vec::with_capacity(facts.len());
+            let mut order: Vec<usize> = (0..facts.len()).collect();
+            order.sort_by_key(|&i| facts[i].start_byte);
+            let mut drop: std::collections::HashSet<usize> = Default::default();
+            for &i in &order {
+                let f = &facts[i];
+                if !matches!(f.kind.as_str(), "field" | "variant") {
+                    continue;
+                }
+                let key = (f.name.clone(), f.owner.clone().unwrap_or_default());
+                if !seen.insert(key) {
+                    drop.insert(i);
+                }
+            }
+            for i in 0..facts.len() {
+                keep.push(!drop.contains(&i));
+            }
+            let mut it = keep.iter();
+            facts.retain(|_| *it.next().unwrap_or(&true));
         }
 
         let mut spans = Vec::new();
@@ -1064,6 +1105,16 @@ const PYTHON_QUERY: &str = r#"
 ; module string (no specific name to qualify with).
 (import_from_statement module_name: (dotted_name) @name (wildcard_import)) @import
 (import_from_statement module_name: (relative_import) @name) @import
+
+; Members. Python declares attributes by assigning them, so both the class-body
+; form and `self.x = …` count; the latter is guarded on its receiver so
+; `other.x = 1` (mutating somebody else's object) is not a declaration.
+; `@field` sits on the *assignment*, not on the class: the owner is resolved by
+; walking up from the fact's own node, so capturing the class would look for the
+; class's own parent and find no type at all.
+(class_definition
+  body: (block (expression_statement (assignment left: (identifier) @name) @field)))
+(assignment left: (attribute object: (identifier) @guard attribute: (identifier) @name)) @field
 "#;
 
 /// JavaScript definitions and ES imports. Node types here also exist in the
@@ -1171,6 +1222,8 @@ const C_QUERY: &str = r#"
 (enum_specifier name: (type_identifier) @name body: (enumerator_list) @body) @enum
 (preproc_include path: (system_lib_string) @name) @import
 (preproc_include path: (string_literal) @name) @import
+(field_declaration declarator: (field_identifier) @name) @field
+(enumerator name: (identifier) @name) @variant
 "#;
 
 const C_SPANS: &str = r#"
@@ -1238,6 +1291,8 @@ const PHP_QUERY: &str = r#"
 (trait_declaration name: (name) @name body: (declaration_list) @body) @trait
 (enum_declaration name: (name) @name) @enum
 (namespace_use_clause (qualified_name) @name) @import
+(property_declaration (property_element (variable_name (name) @name))) @field
+(enum_case name: (name) @name) @variant
 ; File inclusion (require/include and their _once variants) with a static string
 ; path — PHP's other import mechanism. Both single-quoted (string) and
 ; double-quoted (encapsed_string) forms; quotes stripped like other imports.
@@ -1418,6 +1473,7 @@ const KOTLIN_QUERY: &str = r#"
 (object_declaration name: (_) @name) @class
 (function_declaration name: (_) @name) @function
 (import [(identifier) (qualified_identifier)] @name) @import
+(property_declaration (variable_declaration (identifier) @name)) @field
 "#;
 const KOTLIN_SPANS: &str = r#"
 (line_comment) @comment
@@ -1437,6 +1493,7 @@ const SWIFT_QUERY: &str = r#"
 (protocol_declaration name: (type_identifier) @name body: (protocol_body) @body) @interface
 (protocol_declaration name: (type_identifier) @name !body) @interface
 (import_declaration (identifier) @name) @import
+(property_declaration (pattern (simple_identifier) @name)) @field
 "#;
 const SWIFT_SPANS: &str = r#"
 (comment) @comment

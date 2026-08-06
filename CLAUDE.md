@@ -27,8 +27,10 @@ benchmarks — not as a step you run before querying.
   definition is always kept, the rest fill the budget, drops are listed under `omitted`).
 - **A type's members:** fields, properties and enum variants are facts too, tagged with
   the `owner` type — `codeq definitions retries` says which type declares it, and
-  `codeq outline <file>` nests members under their type. Rust/Go/Java/TS/C# only;
-  other languages still return just the type.
+  `codeq outline <file>` nests members under their type. Rust, Go, Java, TS/TSX,
+  C#, Python, C, C++, PHP, Kotlin and Swift; the remaining languages return just
+  the type. Python has no declaration site, so a member is its earliest class-body
+  or `self.x =` assignment (`other.x =` is not a declaration).
 - **Orient:** `codeq map`
 - **Understand a file cheaply:** `codeq read <file>` — folds long function bodies
   to signatures; read this instead of ingesting a whole large file.

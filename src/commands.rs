@@ -3017,7 +3017,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         ],
         "notes": {
             "imports": "raw syntactic module strings; not resolved",
-            "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#",
+            "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#, Python, C, C++, PHP, Kotlin, Swift. Python attributes are assignments, so a member is its earliest `self.x =` or class-body assignment",
             "context_tokenizer": "approx:4-bytes-per-token",
             "freshness": "every command refreshes changed files before answering",
         },

@@ -1652,3 +1652,34 @@ done deliberately than by a regex that half-worked. Five languages that are exac
 right beats twenty that are approximately right, for a tool whose whole claim is
 that its output can be trusted — but `definitions retries` still returns nothing in
 a Python codebase, which is the same failure that started this. Schema 16 -> 17.
+
+## Members for the remaining languages, and what Python forced
+
+Extending member facts from 5 languages to 11 (adding Python, C, C++, PHP, Kotlin,
+Swift) was mechanical for five of them and a design problem for Python, which has
+no declaration site at all: an attribute exists because something assigned it.
+
+Three rules came out of that, and two are general improvements rather than Python
+special-casing:
+
+- **A member with no owner is dropped.** An owner-less `field` is precisely the
+  bare, unaddressable name this fact kind exists to replace. It also disposes of
+  `self.x = 1` inside a plain function and of anonymous C structs, for free.
+- **Members are deduplicated per (name, owner), earliest wins.** Python assigns
+  `self.retries` in `__init__` and again in `reset`; that is one member, not two
+  declarations. Safe generally, because no language here permits two members of
+  one name in one type.
+- **`other.x = 1` is not a declaration** — guarded on the `self` receiver, reusing
+  the mechanism built for Ruby's `require` and Elixir's `def`.
+
+The owner rule immediately caught a mistake of my own: I had put `@field` on the
+`class_definition` node, so `owner_of` walked up from the class looking for an
+*enclosing* type, found none, and silently dropped every class-body attribute —
+`DEFAULT = 3` and `timeout: float = 1.5` simply were not there. The capture belongs
+on the assignment, so that the walk starts inside the class. Worth noting that the
+new invariant is what surfaced it: before, those would have been emitted as fields
+owned by nothing and looked approximately right.
+
+Python's rule is a judgement, not a fact, so it is stated in `capabilities`, the
+README and CLAUDE.md rather than left implicit: a member is its earliest class-body
+or `self.x =` assignment.
