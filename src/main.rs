@@ -103,6 +103,9 @@ enum Command {
         /// Restrict to a symbol kind (e.g. function, struct, class).
         #[arg(long)]
         kind: Option<String>,
+        /// Restrict to members of this type (fields/variants carry their owner).
+        #[arg(long)]
+        owner: Option<String>,
         /// Restrict to a language.
         #[arg(long)]
         language: Option<String>,
@@ -555,6 +558,7 @@ fn main() -> ExitCode {
         Command::Symbols {
             pattern,
             kind,
+            owner,
             language,
             path,
             signatures,
@@ -563,6 +567,7 @@ fn main() -> ExitCode {
             &cwd,
             pattern.as_deref(),
             kind.as_deref(),
+            owner.as_deref(),
             language.as_deref(),
             path.as_deref(),
             signatures,

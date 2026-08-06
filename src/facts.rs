@@ -601,7 +601,7 @@ impl Extractor {
             )?,
             graphql: LangSpec::new(
                 tree_sitter_graphql::LANGUAGE.into(),
-                GRAPHQL_QUERY, GRAPHQL_SPANS, "", "treesitter/graphql", "graphql",
+                GRAPHQL_QUERY, GRAPHQL_SPANS, GRAPHQL_REL, "treesitter/graphql", "graphql",
             )?,
         })
     }
@@ -1714,6 +1714,45 @@ const GRAPHQL_QUERY: &str = r#"
 (field_definition (name) @name) @field
 (enum_value_definition (enum_value) @name) @variant
 "#;
+// `type User implements Node & Timestamped`. The grammar nests
+// `implements_interfaces` left-recursively rather than listing siblings, so
+// `A & B & C` is `II(II(II(A), B), C)` and a single pattern binds only the
+// outermost. One pattern per nesting level therefore, which covers up to five
+// interfaces on a type — a stated bound rather than a silent truncation, and
+// past anything real schemas do.
+const GRAPHQL_REL: &str = r#"
+(object_type_definition
+  (name) @sub
+  (implements_interfaces (named_type (name) @implements)))
+(interface_type_definition
+  (name) @sub
+  (implements_interfaces (named_type (name) @implements)))
+(object_type_definition
+  (name) @sub
+  (implements_interfaces (implements_interfaces (named_type (name) @implements))))
+(interface_type_definition
+  (name) @sub
+  (implements_interfaces (implements_interfaces (named_type (name) @implements))))
+(object_type_definition
+  (name) @sub
+  (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements)))))
+(interface_type_definition
+  (name) @sub
+  (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements)))))
+(object_type_definition
+  (name) @sub
+  (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements))))))
+(interface_type_definition
+  (name) @sub
+  (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements))))))
+(object_type_definition
+  (name) @sub
+  (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements)))))))
+(interface_type_definition
+  (name) @sub
+  (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements)))))))
+"#;
+
 const GRAPHQL_SPANS: &str = r#"
 (comment) @comment
 (string_value) @string

@@ -116,6 +116,8 @@ benchmarks — not as a step you run before querying.
   x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a` — so the imported symbol
   resolves like a direct module import; relative (`from . import x`) and wildcard
   forms stay coarse. Verify via the edge's module string.
+- **What a type holds:** `codeq symbols --owner Config` — the members a type
+  declares, without dumping every field in the repo.
 - **Trim tokens on list output:** append `--fields a,b`
 
 ## Known limitations (found by dogfooding — don't be misled)

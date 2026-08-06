@@ -994,6 +994,106 @@ fn members_are_definitions_and_name_the_type_that_declares_them() {
 }
 
 #[test]
+fn deps_resolves_an_import_that_names_a_directory() {
+    // Most imports name a *directory*, not a file — `./utils` means
+    // `utils/index.js`, `from pkg import x` means `pkg/__init__.py` — and stem
+    // matching alone never resolved any of them, so the dependency graph silently
+    // missed the dominant idiom in its two largest ecosystems.
+    let f = Fixture::new();
+    f.write("app.js", "import { helper } from './utils';\nexport function run() { return helper(); }\n");
+    f.write("utils/index.js", "export function helper() { return 1 }\n");
+    f.write("main.py", "from pkg import thing\n");
+    f.write("pkg/__init__.py", "def thing(): pass\n");
+    // An ordinary file import must keep working.
+    f.write("b.js", "import { x } from './plain';\n");
+    f.write("plain.js", "export const x = 1;\n");
+
+    let deps = field_set(&f.run(&["deps", "app.js"]), "path");
+    assert!(deps.contains(&"utils/index.js".to_string()), "{deps:?}");
+    let deps = field_set(&f.run(&["deps", "main.py"]), "path");
+    assert!(deps.contains(&"pkg/__init__.py".to_string()), "{deps:?}");
+    let deps = field_set(&f.run(&["deps", "b.js"]), "path");
+    assert!(deps.contains(&"plain.js".to_string()), "direct file import broke: {deps:?}");
+}
+
+#[test]
+fn symbols_can_be_filtered_by_the_type_that_owns_them() {
+    // Members are only addressable together with their type, so the owner has to
+    // be queryable — otherwise "what does this type hold?" means fetching every
+    // field in the repository and filtering by hand.
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct Config { pub retries: u32, pub name: String }\npub struct Other { pub retries: u32 }\n");
+
+    let mine = field_set(&f.run(&["symbols", "--owner", "Config", "--limit", "0"]), "name");
+    assert_eq!(mine.len(), 2, "{mine:?}");
+    assert!(mine.contains(&"retries".to_string()) && mine.contains(&"name".to_string()), "{mine:?}");
+
+    // The same name under a different type is a different member.
+    let v = f.run(&["symbols", "--owner", "Other", "--limit", "0"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{v}");
+    assert_eq!(rows[0]["name"], "retries");
+}
+
+#[test]
+fn graphql_implements_is_a_type_relation() {
+    // `implements_interfaces` nests left-recursively rather than listing siblings,
+    // so a single pattern bound only the outermost interface.
+    let f = Fixture::new();
+    f.write(
+        "s.graphql",
+        "interface A { id: ID! }\ninterface B { id: ID! }\ninterface C { id: ID! }\n\
+         type User implements A & B & C { id: ID! }\ntype Post implements A { id: ID! }\n",
+    );
+    let supers = field_set(&f.run(&["supertypes", "User"]), "supertype");
+    assert_eq!(supers, vec!["A", "B", "C"], "every interface, not just the last: {supers:?}");
+    let impls = field_set(&f.run(&["implementors", "A"]), "subtype");
+    assert!(impls.contains(&"User".to_string()) && impls.contains(&"Post".to_string()), "{impls:?}");
+}
+
+#[test]
+fn calls_filter_recognises_markup_instantiation() {
+    // `--calls` tested for `Name(`, which a component is never spelled with — so
+    // it returned nothing for a component that is plainly used.
+    let f = Fixture::new();
+    f.write("Btn.svelte", "<script>export let label = 'x'</script>\n<button>{label}</button>\n");
+    f.write(
+        "Page.svelte",
+        "<script>\n  import Btn from './Btn.svelte';\n  // Btn is mentioned here\n  const x = Btn;\n</script>\n<Btn />\n",
+    );
+    let v = f.run(&["references", "Btn", "--calls"]);
+    let refs = v["data"]["references"].as_array().unwrap();
+    assert_eq!(refs.len(), 1, "only the instantiation counts: {v}");
+    assert_eq!(refs[0]["line"], 6, "{v}");
+    // The import, the comment and the assignment are all mentions, not uses.
+    assert!(f.run(&["callers", "Btn", "--calls"])["data"].as_array().unwrap().len() == 1);
+}
+
+#[test]
+fn unused_ignores_definitions_that_exist_to_be_consumed_elsewhere() {
+    // A GraphQL type or protobuf message is a contract for another codebase, so
+    // "nothing here references it" is its normal state, not a finding — reporting
+    // them buries the real hits.
+    let f = Fixture::new();
+    f.write("s.graphql", "type User { id: ID! }\n");
+    f.write("u.proto", "syntax = \"proto3\";\nmessage Order { string id = 1; }\n");
+    f.write("main.tf", "variable \"region\" { default = \"eu\" }\n\
+                        output \"url\" { value = var.region }\n\
+                        variable \"unused_var\" {}\n");
+    f.write("a.css", ".primary { color: red }\n.orphan { color: blue }\n");
+    f.write("page.html", "<div class=\"primary\">x</div>\n");
+
+    let dead = field_set(&f.run(&["unused"]), "name");
+    // Real dead code survives: nothing references these.
+    assert!(dead.contains(&"orphan".to_string()), "dead CSS class: {dead:?}");
+    assert!(dead.contains(&"unused_var".to_string()), "dead variable: {dead:?}");
+    // Contracts and externally-read values do not.
+    for quiet in ["User", "Order", "url", "primary", "region"] {
+        assert!(!dead.contains(&quiet.to_string()), "{quiet} should not be reported: {dead:?}");
+    }
+}
+
+#[test]
 fn hcl_blocks_are_named_by_their_last_label_and_owned_by_their_type() {
     // A block's identity lives in its labels, and which label is the name depends
     // on how many there are — so this cannot be a query, and a first attempt that

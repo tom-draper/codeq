@@ -1773,3 +1773,43 @@ number and failed on an off-by-one in my own fixture, not in the code. Rewritten
 assert on content — that the use site containing `aws_s3_bucket.logs.arn` is
 attributed to the enclosing `output` and is not flagged as the declaration — which
 is what the naming rule is actually for.
+
+## Five capability gaps, found by asking the tool instead of guessing
+
+Rather than brainstorm what might be missing, I probed: query the thing, look at
+what comes back. Four of five suspicions were real, and one was already working.
+
+**`deps` missed every directory-style import.** Not a Terraform quirk — general and
+severe. Resolution matched import segments against file *stems*, so `./utils` never
+reached `utils/index.js`, `from pkg import x` never reached `pkg/__init__.py`, and a
+Terraform `source` never reached its module directory. That is the dominant idiom in
+the two largest ecosystems here, silently absent from the dependency graph the whole
+time. A file that stands in for its directory — a conventional entry file, or any
+`.tf` — is now also filed under the directory's name.
+
+**Data I had added but left unqueryable.** `owner` went onto members across 13
+languages with no way to filter by it: `symbols --kind field --owner Config` was an
+argument error. So "what does this type hold?" meant fetching every field in the
+repository and filtering by hand. My own omission. It turns out to generalise nicely
+to HCL — `--owner aws_s3_bucket` lists every bucket, `--owner local` every local.
+
+**GraphQL `implements` was not a relation.** `type User implements Node` is real
+inheritance and I shipped GraphQL with an empty relation query. The fix then failed
+halfway for a reason worth recording: `implements_interfaces` nests *left-recursively*
+rather than listing siblings, so `A & B & C` parses as `II(II(II(A), B), C)` and one
+pattern binds only the outermost. One pattern per nesting level, bounded at five
+interfaces — a stated limit rather than a silent truncation.
+
+**`--calls` only knew one syntax.** It tested for `Name(`, which a component is never
+spelled with, so `callers Btn --calls` returned nothing for a component plainly used
+as `<Btn />`. Markup instantiation now counts; a bare mention, an import and
+`const x = Btn` still do not, and call-syntax languages are unchanged.
+
+**`unused` reported contracts as dead code.** Every GraphQL type, every protobuf
+message, every Terraform `output` — all things that exist to be consumed from
+*outside* the repository, so "nothing here references it" is their normal state.
+They drowned the real hits. Now skipped, with the reasoning in `capabilities`.
+
+The one that was already right: CSS. `.orphan` is reported and `.primary` is not,
+because `page.html` uses it — genuine dead-stylesheet detection that fell out of
+adding CSS spans, and worth checking rather than assuming it was noise too.

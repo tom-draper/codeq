@@ -119,9 +119,26 @@ fn is_ident_byte(b: u8) -> bool {
     b == b'_' || b.is_ascii_alphanumeric()
 }
 
-/// Whether the match ending at byte `end` is immediately followed by `(` (after
-/// optional spaces/tabs) — i.e. it's a call, not a bare mention.
-fn is_call_position(bytes: &[u8], end: usize) -> bool {
+/// Whether the match is an *invocation* rather than a bare mention.
+///
+/// `Name(` is the call-syntax languages. But codeq now indexes formats where
+/// invocation is spelled differently and `Name(` never appears: a Svelte or Vue
+/// component is invoked as `<Name …/>`, so `--calls` on one used to return
+/// nothing at all for a component that is plainly used. Both forms count, since
+/// the question `--calls` answers — "where is this actually used, not merely
+/// named?" — is the same one.
+fn is_call_position(bytes: &[u8], start: usize, end: usize) -> bool {
+    // `<Name` / `</Name` — markup instantiation.
+    let mut i = start;
+    while i > 0 && (bytes[i - 1] == b' ' || bytes[i - 1] == b'\t') {
+        i -= 1;
+    }
+    if i > 0 && bytes[i - 1] == b'/' {
+        i -= 1; // a closing tag
+    }
+    if i > 0 && bytes[i - 1] == b'<' {
+        return true;
+    }
     let mut j = end;
     while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
         j += 1;
@@ -359,7 +376,7 @@ pub(crate) fn run_search(
                     if !accept(off) {
                         continue;
                     }
-                    if opts.call_only && !is_call_position(bytes, m.end()) {
+                    if opts.call_only && !is_call_position(bytes, m.start(), m.end()) {
                         continue;
                     }
                     if let Some(recv) = &opts.qualifier {

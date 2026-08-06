@@ -329,6 +329,7 @@ pub fn cmd_symbols(
     cwd: &Path,
     pattern: Option<&str>,
     kind: Option<&str>,
+    owner: Option<&str>,
     language: Option<&str>,
     path: Option<&str>,
     signatures: bool,
@@ -349,6 +350,13 @@ pub fn cmd_symbols(
     if let Some(k) = kind {
         sql.push_str(" AND kind = ?");
         args.push(k.to_string());
+    }
+    // Members are only addressable with their type — `id` and `name` recur
+    // everywhere — so filtering by owner is how "what does this type hold?" gets
+    // asked without dumping every field in the repository.
+    if let Some(o) = owner {
+        sql.push_str(" AND owner = ?");
+        args.push(o.to_string());
     }
     if let Some(l) = language {
         sql.push_str(" AND language = ?");
@@ -2370,9 +2378,18 @@ pub fn cmd_unused(
 
     // The definitions eligible to be reported (scoped by path/kind).
     let filters = Filters::new().like("path", path).eq("kind", kind);
+    // A schema language exists to be consumed from outside the repository: every
+    // GraphQL type and protobuf message is a contract for some other codebase, so
+    // "nothing here references it" is the normal state, not a finding. Reporting
+    // them buries the real hits — the whole point of `unused` is that it
+    // under-reports rather than misleads. A Terraform `output` is the same shape:
+    // it exists so something outside can read it. Everything else stays: an
+    // unreferenced CSS class or `variable` really is dead.
     let sql = format!(
         "SELECT name, kind, path, start_line, visibility FROM facts
-         WHERE kind <> 'import' AND name IS NOT NULL{} ORDER BY path, start_line",
+         WHERE kind <> 'import' AND name IS NOT NULL
+           AND (language IS NULL OR language NOT IN ('graphql', 'proto'))
+           AND NOT (language = 'hcl' AND kind = 'output'){} ORDER BY path, start_line",
         filters.sql(),
     );
     let candidates: Vec<UnusedRow> = {
@@ -3018,6 +3035,8 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         ],
         "notes": {
             "imports": "raw syntactic module strings; not resolved",
+            "deps": "an import naming a directory resolves through that directory's conventional entry file (index.js, __init__.py, mod.rs) or any .tf",
+            "unused": "skips GraphQL/protobuf definitions and Terraform outputs — they exist to be consumed outside the repo, so absence of local references says nothing",
             "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#, Python, C, C++, PHP, Kotlin, Swift, Protobuf, GraphQL. Python attributes are assignments, so a member is its earliest `self.x =` or class-body assignment",
             "hcl": "block kinds are the block keyword verbatim (resource/variable/module/…), so the vocabulary is open-ended; a block is named by its last label and owned by its type label. A module `source` is an import, but `deps` resolves file stems and a module target is a directory, so it stays unresolved",
             "context_tokenizer": "approx:4-bytes-per-token",
