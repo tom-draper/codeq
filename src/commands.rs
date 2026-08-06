@@ -3002,13 +3002,14 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "imports", "importers", "astgrep", "tests", "context", "capabilities", "mcp",
         ],
         // Languages with symbol + import extraction.
-        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte", "vue"],
+        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte", "vue", "css", "powershell", "proto", "graphql"],
         // Languages recognised for file classification (extraction may be absent).
         "classified_languages": [
             "rust", "javascript", "typescript", "tsx", "python", "go", "java",
             "json", "yaml", "toml", "markdown", "sql", "bash", "lua", "scala",
             "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte",
-            "vue", "c", "cpp", "csharp", "php", "ruby",
+            "vue", "css", "powershell", "proto", "graphql",
+            "c", "cpp", "csharp", "php", "ruby",
         ],
         "fact_kinds": [
             "function", "method", "struct", "enum", "union", "trait", "module",
@@ -3017,7 +3018,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         ],
         "notes": {
             "imports": "raw syntactic module strings; not resolved",
-            "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#, Python, C, C++, PHP, Kotlin, Swift. Python attributes are assignments, so a member is its earliest `self.x =` or class-body assignment",
+            "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#, Python, C, C++, PHP, Kotlin, Swift, Protobuf, GraphQL. Python attributes are assignments, so a member is its earliest `self.x =` or class-body assignment",
             "context_tokenizer": "approx:4-bytes-per-token",
             "freshness": "every command refreshes changed files before answering",
         },

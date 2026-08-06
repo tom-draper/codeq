@@ -1712,3 +1712,30 @@ like the more likely culprit. And once the error was visible, I validated every 
 type in all five new grammars programmatically against their `node-types.json`
 rather than fixing errors one rebuild at a time; that found the single remaining
 problem in one pass.
+
+## Four more languages: CSS, PowerShell, Protobuf, GraphQL (27 total)
+
+Chosen for coverage rather than count. CSS earns its place twice: `<style>` inside a
+Svelte or Vue component was opaque, so CSS comments read as *code* to `search --in`
+— a limitation I had to document when adding those languages, now closed. PowerShell
+is the Bash counterpart that was conspicuously missing. Protobuf and GraphQL are the
+contracts between services, so in a polyglot repo a message name is often the one
+symbol that crosses language boundaries.
+
+Two things needed work beyond writing queries. Protobuf spells names per construct
+(`message_name`, `enum_name`, `service_name`) rather than using a `name` field, so
+`owner_of` found no name for the enclosing type and the new "members must have an
+owner" rule silently dropped every protobuf field — the rule working exactly as
+designed, on a grammar it had not met. Broadened to accept a `_name` suffix. And the
+new grammars' type nodes had to join `TYPE_KINDS` before their members resolved at
+all.
+
+**HCL/Terraform was cut after it shipped wrong.** A block's identity lives in its
+labels, and which label is the name depends on how many there are: `variable
+"region"` is named by its only label, `resource "aws_s3_bucket" "logs"` by its
+*last*. Tree-sitter queries cannot express "last", so my first attempt produced
+`kindword "aws_s3_bucket"` and `kindword "logs"` — the capture name leaking in as the
+fact kind, quotes included, two facts per block. I had flagged exactly this risk
+before starting and went ahead anyway. It needs a name-derivation rule in code, like
+Svelte's component fact, so it is deferred rather than approximated: `kindword` facts
+in a tool whose pitch is trustworthy output are worse than no Terraform support.

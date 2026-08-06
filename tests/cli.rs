@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 17);
+    assert_eq!(v["index"]["schema"], 18);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -991,6 +991,49 @@ fn members_are_definitions_and_name_the_type_that_declares_them() {
     // Non-members must not sprout an owner.
     let v = f.run(&["definitions", "Config"]);
     assert!(v["data"][0]["owner"].is_null(), "a type has no owner: {v}");
+}
+
+#[test]
+fn extracts_css_powershell_protobuf_and_graphql() {
+    let f = Fixture::new();
+    f.write("a.css", "/* theme */\n.primary { color: red }\n#hero { top: 0 }\n@keyframes fade { from { opacity: 0 } }\n");
+    f.write("s.ps1", "function Get-Thing {\n  return 1\n}\nclass Widget { [int] $Size }\n");
+    f.write(
+        "u.proto",
+        "syntax = \"proto3\";\nimport \"other.proto\";\nmessage User { string email = 1; }\n\
+         enum Role { ADMIN = 0; }\nservice Users { rpc GetUser (User) returns (User); }\n",
+    );
+    f.write("s.graphql", "type User { id: ID!\n  email: String }\nenum Role { ADMIN }\ninterface Node { id: ID! }\n");
+
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    for want in [
+        "primary", "hero", "fade",           // css selectors and keyframes
+        "Get-Thing", "Widget",               // powershell
+        "User", "Role", "Users", "GetUser",  // protobuf message/enum/service/rpc
+        "Node",                              // graphql interface
+    ] {
+        assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
+    }
+
+    // Members of a protobuf message and a GraphQL type carry their owner, so the
+    // grammars that spell the name out per construct (`message_name`) resolve too.
+    let v = f.run(&["definitions", "email"]);
+    let owners: Vec<&str> = v["data"].as_array().unwrap().iter()
+        .filter_map(|r| r["owner"].as_str()).collect();
+    assert_eq!(owners, ["User", "User"], "proto and graphql fields need owners: {v}");
+
+    // A protobuf import is a module string like any other.
+    let imports = field_set(&f.run(&["imports", "u.proto"]), "module");
+    assert!(imports.contains(&"other.proto".to_string()), "{imports:?}");
+
+    // Spans: CSS comments are classified, which is what closes the `<style>` hole
+    // in Svelte and Vue components.
+    let count = |needle: &str, kind: &str| -> i64 {
+        f.run(&["search", needle, "--in", kind, "-c"])["data"]["counts"]
+            .as_array().unwrap().iter().map(|c| c["count"].as_i64().unwrap()).sum()
+    };
+    assert_eq!(count("theme", "comments"), 1);
+    assert_eq!(count("theme", "code"), 0);
 }
 
 #[test]

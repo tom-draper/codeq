@@ -281,7 +281,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                     // quietly meant the workers sent nothing, the writer stored
                     // nothing, and the whole index came back *empty and reporting
                     // itself fresh*: a broken query in one language silently
-                    // zeroed every other one. Make it loud.
+                    // zeroed all 28. Make it loud.
                     let mut ex = match Extractor::new() {
                         Ok(e) => e,
                         Err(e) => {
@@ -574,6 +574,10 @@ pub fn language_for(path: &str) -> Option<&'static str> {
         "sol" => "solidity",
         "svelte" => "svelte",
         "vue" => "vue",
+        "css" | "scss" => "css",
+        "ps1" | "psm1" | "psd1" => "powershell",
+        "proto" => "proto",
+        "graphql" | "gql" => "graphql",
         _ => return None,
     };
     Some(lang)

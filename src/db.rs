@@ -24,7 +24,9 @@ use rusqlite::Connection;
 // is no longer invisible; old rows have no ctime to compare, so rebuild.
 // v17: struct fields / class properties / enum variants are extracted as
 // `field` and `variant` facts carrying their owning type — rebuild to populate.
-pub const SCHEMA_VERSION: i64 = 17;
+// v18: added CSS/PowerShell/Protobuf/GraphQL extraction, and members for six more
+// languages — rebuild to populate them.
+pub const SCHEMA_VERSION: i64 = 18;
 
 pub struct Db {
     pub conn: Connection,

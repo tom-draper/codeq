@@ -103,6 +103,10 @@ pub struct Extractor {
     solidity: LangSpec,
     svelte: LangSpec,
     vue: LangSpec,
+    css: LangSpec,
+    powershell: LangSpec,
+    proto: LangSpec,
+    graphql: LangSpec,
 }
 
 struct LangSpec {
@@ -578,6 +582,22 @@ impl Extractor {
                 "treesitter/vue",
                 "vue",
             )?,
+            css: LangSpec::new(
+                tree_sitter_css::LANGUAGE.into(),
+                CSS_QUERY, CSS_SPANS, "", "treesitter/css", "css",
+            )?,
+            powershell: LangSpec::new(
+                tree_sitter_powershell::LANGUAGE.into(),
+                POWERSHELL_QUERY, POWERSHELL_SPANS, "", "treesitter/powershell", "powershell",
+            )?,
+            proto: LangSpec::new(
+                tree_sitter_proto::LANGUAGE.into(),
+                PROTO_QUERY, PROTO_SPANS, "", "treesitter/proto", "proto",
+            )?,
+            graphql: LangSpec::new(
+                tree_sitter_graphql::LANGUAGE.into(),
+                GRAPHQL_QUERY, GRAPHQL_SPANS, "", "treesitter/graphql", "graphql",
+            )?,
         })
     }
 
@@ -612,6 +632,10 @@ impl Extractor {
             "zig" => self.zig.extract(src),
             "elixir" => self.elixir.extract(src),
             "solidity" => self.solidity.extract(src),
+            "css" => self.css.extract(src),
+            "powershell" => self.powershell.extract(src),
+            "proto" => self.proto.extract(src),
+            "graphql" => self.graphql.extract(src),
             // Single-file component formats: markup wrapping the real code. Both
             // grammars name the nodes the same way, so one path serves both —
             // disjoint field borrows let the markup and nested extractors be
@@ -801,6 +825,10 @@ pub fn has_spans(language: &str) -> bool {
             | "solidity"
             | "svelte"
             | "vue"
+            | "css"
+            | "powershell"
+            | "proto"
+            | "graphql"
     )
 }
 
@@ -833,6 +861,14 @@ const TYPE_KINDS: &[&str] = &[
     "record_declaration",
     "object_declaration",
     "protocol_declaration",
+    // Protobuf / GraphQL
+    "message",
+    "enum",
+    "service",
+    "object_type_definition",
+    "interface_type_definition",
+    "input_object_type_definition",
+    "enum_type_definition",
     // C / C++
     "struct_specifier",
     "class_specifier",
@@ -859,10 +895,16 @@ fn owner_of(kind: &str, node: Node, src: &[u8]) -> Option<String> {
             {
                 return Some(t.to_string());
             }
+            // No `name:` field, so take the first child that *is* the name.
+            // `_name` catches the grammars that spell it out per construct
+            // (protobuf's `message_name`, `enum_name`, …).
             let mut c = n.walk();
             return n
                 .children(&mut c)
-                .find(|ch| ch.kind().ends_with("identifier") || ch.kind() == "name")
+                .find(|ch| {
+                    let k = ch.kind();
+                    k.ends_with("identifier") || k == "name" || k.ends_with("_name")
+                })
                 .and_then(|ch| ch.utf8_text(src).ok())
                 .map(|t| t.to_string());
         }
@@ -1597,4 +1639,65 @@ const VUE_QUERY: &str = "";
 const VUE_SPANS: &str = r#"
 (comment) @comment
 (attribute (quoted_attribute_value) @string)
+"#;
+
+// CSS. Rules are not "definitions" in the usual sense, but "where is `.primary`
+// styled?" is a real question with an exact answer, so a class/id selector and a
+// named at-rule are captured. The bigger win is spans: `<style>` inside a Svelte
+// or Vue component was previously opaque, so CSS comments read as code.
+const CSS_QUERY: &str = r#"
+(rule_set (selectors (class_selector (class_name) @name))) @type
+(rule_set (selectors (id_selector (id_name) @name))) @type
+(keyframes_statement (keyframes_name) @name) @type
+(import_statement (string_value) @name) @import
+"#;
+const CSS_SPANS: &str = r#"
+(comment) @comment
+(string_value) @string
+"#;
+
+// PowerShell: functions and classes, the Bash counterpart codeq was missing.
+const POWERSHELL_QUERY: &str = r#"
+(function_statement (function_name) @name) @function
+(class_statement (simple_name) @name) @class
+(class_method_definition (simple_name) @name) @method
+"#;
+const POWERSHELL_SPANS: &str = r#"
+(comment) @comment
+(string_literal) @string
+(expandable_string_literal) @string
+(expandable_here_string_literal) @string
+"#;
+
+// Protobuf: the interface between services in a polyglot repo, so a message name
+// is often the one symbol that crosses language boundaries.
+const PROTO_QUERY: &str = r#"
+(message (message_name) @name) @class
+(enum (enum_name) @name) @enum
+(service (service_name) @name) @interface
+(rpc (rpc_name) @name) @method
+(field (identifier) @name) @field
+(enum_field (identifier) @name) @variant
+(import (string) @name) @import
+"#;
+const PROTO_SPANS: &str = r#"
+(comment) @comment
+(string) @string
+"#;
+
+// GraphQL: schema types and their fields.
+const GRAPHQL_QUERY: &str = r#"
+(object_type_definition (name) @name) @type
+(interface_type_definition (name) @name) @interface
+(input_object_type_definition (name) @name) @type
+(enum_type_definition (name) @name) @enum
+(scalar_type_definition (name) @name) @type
+(union_type_definition (name) @name) @type
+(directive_definition (name) @name) @function
+(field_definition (name) @name) @field
+(enum_value_definition (enum_value) @name) @variant
+"#;
+const GRAPHQL_SPANS: &str = r#"
+(comment) @comment
+(string_value) @string
 "#;

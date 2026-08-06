@@ -45,6 +45,10 @@ tree-sitter-elixir = "0.3.5"
 tree-sitter-solidity = "1.2.13"
 tree-sitter-svelte-ng = "1.0.2"
 tree-sitter-vue-next = "0.1.0"
+tree-sitter-css = "0.25.0"
+tree-sitter-powershell = "0.26.4"
+tree-sitter-proto = "0.4.0"
+tree-sitter-graphql = "0.1.0"
 
 [profile.release]
 lto = "thin"
