@@ -275,9 +275,19 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 let existing = &existing;
                 let failures = &parse_failures;
                 scope.spawn(move || {
+                    // Building the extractor compiles every language's queries, so
+                    // it fails only when one of them is malformed — a programming
+                    // error, identical for every worker and every file. Returning
+                    // quietly meant the workers sent nothing, the writer stored
+                    // nothing, and the whole index came back *empty and reporting
+                    // itself fresh*: a broken query in one language silently
+                    // zeroed every other one. Make it loud.
                     let mut ex = match Extractor::new() {
                         Ok(e) => e,
-                        Err(_) => return,
+                        Err(e) => {
+                            eprintln!("codeq: fact extraction unavailable: {e:#}");
+                            std::process::exit(1);
+                        }
                     };
                     for (rel, abs, size, mtime, ctime) in c {
                         match parse_one(existing, &mut ex, rel, abs, *size, *mtime, *ctime) {

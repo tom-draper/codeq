@@ -1683,3 +1683,32 @@ owned by nothing and looked approximately right.
 Python's rule is a judgement, not a fact, so it is stated in `capabilities`, the
 README and CLAUDE.md rather than left implicit: a member is its earliest class-body
 or `self.x =` assignment.
+
+## A malformed query silently emptied the whole index
+
+Adding four grammars, one of my span queries named a node type that does not exist
+(`verbatim_string_literal`, PowerShell). The result was not an error. It was this:
+
+    $ codeq stats
+    files: 0
+    index: {schema: 18, fresh: true}
+
+codeq's own repository, 78 files, indexed as *nothing* — and reporting itself
+fresh. Every language, not just the broken one.
+
+`Extractor::new()` compiles every language's queries, and the parse workers did
+`Err(_) => return`. So each worker exited quietly, sent no results, the writer
+stored nothing, and the refresh reported success. A programming error in one
+grammar's query took out all 27 languages and looked exactly like an empty repo.
+
+This is the worst failure shape in the tool: not slow, not partial, but confidently
+wrong at full scale. Query compilation fails identically for every worker and every
+file, so there is no partial-success story to preserve — it now prints which query
+failed and exits 1.
+
+Two process notes. I found it only because a fixture returned nothing and I checked
+codeq's *own* repo rather than assuming the fixture was odd — the fixture looked
+like the more likely culprit. And once the error was visible, I validated every node
+type in all five new grammars programmatically against their `node-types.json`
+rather than fixing errors one rebuild at a time; that found the single remaining
+problem in one pass.
