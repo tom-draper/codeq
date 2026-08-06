@@ -1739,3 +1739,37 @@ fact kind, quotes included, two facts per block. I had flagged exactly this risk
 before starting and went ahead anyway. It needs a name-derivation rule in code, like
 Svelte's component fact, so it is deferred rather than approximated: `kindword` facts
 in a tool whose pitch is trustworthy output are worse than no Terraform support.
+
+## HCL/Terraform, done the way the language actually names things
+
+Cut from the previous batch after it shipped `kindword "aws_s3_bucket"` facts.
+The reason it could not be a query: a block is `keyword "label"… { … }`, and the
+labels are a *repeated, unnamed* child, so tree-sitter cannot select "the last
+one" — and which label is the name depends on how many there are.
+
+    terraform { }                       0 labels -> no identity, skipped
+    variable "region"                   1 label  -> region
+    resource "aws_s3_bucket" "logs"     2 labels -> logs, of type aws_s3_bucket
+
+The model that fits is the one already built for struct members. Terraform refers
+to things as `aws_s3_bucket.logs.arn`, `var.region`, `local.x` — so the name is the
+last label and the type label becomes the `owner`, exactly the field/type split.
+`definitions logs` then answers "the aws_s3_bucket one", and `references logs`
+finds `aws_s3_bucket.logs.arn` because codeq's graph is name-based. `kind` is the
+block keyword verbatim, which costs an open-ended kind vocabulary but keeps this
+honest for non-Terraform HCL (Nomad's `job`, Packer's `source`) instead of
+hardcoding one tool's nouns. `locals` contributes one constant per attribute, and a
+`module`'s `source` is captured as an import.
+
+Two honest limits, both stated in `capabilities` rather than left to be discovered:
+the kind vocabulary is open-ended, and `deps` does *not* resolve a module source —
+resolution matches import segments against file stems, and a Terraform module is a
+directory. That is a general limitation (JS `./utils` -> `utils/index.js` does not
+resolve either), not something specific to HCL, so `imports` and `importers` work
+while `deps` stays empty.
+
+Also worth recording: my first version of the test asserted a hard-coded line
+number and failed on an off-by-one in my own fixture, not in the code. Rewritten to
+assert on content — that the use site containing `aws_s3_bucket.logs.arn` is
+attributed to the enclosing `output` and is not flagged as the declaration — which
+is what the naming rule is actually for.

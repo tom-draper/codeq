@@ -575,6 +575,7 @@ pub fn language_for(path: &str) -> Option<&'static str> {
         "svelte" => "svelte",
         "vue" => "vue",
         "css" | "scss" => "css",
+        "tf" | "tfvars" | "hcl" | "nomad" => "hcl",
         "ps1" | "psm1" | "psd1" => "powershell",
         "proto" => "proto",
         "graphql" | "gql" => "graphql",

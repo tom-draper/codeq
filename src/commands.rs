@@ -3002,13 +3002,13 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "imports", "importers", "astgrep", "tests", "context", "capabilities", "mcp",
         ],
         // Languages with symbol + import extraction.
-        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte", "vue", "css", "powershell", "proto", "graphql"],
+        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte", "vue", "css", "powershell", "proto", "graphql", "hcl"],
         // Languages recognised for file classification (extraction may be absent).
         "classified_languages": [
             "rust", "javascript", "typescript", "tsx", "python", "go", "java",
             "json", "yaml", "toml", "markdown", "sql", "bash", "lua", "scala",
             "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte",
-            "vue", "css", "powershell", "proto", "graphql",
+            "vue", "css", "powershell", "proto", "graphql", "hcl",
             "c", "cpp", "csharp", "php", "ruby",
         ],
         "fact_kinds": [
@@ -3019,6 +3019,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "notes": {
             "imports": "raw syntactic module strings; not resolved",
             "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#, Python, C, C++, PHP, Kotlin, Swift, Protobuf, GraphQL. Python attributes are assignments, so a member is its earliest `self.x =` or class-body assignment",
+            "hcl": "block kinds are the block keyword verbatim (resource/variable/module/…), so the vocabulary is open-ended; a block is named by its last label and owned by its type label. A module `source` is an import, but `deps` resolves file stems and a module target is a directory, so it stays unresolved",
             "context_tokenizer": "approx:4-bytes-per-token",
             "freshness": "every command refreshes changed files before answering",
         },

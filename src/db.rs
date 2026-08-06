@@ -26,7 +26,8 @@ use rusqlite::Connection;
 // `field` and `variant` facts carrying their owning type — rebuild to populate.
 // v18: added CSS/PowerShell/Protobuf/GraphQL extraction, and members for six more
 // languages — rebuild to populate them.
-pub const SCHEMA_VERSION: i64 = 18;
+// v19: added HCL/Terraform extraction — rebuild to populate it.
+pub const SCHEMA_VERSION: i64 = 19;
 
 pub struct Db {
     pub conn: Connection,

@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 18);
+    assert_eq!(v["index"]["schema"], 19);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -991,6 +991,62 @@ fn members_are_definitions_and_name_the_type_that_declares_them() {
     // Non-members must not sprout an owner.
     let v = f.run(&["definitions", "Config"]);
     assert!(v["data"][0]["owner"].is_null(), "a type has no owner: {v}");
+}
+
+#[test]
+fn hcl_blocks_are_named_by_their_last_label_and_owned_by_their_type() {
+    // A block's identity lives in its labels, and which label is the name depends
+    // on how many there are — so this cannot be a query, and a first attempt that
+    // tried produced two facts per resource and named the wrong one.
+    let f = Fixture::new();
+    f.write(
+        "main.tf",
+        "# infra\nterraform { required_version = \">= 1.0\" }\n\
+         \nvariable \"region\" { default = \"eu-west-1\" }\n\
+         \nlocals {\n  bucket_prefix = \"acme\"\n}\n\
+         \nresource \"aws_s3_bucket\" \"logs\" {\n  lifecycle { prevent_destroy = true }\n}\n\
+         \ndata \"aws_ami\" \"ubuntu\" { most_recent = true }\n\
+         \nmodule \"vpc\" {\n  source = \"./modules/vpc\"\n}\n\
+         \noutput \"arn\" { value = aws_s3_bucket.logs.arn }\n",
+    );
+
+    let by_name = |n: &str| -> Value {
+        let v = f.run(&["definitions", n]);
+        v["data"][0].clone()
+    };
+
+    // One label: the label names it, the keyword owns it.
+    assert_eq!(by_name("region")["kind"], "variable");
+    assert_eq!(by_name("region")["owner"], "variable");
+    // Two labels: the *last* names it, the first is its type.
+    let logs = by_name("logs");
+    assert_eq!(logs["kind"], "resource");
+    assert_eq!(logs["owner"], "aws_s3_bucket", "named by last label, owned by type: {logs}");
+    assert_eq!(by_name("ubuntu")["owner"], "aws_ami");
+    // `locals` declares one name per attribute, referenced as `local.x`.
+    assert_eq!(by_name("bucket_prefix")["owner"], "local");
+
+    // Unlabelled blocks have no identity: `terraform` and the nested `lifecycle`
+    // must not become definitions.
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    assert!(!syms.contains(&"terraform".to_string()), "{syms:?}");
+    assert!(!syms.contains(&"lifecycle".to_string()), "{syms:?}");
+
+    // A module's `source` is an import, so `importers` finds it.
+    let imports = field_set(&f.run(&["imports", "main.tf"]), "module");
+    assert_eq!(imports, vec!["./modules/vpc".to_string()], "only the source: {imports:?}");
+
+    // The naming rule exists so that reference sites resolve: Terraform writes
+    // `aws_s3_bucket.logs.arn`, and naming the block `logs` is what makes that
+    // findable — and it lands inside the `output` that uses it.
+    let v = f.run(&["references", "logs"]);
+    let refs = v["data"]["references"].as_array().unwrap();
+    let use_site = refs
+        .iter()
+        .find(|r| r["text"].as_str().unwrap_or_default().contains("aws_s3_bucket.logs.arn"))
+        .unwrap_or_else(|| panic!("no use site for the resource: {v}"));
+    assert_eq!(use_site["symbol"], "arn", "attributed to the enclosing output: {v}");
+    assert!(use_site["definition"].is_null(), "a use is not the declaration: {v}");
 }
 
 #[test]
