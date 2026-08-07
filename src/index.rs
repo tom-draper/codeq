@@ -322,8 +322,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 "INSERT OR REPLACE INTO facts(
                     id, kind, name, path, language,
                     start_byte, end_byte, start_line, start_col, end_line, end_col,
-                    signature, doc, source, confidence, visibility, owner)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+                    signature, doc, source, confidence, visibility, owner, shape, shape_nodes)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
             )?;
             let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
             let mut ins_fts =
@@ -380,6 +380,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                             f.confidence,
                             &f.visibility,
                             &f.owner,
+                            &f.shape,
+                            f.shape_nodes,
                         ])?;
                     }
                     for (sb, eb, sp) in &p.spans {

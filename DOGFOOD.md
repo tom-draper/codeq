@@ -1834,3 +1834,34 @@ itself immediately. A wrong Dart pattern — `declaration` does not contain
 `initialized_variable_definition` — would previously have emptied the entire index
 while reporting `fresh: true`. Instead it printed `Impossible pattern:` with the
 exact query, and the fix took one lookup.
+
+## clones: structural duplication as a fact, not a score
+
+The original suggestion was a *similarity score* between two code sections. I
+argued against it and built the version that fits: hash a definition's syntax
+shape — the tree of node kinds, with identifiers and literals normalised away —
+and group by exact hash. Shapes match or they do not. No threshold to justify, no
+number an agent cannot act on, and `diff` still covers "what exactly differs".
+
+It found real duplication in codeq's own source on the first run, biggest first:
+
+    cmd_implementors / cmd_supertypes      202 nodes
+    defs_by_names    / defs_by_paths       148 nodes
+    opt              / optn                 58 nodes
+    print_range      / print_range_raw      49 nodes
+
+Checked by eye rather than trusting the hash: `cmd_implementors` and
+`cmd_supertypes` really are the same function with `subtype`/`supertype` swapped.
+
+Two decisions worth stating. The shape walk uses an explicit stack, because
+recursion depth here is attacker-controlled by source nesting. And a definition
+under twelve nodes gets no shape at all: every empty function in a repository
+shares a shape, truthfully and uselessly, so the floor belongs at extraction
+rather than in the query. `--min-nodes` (default 24) then filters how much code a
+group must cover — it filters, it never ranks.
+
+Honest cost, measured rather than assumed: a cold index of 78 files goes from
+~900ms to ~1100ms, about 20%, because every definition's subtree is walked once.
+Warm queries are unchanged at 5ms. That seemed worth it for a capability that
+answers "is this already implemented?" — but it is a real cost and belongs in the
+docs, not hidden.

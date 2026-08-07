@@ -135,6 +135,11 @@ Trace relationships (matched by name):
   type, and what it derives from.
 - `codeq tests <name>` finds the tests that exercise a symbol.
 - `codeq unused [path]` lists definitions with no reference anywhere (candidate dead code).
+- `codeq clones` groups definitions whose syntax shape is identical up to renaming — the
+  same code written twice. Exact, not fuzzy: shapes match or they don't, so there is no
+  similarity score to interpret. `--min-nodes` sets how much code a shared shape must
+  cover. Ask it before writing a helper, or to find the copy-paste that needs one fix in
+  four places.
 
 Imports and dependencies:
 - `codeq imports [path]` and `codeq importers <query>` list import statements, and who

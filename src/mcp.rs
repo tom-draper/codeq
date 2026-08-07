@@ -310,6 +310,13 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "limit", "--limit");
         }
+        "codeq_clones" => {
+            args.push("clones".into());
+            opt(&mut args, a, "path", "--path");
+            opt(&mut args, a, "kind", "--kind");
+            optn(&mut args, a, "min_nodes", "--min-nodes");
+            optn(&mut args, a, "limit", "--limit");
+        }
         "codeq_tests" => {
             args.push("tests".into());
             pos.push(s(a, "name")?.into());
@@ -456,6 +463,9 @@ fn tools() -> Value {
         tool("codeq_astgrep",
             "Structural (AST) search: match a code pattern with $NAME / $_ metavariables (and $$$ for any run of siblings, e.g. foo($$$)), parsed with the language's own grammar so it matches syntax not text — e.g. '$X.unwrap()' finds every .unwrap() call whatever the receiver. Deterministic; a repeated $NAME must bind identically. Cannot see inside macro invocations. language is required.",
             json!({ "pattern": str_, "language": str_, "path": str_, "limit": int_ }), &["pattern", "language"]),
+        tool("codeq_clones",
+            "Definitions whose syntax shape is identical up to renaming — the same code written twice. Exact, not fuzzy: shapes either match or they don't, so there is no similarity score to interpret and no threshold to tune. Rows are grouped by a shared shape hash, biggest duplication first. Use it before writing a helper (is this already implemented?) and to find the copy-paste that needs the same fix in several places. min_nodes (default 24) sets how much code a shared shape must cover; kind narrows to e.g. function.",
+            json!({ "path": str_, "kind": str_, "min_nodes": int_, "limit": int_ }), &[]),
         tool("codeq_tests",
             "Which tests exercise a symbol: the test functions that reference the given name (heuristic — a test-file path or test-like function name). Great for the edit-then-find-the-test loop.",
             json!({ "name": str_, "path": str_, "limit": int_ }), &["name"]),

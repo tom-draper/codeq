@@ -29,7 +29,8 @@ use rusqlite::Connection;
 // v19: added HCL/Terraform extraction — rebuild to populate it.
 // v20: members for Zig/Solidity/Dart/Scala, and GraphQL type relations —
 // rebuild to populate them.
-pub const SCHEMA_VERSION: i64 = 20;
+// v21: definitions carry a syntax-shape hash, for structural clone detection.
+pub const SCHEMA_VERSION: i64 = 21;
 
 pub struct Db {
     pub conn: Connection,
@@ -135,6 +136,10 @@ impl Db {
                 visibility TEXT,
                 -- The type a `field`/`variant` belongs to; NULL otherwise.
                 owner      TEXT,
+                -- Hash of the definition's syntax shape (identifiers and
+                -- literals normalised away) and how many nodes it covers.
+                shape       TEXT,
+                shape_nodes INTEGER,
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
             );
 
@@ -206,6 +211,10 @@ impl Db {
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN owner TEXT", []);
+        let _ = self.conn.execute("ALTER TABLE facts ADD COLUMN shape TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE facts ADD COLUMN shape_nodes INTEGER", []);
 
         // On a schema version change, wipe derived data so the next refresh
         // rebuilds everything (including the FTS index) from scratch.

@@ -3016,7 +3016,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "index", "files", "changed", "stats", "map",
             "symbols", "definitions", "callers", "callees", "about",
             "references", "outline", "at", "read", "search",
-            "imports", "importers", "astgrep", "tests", "context", "capabilities", "mcp",
+            "imports", "importers", "astgrep", "tests", "clones", "context", "capabilities", "mcp",
         ],
         // Languages with symbol + import extraction.
         "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte", "vue", "css", "powershell", "proto", "graphql", "hcl"],
@@ -3036,6 +3036,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         "notes": {
             "imports": "raw syntactic module strings; not resolved",
             "deps": "an import naming a directory resolves through that directory's conventional entry file (index.js, __init__.py, mod.rs) or any .tf",
+            "clones": "structural equality of the syntax tree with identifiers and literals normalised away; exact, never a similarity score. min_nodes filters by how much code is involved",
             "unused": "skips GraphQL/protobuf definitions and Terraform outputs — they exist to be consumed outside the repo, so absence of local references says nothing",
             "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#, Python, C, C++, PHP, Kotlin, Swift, Protobuf, GraphQL, HCL, Zig, Solidity, Dart, Scala. Python attributes are assignments, so a member is its earliest `self.x =` or class-body assignment",
             "hcl": "block kinds are the block keyword verbatim (resource/variable/module/…), so the vocabulary is open-ended; a block is named by its last label and owned by its type label. A module `source` is an import, but `deps` resolves file stems and a module target is a directory, so it stays unresolved",
@@ -3056,4 +3057,66 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
         print!("{}", crate::envelope::render_data_text(&data));
     }
     Ok(())
+}
+
+/// One member of a group of structurally identical definitions.
+#[derive(Serialize)]
+struct CloneRow {
+    /// Shared shape hash — the group key.
+    shape: String,
+    /// How many definitions share it.
+    group: i64,
+    /// Nodes in the shared shape: bigger means more code duplicated.
+    nodes: i64,
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+}
+
+/// `clones` — definitions whose syntax shape is identical up to renaming.
+///
+/// Exact, not fuzzy: shapes match or they do not, so there is no threshold and no
+/// score. `--min-nodes` raises the floor on how much code has to be involved
+/// before a group is worth reporting; it filters, it does not rank.
+pub fn cmd_clones(
+    cwd: &Path,
+    path: Option<&str>,
+    kind: Option<&str>,
+    min_nodes: i64,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let filters = Filters::new().like("path", path).eq("kind", kind);
+    // Group first, then re-join, so only shapes with more than one holder are read.
+    let sql = format!(
+        "SELECT shape, cnt, shape_nodes, name, kind, path, start_line FROM (
+             SELECT shape, COUNT(*) OVER (PARTITION BY shape) AS cnt,
+                    shape_nodes, name, kind, path, start_line
+             FROM facts
+             WHERE shape IS NOT NULL AND shape_nodes >= ?{}
+         ) WHERE cnt > 1
+         ORDER BY shape_nodes DESC, shape, path, start_line{}",
+        filters.sql(),
+        limit_clause(limit),
+    );
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&min_nodes];
+    for a in filters.args() {
+        params.push(a);
+    }
+    let rows = stmt.query_map(params.as_slice(), |r| {
+        Ok(CloneRow {
+            shape: r.get(0)?,
+            group: r.get(1)?,
+            nodes: r.get(2)?,
+            name: r.get(3)?,
+            kind: r.get(4)?,
+            path: r.get(5)?,
+            line: r.get(6)?,
+        })
+    })?;
+    let data: Vec<CloneRow> = rows.collect::<std::result::Result<_, _>>()?;
+    s.emit(data)
 }

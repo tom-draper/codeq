@@ -43,6 +43,15 @@ pub struct Fact {
     /// (`id`, `name`, `path`), so the owner is what makes one addressable:
     /// without it `definitions retries` cannot say *which* type's field it found.
     pub owner: Option<String>,
+    /// Hash of this definition's syntax *shape* — the tree of node kinds, with
+    /// every identifier and literal normalised away — paired with the number of
+    /// nodes hashed. Two definitions with the same shape are structurally
+    /// identical up to renaming: a fact, not a similarity score, so there is no
+    /// threshold to tune and no ranking to distrust. The node count exists so a
+    /// caller can insist on substance; every empty function in a repository
+    /// shares a shape, and truthfully so.
+    pub shape: Option<String>,
+    pub shape_nodes: i64,
 }
 
 /// A type relation: `subtype` implements/extends `supertype`. Captures
@@ -238,6 +247,8 @@ impl LangSpec {
                                 confidence: 1.0,
                                 visibility: None,
                                 owner: None,
+                                shape: None,
+                                shape_nodes: 0,
                             });
                         }
                     }
@@ -283,6 +294,7 @@ impl LangSpec {
                     // function — and an owner-less `field` is exactly the bare
                     // name this fact kind exists to avoid.
                     let owner = owner_of(kind, node, src);
+                    let (shape, shape_nodes) = shape_of(node);
                     if matches!(kind, "field" | "variant") && owner.is_none() {
                         continue;
                     }
@@ -301,6 +313,8 @@ impl LangSpec {
                         confidence: 1.0,
                         visibility,
                         owner,
+                        shape,
+                        shape_nodes,
                     });
                 }
             }
@@ -809,6 +823,8 @@ fn component_fact(path: &str, src: &[u8]) -> Option<Fact> {
         confidence: 1.0,
         visibility: Some("public".to_string()), // importable by any other file
         owner: None,
+        shape: None,
+        shape_nodes: 0,
     })
 }
 
@@ -1881,6 +1897,8 @@ fn hcl_fact(kind: &str, name: String, owner: Option<String>, node: Node, src: &[
         confidence: 1.0,
         visibility: None,
         owner,
+        shape: None,
+        shape_nodes: 0,
     }
 }
 
@@ -1958,4 +1976,45 @@ fn hcl_facts(root: Node, src: &[u8]) -> Vec<Fact> {
     }
     out.sort_by_key(|f| f.start_byte);
     out
+}
+
+/// Minimum nodes before a shape is recorded at all. Below this every trivial
+/// definition in a repository collides — truthfully, but uselessly — so the
+/// cheapest place to stop is at extraction.
+const MIN_SHAPE_NODES: usize = 12;
+
+/// A definition's syntax shape: the tree of node *kinds*, with identifiers and
+/// literals normalised away, hashed. Two definitions sharing a shape are the same
+/// code up to renaming.
+///
+/// This deliberately answers a yes/no question rather than producing a similarity
+/// score. A score would need a threshold nobody can justify, and "0.87" tells an
+/// agent nothing it can act on — whereas "these four functions are structurally
+/// identical" is checkable, and `diff` covers the rest. Walked with an explicit
+/// stack: recursion here is bounded by source nesting, which is attacker-controlled.
+fn shape_of(node: Node) -> (Option<String>, i64) {
+    let mut h = blake3::Hasher::new();
+    let mut count = 0usize;
+    // (node, entered) — the close marker is what makes sibling structure matter,
+    // so `f(g(x))` and `f(g, x)` cannot collide.
+    let mut stack: Vec<(Node, bool)> = vec![(node, false)];
+    while let Some((n, entered)) = stack.pop() {
+        if entered {
+            h.update(b")");
+            continue;
+        }
+        h.update(&n.kind_id().to_le_bytes());
+        h.update(b"(");
+        count += 1;
+        stack.push((n, true));
+        let mut c = n.walk();
+        let kids: Vec<Node> = n.named_children(&mut c).collect();
+        for child in kids.into_iter().rev() {
+            stack.push((child, false));
+        }
+    }
+    if count < MIN_SHAPE_NODES {
+        return (None, count as i64);
+    }
+    (Some(h.finalize().to_hex()[..16].to_string()), count as i64)
 }

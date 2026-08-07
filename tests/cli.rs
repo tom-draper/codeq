@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 20);
+    assert_eq!(v["index"]["schema"], 21);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -991,6 +991,43 @@ fn members_are_definitions_and_name_the_type_that_declares_them() {
     // Non-members must not sprout an owner.
     let v = f.run(&["definitions", "Config"]);
     assert!(v["data"][0]["owner"].is_null(), "a type has no owner: {v}");
+}
+
+#[test]
+fn clones_are_exact_structural_matches_not_a_similarity_score() {
+    let f = Fixture::new();
+    // Same shape, different names *and* different literals: a type-2 clone.
+    f.write(
+        "a.rs",
+        "pub fn total(items: &[i32]) -> i32 {\n    let mut acc = 0;\n    for it in items {\n        acc += it * 2;\n    }\n    acc\n}\n\
+         pub fn weight(rows: &[i32]) -> i32 {\n    let mut sum = 0;\n    for r in rows {\n        sum += r * 3;\n    }\n    sum\n}\n",
+    );
+    // Structurally different: an `if` where the others have none.
+    f.write(
+        "b.rs",
+        "pub fn other(xs: &[i32]) -> i32 {\n    let mut acc = 0;\n    for x in xs {\n        if *x > 0 {\n            acc += x;\n        }\n    }\n    acc\n}\n",
+    );
+
+    let v = f.run(&["clones", "--min-nodes", "10"]);
+    let rows = v["data"].as_array().unwrap();
+    let names: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"total") && names.contains(&"weight"), "{v}");
+    assert!(!names.contains(&"other"), "a different shape is not a clone: {v}");
+    // Every row in a group carries the same shape and the group size.
+    assert_eq!(rows[0]["shape"], rows[1]["shape"]);
+    assert_eq!(rows[0]["group"], 2);
+
+    // `min_nodes` filters by how much code is involved; it does not rank.
+    let big = f.run(&["clones", "--min-nodes", "10000"]);
+    assert!(big["data"].as_array().unwrap().is_empty(), "{big}");
+
+    // Trivial definitions share a shape truthfully but uselessly, so they carry
+    // none at all and can never form a group.
+    f.write("c.rs", "pub fn a() {}\npub fn b() {}\n");
+    let v = f.run(&["clones", "--min-nodes", "1"]);
+    let names: Vec<&str> = v["data"].as_array().unwrap().iter()
+        .map(|r| r["name"].as_str().unwrap()).collect();
+    assert!(!names.contains(&"a"), "empty fns must not be reported: {names:?}");
 }
 
 #[test]

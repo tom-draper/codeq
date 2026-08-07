@@ -94,6 +94,10 @@ benchmarks — not as a step you run before querying.
   diff touched, their transitive callers (impacted, `--depth N`), and the test
   *files* to re-run. Composes `changed --symbols` + a caller BFS + `tests`; name-based,
   so it over-includes rather than misses.
+- **Is this already implemented?** `codeq clones` — definitions with an identical
+  syntax shape (identifiers and literals normalised away). Exact structural
+  equality, never a similarity score; `--min-nodes N` raises the floor on how
+  much code counts. Costs ~20% on a cold index, nothing on a warm one.
 - **Find dead code:** `codeq unused [<path>]` — definitions with no reference
   anywhere outside their own definition site. Conservative (a comment/string
   mention counts as a use; name-based, so a same-named symbol elsewhere masks it)

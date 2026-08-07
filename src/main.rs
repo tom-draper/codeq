@@ -82,6 +82,24 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// Definitions whose syntax shape is identical up to renaming — the same
+    /// code written twice. Exact, not fuzzy: shapes match or they don't, so
+    /// there is no similarity score to interpret. Use before writing a helper,
+    /// or to find the copy-paste that needs the same fix in several places.
+    Clones {
+        /// Restrict to paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Only this kind (e.g. function, method).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Minimum syntax nodes a shared shape must cover.
+        #[arg(long, default_value_t = 24)]
+        min_nodes: i64,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// For a diff: the definitions it touched, their transitive callers (the
     /// impacted set), and the tests exercising any of them — what to re-check and
     /// re-run for the change. Name-based.
@@ -550,6 +568,19 @@ fn main() -> ExitCode {
             symbols,
             limit,
         } => commands::cmd_changed(&cwd, &compare_to, symbols, limit, out),
+        Command::Clones {
+            path,
+            kind,
+            min_nodes,
+            limit,
+        } => commands::cmd_clones(
+            &cwd,
+            path.as_deref(),
+            kind.as_deref(),
+            min_nodes,
+            limit,
+            out,
+        ),
         Command::Affected {
             compare_to,
             depth,
