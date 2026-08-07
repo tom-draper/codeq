@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 19);
+    assert_eq!(v["index"]["schema"], 20);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -991,6 +991,32 @@ fn members_are_definitions_and_name_the_type_that_declares_them() {
     // Non-members must not sprout an owner.
     let v = f.run(&["definitions", "Config"]);
     assert!(v["data"][0]["owner"].is_null(), "a type has no owner: {v}");
+}
+
+#[test]
+fn members_extract_for_zig_solidity_dart_and_scala() {
+    let f = Fixture::new();
+    // Zig binds a type to a name rather than declaring it with one, so the
+    // struct is anonymous and `Point` sits on the enclosing declaration — every
+    // field was ownerless, and therefore dropped, until the owner lookup
+    // followed that binding.
+    f.write("z.zig", "const Point = struct { x: i32, y: i32 };\n");
+    f.write("W.sol", "contract Wallet {\n  uint256 public balance;\n  enum State { Open, Closed }\n}\n");
+    f.write("d.dart", "class Widget {\n  int size = 1;\n}\nenum Mode { fast, slow }\n");
+    f.write("s.scala", "class Server {\n  val port: Int = 80\n  var live: Boolean = true\n}\n");
+
+    for (name, owner) in [
+        ("x", "Point"), ("balance", "Wallet"), ("size", "Widget"),
+        ("port", "Server"), ("live", "Server"),
+    ] {
+        let v = f.run(&["definitions", name]);
+        assert_eq!(v["data"][0]["owner"], owner, "{name}: {v}");
+    }
+    for (name, owner) in [("Open", "State"), ("fast", "Mode")] {
+        let v = f.run(&["definitions", name]);
+        assert_eq!(v["data"][0]["owner"], owner, "{name}: {v}");
+        assert_eq!(v["data"][0]["kind"], "variant", "{name}: {v}");
+    }
 }
 
 #[test]

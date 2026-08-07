@@ -27,7 +27,9 @@ use rusqlite::Connection;
 // v18: added CSS/PowerShell/Protobuf/GraphQL extraction, and members for six more
 // languages — rebuild to populate them.
 // v19: added HCL/Terraform extraction — rebuild to populate it.
-pub const SCHEMA_VERSION: i64 = 19;
+// v20: members for Zig/Solidity/Dart/Scala, and GraphQL type relations —
+// rebuild to populate them.
+pub const SCHEMA_VERSION: i64 = 20;
 
 pub struct Db {
     pub conn: Connection,

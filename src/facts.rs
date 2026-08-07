@@ -878,6 +878,15 @@ const TYPE_KINDS: &[&str] = &[
     "record_declaration",
     "object_declaration",
     "protocol_declaration",
+    // Zig / Solidity / Dart / Scala
+    "container_declaration",
+    "struct_declaration",
+    "contract_declaration",
+    "library_declaration",
+    "class_definition",
+    "object_definition",
+    "trait_definition",
+    "enum_definition",
     // Protobuf / GraphQL
     "message",
     "enum",
@@ -916,12 +925,27 @@ fn owner_of(kind: &str, node: Node, src: &[u8]) -> Option<String> {
             // `_name` catches the grammars that spell it out per construct
             // (protobuf's `message_name`, `enum_name`, …).
             let mut c = n.walk();
-            return n
+            let own = n
                 .children(&mut c)
                 .find(|ch| {
                     let k = ch.kind();
                     k.ends_with("identifier") || k == "name" || k.ends_with("_name")
                 })
+                .and_then(|ch| ch.utf8_text(src).ok())
+                .map(|t| t.to_string());
+            if own.is_some() {
+                return own;
+            }
+            // Some languages bind a type to a name rather than declaring it with
+            // one: Zig's `const Point = struct { … }` leaves the struct itself
+            // anonymous and puts `Point` on the enclosing declaration. Look there
+            // before giving up, or every field of every Zig type is ownerless and
+            // silently dropped.
+            let parent = n.parent()?;
+            let mut pc = parent.walk();
+            return parent
+                .children(&mut pc)
+                .find(|ch| ch.kind().ends_with("identifier"))
                 .and_then(|ch| ch.utf8_text(src).ok())
                 .map(|t| t.to_string());
         }
@@ -1517,6 +1541,11 @@ const SCALA_QUERY: &str = r#"
 (enum_definition name: (identifier) @name) @enum
 (type_definition name: (identifier) @name) @type
 (import_declaration path: (_) @name) @import
+(val_definition pattern: (identifier) @name) @field
+(var_definition pattern: (identifier) @name) @field
+(val_declaration name: (identifier) @name) @field
+(var_declaration name: (identifier) @name) @field
+(simple_enum_case name: (identifier) @name) @variant
 "#;
 const SCALA_SPANS: &str = r#"
 (comment) @comment
@@ -1569,6 +1598,11 @@ const DART_QUERY: &str = r#"
 (mixin_declaration name: (identifier) @name body: (class_body) @body) @class
 (enum_declaration name: (identifier) @name body: (_) @body) @enum
 (library_import (import_specification uri: (configurable_uri (uri (string_literal) @name)))) @import
+(class_member (declaration (initialized_identifier_list
+  (initialized_identifier name: (identifier) @name)))) @field
+(class_member (declaration (static_final_declaration_list
+  (static_final_declaration name: (identifier) @name)))) @field
+(enum_constant name: (identifier) @name) @variant
 "#;
 const DART_SPANS: &str = r#"
 (comment) @comment
@@ -1581,6 +1615,7 @@ const ZIG_QUERY: &str = r#"
 (variable_declaration (identifier) @name (struct_declaration)) @struct
 (variable_declaration (identifier) @name (enum_declaration)) @enum
 (variable_declaration (identifier) @name (union_declaration)) @union
+(container_field name: (identifier) @name) @field
 "#;
 const ZIG_SPANS: &str = r#"
 (comment) @comment
@@ -1600,6 +1635,10 @@ const SOLIDITY_QUERY: &str = r#"
 (enum_declaration name: (identifier) @name) @enum
 (event_definition name: (identifier) @name) @type
 (import_directive source: (string) @name) @import
+(state_variable_declaration name: (identifier) @name) @field
+(constant_variable_declaration name: (identifier) @name) @field
+(struct_member name: (identifier) @name) @field
+(enum_value) @name @variant
 "#;
 const SOLIDITY_SPANS: &str = r#"
 (comment) @comment

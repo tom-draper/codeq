@@ -3037,7 +3037,7 @@ pub fn cmd_capabilities(out: Out) -> Result<()> {
             "imports": "raw syntactic module strings; not resolved",
             "deps": "an import naming a directory resolves through that directory's conventional entry file (index.js, __init__.py, mod.rs) or any .tf",
             "unused": "skips GraphQL/protobuf definitions and Terraform outputs — they exist to be consumed outside the repo, so absence of local references says nothing",
-            "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#, Python, C, C++, PHP, Kotlin, Swift, Protobuf, GraphQL. Python attributes are assignments, so a member is its earliest `self.x =` or class-body assignment",
+            "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#, Python, C, C++, PHP, Kotlin, Swift, Protobuf, GraphQL, HCL, Zig, Solidity, Dart, Scala. Python attributes are assignments, so a member is its earliest `self.x =` or class-body assignment",
             "hcl": "block kinds are the block keyword verbatim (resource/variable/module/…), so the vocabulary is open-ended; a block is named by its last label and owned by its type label. A module `source` is an import, but `deps` resolves file stems and a module target is a directory, so it stays unresolved",
             "context_tokenizer": "approx:4-bytes-per-token",
             "freshness": "every command refreshes changed files before answering",

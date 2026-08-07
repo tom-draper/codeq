@@ -1813,3 +1813,24 @@ They drowned the real hits. Now skipped, with the reasoning in `capabilities`.
 The one that was already right: CSS. `.orphan` is reported and `.primary` is not,
 because `page.html` uses it — genuine dead-stylesheet detection that fell out of
 adding CSS spans, and worth checking rather than assuming it was noise too.
+
+## Members for Zig, Solidity, Dart and Scala (18 languages)
+
+Mechanical for three of them. Zig was not, and the reason generalises: some
+languages *bind* a type to a name rather than declaring it with one. `const Point
+= struct { x: i32 }` leaves the struct itself anonymous — `Point` lives on the
+enclosing declaration — so the owner lookup found an unnamed type and the
+"members must have an owner" rule dropped every Zig field silently. The lookup now
+follows that binding before giving up. Same shape as the mistake I made in Python,
+where the capture sat on the class instead of the assignment: the owner rule keeps
+catching cases where a member's type is not where you would first look for it.
+
+Zig reports enum members as `field` rather than `variant`, because the grammar
+models both as `container_field` and the language genuinely does not distinguish
+them. Reporting what the language says beats inventing a distinction it lacks.
+
+Also worth recording: the loud-failure fix committed an hour earlier paid for
+itself immediately. A wrong Dart pattern — `declaration` does not contain
+`initialized_variable_definition` — would previously have emptied the entire index
+while reporting `fresh: true`. Instead it printed `Impossible pattern:` with the
+exact query, and the fix took one lookup.
