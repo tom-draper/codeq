@@ -153,6 +153,50 @@ impl Filters {
     }
 }
 
+/// Definition sites of one exact name, as `(path, start_line)`.
+///
+/// Both `callers` and `references` need this to tell a declaration apart from a
+/// use of the same name — the one place where two commands genuinely ask the
+/// database the same question, so it is worth one function rather than two
+/// copies that could drift on the `kind <> 'import'` clause.
+fn def_sites_of(conn: &rusqlite::Connection, name: &str) -> Result<HashSet<(String, i64)>> {
+    let mut stmt =
+        conn.prepare("SELECT path, start_line FROM facts WHERE name = ?1 AND kind <> 'import'")?;
+    let rows = stmt.query_map([name], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    Ok(rows.collect::<std::result::Result<HashSet<_>, _>>()?)
+}
+
+/// Every definition site in the repo, as `(name, path, start_line)`.
+///
+/// Yields rows instead of returning a built structure because the two callers
+/// want different shapes of the same scan: `unused` groups sites by name to tell
+/// a use from a declaration, `hotspots` needs both a per-name count and a flat
+/// site set. Sharing the query keeps them agreeing on what counts as a definition.
+fn for_each_def_site(
+    conn: &rusqlite::Connection,
+    mut f: impl FnMut(String, String, i64),
+) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT name, path, start_line FROM facts
+         WHERE kind <> 'import' AND name IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+    })?;
+    for row in rows {
+        let (name, path, line) = row?;
+        f(name, path, line);
+    }
+    Ok(())
+}
+
+/// Every indexed file path, sorted — the node set for the dependency graph.
+fn all_file_paths(conn: &rusqlite::Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT path FROM files ORDER BY path")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
 /// A `LIMIT n` clause, or empty when `limit` is 0 (unlimited).
 fn limit_clause(limit: usize) -> String {
     if limit > 0 {
@@ -572,15 +616,7 @@ fn callers_of(
     };
 
     // Declaration lines of `name` — a reference on one of these is the def, not a call.
-    let mut defsites: HashSet<(String, i64)> = HashSet::new();
-    {
-        let mut st = s.db.conn.prepare(
-            "SELECT path, start_line FROM facts WHERE name = ?1 AND kind <> 'import'",
-        )?;
-        for row in st.query_map([name], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
-            defsites.insert(row?);
-        }
-    }
+    let defsites = def_sites_of(&s.db.conn, name)?;
 
     // Import lines in the files that matched. An import names the symbol without
     // using it, so it is a poor anchor for a caller row — it points at the
@@ -1717,9 +1753,7 @@ struct CycleRow {
 /// an `(importing_file, raw_module)` pair, resolved to file→file edges.
 fn load_dep_graph(s: &Session) -> Result<deps::Graph> {
     let files: Vec<String> = {
-        let mut stmt = s.db.conn.prepare("SELECT path FROM files ORDER BY path")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        rows.collect::<std::result::Result<_, _>>()?
+        all_file_paths(&s.db.conn)?
     };
     let imports: Vec<(String, String)> = {
         let mut stmt = s
@@ -1863,10 +1897,7 @@ fn resolve_dep_target(graph: &deps::Graph, s: &Session, query: &str) -> Result<S
     if graph.contains(query) {
         return Ok(query.to_string());
     }
-    let mut stmt = s.db.conn.prepare("SELECT path FROM files ORDER BY path")?;
-    let paths: Vec<String> = stmt
-        .query_map([], |r| r.get::<_, String>(0))?
-        .collect::<std::result::Result<_, _>>()?;
+    let paths = all_file_paths(&s.db.conn)?;
     let q = query.trim_start_matches("./");
     let matches: Vec<String> = paths
         .into_iter()
@@ -2255,17 +2286,7 @@ pub fn cmd_references(
     };
 
     // Definition sites of this exact name: (path, start_line).
-    let mut defsites: HashSet<(String, i64)> = HashSet::new();
-    {
-        let mut stmt = s.db.conn.prepare(
-            "SELECT path, start_line FROM facts WHERE name = ?1 AND kind <> 'import'",
-        )?;
-        let rows =
-            stmt.query_map([name], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-        for row in rows {
-            defsites.insert(row?);
-        }
-    }
+    let defsites = def_sites_of(&s.db.conn, name)?;
 
     let references: Vec<ReferenceRow> = hits
         .into_iter()
@@ -2696,22 +2717,12 @@ pub fn cmd_hotspots(
     // silently discarded every such call site.
     let mut defsites: HashSet<(String, String, i64)> = HashSet::new();
     let mut declarations: HashMap<String, i64> = HashMap::new();
-    {
-        let mut stmt = s.db.conn.prepare(
-            "SELECT name, path, start_line FROM facts
-             WHERE kind <> 'import' AND name IS NOT NULL",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
-        })?;
-        for row in rows {
-            let (name, path, line) = row?;
-            if wanted.contains(name.as_str()) {
-                *declarations.entry(name.clone()).or_insert(0) += 1;
-                defsites.insert((name, path, line));
-            }
+    for_each_def_site(&s.db.conn, |name, path, line| {
+        if wanted.contains(name.as_str()) {
+            *declarations.entry(name.clone()).or_insert(0) += 1;
+            defsites.insert((name, path, line));
         }
-    }
+    })?;
 
     // One pass over every indexed body, counting only the names we care about.
     let mut counts: HashMap<&str, i64> = HashMap::new();
@@ -2807,19 +2818,9 @@ pub fn cmd_unused(
     // Every definition site keyed by name (repo-wide) so a use can be told from
     // a definition, and a name defined in >1 place is handled.
     let mut defsites: HashMap<String, HashSet<(String, i64)>> = HashMap::new();
-    {
-        let mut stmt = s.db.conn.prepare(
-            "SELECT name, path, start_line FROM facts
-             WHERE kind <> 'import' AND name IS NOT NULL",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
-        })?;
-        for row in rows {
-            let (n, p, l) = row?;
-            defsites.entry(n).or_default().insert((p, l));
-        }
-    }
+    for_each_def_site(&s.db.conn, |n, p, l| {
+        defsites.entry(n).or_default().insert((p, l));
+    })?;
 
     // The definitions eligible to be reported (scoped by path/kind).
     let filters = Filters::new().like("path", path).eq("kind", kind);
