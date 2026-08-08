@@ -8,6 +8,7 @@
 //! guess intent or rank by opinion.
 
 mod astgrep;
+mod callsite;
 mod commands;
 mod context;
 mod db;
@@ -30,6 +31,17 @@ use clap::{Parser, Subcommand};
 struct Cli {
     #[command(subcommand)]
     command: Command,
+
+    /// Run against this directory as the repository root, instead of discovering
+    /// one from the current directory.
+    ///
+    /// Takes the directory literally: it does not walk up to a Git toplevel, and
+    /// it ignores the *parent* repository's ignore rules. That is what makes a
+    /// dependency readable — `--root node_modules/lodash`, a vendored tree, or a
+    /// checkout outside the current repo. The index is written to `.codeq`
+    /// inside that directory, as it is anywhere else.
+    #[arg(long, global = true, value_name = "DIR")]
+    root: Option<PathBuf>,
 
     /// Emit JSON (the `codeq.result.v1` envelope). Default is compact grep-style
     /// text — fewer tokens. Use this for programmatic consumers.
@@ -139,6 +151,25 @@ enum Command {
         #[arg(long, default_value_t = 200)]
         limit: usize,
     },
+    /// What a type contains: its fields, enum variants, and methods.
+    ///
+    /// Containment comes from the parse tree, not from name matching: a member is
+    /// a definition nested directly inside NAME's byte range. Languages that do
+    /// not declare members (Ruby `attr_accessor`, Python `self.x` in `__init__`)
+    /// yield nothing rather than a guess.
+    Members {
+        /// The type whose members to list.
+        name: String,
+        /// Restrict to definitions in paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Restrict to one member kind (field, variant, method, function).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
     /// The structure of a file top to bottom: definitions, signatures, nesting.
     Outline {
         /// File to outline (repo-relative path or basename).
@@ -169,6 +200,10 @@ enum Command {
         /// Only this kind (e.g. function, struct, class, interface).
         #[arg(long)]
         kind: Option<String>,
+        /// Report how the exported surface differs from this Git ref instead:
+        /// what was added, removed, or changed shape.
+        #[arg(long, value_name = "REF")]
+        compare_to: Option<String>,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
@@ -403,6 +438,20 @@ enum Command {
         #[arg(long, default_value_t = 30)]
         limit: usize,
     },
+    /// Exported definitions that no test refers to — `api` composed with `tests`.
+    ///
+    /// Public only, and heuristic in the same way `tests` is, so it over-reports
+    /// coverage rather than under-report it.
+    Untested {
+        /// Restrict to paths containing this substring.
+        path: Option<String>,
+        /// Restrict to one kind (function, struct, class, …).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
     /// Test functions that reference a symbol — "which tests exercise X".
     /// Heuristic (test-file path or test-like function name), name-based.
     Tests {
@@ -468,6 +517,10 @@ enum Command {
         /// Report every import cycle in the repo instead of one file's deps.
         #[arg(long)]
         cycles: bool,
+        /// Imports that resolve to no file in the repo: third-party dependencies,
+        /// and broken local references (a markdown link or ./path to nothing).
+        #[arg(long)]
+        external: bool,
     },
     /// Structural (AST) search: match a code pattern with `$VAR` metavariables.
     /// Parsed with the language's grammar, so it matches syntax, not text —
@@ -529,6 +582,13 @@ enum Command {
         /// Maximum results to return (0 = unlimited).
         #[arg(long, default_value_t = 100)]
         limit: usize,
+        /// Search text piped in on stdin instead of the repository index.
+        ///
+        /// Requires no repo and reads no index. Pass --language to also get
+        /// --in code|comments|strings and the enclosing [symbol] on each match;
+        /// without it the scan is exact but has neither.
+        #[arg(long)]
+        stdin: bool,
     },
     /// Assemble token-budgeted context from explicit seeds.
     Context {
@@ -565,7 +625,11 @@ enum Command {
     },
     /// REPO BROKEN DOWN for orientation: counts grouped by language, directory,
     /// imported module and file — what is here and where the weight sits. Start
-    /// here in an unfamiliar codebase; use `stats` for the one-line totals.
+    /// here in an unfamiliar codebase; use `stats` for the one-line totals and
+    /// `tree` when the nesting itself is what you need.
+    ///
+    /// Each list is ordered by its visible count (files/importers/definitions)
+    /// descending, ties broken by name/path.
     Map {
         /// Max rows per list (0 = unlimited).
         #[arg(long, default_value_t = 20)]
@@ -609,6 +673,15 @@ fn main() -> ExitCode {
     reset_sigpipe();
     let cli = Cli::parse();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // `--root` pins the tree; `PINNED_ROOT` carries that to `Repo::at` without
+    // threading a parameter through every command signature.
+    let cwd = match &cli.root {
+        Some(r) => {
+            commands::pin_root();
+            if r.is_absolute() { r.clone() } else { cwd.join(r) }
+        }
+        None => cwd,
+    };
 
     let out = commands::Out {
         json: cli.json,
@@ -681,8 +754,20 @@ fn main() -> ExitCode {
             path,
             limit,
         } => commands::cmd_definitions(&cwd, &symbol, path.as_deref(), limit, out),
-        Command::Api { path, kind, limit } => {
-            commands::cmd_api(&cwd, path.as_deref(), kind.as_deref(), limit, out)
+        Command::Api {
+            path,
+            kind,
+            compare_to,
+            limit,
+        } => {
+            commands::cmd_api(
+                &cwd,
+                path.as_deref(),
+                kind.as_deref(),
+                compare_to.as_deref(),
+                limit,
+                out,
+            )
         }
         Command::Callers {
             name,
@@ -825,7 +910,8 @@ fn main() -> ExitCode {
             file,
             depth,
             cycles,
-        } => commands::cmd_deps(&cwd, file.as_deref(), depth, cycles, out),
+            external,
+        } => commands::cmd_deps(&cwd, file.as_deref(), depth, cycles, external, out),
         Command::Astgrep {
             pattern,
             language,
@@ -847,6 +933,7 @@ fn main() -> ExitCode {
             files_with_matches,
             count,
             limit,
+            stdin,
         } => commands::cmd_search(
             &cwd,
             commands::SearchArgs {
@@ -863,6 +950,7 @@ fn main() -> ExitCode {
                 files_with_matches,
                 count,
                 limit,
+                stdin,
             },
             out,
         ),
@@ -889,6 +977,15 @@ fn main() -> ExitCode {
             },
             out,
         ),
+        Command::Members {
+            name,
+            path,
+            kind,
+            limit,
+        } => commands::cmd_members(&cwd, &name, path.as_deref(), kind.as_deref(), limit, out),
+        Command::Untested { path, kind, limit } => {
+            commands::cmd_untested(&cwd, path.as_deref(), kind.as_deref(), limit, out)
+        }
         Command::Stats {} => commands::cmd_stats(&cwd, out),
         Command::Map { limit } => commands::cmd_map(&cwd, limit, out),
         Command::Capabilities {} => {

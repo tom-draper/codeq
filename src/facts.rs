@@ -88,6 +88,10 @@ impl Fact {
 
 /// Holds a parser + compiled query per supported language, reused across files
 /// within a single refresh pass.
+/// What one parse of a file yields: its definitions, its comment/string spans,
+/// and its type relations.
+pub type Extraction = (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>);
+
 pub struct Extractor {
     rust: LangSpec,
     python: LangSpec,
@@ -172,7 +176,7 @@ impl LangSpec {
     }
 
     /// One parse yields definition facts, comment/string spans, and type relations.
-    fn extract(&mut self, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>) {
+    fn extract(&mut self, src: &[u8]) -> Extraction {
         let tree = match self.parser.parse(src, None) {
             Some(t) => t,
             None => return (Vec::new(), Vec::new(), Vec::new()),
@@ -254,20 +258,39 @@ impl LangSpec {
                     }
                 }
                 if let Some(g) = guard {
+                    let is_import = kind == Some("import");
                     // A guarded match is only valid when the token is a known
                     // keyword. Elixir definitions are macro calls (`def`/`defp`/
                     // `defmodule`); every other language guards call-style imports.
-                    // Python instance attributes are assignments, and only a
-                    // `self.`-qualified one declares a member; `other.x = 1`
-                    // mutates somebody else's object.
-                    let ok = if self.lang == "python" {
-                        g == "self"
-                    } else if self.lang == "elixir" {
-                        matches!(g, "def" | "defp" | "defmacro" | "defmacrop"
-                            | "defmodule" | "defprotocol" | "defimpl" | "defguard")
-                    } else {
-                        matches!(g, "require" | "require_relative"
-                            | "require_dependency" | "load" | "autoload")
+                    // The allow-list depends on what the match claims to be, not
+                    // just the language: in Elixir `defmodule M` and `alias M`
+                    // are the same shape of call, and only the keyword says
+                    // whether it defines a module or imports one. Checking the
+                    // keyword against the *kind* keeps them apart.
+                    let ok = match (self.lang, is_import) {
+                        ("elixir", false) => matches!(g, "def" | "defp" | "defmacro"
+                            | "defmacrop" | "defmodule" | "defprotocol" | "defimpl"
+                            | "defguard"),
+                        ("elixir", true) => matches!(g, "alias" | "import" | "use" | "require"),
+                        // Python declares an instance attribute by assigning it,
+                        // and only a `self.`-qualified assignment declares one:
+                        // `other.x = 1` mutates somebody else's object. The member
+                        // query captures the receiver as `@guard` for this check,
+                        // so dropping this arm silently loses every Python
+                        // instance attribute.
+                        ("python", false) => g == "self",
+                        ("bash", _) => matches!(g, "source" | "."),
+                        ("lua", _) => matches!(g, "require" | "dofile" | "loadfile"),
+                        ("zig", _) => matches!(g, "@import" | "@cImport"),
+                        // Ruby uses method calls for both requires and field
+                        // declarations; the callee name says which.
+                        ("ruby", true) => matches!(g, "require" | "require_relative"
+                            | "require_dependency" | "load" | "autoload"),
+                        ("ruby", false) => {
+                            matches!(g, "attr_accessor" | "attr_reader" | "attr_writer")
+                        }
+                        _ => matches!(g, "require" | "require_relative"
+                            | "require_dependency" | "load" | "autoload"),
                     };
                     if !ok {
                         continue;
@@ -279,8 +302,22 @@ impl LangSpec {
                     let name = if kind == "import" {
                         name.trim_matches(|c: char| "\"'`<>".contains(c))
                             .to_string()
+                    } else if kind == "field" {
+                        // A Ruby `attr_accessor :a` declares the field `a`; the
+                        // colon is symbol syntax, not part of the name.
+                        name.trim_start_matches(':').to_string()
                     } else {
                         name
+                    };
+                    // A function declared inside a type body is a method: it
+                    // can be called on a value. Several grammars use the same
+                    // node for both (Rust `function_item`, Python
+                    // `function_definition`), so the queries cannot tell them
+                    // apart and every method came back as `function`.
+                    let kind = if kind == "function" && is_method(self.lang, node) {
+                        "method"
+                    } else {
+                        kind
                     };
                     let visibility = if kind == "import" {
                         None
@@ -431,7 +468,7 @@ impl Extractor {
             )?,
             javascript: LangSpec::new(
                 tree_sitter_javascript::LANGUAGE.into(),
-                JS_QUERY,
+                &format!("{JS_QUERY}\n{JS_EXTRA}"),
                 JS_SPANS,
                 JS_REL,
                 "treesitter/javascript",
@@ -529,7 +566,7 @@ impl Extractor {
                 tree_sitter_scala::LANGUAGE.into(),
                 SCALA_QUERY,
                 SCALA_SPANS,
-                "",
+                SCALA_REL,
                 "treesitter/scala",
                 "scala",
             )?,
@@ -537,7 +574,7 @@ impl Extractor {
                 tree_sitter_kotlin_ng::LANGUAGE.into(),
                 KOTLIN_QUERY,
                 KOTLIN_SPANS,
-                "",
+                KOTLIN_REL,
                 "treesitter/kotlin",
                 "kotlin",
             )?,
@@ -545,7 +582,7 @@ impl Extractor {
                 tree_sitter_swift::LANGUAGE.into(),
                 SWIFT_QUERY,
                 SWIFT_SPANS,
-                "",
+                SWIFT_REL,
                 "treesitter/swift",
                 "swift",
             )?,
@@ -553,7 +590,7 @@ impl Extractor {
                 tree_sitter_dart::LANGUAGE.into(),
                 DART_QUERY,
                 DART_SPANS,
-                "",
+                DART_REL,
                 "treesitter/dart",
                 "dart",
             )?,
@@ -577,7 +614,7 @@ impl Extractor {
                 tree_sitter_solidity::LANGUAGE.into(),
                 SOLIDITY_QUERY,
                 SOLIDITY_SPANS,
-                "",
+                SOLIDITY_REL,
                 "treesitter/solidity",
                 "solidity",
             )?,
@@ -628,7 +665,7 @@ impl Extractor {
         language: &str,
         path: &str,
         src: &[u8],
-    ) -> (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>) {
+    ) -> Extraction {
         match language {
             "rust" => self.rust.extract(src),
             "python" => self.python.extract(src),
@@ -651,6 +688,7 @@ impl Extractor {
             "zig" => self.zig.extract(src),
             "elixir" => self.elixir.extract(src),
             "solidity" => self.solidity.extract(src),
+            "markdown" => markdown_facts(src),
             "css" => self.css.extract(src),
             // Derived rather than queried — see `hcl_facts`.
             "hcl" => {
@@ -779,6 +817,354 @@ fn script_is_ts(script: Node, src: &[u8]) -> bool {
     false
 }
 
+
+// --- Markdown ----------------------------------------------------------------
+
+/// Markdown structure, parsed line-wise rather than with a grammar.
+///
+/// Docs are the first thing read in an unfamiliar repo and the last thing codeq
+/// knew anything about. Treating a **heading as a definition** is the whole
+/// feature: a heading has a name, a byte range (down to the next heading of the
+/// same or higher level) and a nesting depth, which is exactly the fact model
+/// every other language produces. `outline`, `at`, `read --symbol`, the folded
+/// `read`, and the enclosing-`[symbol]` annotation on search hits all then work
+/// on prose for free.
+///
+/// Deliberately not Tree-sitter: headings are unambiguous line-wise as long as
+/// fenced blocks are tracked (so a `# comment` inside a shell example is not a
+/// heading), and this avoids a grammar dependency for the one format where the
+/// structure is trivial. `source` records which was used.
+///
+/// Also emitted:
+/// - **Spans.** A fenced code block is `Str`, prose is `Comment`, so
+///   `--in strings` searches the examples and `--in comments` searches the prose.
+///   Markdown has no "code" in the `--in code` sense, so that filter is
+///   correctly empty here rather than quietly matching everything.
+/// - **Imports.** A link or image with a local target (`](./x.md)`,
+///   `![](assets/logo.png)`, and reference definitions `[l]: ./x.md`) becomes an
+///   import, so `deps`, `importers` and cycle detection cover documentation and
+///   its assets. External URLs and bare `#anchor` links are not file references
+///   and are skipped.
+fn markdown_facts(src: &[u8]) -> Extraction {
+    let text = String::from_utf8_lossy(src);
+    let mut facts: Vec<Fact> = Vec::new();
+    let mut spans: Vec<(usize, usize, Span)> = Vec::new();
+
+    // (line_index, byte_start, byte_end_excluding_newline, text)
+    let mut lines: Vec<(usize, usize, &str)> = Vec::new();
+    let mut off = 0usize;
+    for l in text.split_inclusive('\n') {
+        let trimmed = l.strip_suffix('\n').unwrap_or(l);
+        let trimmed = trimmed.strip_suffix('\r').unwrap_or(trimmed);
+        lines.push((off, off + trimmed.len(), trimmed));
+        off += l.len();
+    }
+
+    // A heading found in the scan: (line index, level, name, byte start).
+    struct Head {
+        line: usize,
+        level: usize,
+        name: String,
+        start: usize,
+    }
+    let mut heads: Vec<Head> = Vec::new();
+
+    // Prose/code classification, accumulated as runs and merged at the end.
+    let mut classes: Vec<Option<Span>> = vec![None; lines.len()];
+
+    let mut fence: Option<(char, usize)> = None; // (char, run length)
+    let mut in_frontmatter = false;
+
+    for (i, (start, end, raw)) in lines.iter().enumerate() {
+        let t = raw.trim_start();
+        let indent = raw.len() - t.len();
+
+        // YAML/TOML frontmatter at the very top is metadata, not prose or
+        // headings; its `---` must not be read as a setext underline.
+        if i == 0 && (t == "---" || t == "+++") {
+            in_frontmatter = true;
+            classes[i] = Some(Span::Str);
+            continue;
+        }
+        if in_frontmatter {
+            classes[i] = Some(Span::Str);
+            if t == "---" || t == "+++" {
+                in_frontmatter = false;
+            }
+            continue;
+        }
+
+        // Fenced code blocks. A closing fence is the same character, at least as
+        // long as the opener, and carries no info string.
+        let fence_run = |s: &str, c: char| s.chars().take_while(|&x| x == c).count();
+        if let Some((fc, flen)) = fence {
+            classes[i] = Some(Span::Str);
+            let run = fence_run(t, fc);
+            if run >= flen && t[run..].trim().is_empty() {
+                fence = None;
+            }
+            continue;
+        }
+        if indent < 4 && (t.starts_with("```") || t.starts_with("~~~")) {
+            let fc = t.chars().next().unwrap();
+            fence = Some((fc, fence_run(t, fc)));
+            classes[i] = Some(Span::Str);
+            continue;
+        }
+
+        classes[i] = Some(Span::Comment); // ordinary prose
+
+        // ATX heading: up to 3 spaces of indent, 1-6 `#`, then a space.
+        if indent < 4 && t.starts_with('#') {
+            let level = t.chars().take_while(|&c| c == '#').count();
+            let rest = &t[level..];
+            if (1..=6).contains(&level) && (rest.is_empty() || rest.starts_with(' ')) {
+                // A trailing run of `#` is decoration, not part of the name.
+                let name = rest.trim().trim_end_matches('#').trim().to_string();
+                if !name.is_empty() {
+                    heads.push(Head { line: i, level, name, start: *start });
+                }
+                continue;
+            }
+        }
+
+        // Setext underline: `===` or `---` directly under paragraph text. The
+        // preceding line must be ordinary prose, otherwise `---` is a thematic
+        // break (or a list marker), not a heading.
+        if indent < 4 && !t.is_empty() && (t.chars().all(|c| c == '=') || t.chars().all(|c| c == '-'))
+        {
+            if let Some(prev) = i.checked_sub(1) {
+                let prev_raw = lines[prev].2.trim();
+                let prev_is_prose = !prev_raw.is_empty()
+                    && classes[prev] == Some(Span::Comment)
+                    && !heads.iter().any(|h| h.line == prev)
+                    && !prev_raw.starts_with(['-', '*', '+', '>', '#']);
+                if prev_is_prose {
+                    let level = if t.starts_with('=') { 1 } else { 2 };
+                    heads.push(Head {
+                        line: prev,
+                        level,
+                        name: prev_raw.to_string(),
+                        start: lines[prev].0,
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // File references: inline links/images and reference definitions.
+        collect_md_links(raw, *start, i + 1, &mut facts);
+        let _ = end;
+    }
+
+    // A heading owns everything down to the next heading of the same or higher
+    // level, which is what makes containment (and therefore outline nesting)
+    // work without tracking a stack.
+    let eof = text.len();
+    for (idx, h) in heads.iter().enumerate() {
+        let end_byte = heads[idx + 1..]
+            .iter()
+            .find(|o| o.level <= h.level)
+            .map(|o| o.start)
+            .unwrap_or(eof);
+        let end_line = heads[idx + 1..]
+            .iter()
+            .find(|o| o.level <= h.level)
+            .map(|o| o.line)
+            .unwrap_or(lines.len());
+        // The section's first prose line doubles as its summary, the way a
+        // docstring does for a function.
+        let doc = lines[(h.line + 1).min(lines.len())..end_line]
+            .iter()
+            .map(|(_, _, t)| t.trim())
+            .find(|t| !t.is_empty())
+            .map(|t| cap(&collapse_ws(t), MAX_DOC));
+        facts.push(Fact {
+            kind: "heading".to_string(),
+            name: h.name.clone(),
+            start_byte: h.start,
+            end_byte: end_byte.max(h.start),
+            start_line: h.line + 1,
+            start_col: 0,
+            end_line: end_line.max(h.line + 1),
+            end_col: 0,
+            signature: cap(&collapse_ws(lines[h.line].2.trim()), MAX_SIG),
+            doc,
+            source: "lines/markdown".to_string(),
+            confidence: 1.0,
+            visibility: None,
+            owner: None,
+            shape: None,
+            shape_nodes: 0,
+        });
+    }
+
+    // Merge the per-line classes into runs.
+    let mut i = 0usize;
+    while i < lines.len() {
+        let c = classes[i];
+        if c.is_none() {
+            i += 1;
+            continue;
+        }
+        let start = lines[i].0;
+        let mut j = i;
+        while j + 1 < lines.len() && classes[j + 1] == c {
+            j += 1;
+        }
+        let end = if j + 1 < lines.len() { lines[j + 1].0 } else { eof };
+        spans.push((start, end, c.unwrap()));
+        i = j + 1;
+    }
+
+    facts.sort_by_key(|f| (f.start_byte, f.end_byte));
+    (facts, spans, Vec::new())
+}
+
+/// Local file references on one markdown line: inline `[t](path)` / `![a](path)`
+/// and reference definitions `[label]: path`. External URLs and pure `#anchor`
+/// links name no file, so they carry no edge.
+///
+/// Anything inside an inline code span is an *example* of a link, not a link:
+/// documentation about markdown is full of `` `[t](./guide.md)` `` that must not
+/// become a dependency edge (or a broken one). Found by dogfooding, when
+/// `deps --external` reported this repo's own README as having two dead links.
+fn collect_md_links(raw: &str, line_start: usize, line_no: usize, facts: &mut Vec<Fact>) {
+    let mut push = |target: &str, at: usize| {
+        let t = target.trim();
+        // Strip an optional title: `(path "Title")`.
+        let t = t.split_whitespace().next().unwrap_or(t);
+        let t = t.trim_matches(|c| c == '<' || c == '>');
+        // Drop any anchor, keeping the file part (`./x.md#section` -> `./x.md`).
+        let file = t.split('#').next().unwrap_or(t);
+        if file.is_empty() || is_external_url(t) {
+            return;
+        }
+        facts.push(Fact {
+            kind: "import".to_string(),
+            name: file.to_string(),
+            start_byte: line_start + at,
+            end_byte: line_start + at + target.len(),
+            start_line: line_no,
+            start_col: at,
+            end_line: line_no,
+            end_col: at + target.len(),
+            signature: String::new(),
+            doc: None,
+            source: "lines/markdown".to_string(),
+            confidence: 1.0,
+            visibility: None,
+            owner: None,
+            shape: None,
+            shape_nodes: 0,
+        });
+    };
+
+    // Byte ranges covered by inline code spans on this line.
+    let code_spans = inline_code_spans(raw);
+    let in_code = |at: usize| code_spans.iter().any(|(s, e)| at >= *s && at < *e);
+
+    let bytes = raw.as_bytes();
+    // Reference definition: `[label]: target`.
+    if let Some(rest) = raw.trim_start().strip_prefix('[') {
+        if let Some((_, after)) = rest.split_once("]:") {
+            let at = raw.len() - after.len();
+            if !in_code(at) {
+                push(after, at);
+            }
+            return;
+        }
+    }
+    // Inline `](target)`, which covers both links and images.
+    let mut i = 0usize;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b']' && bytes[i + 1] == b'(' {
+            if let Some(close) = raw[i + 2..].find(')') {
+                if !in_code(i) {
+                    push(&raw[i + 2..i + 2 + close], i + 2);
+                }
+                i += 2 + close;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Byte ranges of inline code spans (`` `x` ``, ``` ``x`` ```) on one line.
+fn inline_code_spans(raw: &str) -> Vec<(usize, usize)> {
+    let bytes = raw.as_bytes();
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let ticks = bytes[i..].iter().take_while(|&&b| b == b'`').count();
+        let open = i;
+        let mut j = i + ticks;
+        // The closing run must be the same length, as in CommonMark.
+        while j < bytes.len() {
+            if bytes[j] == b'`' {
+                let run = bytes[j..].iter().take_while(|&&b| b == b'`').count();
+                if run == ticks {
+                    spans.push((open, j + run));
+                    break;
+                }
+                j += run;
+            } else {
+                j += 1;
+            }
+        }
+        i = if j < bytes.len() { j + ticks } else { bytes.len() };
+    }
+    spans
+}
+
+fn is_external_url(t: &str) -> bool {
+    let lower = t.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:")
+        || lower.starts_with("ftp://")
+        || lower.starts_with("//")
+        || t.starts_with('#')
+}
+
+/// Whether a function node is a method — declared inside a type body, so it can
+/// be called on a value.
+///
+/// Walks outward and stops at the first enclosing definition: a function ancestor
+/// means this is a nested function or closure, not a method, however deeply the
+/// class sits above it.
+///
+/// Rust is the exception that needs more than nesting. An `impl` block holds both
+/// methods and associated functions, and only a `self` parameter distinguishes
+/// `s.meth()` from `S::assoc()`, so Rust requires one.
+fn is_method(lang: &str, node: Node) -> bool {
+    if lang == "rust" && !has_self_parameter(node) {
+        return false;
+    }
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        let k = n.kind();
+        // A nearer function encloses this one: nested, not a member.
+        if k.contains("function_item")
+            || k.contains("function_definition")
+            || k.contains("function_declaration")
+            || k.contains("method")
+        {
+            return false;
+        }
+        if is_type_body(k) {
+            return true;
+        }
+        cur = n.parent();
+    }
+    false
+}
+
 /// A copy of `src` with every byte outside `[start, end)` replaced by a space,
 /// newlines excepted. Parsing this instead of the slice keeps the embedded
 /// region at its original byte offsets, rows and columns, so facts extracted
@@ -828,6 +1214,115 @@ fn component_fact(path: &str, src: &[u8]) -> Option<Fact> {
     })
 }
 
+
+/// Node kinds that introduce a type's body across the supported grammars.
+fn is_type_body(kind: &str) -> bool {
+    const TYPEISH: &[&str] = &[
+        "impl", "trait", "class", "struct", "contract", "object", "protocol",
+        "extension", "interface", "enum", "record",
+    ];
+    TYPEISH.iter().any(|t| kind.contains(t))
+}
+
+/// A Rust `fn` whose first parameter is `self` (`&self`, `&mut self`, `self`).
+fn has_self_parameter(node: Node) -> bool {
+    let Some(params) = node.child_by_field_name("parameters") else {
+        return false;
+    };
+    let mut c = params.walk();
+    let found = params
+        .named_children(&mut c)
+        .any(|p| p.kind() == "self_parameter");
+    found
+}
+
+/// Every language codeq extracts from.
+pub const LANGUAGES: &[&str] = &[
+    "rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby",
+    "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift",
+    "dart", "zig", "elixir", "solidity", "markdown",
+];
+
+/// What codeq can extract for one language.
+///
+/// Support is uneven and always has been — Go has no inheritance edges, Ruby
+/// declares no fields, several languages have no import syntax codeq reads — but
+/// `capabilities` presented flat lists, so "no results" and "not supported"
+/// looked identical. This makes the difference queryable.
+///
+/// Derived from each language's own query text rather than a hand-kept table,
+/// because the hand-kept list is exactly what drifted (it listed `field`/
+/// `variant` twice and omitted `heading`).
+#[derive(serde::Serialize)]
+pub struct Support {
+    pub language: String,
+    /// Definitions: functions, types, and so on.
+    pub definitions: bool,
+    /// Import statements, so `deps`/`importers` work.
+    pub imports: bool,
+    /// Fields and enum variants, for `members`.
+    pub members: bool,
+    /// Inheritance edges, for `implementors`/`supertypes`.
+    pub relations: bool,
+    /// Comment/string spans, for `search --in`.
+    pub spans: bool,
+    /// Call sites, for the `--calls`/`--on` precision filters.
+    pub calls: bool,
+}
+
+/// The raw query text for a language: (definitions, relations).
+fn queries_for(language: &str) -> Option<(String, String)> {
+    let pair = |q: &str, r: &str| Some((q.to_string(), r.to_string()));
+    match language {
+        "rust" => pair(RUST_QUERY, RUST_REL),
+        "python" => pair(PYTHON_QUERY, PYTHON_REL),
+        "javascript" => pair(&format!("{JS_QUERY}\n{JS_EXTRA}"), JS_REL),
+        "typescript" | "tsx" => pair(&format!("{JS_QUERY}\n{TS_EXTRA}"), TS_REL),
+        "go" => pair(GO_QUERY, GO_REL),
+        "java" => pair(JAVA_QUERY, JAVA_REL),
+        "ruby" => pair(RUBY_QUERY, RUBY_REL),
+        "c" => pair(C_QUERY, C_REL),
+        "cpp" => pair(CPP_QUERY, CPP_REL),
+        "csharp" => pair(CSHARP_QUERY, CSHARP_REL),
+        "php" => pair(PHP_QUERY, PHP_REL),
+        "bash" => pair(BASH_QUERY, ""),
+        "lua" => pair(LUA_QUERY, ""),
+        "scala" => pair(SCALA_QUERY, SCALA_REL),
+        "kotlin" => pair(KOTLIN_QUERY, KOTLIN_REL),
+        "swift" => pair(SWIFT_QUERY, SWIFT_REL),
+        "dart" => pair(DART_QUERY, DART_REL),
+        "zig" => pair(ZIG_QUERY, ""),
+        "elixir" => pair(ELIXIR_QUERY, ""),
+        "solidity" => pair(SOLIDITY_QUERY, SOLIDITY_REL),
+        _ => None,
+    }
+}
+
+pub fn support(language: &str) -> Option<Support> {
+    // Markdown is extracted by hand, not by a query, so it is described directly.
+    if language == "markdown" {
+        return Some(Support {
+            language: language.to_string(),
+            definitions: true, // headings
+            imports: true,     // local links and images
+            members: false,
+            relations: false,
+            spans: true, // fenced code vs prose
+            calls: false,
+        });
+    }
+    let (query, rel) = queries_for(language)?;
+    Some(Support {
+        language: language.to_string(),
+        definitions: query.contains(") @") || query.contains("@function"),
+        imports: query.contains("@import"),
+        members: query.contains("@field") || query.contains("@variant"),
+        relations: !rel.trim().is_empty(),
+        spans: has_spans(language),
+        calls: crate::astgrep::ts_language(language).is_some(),
+    })
+}
+
 /// Whether codeq can classify comment/string spans for this language (i.e. it
 /// has a parser). `search --in` excludes files in other languages rather than
 /// guess.
@@ -862,6 +1357,7 @@ pub fn has_spans(language: &str) -> bool {
             | "powershell"
             | "proto"
             | "graphql"
+            | "markdown"
     )
 }
 
@@ -916,6 +1412,13 @@ const TYPE_KINDS: &[&str] = &[
     "class_specifier",
     "union_specifier",
     "enum_specifier",
+    // Ruby. Its grammar names the nodes plainly, with no `_declaration` suffix —
+    // which is how `attr_accessor :a` fields went missing when Ruby member
+    // extraction met the rule below that an owner-less member is dropped. Each
+    // side was right on its own; only together did they cancel out.
+    "class",
+    "module",
+    "singleton_class",
 ];
 
 /// The name of the type enclosing a member, for `field` and `variant` facts.
@@ -1161,6 +1664,9 @@ fn cap(s: &str, max: usize) -> String {
 /// whole definition node, and optionally `@body` (stripped from signatures).
 const RUST_QUERY: &str = r#"
 (function_item name: (identifier) @name body: (block) @body) @function
+; A trait method declaration has no body, so the pattern above misses it — yet it
+; is the whole point of the trait, and what `implementors` sends you looking for.
+(function_signature_item name: (identifier) @name) @method
 (struct_item name: (type_identifier) @name) @struct
 (enum_item name: (type_identifier) @name) @enum
 (union_item name: (type_identifier) @name) @union
@@ -1182,6 +1688,10 @@ const RUST_QUERY: &str = r#"
 ; file-level dependency edge, so treat it as an import for reachability. Inline
 ; `mod foo { … }` (has a body) is not a separate file, so exclude it via `!body`.
 (mod_item name: (identifier) @name !body) @import
+; Members: struct/union fields and enum variants. Contained in their parent's
+; byte range, which is how `members` and `outline` recover the relationship.
+(field_declaration name: (field_identifier) @name) @field
+(enum_variant name: (identifier) @name) @variant
 "#;
 
 const PYTHON_QUERY: &str = r#"
@@ -1243,14 +1753,25 @@ const JS_QUERY: &str = r#"
   arguments: (arguments . (string (string_fragment) @name))) @import
 "#;
 
+/// JavaScript-only definitions, appended to `JS_QUERY` for .js/.jsx.
+///
+/// A class field is `field_definition` in the JavaScript grammar but
+/// `public_field_definition` in TypeScript's, so it cannot live in the shared
+/// query: a node type absent from a grammar fails the whole query to compile.
+const JS_EXTRA: &str = r#"
+(field_definition property: (property_identifier) @name) @field
+(field_definition property: (private_property_identifier) @name) @field
+"#;
+
 /// TypeScript-only definitions, appended to `JS_QUERY` for TS and TSX.
 const TS_EXTRA: &str = r#"
 (interface_declaration name: (_) @name) @interface
 (type_alias_declaration name: (_) @name) @type
 (enum_declaration name: (_) @name) @enum
-(public_field_definition name: (_) @name) @field
-(property_signature name: (_) @name) @field
-(enum_assignment name: (_) @name) @variant
+; Typed class fields, interface properties, and enum members.
+(public_field_definition name: (property_identifier) @name) @field
+(property_signature name: (property_identifier) @name) @field
+(enum_assignment name: (property_identifier) @name) @variant
 "#;
 
 /// Go definitions and imports.
@@ -1262,6 +1783,7 @@ const GO_QUERY: &str = r#"
 (type_declaration (type_spec name: (type_identifier) @name type: (type_identifier)) @type)
 (type_declaration (type_alias name: (type_identifier) @name) @type)
 (import_spec path: (interpreted_string_literal) @name) @import
+; Struct fields. Embedded fields (no name) carry no identifier, so are skipped.
 (field_declaration name: (field_identifier) @name) @field
 "#;
 
@@ -1281,6 +1803,7 @@ const JAVA_QUERY: &str = r#"
 (method_declaration name: (identifier) @name !body) @method
 (constructor_declaration name: (identifier) @name body: (constructor_body) @body) @method
 (import_declaration (scoped_identifier) @name) @import
+; Fields and enum constants.
 (field_declaration declarator: (variable_declarator name: (identifier) @name)) @field
 (enum_constant name: (identifier) @name) @variant
 "#;
@@ -1305,6 +1828,12 @@ const RUBY_QUERY: &str = r#"
 (call
   method: (identifier) @guard
   arguments: (argument_list . (string (string_content) @name))) @import
+
+; `attr_accessor :a, :b` — Ruby declares fields through a method call, so each
+; symbol argument becomes a field. Guarded on the attr_* family.
+(call
+  method: (identifier) @guard
+  arguments: (argument_list (simple_symbol) @name)) @field
 "#;
 
 const RUBY_SPANS: &str = r#"
@@ -1321,7 +1850,9 @@ const C_QUERY: &str = r#"
 (enum_specifier name: (type_identifier) @name body: (enumerator_list) @body) @enum
 (preproc_include path: (system_lib_string) @name) @import
 (preproc_include path: (string_literal) @name) @import
+; Struct/union fields, including pointer declarators (`char *b`).
 (field_declaration declarator: (field_identifier) @name) @field
+(field_declaration declarator: (pointer_declarator declarator: (field_identifier) @name)) @field
 (enumerator name: (identifier) @name) @variant
 "#;
 
@@ -1349,6 +1880,9 @@ const CPP_QUERY: &str = r#"
 (namespace_definition name: (namespace_identifier) @name body: (declaration_list) @body) @namespace
 (preproc_include path: (system_lib_string) @name) @import
 (preproc_include path: (string_literal) @name) @import
+(field_declaration declarator: (field_identifier) @name) @field
+(field_declaration declarator: (pointer_declarator declarator: (field_identifier) @name)) @field
+(enumerator name: (identifier) @name) @variant
 "#;
 
 const CPP_SPANS: &str = r#"
@@ -1370,6 +1904,7 @@ const CSHARP_QUERY: &str = r#"
 (namespace_declaration name: (_) @name body: (_) @body) @namespace
 (using_directive (identifier) @name) @import
 (using_directive (qualified_name) @name) @import
+; Fields, auto/expression properties, and enum members.
 (field_declaration (variable_declaration (variable_declarator (identifier) @name))) @field
 (property_declaration name: (identifier) @name) @field
 (enum_member_declaration name: (identifier) @name) @variant
@@ -1399,6 +1934,9 @@ const PHP_QUERY: &str = r#"
 (require_once_expression [(string) (encapsed_string)] @name) @import
 (include_expression [(string) (encapsed_string)] @name) @import
 (include_once_expression [(string) (encapsed_string)] @name) @import
+; Typed and untyped properties, and enum cases.
+(property_declaration (property_element (variable_name (name) @name))) @field
+(enum_case name: (name) @name) @variant
 "#;
 
 const PHP_SPANS: &str = r#"
@@ -1521,6 +2059,11 @@ const PHP_REL: &str = r#"
 
 // Bash: functions only (source/. includes are plain commands, not captured).
 const BASH_QUERY: &str = r#"
+; `source ./lib.sh` and `. ./lib.sh` — a command, guarded on its name.
+(command
+  name: (command_name (word) @guard)
+  argument: (word) @name) @import
+
 (function_definition name: (word) @name body: (_) @body) @function
 "#;
 const BASH_SPANS: &str = r#"
@@ -1537,6 +2080,12 @@ const LUA_QUERY: &str = r#"
 (function_declaration name: (identifier) @name body: (block) @body) @function
 (function_declaration name: (dot_index_expression) @name body: (block) @body) @function
 (function_declaration name: (method_index_expression) @name body: (block) @body) @method
+
+; `require("mod")` is a call, not syntax, so it is guarded on the callee name the
+; same way Ruby's `require` is.
+(function_call
+  name: (identifier) @guard
+  arguments: (arguments . (string (string_content) @name))) @import
 "#;
 const LUA_SPANS: &str = r#"
 (comment) @comment
@@ -1544,6 +2093,16 @@ const LUA_SPANS: &str = r#"
 "#;
 
 // Scala: defs, classes/objects/traits/enums, type aliases, and imports.
+const SCALA_REL: &str = r#"
+; `class A extends B with C` — the extends clause lists every ancestor.
+(class_definition name: (identifier) @sub
+  (extends_clause (type_identifier) @extends))
+(trait_definition name: (identifier) @sub
+  (extends_clause (type_identifier) @extends))
+(object_definition name: (identifier) @sub
+  (extends_clause (type_identifier) @extends))
+"#;
+
 const SCALA_QUERY: &str = r#"
 (function_definition name: (identifier) @name body: (_) @body) @function
 (function_definition name: (identifier) @name !body) @function
@@ -1557,8 +2116,10 @@ const SCALA_QUERY: &str = r#"
 (enum_definition name: (identifier) @name) @enum
 (type_definition name: (identifier) @name) @type
 (import_declaration path: (_) @name) @import
+; `val`/`var` members and case-class parameters (which are fields).
 (val_definition pattern: (identifier) @name) @field
 (var_definition pattern: (identifier) @name) @field
+(class_parameter name: (identifier) @name) @field
 (val_declaration name: (identifier) @name) @field
 (var_declaration name: (identifier) @name) @field
 (simple_enum_case name: (identifier) @name) @variant
@@ -1572,12 +2133,25 @@ const SCALA_SPANS: &str = r#"
 
 // Kotlin: classes/objects/functions and imports. The grammar exposes no body
 // field, so signatures are the (capped) declaration, like Ruby.
+const KOTLIN_REL: &str = r#"
+; `class A : B(), C` — a delegation specifier is a base class or interface;
+; Kotlin does not distinguish them syntactically, so both read as `extends`.
+(class_declaration name: (identifier) @sub
+  (delegation_specifiers (delegation_specifier
+    (constructor_invocation (user_type (identifier) @extends)))))
+(class_declaration name: (identifier) @sub
+  (delegation_specifiers (delegation_specifier
+    (user_type (identifier) @extends))))
+"#;
+
 const KOTLIN_QUERY: &str = r#"
 (class_declaration name: (_) @name) @class
 (object_declaration name: (_) @name) @class
 (function_declaration name: (_) @name) @function
 (import [(identifier) (qualified_identifier)] @name) @import
+; `val`/`var` properties and primary-constructor parameters.
 (property_declaration (variable_declaration (identifier) @name)) @field
+(class_parameter (identifier) @name) @field
 "#;
 const KOTLIN_SPANS: &str = r#"
 (line_comment) @comment
@@ -1588,6 +2162,12 @@ const KOTLIN_SPANS: &str = r#"
 // Swift: functions, class/struct/enum/actor (all `class_declaration`), protocols,
 // and imports. `name:` is pinned to the identifier node because a
 // `function_declaration` also exposes its return type under a `name` field.
+const SWIFT_REL: &str = r#"
+; `class A: B, C` — a base class and a protocol look the same here.
+(class_declaration name: (type_identifier) @sub
+  (inheritance_specifier (user_type (type_identifier) @extends)))
+"#;
+
 const SWIFT_QUERY: &str = r#"
 (function_declaration name: (simple_identifier) @name body: (function_body) @body) @function
 (function_declaration name: (simple_identifier) @name !body) @function
@@ -1597,6 +2177,7 @@ const SWIFT_QUERY: &str = r#"
 (protocol_declaration name: (type_identifier) @name body: (protocol_body) @body) @interface
 (protocol_declaration name: (type_identifier) @name !body) @interface
 (import_declaration (identifier) @name) @import
+; Stored properties (`var`/`let` in a type body).
 (property_declaration (pattern (simple_identifier) @name)) @field
 "#;
 const SWIFT_SPANS: &str = r#"
@@ -1607,6 +2188,14 @@ const SWIFT_SPANS: &str = r#"
 "#;
 
 // Dart: top-level functions, methods, classes/mixins/enums, and imports.
+const DART_REL: &str = r#"
+; `class A extends B implements C` — the two *are* distinguishable.
+(class_declaration name: (identifier) @sub
+  (superclass (type (type_identifier) @extends)))
+(class_declaration name: (identifier) @sub
+  (interfaces (type (type_identifier) @implements)))
+"#;
+
 const DART_QUERY: &str = r#"
 (function_declaration signature: (function_signature name: (identifier) @name) body: (function_body) @body) @function
 (method_declaration (method_signature (function_signature name: (identifier) @name)) body: (function_body) @body) @method
@@ -1627,6 +2216,11 @@ const DART_SPANS: &str = r#"
 
 // Zig: functions, and the `const X = struct/enum/union {…}` type idiom.
 const ZIG_QUERY: &str = r#"
+; `@import("std")` — a builtin call, guarded on the builtin's name.
+(builtin_function
+  (builtin_identifier) @guard
+  (arguments (string (string_content) @name))) @import
+
 (function_declaration name: (identifier) @name body: (block) @body) @function
 (variable_declaration (identifier) @name (struct_declaration)) @struct
 (variable_declaration (identifier) @name (enum_declaration)) @enum
@@ -1640,6 +2234,12 @@ const ZIG_SPANS: &str = r#"
 
 // Solidity: contracts/interfaces/libraries, functions, modifiers, structs, enums,
 // events, and imports.
+const SOLIDITY_REL: &str = r#"
+; `contract A is B, C` — Solidity has no separate implements form.
+(contract_declaration name: (identifier) @sub
+  (inheritance_specifier (user_defined_type (identifier) @extends)))
+"#;
+
 const SOLIDITY_QUERY: &str = r#"
 (contract_declaration name: (identifier) @name body: (contract_body) @body) @class
 (interface_declaration name: (identifier) @name body: (contract_body) @body) @interface
@@ -1651,7 +2251,10 @@ const SOLIDITY_QUERY: &str = r#"
 (enum_declaration name: (identifier) @name) @enum
 (event_definition name: (identifier) @name) @type
 (import_directive source: (string) @name) @import
+; Contract state variables, and enum values.
 (state_variable_declaration name: (identifier) @name) @field
+; A Solidity `enum_value` is itself the identifier leaf, not a wrapper, so the
+; name and the definition are the same node.
 (constant_variable_declaration name: (identifier) @name) @field
 (struct_member name: (identifier) @name) @field
 (enum_value) @name @variant
@@ -1666,6 +2269,9 @@ const SOLIDITY_SPANS: &str = r#"
 // on (an ordinary call like `import Foo` is rejected). `defmodule` names an
 // `alias`; `def`/`defp` name the inner call's (or bare) identifier.
 const ELIXIR_QUERY: &str = r#"
+; `alias Foo.Bar`, `import Baz`, `use Mod` — macro calls, like the def* family.
+(call target: (identifier) @guard (arguments (alias) @name)) @import
+
 (call target: (identifier) @guard (arguments (alias) @name)) @module
 (call target: (identifier) @guard (arguments (call target: (identifier) @name))) @function
 (call target: (identifier) @guard (arguments (identifier) @name)) @function

@@ -17,20 +17,37 @@ use rusqlite::Connection;
 // non-extracted "shell" label to "bash"), so existing indexes must rebuild to
 // populate facts/spans for these files.
 // v13: added Dart/Zig/Elixir/Solidity extraction — rebuild to populate them.
-// v14: added Svelte extraction (nested `<script>` facts, component facts) —
-// rebuild to populate them.
-// v15: added Vue extraction — rebuild to populate them.
+// v14-v21 below are a *merge* of two parallel lines that both bumped from v13,
+// so the same numbers meant different migrations on each side. They are recorded
+// together for history only — no index can have followed both sequences, and the
+// numbers are not individually meaningful any more. What matters is v22: it is
+// above every version either line issued, so every existing index rebuilds once
+// and lands on the union of both feature sets. The version is a cache-invalidation
+// token, not a schema identity, which is what makes this safe to collapse.
+//
+// From the component/clones line:
+// v14: added Svelte extraction (nested `<script>` facts, component facts).
+// v15: added Vue extraction.
 // v16: freshness also compares inode ctime, so a size- and mtime-preserving edit
-// is no longer invisible; old rows have no ctime to compare, so rebuild.
-// v17: struct fields / class properties / enum variants are extracted as
-// `field` and `variant` facts carrying their owning type — rebuild to populate.
+// is no longer invisible.
 // v18: added CSS/PowerShell/Protobuf/GraphQL extraction, and members for six more
-// languages — rebuild to populate them.
-// v19: added HCL/Terraform extraction — rebuild to populate it.
-// v20: members for Zig/Solidity/Dart/Scala, and GraphQL type relations —
-// rebuild to populate them.
+// languages.
+// v19: added HCL/Terraform extraction.
+// v20: members for Zig/Solidity/Dart/Scala, and GraphQL type relations.
 // v21: definitions carry a syntax-shape hash, for structural clone detection.
-pub const SCHEMA_VERSION: i64 = 21;
+//
+// From the markdown/relations line:
+// v15: added markdown extraction (`heading` facts, code-fence/prose spans, and
+// local link/image targets as imports).
+// v16: relations for Scala/Kotlin/Swift/Dart/Solidity, imports for Zig/Elixir/
+// Lua/Bash, and Ruby attr_* fields.
+// v17: functions declared inside a type body are now `method`, not `function`.
+//
+// Both lines independently added member extraction (`field`/`variant` facts with
+// their owning type) — mine at v17, theirs at v14.
+//
+// v22: the merge of both lines — rebuild once to populate everything above.
+pub const SCHEMA_VERSION: i64 = 22;
 
 pub struct Db {
     pub conn: Connection,

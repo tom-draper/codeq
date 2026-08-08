@@ -37,6 +37,14 @@ benchmarks — not as a step you run before querying.
   where the code is; `tree --min-symbols 1` goes straight to the directories that
   hold any. Ignore-aware, so no `node_modules`/`.git` noise — on a 2,700-file data
   repo it answers in 8 lines what `find -type d` needs 44 KB for.
+- **Docs are indexed too.** A markdown heading is a definition, so `outline
+  README.md` is a table of contents, `read README.md` folds to that ToC with each
+  section's line range, `read README.md --symbol "Output contract"` returns just
+  that section (read this instead of the whole file), and `at README.md:230` says
+  which section a line is in. Search hits carry their `[Section]`. `--in strings`
+  searches fenced examples, `--in comments` searches prose (`--in code` is
+  correctly empty: markdown has no code). Local links and images are file
+  references, so `deps`/`importers` work across docs and assets.
 - **Understand a file cheaply:** `codeq read <file>` — folds long function bodies
   to signatures; read this instead of ingesting a whole large file.
 - **Read one definition / range (verbatim, line-numbered):**
@@ -46,6 +54,11 @@ benchmarks — not as a step you run before querying.
   into the Edit tool's `old_string`, so you skip the grep-for-the-line →
   read-the-region → strip-prefixes dance. With `--symbol` it requires a single
   match (a clean anchor); scope with `--lines A-B` if a name is ambiguous.
+- **`--kind method` vs `--kind function` is meaningful.** A function declared
+  inside a type body is a `method` (it can be called on a value); a nested
+  function or closure is not, however deep the class above it. Rust needs a
+  `self` parameter, so `S::assoc()` stays a `function` while `s.meth()` is a
+  `method`. Elixir `def`s are module functions, so they stay `function`.
 - **Understand a symbol before editing, without pulling in source:** `codeq about
   NAME` — the same neighbourhood `explore` walks, minus the code and plus fuller
   metadata per node (doc comment, `owner`, which callers are tests). Source is the
@@ -77,15 +90,25 @@ benchmarks — not as a step you run before querying.
       pkg import x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a`) all count
       as edges, so intra-crate, package-submodule, and named-binding reachability
       work.
-    - `--calls` — keep only call sites (`NAME(`), excluding a bare identifier,
-      field, or variable of the same name (code-only).
-    - `--on RECV` — keep only calls qualified by a receiver/type (`RECV.NAME`,
-      `RECV::NAME`, `RECV->NAME`) — disambiguates a common method name.
+    - `--calls` — keep only call sites. Answered from the **parse tree**, not the
+      surrounding bytes, so a declaration (`fn NAME(`) and a mention in a string or
+      comment are all excluded, and formatting never matters.
+    - `--on RECV` — keep only calls on that receiver, matched against the
+      **receiver expression as written**. So `--on db` gets `db.query()` however
+      it is wrapped, and *not* `mydb.query()` or `a.inner.query()`; for those use
+      `--on a.inner`, and a call-valued receiver works too (`--on 'conn()'`).
+      Receivers are as the language writes them — PHP needs `--on '$db'`.
+    - With either filter, each row also carries **`on=<receiver>`**, the thing the
+      call was made on. codeq shows it rather than filtering on it: a receiver may
+      be a value (`db.stem()`) or a module path (`helpers::stem()`), and telling
+      those apart needs name resolution codeq doesn't do. So when a name is both a
+      method and a free function, read `on=` and decide — don't expect codeq to.
     - `--examples` (callers) — surface the actual call expression at each site (one
       representative per caller): the row becomes `path:line:col:` the source line,
       so one command answers "who calls it *and how*". For every call site rather
       than one per caller, use `references NAME --calls`. Composes with the filters.
   - **`callees` is already call-position only** (a bare mention of a name isn't a
+    callee, and `helper()` written inside a string or comment isn't either), so it needs no `--calls`; it does take `--resolved`, which keeps only
     callee), so it needs no `--calls`. `--examples` adds `call` — the call as
     *written*, receiver included (`subprocess.run`, not `run`) — plus `call_line`.
     That is usually the fastest way to spot a name collision: a module-qualified
@@ -103,14 +126,28 @@ benchmarks — not as a step you run before querying.
     where FROM calls … calls TO, shown step by step (empty if unreachable within
     `--max-depth`, default 8). Reachability *with the route*, vs `callees --depth`
     which only says whether/at what depth.
-- **Who implements / extends a type:** `codeq implementors NAME` — the types that
-  `impl T for X` (Rust), `extends`/`implements` (Java/TS/PHP/C#/C++), subclass
-  (`class X(Base)` Python, `class X < Y` Ruby). The inheritance edges the call
-  graph misses; `--relation implements|extends` to filter. Go (structural) / C
-  have none; name-based like the other graph commands.
+- **Who implements / extends a type:** `codeq implementors NAME` — the inheritance
+  edges the call graph misses, across 17 languages (`impl T for X` in Rust,
+  `extends`/`implements` in Java/TS/PHP/C#/C++/Dart, `class X : B` in
+  Kotlin/Swift, `extends ... with` in Scala, `contract A is B` in Solidity,
+  `class X(Base)` in Python, `class X < Y` in Ruby). `--relation
+  implements|extends` to filter. Go (structural typing), C and Zig have no
+  inheritance at all — `capabilities.language_support` says which, and an empty
+  result there says so rather than implying none exist. Name-based.
   - **The reverse — what a type derives from:** `codeq supertypes NAME` — the
     traits / interfaces / base classes NAME extends or implements (as written at
     the declaration, not transitively resolved).
+- **Check what codeq supports before trusting an empty answer:** `codeq
+  capabilities` includes `language_support`, a per-language matrix of which
+  extractions exist. Go and C have **no** inheritance edges, Ruby declares no
+  fields, Bash/Lua/Zig/Elixir have no imports — for those, "none found" is not
+  evidence of absence, and the empty-result note says so.
+- **Public API with no tests:** `codeq untested [<path>]` — `api` composed with
+  `tests` in one call instead of one per symbol. Public only; over-reports
+  coverage (a test that never names the symbol is invisible).
+- **Did this change the public surface:** `codeq api <path> --compare-to <ref>` —
+  exported declarations added, removed, or changed shape, grouped and with the
+  previous signature. The review question a raw diff can't answer.
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
   reference NAME. A test is recognised by test-file path, test-like name, *or* a
   test-like enclosing module/class — so Rust's `#[cfg(test)] mod tests` inside the
@@ -126,6 +163,20 @@ benchmarks — not as a step you run before querying.
   equality, never a similarity score; `--min-nodes N` raises the floor on how
   much code counts. Costs ~20% on a cold index, nothing on a warm one.
 - **Find dead code:** `codeq unused [<path>]` — definitions with no reference
+  anywhere outside their own definition site. A mention in a **comment** is not a
+  use (a stale TODO can't mask dead code), but a mention in a **string** still is,
+  because reflection, serde renames, config keys and SQL identifiers are real uses
+  that live in string literals. Still name-based, so a same-named symbol elsewhere
+  masks it; it under-reports rather than mislead. Shows `visibility` (a `public` hit may
+  be external API, not dead); test-file defs excluded unless `--include-tests`.
+- **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
+  - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
+    templates. codeq's own SQL lives in string literals, so `--in code` finds none.
+  - **Piped input:** `CMD | codeq search PAT --stdin` scans the pipe instead of the
+    index, so codeq replaces grep in a pipeline too (no repo or index needed). Add
+    `--language rust` to also get `--in` and the enclosing `[symbol]` on each match.
+    `--stdin` is required — it is never inferred, so an open pipe can't hijack a
+    normal query.
   anywhere outside their own definition site. Conservative (a comment/string
   mention counts as a use; name-based, so a same-named symbol elsewhere masks it)
   so it under-reports rather than mislead. Shows `visibility` (a `public` hit may
@@ -165,6 +216,21 @@ benchmarks — not as a step you run before querying.
   declares, without dumping every field in the repo.
 - **Trim tokens on list output:** append `--fields a,b`
 
+## When a query comes back empty
+
+codeq tells you why, on stderr (or in the `note` field under `--json`):
+
+- `no symbol named 'ScanOpt'; closest: ScanOpts` — a typo, with the fix.
+- `'X' is defined at a.rs:2 but has no callers` — the symbol is real, the
+  relation is genuinely empty.
+- `'X' is defined at a.rs:2 but nothing matches --path zzz` — your filter, not
+  the code.
+- `no public definitions in 'src/search.rs' (34 private, 40 restricted)` — the
+  defs exist, none are public (`pub(crate)` is restricted, not public).
+- `no unused definitions ...` — a clean result, not a failed one.
+
+So read stderr before assuming a command doesn't work or a symbol doesn't exist.
+
 ## Excluding files
 
 codeq honours `.gitignore`/`.ignore`, plus a **`.codeqignore`** for trees that are
@@ -185,7 +251,38 @@ instead. Editing it takes effect on the next query — no reindex step.
   narrows them using the import graph (see above), but it's a heuristic filter,
   not real type resolution.
 
+## Reading a dependency
+
+Dependency trees are gitignored, so `node_modules`, `vendor` and friends are
+invisible to the normal index (correctly: they are not this repo's code). To read
+one, point codeq at it: `codeq --root node_modules/lodash api`. `--root` takes the
+directory literally — no walking up to a Git toplevel, no parent ignore rules — so
+every command works there. It writes a `.codeq` index inside that directory.
+
 ## Build / test
 
 - `cargo build --release` · `cargo test` (integration tests in `tests/cli.rs`)
-- Benchmarks: `bench/bench.py` (single commands), `bench/tasks.py` (task-level).
+
+**Before committing, run the correctness harnesses too — `cargo test` alone is not
+enough.** It uses small synthetic fixtures; the harnesses run against real code and
+catch what fixtures cannot.
+
+```bash
+python3 bench/textmode.py      # seconds. Text output carries the same facts as --json
+python3 bench/differential.py  # ~10 min (clones 20 repos once, then cached)
+```
+
+`differential.py` is the important one: ~4,200 assertions over 20 pinned
+open-source repos, checking that `search` is a superset of ripgrep and that
+per-symbol invariants hold in every supported language. It writes a result to
+`bench/results/` (committed, so the trend lives in git). Expect
+`N PASS, 0 FAIL, 0 ERROR`.
+
+Run these whenever a change touches extraction, the search engine, the renderer,
+or the schema — which is most changes. Skipping them is how six commits once went
+in unverified: everything passed in the end, but nobody knew that at the time.
+
+- Token/benchmark numbers: `bench/bench.py` (single commands), `bench/tasks.py`
+  (task-level), `bench/completion.py` (the token-to-completion table in the
+  README — rerun it if a change moves those numbers, since they are published as
+  current).

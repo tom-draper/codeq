@@ -1,8 +1,10 @@
 {
   "mcpServers": {
     "codeq": {
-      "command": "/home/tomdraper/dev/codeq/target/release/codeq",
-      "args": ["mcp"]
+      "command": "/home/tomdraper/.local/bin/codeq",
+      "args": [
+        "mcp"
+      ]
     }
   }
 }

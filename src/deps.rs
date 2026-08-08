@@ -181,6 +181,17 @@ impl Graph {
     }
 
     /// Whether `file` is a known node in the graph.
+    /// Whether `module`, imported by `from`, resolved to an internal file.
+    ///
+    /// False means the import points outside the repo: a third-party package for
+    /// code, or — when the module is a relative path — a file reference that
+    /// does not exist.
+    pub fn resolves(&self, from: &str, module: &str) -> bool {
+        self.edges
+            .get(from)
+            .is_some_and(|es| es.iter().any(|e| e.module == module))
+    }
+
     pub fn contains(&self, file: &str) -> bool {
         self.edges.contains_key(file)
     }

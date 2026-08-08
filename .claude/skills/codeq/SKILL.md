@@ -82,6 +82,17 @@ refresh the index — every command auto-refreshes changed files first.
 
 **API surface / cleanup**
 - `codeq api <path>` — the public/exported definitions of a file or directory.
+- **Empty result?** codeq says why on stderr (`no symbol named 'X'; closest: Y`,
+  `'X' ... has no callers`, `nothing matches --path Z`), or in `note` under
+  `--json`. Read it before concluding the symbol or the command is wrong.
+- **Markdown**: headings are definitions. `outline doc.md` = table of contents;
+  `read doc.md --symbol "Section"` = one section (not the whole file); `--in
+  strings` = fenced examples, `--in comments` = prose; local links/images are
+  file references for `deps`/`importers`.
+- `codeq members NAME` — a type's fields, enum variants and methods (`--kind` to
+  narrow). Structural, not name-based, so no same-name false positives. Already
+  included in `about`. Rust struct methods live in a separate `impl`, so a Rust
+  struct returns fields only.
 - `codeq unused [<path>]` — definitions with no references (candidate dead code; empty
   output = none found). Conservative and name-based, so it under-reports.
 - `codeq implementors <TYPE>` / `codeq supertypes <TYPE>` — who implements/extends a
@@ -96,6 +107,8 @@ refresh the index — every command auto-refreshes changed files first.
   `--fixed`, `-i`, `-w`, `-g '*.rs' -g '!tests/'` (repeatable globs), `-l`, `-c`,
   `-B`/`-A`/`-C`, `--path`, `--language`, `--limit`. **`--limit` defaults to 100**:
   raise it (or pass 0) before concluding there are no further hits.
+  `CMD | codeq search PAT --stdin [--language L]` scans piped text instead of the
+  index, for grep-in-a-pipeline over output that isn't in the repo.
 - `codeq astgrep '<PATTERN>' --language <lang>` — structural (AST) search, e.g.
   `codeq astgrep '$X.unwrap()' --language rust`. Scope to files with `--path <substr>`.
   Each match is annotated with the `[symbol]` it sits inside.

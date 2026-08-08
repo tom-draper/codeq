@@ -4,6 +4,61 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-08 — merging two parallel lines: three bugs that neither side could have found
+
+`main` had moved 14 commits while this line built 29, both from the same base.
+Every source file conflicted, and the schema had been bumped independently to 21
+on one side and 17 on the other. Resolving it produced the most interesting bugs
+of the week, because **each one needed both halves to exist**: every side's tests
+passed on its own branch, and three real defects lived only in the combination.
+
+**1. Ruby fields silently vanished.** The other line added Ruby `attr_accessor`
+extraction. This line added a rule that a `field`/`variant` fact with no resolvable
+owner is dropped, because an owner-less member is exactly the bare name the fact
+kind exists to avoid. Ruby's grammar names its nodes `class` and `module`, with no
+`_declaration` suffix, so they were absent from `TYPE_KINDS` — every Ruby field
+resolved to no owner and was discarded. Two correct changes cancelling out.
+
+**2. `--calls` stopped seeing component usage.** The other line moved call
+detection onto the parse tree, which is a clear improvement: a declaration, a macro
+name and prose are all handled without guessing. But a Svelte component is *used*
+by writing `<Btn/>`, which no grammar reports as a call node. Tree-sitter is right
+that it isn't a call; codeq is right that it's a usage. The byte-level check that
+knew this was now unreachable, so `--calls` returned nothing for a component that
+was plainly used. Markup instantiation is now checked *in addition to* the parse
+tree, so the tree keeps rejecting declarations and prose.
+
+**3. `callees` went empty for every component.** Worse version of the same shape.
+`calls_in` asks whether a grammar exists; for `.svelte` and `.vue` one does — but
+it is a *markup* grammar, and the `<script>` body comes back as a single opaque
+`raw_text` node. So parsing succeeded, found zero calls, and returned `Some(empty
+map)`. Callers treat `Some` as authoritative, so "I cannot see this code" was
+indistinguishable from "this code calls nothing". `calls_in` now returns `None` for
+embedded-code languages, which routes them to the byte scan that can see inside.
+
+The pattern in all three: an improvement that is correct in isolation, meeting a
+different improvement that is also correct in isolation. No amount of testing
+either branch would have surfaced them.
+
+**A trade-off adopted knowingly, not a bug:** the parse-tree path cannot see inside
+macro invocations, because tree-sitter treats a macro body as an opaque token tree.
+`callees cmd_capabilities` no longer lists `support`, which is called as
+`crate::facts::support(l)` inside a `json!{…}`. The old byte scan found it. This is
+the same limitation `astgrep` already documents, now inherited by `callees`; the
+precision gained elsewhere is worth it, but it is a real loss and belongs written
+down rather than discovered.
+
+**On the schema:** v14-v21 on one line and v14-v17 on the other described different
+migrations under the same numbers. No index can have followed both, and the version
+is a cache-invalidation token rather than a schema identity, so the two histories
+are recorded together for provenance and the version set to 22 — above everything
+either line issued, so every existing index rebuilds exactly once.
+
+**On the benchmark table:** both lines had published numbers, measured on different
+corpora (25 repos vs 20) and on different code. Neither describes the merged
+binary. Rather than pick the flattering one, the README now carries the larger run
+with an explicit note that it predates the merge and needs re-running.
+
 ## 2026-08-08 — `tree`, `callees --examples`, `.codeqignore`, and a refactor I talked myself out of
 
 ### `tree` — the orientation gap `map` couldn't reach
@@ -260,6 +315,676 @@ naming and discoverability, not missing power. Findings, worst first:
   `.codeqignore` to skip data/asset trees would cut cold-index cost and the
   `(unknown)` noise on non-code-dominated repos. (`.codeq/` self-ignores cleanly —
   verified it never touched the host repo's git status — so no complaint there.)
+
+## 2026-07-22 - session 36: the prune I said was safe, isn't
+
+Session 35 made method/function kinds accurate specifically so the receiver-based
+prune could be built "on real facts rather than on a guess". Built the test case
+first, and the premise collapsed:
+
+    mod helpers { pub fn stem(s: &str) -> &str { s } }
+    impl Db { fn stem(&self) -> u32 { 0 } }
+
+    helpers::stem("x")   // receiver: helpers  -> a FREE FUNCTION
+    db.stem()            // receiver: db       -> a METHOD
+
+The rule was "a call with a receiver is not calling a free function". It is
+wrong, because **a receiver can be a module path rather than a value**. Rust
+`helpers::stem()`, Python `module.func()`, Go `pkg.Func()` and JS `mod.fn()` are
+all qualified calls to free functions. Accurate kinds do not help: distinguishing
+a module receiver from a value receiver *is* name resolution, which is the exact
+boundary codeq declines to cross. Two sessions of work whose stated purpose was
+to unblock this, and the honest outcome is that it stays unbuilt.
+
+The kinds work was still worth doing on its own — `--kind method` is meaningful,
+`members` is sharper, trait declarations are extracted — but I should record that
+I asserted the prune was "now safe" before checking, and it took one fixture to
+disprove.
+
+What shipped instead is the version that adds information rather than removing
+it: `--calls`/`--on` rows now carry **`on=<receiver>`**.
+
+    a.rs:5:21: let a = helpers::stem("x");  [use_them]  on=helpers
+    a.rs:6:15: let b = db.stem();           [use_them]  on=db
+
+Same facts codeq was already computing (the call map is built for those filters
+anyway, so this costs nothing new), presented so the reader can make the call
+codeq cannot. When a name is both a method and a free function — precisely the
+case where `callers` is noisiest — `on=` is what tells them apart. Unfiltered
+queries parse nothing and report no receiver, so nobody pays for it who did not
+ask.
+
+This is the same lesson as `unused` counting string mentions, and as the
+`--resolved` heuristics being opt-in: where resolution genuinely cannot be done,
+surface the evidence instead of guessing, and say which it is.
+
+204 tests (+1), textmode ALL PASS.
+
+## 2026-07-22 - session 35: a method is not a function
+
+Session 34 ended by declining to build receiver-based `--resolved` because the
+prerequisite was missing: codeq could not tell a method from a free function.
+
+    $ codeq definitions query --fields kind,name   # impl method + free fn
+    function query
+    function query
+
+Rust's `function_item` and Python's `function_definition` are the same node
+whether or not they sit inside an `impl` or a `class`, so the queries cannot tell
+them apart and every method came back as `function`. Measured across the
+languages first, rather than assumed: **8 of 16 were wrong** — Rust, Python,
+Kotlin, Swift, Scala, Solidity, Zig (Java, Go, JS/TS, C++, C#, PHP, Ruby, Dart
+already had distinct nodes and were right).
+
+The rule is structural: walk outward from the definition and stop at the first
+enclosing definition. A function ancestor means this is nested — a closure or an
+inner `def` — and not a member, however deep the class above it. A type body
+means it is a method.
+
+Rust needs one more condition, and it is the interesting one. An `impl` block
+holds methods *and* associated functions, and only a `self` parameter says which
+can be called on a value. So `S::assoc()` stays a `function` while `s.meth()` is
+a `method` — which is exactly the distinction the whole exercise exists to serve.
+Elixir `def`s stay functions too: they are module functions, called qualified,
+not on a value.
+
+Poking at nesting surfaced a **pre-existing gap I had not gone looking for**:
+`trait T { fn required(&self); }` was extracted as nothing at all. The Rust
+pattern requires `body: (block)`, and a trait method declaration has no body — so
+the one thing `implementors` sends you to look at was invisible. Added as
+`function_signature_item`.
+
+Two existing tests failed, both correctly: they asserted `kind == "function"` for
+a Python method and filtered `members --kind function` to find one. Tests
+encoding the old, wrong classification. That is twice in two sessions that a test
+broke because the tool got better, which is the good failure mode.
+
+Schema 16 -> 17. 203 tests (+4, 2 updated). differential **4188/4188**
+(three more assertions than before, all passing), textmode ALL PASS.
+
+The prune this unblocks — a call with a receiver is not calling a free function —
+is now safe to build on real facts rather than on a guess, but is deliberately
+left for its own change.
+
+## 2026-07-22 - session 34: filling the coverage gaps the matrix exposed
+
+Session 33's support matrix made the holes legible, which made them worth
+closing. Relations went from 12 languages to 17, imports from 17 to 21, and Ruby
+gained fields.
+
+- **Relations for Scala, Kotlin, Swift, Dart, Solidity.** Each has inheritance
+  syntax codeq simply never read. Dart is the only one of the five that
+  distinguishes `extends` from `implements`; Kotlin and Swift do not separate a
+  base class from an interface syntactically, so both report `extends`, which is
+  what the source actually says.
+- **Imports for Zig, Elixir, Lua, Bash.** All four express imports as *calls*
+  (`@import("std")`, `alias Foo.Bar`, `require("mod")`, `source ./lib.sh`), which
+  is exactly why they were missed: the existing patterns look for import syntax.
+  Reused the `@guard` mechanism built for Ruby's `require`.
+- **Ruby `attr_accessor :a, :b` as fields**, same mechanism again.
+
+Two bugs worth recording, both caught in seconds rather than shipped:
+
+**The guard allow-list was language-wide, not per-pattern.** In Elixir
+`defmodule M` and `alias M` are the *same shape* of call — a macro call with an
+alias argument — and only the keyword distinguishes them. With one list per
+language, `defmodule M` was extracted as an import *of* M. The fix is to check the
+keyword against what the match claims to be (`kind == "import"` or not), which is
+the honest formulation anyway: the keyword is what makes it an import.
+
+**I used the wrong capture convention for relations** and got silence rather than
+an error — five queries that compiled fine and matched nothing. The existing
+convention is `@sub` on the subtype and `@extends`/`@implements` on the
+*supertype node*; I wrote `@subtype`/`@supertype` with the relation on the whole
+match. Nothing failed, there were just no relations. A reminder that a query
+compiling is not evidence it matches.
+
+The up-front extractor validation from session 25 paid for itself again: a bad
+field name in the Elixir pattern surfaced as `Invalid field name "arguments"`
+instead of an index that silently came back empty.
+
+Also of note: `capabilities_reports_per_language_support` failed, correctly. It
+asserted `ruby.members == false` and `bash.imports == false`, which had just
+stopped being true. A test that breaks when the tool gets better is the test
+working.
+
+Remaining gaps are genuine language facts, not omissions: Go (structural typing),
+C and Zig have no inheritance; Bash, Lua and Elixir declare no fields. The matrix
+reports those as absent and the empty-result note explains them.
+
+Schema 15 -> 16. 199 tests (+4, 1 updated). differential 4185/4185, textmode ALL
+PASS.
+
+## 2026-07-22 - session 33: making codeq's own limits queryable
+
+Three capabilities, and the first came out of a bug in the second-to-last commit.
+
+`capabilities` listed the fact kind `field, variant` **twice** and omitted
+`heading` — a hand-maintained list that drifted the moment two sessions edited
+it. That is the same class of failure as everything else this week: a claim
+maintained by hand next to the thing it claims to describe.
+
+**`capabilities.language_support`** is therefore *derived*, not declared. For each
+language it reads that language's own query text and reports which of
+definitions / imports / members / relations / spans / calls exist. It cannot
+drift, because the queries are the source of truth:
+
+    language   defs imp mem rel spa cal
+    go         y    y   y   .   y   y
+    ruby       y    y   .   y   y   y
+    bash       y    .   .   .   y   y
+    markdown   y    y   .   .   y   .
+
+This matters because support has always been uneven and flat lists implied it was
+not. Go and C have no inheritance edges *at all*; Ruby declares no fields. An
+agent asking `implementors` about a Go interface got "none", which is true and
+completely misleading. Now:
+
+    codeq extracts no inheritance edges for go; this is not evidence that 'Reader' has none
+
+The empty-result work from session 27 answered "why is this empty" at the command
+level; this answers it at the capability level, which is where the remaining
+misreadings lived.
+
+**`untested`** is `api` composed with `tests`. Measured on this repo before
+building it: 99 of 129 public functions have no test naming them — and finding
+that out took ~130 subprocess calls, one per symbol. Now one call. Public only,
+since a private helper is usually covered through whatever exported thing calls
+it, and it over-reports coverage (a test that reaches code without naming it is
+invisible) rather than claiming coverage that is not there.
+
+**`api --compare-to <ref>`** answers "does this break anyone", which a diff
+cannot: a diff shows every edited line and most are internal. It extracts the
+exported surface from the old blob via `git show` and compares with the current
+index, reporting removed / changed / added. Diff-shaped, not history-shaped, so
+it sits with `changed` and `affected` rather than opening the door to a history
+tool.
+
+One design correction while building it. The first version returned a flat list
+with a `change` column, which text mode rendered *identically* for an added and a
+removed row — because the renderer prints a signature instead of the other
+fields, exactly as session 24's contract says it should. Grouping into
+`# removed` / `# changed` / `# added` sections uses the existing convention and
+makes the distinction visible. A reminder that output shape is part of the
+feature, not a wrapper around it.
+
+195 tests (+4). differential and textmode re-run: ALL PASS.
+
+## 2026-07-22 - session 32: the loose ends, and reading a dependency
+
+Five things, two of them overdue verification rather than features.
+
+**The correctness harnesses had not been run.** Six commits touching the
+renderer, the search engine, extraction and the schema, verified with `cargo
+test` alone, while previous sessions record running the differential and
+text-mode harnesses before committing. Run now: `textmode` ALL PASS,
+`differential` **20 repos / 4185 assertions, 4185 PASS, 0 FAIL, 0 ERROR**
+(search 600, fuzz 1200, invariant 2385). Nothing had broken. That is a relief
+rather than a vindication — the gap was real and I would not have known.
+
+**MCP tool descriptions had drifted out of date.** They still described `--on`
+as `RECV.NAME / RECV::NAME` byte matching, still said `unused` counts comment
+mentions as uses, and never mentioned markdown. MCP is the primary agent path,
+so those strings *are* the contract; a stale one is worse than a missing feature.
+
+**`callees` now reads the call map** (session 31's `callsite.rs`) instead of
+scanning identifiers for a following `(`, closing the last textual gap in the
+call graph.
+
+**`deps --external`** lists imports that resolve to no file. For code that is the
+third-party dependency list; for markdown, whose links are always local paths, an
+unresolved one is a broken reference, flagged `broken=true` and sorted first.
+
+Dogfooding earned its keep immediately: the first run reported **two dead links
+in this repo's own README**, both in documentation written in session 28. They
+were `` `[g](./guide.md)` `` — link syntax inside inline code, i.e. an *example*
+of a link. Documentation about markdown is full of those. Inline code spans are
+now excluded from link extraction. A feature finding a bug in the docs that
+introduced the feature is a good argument for shipping the check.
+
+**`--root DIR`** closes the dependency-source hole. A dependency tree is
+gitignored, so it stays out of the repo's own index (correct — it is not this
+repo's code), but that made "how do I call this library function" unanswerable.
+`--root` takes a directory literally: no walking up to a Git toplevel, and
+`parents(false)` on the walker so the *outer* repo's ignore rules do not erase
+every file inside it. Then every command works there:
+
+    codeq --root node_modules/lodash api
+    codeq --root node_modules/lodash read chunk.js --symbol chunk
+
+Also refreshed the published benchmark table, which predated the session's
+changes and was stated as current. New: **5.5x tokens** over 20 repos (was 5.2x
+over 25). The interesting movement is `unused`, 64x -> 160x, a direct consequence
+of session 29: comments no longer mask dead code, so codeq reports more of it
+while the generic-tool baseline stays where it was.
+
+One test failed for an instructive reason: `.gitignore` is only honoured inside a
+real Git repository, and the test fixture is a bare temp directory. Switched to
+`.ignore`, which the walker honours anywhere and exercises the same filter path.
+
+191 tests (+3).
+
+## 2026-07-22 - session 31: `--calls` and `--on` read the parse tree
+
+The structural version of the two filters sessions 29 and 30 patched textually.
+New `src/callsite.rs`: parse the file, walk it, and build a map from the byte
+offset of each called identifier to its receiver. `--calls` is then a lookup and
+`--on` is a comparison against the receiver *expression*.
+
+The design choice that made this cheap: **verify, don't index.** The obvious
+implementation is a `call` fact kind emitted during indexing, but calls outnumber
+definitions by an order of magnitude and every query would pay for an index that
+only two opt-in filters read. Instead the textual pass narrows first (trigram
+index plus word-boundary regex, fast and never misses), and only the surviving
+candidate files are parsed. Measured on this repo: plain `references` 0.00s,
+`references --calls` 0.03s. Ordinary queries pay nothing and the index does not
+grow.
+
+What this buys beyond fixing the old bugs: the receiver is now the expression as
+written, so `--on a.inner` and even `--on 'conn()'` work, and `--on db` correctly
+excludes `a.inner.query()`. Text could not express any of that.
+
+Grammars disagree about node *kinds* but largely agree about **field names**, so
+the walk reads fields (`function`, `object`, `receiver`, `target`, `name`,
+`suffix`) rather than kind spellings. That got 14 of 17 languages working from
+one implementation. The three that needed help, each found by dumping the real
+tree:
+
+- **Ruby** puts the method in `method` and the receiver on the *call node*, not
+  on a member node, so a bare callee identifier can still be qualified. Also
+  `db.query` has no argument list at all, so requiring one rejected every
+  paren-less call.
+- **Solidity** wraps the callee in a transparent `expression` node with no
+  fields, so single-child wrappers need stepping through.
+- **Swift** keeps its arguments in a `call_suffix` rather than an argument list,
+  and names the method via `suffix: navigation_suffix > suffix: identifier`, one
+  level deeper than everyone else. Its `call_suffix` kind also contains "call",
+  so it had to be excluded from being treated as a call itself.
+
+All 17 are covered by a table-driven test that asserts the same call resolves in
+each, written against dumped trees rather than documentation.
+
+One test I wrote and then deleted rather than keep: a "falls back to text when
+there is no grammar" case. The fallback exists and is correct, but both filters
+already imply code-only, which excludes files codeq cannot parse *before* the
+fallback matters — so the test would have asserted a behaviour that cannot be
+reached. Better to say so in the module doc than to keep a test that implies
+otherwise.
+
+PHP is worth knowing about: receivers are as the language writes them, so it is
+`--on '$db'`. Documented rather than special-cased, since inventing a normalised
+form would be a lie about the source.
+
+188 tests (+2).
+
+## 2026-07-22 - session 30: a declaration is not a call
+
+The two textual heuristics left over from session 29, both in `references`.
+
+**`--calls` matched the definition site.** `fn parse_range(` is followed by `(`
+exactly as `parse_range(x)` is, so `is_call_position` — which peeks past
+whitespace for a `(` — cannot tell a declaration from a call. Every
+`references NAME --calls` therefore reported the declaration as a call site.
+
+No cleverness needed: `references` already computes `defsites` and flags each row
+`definition: true`, purely so the output can show it. The information was sitting
+right there; the filter just never consulted it. Same for `--on`, since a
+declaration is not a qualified use either. Plain `references` still reports the
+definition and still flags it — only the position filters drop it.
+
+**`--on RECV` was defeated by a line break.** `has_qualifier` compared the bytes
+immediately before the match, so of these three identical calls:
+
+    db.query();
+    db
+        .query();
+    db . query();
+
+only the first was found. Two false negatives caused purely by rustfmt. Skipping
+whitespace on both sides of the separator fixes it, and the receiver test itself
+stays exact: `other.query()`, `mydb.query()` (longer name ending in `db`) and
+`db.inner.query()` are all still correctly excluded from `--on db`.
+
+Honest about what this is: still textual, not a parsed receiver expression.
+`a.b.query()` matches `--on b` because the nearest qualifier is what gets tested,
+and a call-valued receiver like `conn().query()` matches nothing at all. Both are
+now documented rather than discovered.
+
+The pattern across sessions 29 and 30 is worth naming. Every one of these four
+bugs was a byte-level test standing in for something codeq already knew: spans
+for "is this a comment", the facts table for "is this a declaration". The
+heuristic was not compensating for missing information, it was ignoring
+information already in the index. Worth checking for that before reaching for a
+parser — the structural answer may already be one query away.
+
+186 tests (+3).
+
+## 2026-07-22 - session 29: comments are not uses
+
+Asked where codeq still matches characters for something the structure already
+knows. Four places; two fixed here, both with span data the index already had.
+
+**`unused` was masked by comment mentions.**
+
+    fn never_called_anywhere() {}
+    // TODO: wire up never_called_anywhere later
+
+Not reported. Delete the comment and it is. So a stale TODO hid real dead code —
+and stale TODOs are exactly the kind of thing that mentions a function nobody
+calls any more. The docstring called this conservatism, but it was buying
+nothing: codeq extracts comment/string spans and `--in code` already filters on
+them. The conservatism was accidental, not chosen.
+
+**`callees` reported mentions in strings and comments as calls.** A function
+whose body contains only `"helper() in a string"` and `// helper() in a comment`
+listed `helper` as a callee, despite `callees` being documented as call-position
+only. `collect_idents` scanned the body's characters with no idea where the
+literals were.
+
+The interesting decision was **not** applying the same rule to both. A comment is
+never a use, so excluding comments is free. A *string* often is: reflection,
+`getattr`, serde renames, DI registration by name, SQL identifiers, config keys.
+Excluding strings from `unused` would make it report live code as dead, inverting
+the command's whole stance — and deleting live code is the expensive mistake,
+where a missed dead function is cheap. So:
+
+- `unused` excludes **comments only**; string mentions still count as uses.
+- `callees` excludes **comments and strings**, because in the languages codeq
+  parses, a call written inside a string literal is not a call.
+
+That needed a new internal `InFilter::NotComment`, and a distinction that had not
+existed before: a `--in` filter is a positive claim ("this match is in a
+comment") and cannot be made without spans, so it skips unparsable files; an
+*exclusion* is not, so it must keep them. Without that, a symbol named only in
+`config.toml` would have been reported as dead the moment the filter was applied,
+since TOML has no spans. There is a test for exactly that.
+
+One existing test failed, correctly: `unused_is_conservative_about_comment_mentions`
+asserted the old contract in its name. Rewritten as
+`..._about_string_mentions`, which is the part of the conservatism actually worth
+keeping.
+
+Still textual, deliberately unfixed for now: `references --calls` matches the
+definition site (`fn foo(` is followed by `(` too, though the row is already
+flagged `definition: true`, so the fix is cheap), and `--on RECV` scans bytes
+immediately before the match, so `db\n    .query()` is missed while `db.query()`
+is found. Both want real call-expression structure; `astgrep` already exists and
+could supply it as an opt-in precision mode.
+
+183 tests (+4, 1 rewritten).
+
+## 2026-07-22 - session 28: markdown is indexed like code
+
+Docs were the first thing an agent reads in an unfamiliar repo and the one thing
+codeq knew nothing about. Markdown was 9 files and 20% of this repo's bytes,
+indexed for content search and nothing else: no symbols, no outline, no folding,
+no `--in`, no enclosing-section annotation on hits. For a 291-line README, codeq
+offered nothing over `cat`.
+
+**A heading is a definition.** That single mapping is the whole feature. A
+heading has a name, a byte range (down to the next heading of the same or higher
+level) and a nesting depth, which is exactly the fact model the Tree-sitter
+extractors produce, so `outline`, `at`, `read --symbol`, folded `read`, `search`
+annotation, `symbols`, `context` and `changed --symbols` all started working on
+prose with no new commands at all.
+
+The `read --symbol "Output contract"` case is the real prize: 2,961 bytes instead
+of 17,987 for the whole README, on exactly the files that are pure prose and
+don't compress.
+
+Deliberately **not** Tree-sitter. Headings are unambiguous line-wise provided
+fenced blocks are tracked, so this avoids a grammar dependency for the one format
+where the structure is trivial, and the `source` field (`lines/markdown` vs
+`treesitter/rust`) already existed to record which was used.
+
+Three things that needed care, all of which would have looked broken on first run:
+
+- **Folding a document collapsed it to its title.** A level-1 heading owns the
+  whole file, so the generic "fold the definition's body" rule hid all 290
+  remaining lines behind one marker. Markdown folds the prose *between*
+  consecutive headings instead, which leaves the whole heading tree visible: a
+  table of contents where each entry carries its section's line range, ready to
+  paste into `--lines`.
+- **`unused` would have reported every section in every document.** Nothing ever
+  references prose by name. Headings are excluded unless explicitly asked for
+  with `--kind heading`, the same shape as the existing test-file exclusion.
+- **A `#` inside a fenced block is a shell comment, not a heading.** Fence
+  tracking handles it, as does frontmatter (`---` at the top is metadata, and
+  must not read as a setext underline), and a `---` after a blank line is a
+  thematic break rather than an underline.
+
+The spans mapping is worth stating: a fenced block is `Str` and prose is
+`Comment`, so `--in strings` searches the documented examples and `--in comments`
+searches the surrounding text. `--in code` is correctly empty for markdown, which
+has no code — consistent with the existing guidance that SQL-in-strings is found
+with `--in strings`, not `--in code`.
+
+Local links and images are file references (`import` facts), so `deps`,
+`importers` and cycle detection now cover documentation and its assets. External
+URLs and bare `#anchor` links name no file and carry no edge.
+
+**A latent bug this exposed:** `outline README.md` matched `path = ?1 OR path LIKE
+'%/README.md'`, so it merged the root README and `bench/README.md` into a single
+interleaved outline with nonsensical nesting. `at` had the same bug. It had been
+invisible because code files rarely share a basename, whereas every repo has
+several READMEs. Both now resolve to one file the way `read` always did (exact
+path wins, else a unique suffix).
+
+Schema 14 -> 15. 179 tests (+7).
+
+## 2026-07-22 - session 27: an empty result now says why it is empty
+
+Not a new command. codeq already has 31, and the next-best thing was not a 32nd
+but making the ones there fail informatively.
+
+The problem, from this session's own transcript rather than theory. Seven
+commands, five silent:
+
+    api src/search.rs        -> (empty)
+    tests declaration_header -> (empty)
+    unused src/deps.rs       -> (empty)
+    implementors Serialize   -> (empty)
+    callers nonexistent_xyz  -> (empty)
+    about ScanOpt            -> "# definitions" and nothing under it
+
+Every one is ambiguous between four different things: the name doesn't exist,
+the name exists but has none of that relation, the language has no such concept,
+or a `--path` filter removed everything. I lost real time to `api src/search.rs`
+before remembering `pub(crate)` is `restricted`, not `public`. And `about
+ScanOpt` is the worst of the set, because a typo returns valid headers with
+nothing under them, which reads like a fact about a real symbol.
+
+Now each explains itself:
+
+    no symbol named 'ScanOpt'; closest: ScanOpts
+    'declaration_header' is defined at src/commands.rs:671 but has no tests referencing it
+    'ScanOpts' is defined at src/search.rs:110 but nothing matches --path zzz
+    no public definitions in 'src/search.rs' (34 private, 40 restricted)
+    no unused definitions in 'src/deps.rs' (every one is referenced somewhere)
+
+Three design points worth keeping:
+
+- **The note is diagnostic, never data.** `data` stays empty, the exit status
+  stays 0, and stdout stays pure in text mode (the note goes to stderr). A parser
+  that ignored it before ignores it still.
+- **It has to reach MCP.** `call_tool` shells out with `--json` and captures
+  *stdout only*, so a stderr-only note would be invisible to exactly the consumer
+  that needs it most. Hence a `note` field in the envelope as well.
+- **Suggestions are deliberately tight.** The first cut allowed edit distance up
+  to 3, which turned `Serialize` into "closest: normalize" — an unrelated word
+  offered as a fix, which invites a second wrong query. Now the budget is
+  `len/4`, capped at 2, and names sharing a prefix rank first, since a truncated
+  or extended name is the commonest real typo. `Serialize` now correctly offers
+  nothing; `renderrow` offers `render_row, render_rows`.
+
+One test of mine was wrong rather than the code: I asserted `unused` on a file
+with a `main` would be clean, forgetting that nothing calls the root, so `main`
+is legitimately reported. Scoping the assertion to a file whose only definition
+is called from elsewhere fixed it. Worth noting because the failure was the tool
+being right.
+
+172 tests (+5).
+
+## 2026-07-22 - session 26: docs in text output (a flag that did nothing)
+
+Asked "can an agent get a function's documentation", checked, and found the data
+was already there and the default output threw it away. `doc` sat in the
+renderer's `CONSUMED` list, so every doc comment codeq extracts was visible only
+under `--json`.
+
+The sharp end of that: **`outline --docs` was a silent no-op in text mode.** The
+flag parsed, the query fetched docs, the JSON contained them, and the default
+output was byte-identical with and without it. Same shape as the en-dash range
+bug from session 24: a documented affordance that quietly doesn't work in the
+mode everyone actually uses. Both were invisible because nothing asserted on text
+output, which is why session 24's contract test now has company.
+
+Docs are stored already collapsed to one line and capped at 240 chars, so they
+render inline as `  // <doc>` on the definition's own row and the one-row-one-line
+rule survives. `definitions`, `about`, `explore` and `members` fetch docs anyway,
+so they now show them by default, which is the right default for symbol-focused
+commands (a dossier that omits what the author wrote about the symbol is a poor
+dossier). `explore`'s focus node gained a `doc` field; its callers and callees
+deliberately stay bare so the neighbourhood listing doesn't turn into prose.
+
+New rule in the output contract, generalising the bug: **a flag must change the
+text output.** If it only shows up under `--json`, it is a no-op from the
+default's point of view.
+
+167 tests (+3), one of which asserts that `--docs` changes the text output and
+does not add a line, and one that an undocumented field carries no empty marker.
+
+## 2026-07-22 - session 25: `members` (a type's fields and variants)
+
+The gap: `about ScanOpts` told you the struct existed and who used it, but not
+what was in it. The extractor captured 16 kinds and **none of them were fields**,
+so "what does this struct contain" had no answer short of `read --symbol`, which
+is the whole-file-read habit codeq exists to replace. Session 24 made it more
+visible by cutting container bodies out of signatures, which removed the
+accidental way of half-seeing fields through a truncated body dump.
+
+`codeq members NAME` returns fields, enum variants and methods in source order.
+The property worth stating: it is the **one graph command with no name-matching
+caveat**. Containment comes from the parse tree (a member is a definition nested
+directly inside NAME's byte range), so a same-named type elsewhere cannot leak
+in, and a local inside a method is not a member of the class. `about` now
+includes it, omitting the section entirely when there are none, so a struct's
+dossier is still one call.
+
+Followed the dump-real-parse-trees rule again, and it earned its keep. Two things
+no amount of reading docs would have given:
+
+- **JS and TS disagree on the node name.** A class field is `field_definition`
+  in the JavaScript grammar and `public_field_definition` in TypeScript's. The
+  shared `JS_QUERY` compiles against both, and a node type absent from a grammar
+  fails the *whole* query, so the JS capture had to move to a new `JS_EXTRA`,
+  mirroring the existing `TS_EXTRA`.
+- **Solidity's `enum_value` is the identifier**, a leaf, not a wrapper around
+  one. `(enum_value (identifier) @name)` is an "impossible pattern"; the fix is
+  two captures on one node, `(enum_value) @name @variant`.
+
+The real find, though, was the failure mode those two bugs exposed. A query that
+fails to compile makes `Extractor::new()` return Err, and each worker did
+`Err(_) => return`. So a malformed query produced **an index with zero files, no
+error, and exit 0**. `codeq stats` reported `files: 0` in a repo full of Rust.
+That is indistinguishable from an empty directory, and it cost a while to spot
+because the obvious suspects (a corrupt db, a bad walk, an ignore rule) all
+present identically. Now the extractor is built once up front purely to validate
+and the error propagates with context, so a malformed query says so:
+
+    codeq: building the fact extractor (malformed query?): compiling query:
+    Query error at 14:13. Impossible pattern: (enum_value (identifier) @name)
+
+Worth generalising: an error swallowed in a worker is far more expensive than one
+that crashes, because the empty result looks like a legitimate answer. There is
+now a test that simply asserts indexing a normal repo yields facts.
+
+Also noticed while adding the command: `capabilities` listed 22 commands and the
+CLI had 31. `explore`, `api`, `unused`, `deps`, `path`, `implementors`,
+`supertypes`, `affected` and `install` were all missing, some for many sessions.
+A stale capabilities list is worse than none, since an agent reads it as the
+contract. It is now cross-checked against `--help` in the test suite.
+
+Honest limits, all documented rather than guessed around: in Rust a struct's
+methods live in a separate `impl` block, so `members` on a Rust struct returns
+fields only; Ruby's `attr_accessor` is a method call, not a declaration; Python
+instance attributes (`self.x = ...` in `__init__`) are assignments, not
+declarations, so only class-level attributes are covered. Verified across 16
+languages for fields and 6 for variants.
+
+Schema 13 -> 14. 164 tests (+13).
+
+## 2026-07-22 - session 24: output-format audit + piped input (`--stdin`)
+
+Two jobs. First, an audit of what codeq actually prints, on the theory that its
+whole value is emitting only what an agent needs.
+
+Found one outright bug: the `read` fold marker printed its range with an en dash,
+`21 lines (44–64)`, but `--lines` only parses ASCII hyphens. So the marker
+advertised a next command that codeq itself rejects. Copying it verbatim errors.
+Fixed to `... 21 lines (44-64)`, and the assertion now pins the exact string.
+
+The rest was accumulated noise, all of it per-row or per-call:
+
+- Container signatures (`struct`/`enum`/`interface`) were stored as the whole
+  declaration, so `symbols --signatures`, `definitions`, `outline`, `about` and
+  `explore` each dumped the full field list plus doc comments and attributes,
+  truncated mid-token at 180 chars. `api` already had `api_signature()` to cut
+  this. It was applied in exactly one of six places. Generalised to
+  `declaration_header(kind, sig)`, kind-aware so a constant's value (which *is*
+  its content) survives, and applied everywhere.
+- `map` printed a 25-token sentence explaining its own sort order on every call.
+  Moved to `--help`, where it costs nothing per query.
+- `changed` printed `indexed=true` on every row. Only `false` is information.
+- `callers/callees --depth` and `deps` indented every row including depth 1, so
+  the shallowest results carried indentation that meant nothing. The renderer now
+  normalises depth against the minimum in the list, which fixes both without
+  touching `outline` (already 0-based).
+- Callers at file scope rendered as `src/commands.rs:14: ` , a locator, a
+  separator, and then nothing.
+- A multi-line `use a::{\n b,\n}` import spilled one row across four lines,
+  quietly breaking the one-row-per-line contract that makes the output greppable.
+
+21% fewer characters across a 7-command workload with nothing lost. The lesson is
+that none of these were decisions anyone made; they accreted one command at a
+time, which is exactly why the contract is now written down in the README and
+enforced by `text_output_stays_plain_ascii_rows`.
+
+Second job: `search --stdin`, so codeq covers the case where an agent would
+otherwise fall back to grep, output that isn't in the repo at all (`git log |`,
+`curl |`, a build log). Refactored the per-file match loop out of `run_search`
+into `scan_doc`, so piped and indexed scans share one implementation and cannot
+drift; only the source of spans and defs differs. With `--language` the buffer is
+parsed once, which is what makes this more than a slower grep: `--in
+code|comments|strings` and the enclosing `[symbol]` both work on a stream.
+
+The design constraint that mattered: **`--stdin` is never inferred**. The obvious
+implementation is "if stdin isn't a TTY, read it", and it would have been a
+disaster. An agent's shell hands the process an open pipe, so every ordinary
+`codeq search` would have silently become a scan of an empty buffer, and the MCP
+server would have answered nothing for every query while looking perfectly
+healthy. There is a test named for exactly this. A related discovery while
+testing: an `IsTerminal` guard does *not* save you, because in that same agent
+shell stdin is a pipe, not a terminal. `codeq search x --stdin` with nothing
+piped in hangs, same as `grep x` would.
+
+Also worth recording, because it cost real time twice in one session: a
+`cargo build --release` that gets interrupted leaves a **0-byte
+`target/release/codeq`**, and cargo then reports `Finished` without relinking. An
+empty executable file runs as an empty script, so every command exits 0 printing
+nothing. `stats` returning nothing looks exactly like a corrupt index. The same
+artifact instability caused the MCP server to fail at session start with ENOENT,
+because the binary was mid-rebuild when Claude Code spawned it. Pointing the MCP
+config at a stable installed path rather than the cargo target dir avoids the
+whole class.
+
+Minor friction, not fixed: `codeq api src/search.rs` returns nothing because
+every item there is `pub(crate)`, which is `restricted`, not `public`. That is
+correct and documented, but an empty result is indistinguishable from a wrong
+command, and there is no hint that N restricted definitions were filtered out.
+Also `api` takes its scope as a positional while most commands take `--path`.
+
+157 tests (+7).
 
 ## 2026-07-14 — session 19: tests-linkage (`codeq tests NAME`)
 

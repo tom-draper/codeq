@@ -14,19 +14,34 @@ pub struct Repo {
     /// Absolute repository root (the Git toplevel, or CWD for non-Git trees).
     pub root: PathBuf,
     pub is_git: bool,
+    /// The root was named explicitly with `--root`, so the walk must not consult
+    /// a parent repository's ignore files.
+    pub pinned: bool,
 }
 
 impl Repo {
-    /// Discover the repo containing `start`. Prefers the Git toplevel; falls
-    /// back to `start` itself when there is no Git repository.
-    pub fn discover(start: &Path) -> Result<Repo> {
+    /// Discover the repo containing `start` — preferring the Git toplevel and
+    /// falling back to `start` itself — or, when `pinned`, treat `start` as the
+    /// root without walking up at all.
+    ///
+    /// Pinning is what makes a dependency readable: `node_modules/lodash` sits
+    /// inside the outer repo and is ignored by it, so discovery would otherwise
+    /// resolve to the parent and the walk would skip every file.
+    pub fn at(start: &Path, pinned: bool) -> Result<Repo> {
+        if pinned {
+            let root = start
+                .canonicalize()
+                .map_err(|e| anyhow!("cannot resolve {}: {e}", start.display()))?;
+            let is_git = git_toplevel(&root).is_some_and(|t| t == root);
+            return Ok(Repo { root, is_git, pinned: true });
+        }
         if let Some(root) = git_toplevel(start) {
-            return Ok(Repo { root, is_git: true });
+            return Ok(Repo { root, is_git: true, pinned: false });
         }
         let root = start
             .canonicalize()
             .map_err(|e| anyhow!("cannot resolve {}: {e}", start.display()))?;
-        Ok(Repo { root, is_git: false })
+        Ok(Repo { root, is_git: false, pinned: false })
     }
 
     pub fn vcs(&self) -> &'static str {
@@ -66,6 +81,21 @@ impl Repo {
 
     /// Paths changed relative to `reference` (a ref, or the working tree vs a
     /// ref). Returns repo-relative paths.
+    /// The contents of `path` as of `reference`, or `None` when the file did not
+    /// exist there (which is how an added file is recognised).
+    pub fn file_at(&self, reference: &str, path: &str) -> Option<Vec<u8>> {
+        let base = git(&self.root, &["merge-base", reference, "HEAD"])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| reference.to_string());
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&self.root)
+            .args(["show", &format!("{base}:{path}")])
+            .output()
+            .ok()?;
+        out.status.success().then_some(out.stdout)
+    }
+
     pub fn changed_since(&self, reference: &str) -> Result<Vec<String>> {
         if !self.is_git {
             return Err(anyhow!("`changed` requires a Git repository"));

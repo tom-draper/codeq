@@ -32,11 +32,26 @@ pub struct Envelope<T: Serialize> {
     repo: RepoMeta,
     index: IndexMeta,
     data: T,
+    /// Why an empty result is empty. Carried in the envelope rather than only on
+    /// stderr because the MCP server captures stdout alone, and the agent behind
+    /// it is exactly who needs to know the difference between "none" and "you
+    /// asked the wrong question".
+    note: Option<String>,
 }
 
 impl<T: Serialize> Envelope<T> {
     pub fn new(repo: RepoMeta, index: IndexMeta, data: T) -> Self {
-        Envelope { repo, index, data }
+        Envelope {
+            repo,
+            index,
+            data,
+            note: None,
+        }
+    }
+
+    pub fn note(mut self, note: Option<String>) -> Self {
+        self.note = note;
+        self
     }
 
     /// Whether the meta blocks carry signal worth the tokens.
@@ -62,6 +77,9 @@ impl<T: Serialize> Envelope<T> {
             let include_meta = r.meta || r.pretty || self.noteworthy();
             let mut out = serde_json::Map::new();
             out.insert("schema".into(), Value::from(RESULT_SCHEMA));
+            if let Some(n) = &self.note {
+                out.insert("note".into(), Value::from(n.as_str()));
+            }
             if include_meta {
                 out.insert("repo".into(), serde_json::to_value(&self.repo)?);
                 out.insert("index".into(), serde_json::to_value(&self.index)?);
@@ -109,6 +127,11 @@ impl<T: Serialize> Envelope<T> {
         let mut s = String::new();
         render_value(&data, &mut s);
         print!("{s}");
+        // Text mode keeps stdout pure data, so the note goes to stderr where it
+        // is visible to a person and invisible to a pipe.
+        if let Some(n) = &self.note {
+            eprintln!("# codeq: {n}");
+        }
         Ok(())
     }
 }
@@ -129,11 +152,7 @@ pub fn render_data_text(data: &Value) -> String {
 /// - object of scalars (`stats`) → `key: value` lines.
 fn render_value(data: &Value, out: &mut String) {
     match data {
-        Value::Array(rows) => {
-            for row in rows {
-                render_row(row, out);
-            }
-        }
+        Value::Array(rows) => render_rows(rows, out),
         Value::Object(map) => {
             let arrays = map.values().filter(|v| v.is_array()).count();
             if arrays == 0 {
@@ -144,9 +163,7 @@ fn render_value(data: &Value, out: &mut String) {
                 // A single result list (+ maybe a scalar like `truncated`): just rows.
                 for v in map.values() {
                     if let Value::Array(rows) = v {
-                        for row in rows {
-                            render_row(row, out);
-                        }
+                        render_rows(rows, out);
                     }
                 }
             } else {
@@ -154,9 +171,7 @@ fn render_value(data: &Value, out: &mut String) {
                     match v {
                         Value::Array(rows) => {
                             out.push_str(&format!("# {k}\n"));
-                            for row in rows {
-                                render_row(row, out);
-                            }
+                            render_rows(rows, out);
                         }
                         _ => out.push_str(&format!("{k}: {}\n", inline(v))),
                     }
@@ -170,8 +185,23 @@ fn render_value(data: &Value, out: &mut String) {
     }
 }
 
+/// Render one list of rows, normalizing the `depth` column so indentation is
+/// relative to the shallowest row. `outline` numbers top-level definitions 0
+/// while `callers`/`callees`/`deps` number direct hits 1; without this every
+/// row of a `--depth` walk would carry a leading indent that means nothing.
+fn render_rows(rows: &[Value], out: &mut String) {
+    let base = rows
+        .iter()
+        .filter_map(|r| r.get("depth").and_then(|v| v.as_i64()))
+        .min()
+        .unwrap_or(0);
+    for row in rows {
+        render_row(row, base, out);
+    }
+}
+
 /// One result row → `path:line:col: payload`, indented by `depth` for outlines.
-fn render_row(row: &Value, out: &mut String) {
+fn render_row(row: &Value, base_depth: i64, out: &mut String) {
     let o = match row {
         Value::Object(m) => m,
         other => {
@@ -197,7 +227,7 @@ fn render_row(row: &Value, out: &mut String) {
         loc.push_str(&format!("{l}: "));
     }
 
-    let pad = "  ".repeat(int_of("depth").unwrap_or(0).max(0) as usize);
+    let pad = "  ".repeat((int_of("depth").unwrap_or(0) - base_depth).max(0) as usize);
 
     // A multi-line body (context chunks) prints verbatim under a locator header
     // (drop the trailing ": " so the header reads cleanly above the block). For
@@ -214,7 +244,14 @@ fn render_row(row: &Value, out: &mut String) {
         let enclosing = str_of("symbol")
             .map(|s| format!("  [{s}]"))
             .unwrap_or_default();
-        let match_line = format!("{pad}{loc}{}{enclosing}\n", t.trim());
+        // The receiver a call is made on. Shown rather than used to filter: a
+        // receiver can be a value (`db.query()`) or a module path
+        // (`helpers::stem()`), and telling those apart needs name resolution
+        // codeq does not do. Surfacing it lets the reader judge.
+        let on = str_of("receiver")
+            .map(|r| format!("  on={r}"))
+            .unwrap_or_default();
+        let match_line = format!("{pad}{loc}{}{enclosing}{on}\n", t.trim());
 
         // -A/-B/-C context lines: render grep-style (`path-line- content`) with
         // computed line numbers, so the flag isn't a silent no-op in text mode.
@@ -240,13 +277,22 @@ fn render_row(row: &Value, out: &mut String) {
         out.push_str(&match_line);
         return;
     }
+    // A definition's own description of itself, which is the most useful thing
+    // after the signature. Docs are stored already collapsed to one line and
+    // capped, so appending keeps one row on one line. Only the commands that ask
+    // for docs put the field on a row, so this costs nothing elsewhere.
+    let doc = str_of("doc")
+        .map(|d| format!("  // {}", d.trim()))
+        .unwrap_or_default();
+
     if let Some(sig) = str_of("signature") {
         // A member's signature (`pub retries: u32`) says nothing about which type
         // it belongs to, and for a name like `id` or `name` that is the only part
-        // that identifies it. Bracketed like `search`'s enclosing symbol.
+        // that identifies it. Bracketed like `search`'s enclosing symbol, before
+        // the doc comment so the row reads signature -> owner -> prose.
         match str_of("owner") {
-            Some(owner) => out.push_str(&format!("{pad}{loc}{sig}  [{owner}]\n")),
-            None => out.push_str(&format!("{pad}{loc}{sig}\n")),
+            Some(owner) => out.push_str(&format!("{pad}{loc}{sig}  [{owner}]{doc}\n")),
+            None => out.push_str(&format!("{pad}{loc}{sig}{doc}\n")),
         }
         return;
     }
@@ -265,7 +311,7 @@ fn render_row(row: &Value, out: &mut String) {
     let mut parts: Vec<String> = Vec::new();
     for key in ["kind", "name", "module", "symbol", "subtype", "supertype", "dir"] {
         if let Some(v) = str_of(key) {
-            parts.push(v.to_string());
+            parts.push(inline(&Value::from(v)));
         }
     }
     if parts.is_empty() {
@@ -275,7 +321,7 @@ fn render_row(row: &Value, out: &mut String) {
     }
     const CONSUMED: &[&str] = &[
         "path", "line", "col", "start_line", "end_line", "start_col", "end_col",
-        "start_byte", "end_byte", "depth", "text", "signature", "doc", "source",
+        "start_byte", "end_byte", "depth", "text", "signature", "doc", "source", "receiver",
         "id", "confidence", "language", "kind", "name", "module", "symbol", "subtype",
         "supertype", "dir",
     ];
@@ -287,12 +333,26 @@ fn render_row(row: &Value, out: &mut String) {
             parts.push(format!("{k}={}", inline(v)));
         }
     }
-    out.push_str(&format!("{pad}{loc}{}\n", parts.join(" ")));
+    // A row with no payload (e.g. a caller sitting at file scope, so no enclosing
+    // symbol) is just its location: drop the dangling ": " rather than emit a
+    // separator with nothing after it.
+    let payload = parts.join(" ");
+    if payload.is_empty() && doc.is_empty() {
+        out.push_str(&format!("{pad}{}\n", loc.trim_end_matches([':', ' '])));
+    } else {
+        out.push_str(&format!("{pad}{loc}{payload}{doc}\n"));
+    }
 }
 
 /// Render a scalar (or a small nested object/array) inline on one line.
 fn inline(v: &Value) -> String {
     match v {
+        // One row is one line. A raw fact can carry newlines (a multi-line
+        // `use a::{\n b,\n}` import string), so collapse them or the row would
+        // silently spill across several lines and break the grep-style contract.
+        Value::String(s) if s.contains(['\n', '\r', '\t']) => {
+            s.split_whitespace().collect::<Vec<_>>().join(" ")
+        }
         Value::String(s) => s.clone(),
         Value::Object(m) => m
             .iter()

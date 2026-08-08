@@ -15,8 +15,8 @@ use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
 use crate::index::{language_for, refresh};
 use crate::repo::Repo;
 use crate::search::{
-    innermost, like_of, load_file_defs, regex_prefilter, run_search, FileDef, Hit,
-    InFilter, OutMode, ScanOpts, SearchData,
+    self, innermost, like_of, load_file_defs, regex_prefilter, run_search, scan_stdin,
+    FileDef, Hit, InFilter, OutMode, ScanOpts, SearchData,
 };
 
 /// Output rendering options parsed from global CLI flags.
@@ -39,10 +39,18 @@ struct Session {
     out: Out,
 }
 
+/// Set by `--root`: the tree was named explicitly, so discovery must take it
+/// literally rather than resolving to an enclosing repository.
+static PINNED_ROOT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn pin_root() {
+    PINNED_ROOT.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 impl Session {
     fn open(cwd: &Path, rebuild: bool, out: Out) -> Result<Session> {
         let started = Instant::now();
-        let repo = Repo::discover(cwd)?;
+        let repo = Repo::at(cwd, PINNED_ROOT.load(std::sync::atomic::Ordering::Relaxed))?;
         let db = Db::open(&repo.root)?;
         if rebuild {
             db.conn.execute("DELETE FROM files", [])?; // cascades to facts
@@ -65,6 +73,12 @@ impl Session {
 
     /// Build the envelope and print it honoring the caller's render options.
     fn emit<T: Serialize>(&self, data: T) -> Result<()> {
+        self.emit_noted(data, None)
+    }
+
+    /// Emit with a note explaining an empty result. The note is only ever
+    /// diagnostic: it never changes `data`, so a parser can keep ignoring it.
+    fn emit_noted<T: Serialize>(&self, data: T, note: Option<String>) -> Result<()> {
         let repo = RepoMeta {
             root: self.repo.root.to_string_lossy().into_owned(),
             vcs: self.repo.vcs(),
@@ -78,7 +92,7 @@ impl Session {
             partial_failures: self.partial_failures,
             elapsed_ms: self.started.elapsed().as_millis() as u64,
         };
-        Envelope::new(repo, index, data).print(Render {
+        Envelope::new(repo, index, data).note(note).print(Render {
             json: self.out.json,
             meta: self.out.meta,
             pretty: self.out.pretty,
@@ -91,6 +105,167 @@ impl Session {
 struct IndexReport {
     indexed_files: i64,
     reindexed: u64,
+}
+
+// --- empty-result diagnosis --------------------------------------------------
+//
+// An empty result is ambiguous: the name may not exist, it may exist with none
+// of the relation asked for, or a `--path` filter may have removed everything.
+// Left unexplained, all three look like "no" — and a typo looks like a fact.
+// These helpers turn the empty case into one line saying which it was.
+
+/// Levenshtein distance, bailing out once it cannot beat `best`.
+fn edit_distance(a: &str, b: &str, best: usize) -> usize {
+    if a.len().abs_diff(b.len()) > best {
+        return best + 1;
+    }
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        cur[0] = i;
+        let mut row_best = cur[0];
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+            row_best = row_best.min(cur[j]);
+        }
+        if row_best > best {
+            return best + 1; // no cell in this row can still win
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// The closest defined symbol names to `name`, nearest first. Case-insensitive,
+/// and tolerant in proportion to the name's length.
+fn nearest_names(s: &Session, name: &str) -> Result<Vec<String>> {
+    // Deliberately tight: a suggestion has to be plausibly the same name
+    // mistyped. Two edits on a long name already reaches unrelated words, and a
+    // bad suggestion is worse than none because it invites a second wrong query.
+    let budget = (name.chars().count() / 4).clamp(1, 2);
+    let needle = name.to_lowercase();
+    let mut stmt = s
+        .db
+        .conn
+        .prepare("SELECT DISTINCT name FROM facts WHERE kind <> 'import'")?;
+    let mut scored: Vec<(usize, String)> = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .filter_map(|n| n.ok())
+        .filter_map(|n| {
+            let d = edit_distance(&needle, &n.to_lowercase(), budget);
+            (d <= budget).then_some((d, n))
+        })
+        .collect();
+    scored.sort_by(|a, b| {
+        let affix = |n: &str| {
+            let n = n.to_lowercase();
+            !(n.starts_with(&needle) || needle.starts_with(&n))
+        };
+        affix(&a.1)
+            .cmp(&affix(&b.1))
+            .then(a.0.cmp(&b.0))
+            .then(a.1.cmp(&b.1))
+    });
+    scored.dedup_by(|a, b| a.1 == b.1);
+    Ok(scored.into_iter().take(3).map(|(_, n)| n).collect())
+}
+
+/// Where a symbol is defined: `(path, line)` per definition.
+fn definition_sites(s: &Session, name: &str) -> Result<Vec<(String, i64)>> {
+    let mut stmt = s.db.conn.prepare(
+        "SELECT path, start_line FROM facts
+         WHERE name = ?1 AND kind <> 'import' ORDER BY path, start_line",
+    )?;
+    let sites = stmt
+        .query_map([name], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(sites)
+}
+
+/// Explain an empty result for a command keyed on a symbol name.
+///
+/// `relation` names what was being looked for ("callers", "members", …) and is
+/// used verbatim in the message. Returns `None` when the result was not empty.
+fn note_if_empty<T>(
+    s: &Session,
+    rows: &[T],
+    name: &str,
+    relation: &str,
+    path: Option<&str>,
+) -> Result<Option<String>> {
+    note_if_empty_feat(s, rows, name, relation, path, None)
+}
+
+/// As [`note_if_empty`], but `feature` names the extraction a command depends on
+/// ("relations", "members"). When the symbol's own language does not support it,
+/// the answer is "codeq cannot see this here", which is a different fact from
+/// "there are none" — and the one an agent needs, because otherwise it takes an
+/// unsupported language as evidence of absence.
+fn note_if_empty_feat<T>(
+    s: &Session,
+    rows: &[T],
+    name: &str,
+    relation: &str,
+    path: Option<&str>,
+    feature: Option<&str>,
+) -> Result<Option<String>> {
+    if !rows.is_empty() {
+        return Ok(None);
+    }
+    let sites = definition_sites(s, name)?;
+    if let (Some(feature), Some((p, _))) = (feature, sites.first()) {
+        if let Some(lang) = language_for(p) {
+            let unsupported = crate::facts::support(lang).is_some_and(|sup| match feature {
+                "relations" => !sup.relations,
+                "members" => !sup.members,
+                _ => false,
+            });
+            if unsupported {
+                let why = match feature {
+                    "relations" => format!(
+                        "codeq extracts no inheritance edges for {lang}; this is not evidence that '{name}' has none"
+                    ),
+                    _ => format!(
+                        "codeq extracts no field or variant declarations for {lang}, so only methods would be reported for '{name}', and it has none"
+                    ),
+                };
+                return Ok(Some(why));
+            }
+        }
+    }
+    if sites.is_empty() {
+        let near = nearest_names(s, name)?;
+        let hint = if near.is_empty() {
+            String::new()
+        } else {
+            format!("; closest: {}", near.join(", "))
+        };
+        return Ok(Some(format!("no symbol named '{name}'{hint}")));
+    }
+    if let Some(filter) = path {
+        if !sites.iter().any(|(p, _)| p.contains(filter)) {
+            let where_ = sites
+                .iter()
+                .map(|(p, l)| format!("{p}:{l}"))
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Ok(Some(format!(
+                "'{name}' is defined at {where_} but nothing matches --path {filter}"
+            )));
+        }
+    }
+    let (p, l) = &sites[0];
+    let more = if sites.len() > 1 {
+        format!(" (+{} more definitions)", sites.len() - 1)
+    } else {
+        String::new()
+    };
+    Ok(Some(format!(
+        "'{name}' is defined at {p}:{l}{more} but has no {relation}"
+    )))
 }
 
 pub fn cmd_index(cwd: &Path, rebuild: bool, out: Out) -> Result<()> {
@@ -250,8 +425,14 @@ struct ChangedRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     /// Whether this path is present in the current index (i.e. not ignored /
-    /// still exists in the tree).
+    /// still exists in the tree). True for almost every row, so it is only
+    /// emitted when false, that being the case that carries information.
+    #[serde(skip_serializing_if = "is_true")]
     indexed: bool,
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 #[derive(Serialize)]
@@ -420,15 +601,20 @@ pub fn cmd_symbols(
     let param_refs: Vec<&dyn rusqlite::ToSql> =
         args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
     let rows = stmt.query_map(param_refs.as_slice(), |r| {
+        let kind: String = r.get(1)?;
         Ok(SymbolRow {
             name: r.get(0)?,
-            kind: r.get(1)?,
             path: r.get(2)?,
             language: r.get(3)?,
             start_line: r.get(4)?,
             end_line: r.get(5)?,
-            signature: if signatures { r.get(6)? } else { None },
+            signature: if signatures {
+                declaration_header(&kind, r.get(6)?)
+            } else {
+                None
+            },
             owner: r.get(7)?,
+            kind,
         })
     })?;
     let data: Vec<SymbolRow> = rows.collect::<std::result::Result<_, _>>()?;
@@ -475,9 +661,9 @@ fn definitions_of(
     );
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map(params_with(&[&symbol], &filters).as_slice(), |r| {
+        let kind: String = r.get(1)?;
         Ok(DefinitionRow {
             name: r.get(0)?,
-            kind: r.get(1)?,
             path: r.get(2)?,
             language: r.get(3)?,
             start_line: r.get(4)?,
@@ -486,9 +672,10 @@ fn definitions_of(
             end_col: r.get(7)?,
             start_byte: r.get(8)?,
             end_byte: r.get(9)?,
-            signature: r.get(10)?,
+            signature: declaration_header(&kind, r.get(10)?),
             doc: r.get(11)?,
             owner: r.get(12)?,
+            kind,
         })
     })?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -503,7 +690,8 @@ pub fn cmd_definitions(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let data = definitions_of(&s, symbol, path, limit)?;
-    s.emit(data)
+    let note = note_if_empty(&s, &data, symbol, "definition", path)?;
+    s.emit_noted(data, note)
 }
 
 #[derive(Serialize)]
@@ -526,10 +714,14 @@ pub fn cmd_api(
     cwd: &Path,
     path: Option<&str>,
     kind: Option<&str>,
+    compare_to: Option<&str>,
     limit: usize,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
+    if let Some(reference) = compare_to {
+        return api_diff(&s, reference, path);
+    }
     let filters = Filters::new().like("path", path).eq("kind", kind);
     let sql = format!(
         "SELECT name, kind, path, start_line, signature
@@ -539,27 +731,218 @@ pub fn cmd_api(
     );
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
+        let kind: String = r.get(1)?;
         Ok(ApiRow {
             name: r.get(0)?,
-            kind: r.get(1)?,
             path: r.get(2)?,
             line: r.get(3)?,
-            signature: r.get::<_, Option<String>>(4)?.map(|s| api_signature(&s)),
+            signature: declaration_header(&kind, r.get(4)?),
+            kind,
         })
     })?;
     let data: Vec<ApiRow> = rows.collect::<std::result::Result<_, _>>()?;
-    s.emit(data)
+    // Empty almost always means "the definitions are there, none are public" —
+    // Rust `pub(crate)` and `protected` count as restricted, not public. Say so
+    // with the counts, so it can't be mistaken for an empty or wrong path.
+    let note = if data.is_empty() {
+        let scope = path.unwrap_or("");
+        let mut counts = s.db.conn.prepare(
+            "SELECT COALESCE(visibility, 'unknown'), COUNT(*) FROM facts
+             WHERE kind <> 'import' AND path LIKE ?1 GROUP BY 1 ORDER BY 1",
+        )?;
+        let like = format!("%{scope}%");
+        let rows: Vec<(String, i64)> = counts
+            .query_map([&like], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        let total: i64 = rows.iter().map(|(_, n)| n).sum();
+        let where_ = if scope.is_empty() {
+            "this repo".to_string()
+        } else {
+            format!("'{scope}'")
+        };
+        Some(if total == 0 {
+            format!("no definitions at all in {where_}")
+        } else {
+            let breakdown = rows
+                .iter()
+                .map(|(v, n)| format!("{n} {v}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("no public definitions in {where_} ({breakdown})")
+        })
+    } else {
+        None
+    };
+    s.emit_noted(data, note)
 }
 
-/// The declaration header for an API listing: a struct/enum/class signature is
-/// stored as the whole body (every field), but the surface only needs the header
-/// — cut at the body opener so `pub struct Edge { … }` becomes `pub struct Edge`.
-/// Function signatures already stop before their body, so they're unaffected.
-fn api_signature(sig: &str) -> String {
-    sig.split_once('{')
-        .map(|(head, _)| head.trim_end())
-        .unwrap_or(sig)
-        .to_string()
+/// Container kinds whose extracted `signature` is the whole declaration, body
+/// and all, because the grammar has no separate body capture for them.
+const CONTAINER_KINDS: &[&str] = &[
+    "struct", "enum", "union", "trait", "class", "interface", "record",
+    "namespace", "module", "type", "typealias",
+];
+
+#[derive(Serialize)]
+struct ApiChangeRow {
+    /// "added", "removed", or "changed"; also the section this row appears in.
+    #[serde(skip_serializing)]
+    change: String,
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+    /// The previous signature, when it changed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    was: Option<String>,
+}
+
+/// `api --compare-to <ref>` — how the exported surface differs from `ref`.
+///
+/// "Does this change break anyone" is the question a review actually asks, and
+/// it is not answerable from a diff: a diff shows every edited line, most of
+/// which are internal. This reports only the exported declarations that appeared,
+/// disappeared, or changed shape.
+///
+/// Diff-shaped, not history-shaped: it compares two trees, the same thing
+/// `changed` and `affected` already do, and needs Git for exactly that reason.
+fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
+    let changed = s.repo.changed_since(compare_to)?;
+    let mut ex = crate::facts::Extractor::new()?;
+    let mut data: Vec<ApiChangeRow> = Vec::new();
+
+    for file in changed {
+        if path.is_some_and(|p| !file.contains(p)) {
+            continue;
+        }
+        let Some(lang) = language_for(&file) else {
+            continue;
+        };
+
+        // The exported surface as of `compare_to`.
+        let old: HashMap<String, (String, String)> = match s.repo.file_at(compare_to, &file) {
+            Some(bytes) => ex
+                .extract(lang, &file, &bytes)
+                .0
+                .into_iter()
+                .filter(|f| f.visibility.as_deref() == Some("public") && f.kind != "import")
+                .map(|f| {
+                    (
+                        f.name.clone(),
+                        (f.kind.clone(), declaration_header(&f.kind, Some(f.signature)).unwrap_or_default()),
+                    )
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+
+        // ...and as of now, from the index (already fresh).
+        let mut stmt = s.db.conn.prepare(
+            "SELECT name, kind, start_line, signature FROM facts
+             WHERE path = ?1 AND visibility = 'public' AND kind <> 'import'
+             ORDER BY start_line",
+        )?;
+        let now: Vec<(String, String, i64, Option<String>)> = stmt
+            .query_map([&file], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+        for (name, kind, line, sig) in now {
+            let sig = declaration_header(&kind, sig);
+            seen.insert(name.clone());
+            match old.get(&name) {
+                None => data.push(ApiChangeRow {
+                    change: "added".into(),
+                    name,
+                    kind,
+                    path: file.clone(),
+                    line,
+                    signature: sig,
+                    was: None,
+                }),
+                Some((_, before)) if Some(before.as_str()) != sig.as_deref() => {
+                    data.push(ApiChangeRow {
+                        change: "changed".into(),
+                        name,
+                        kind,
+                        path: file.clone(),
+                        line,
+                        signature: sig,
+                        was: Some(before.clone()),
+                    })
+                }
+                Some(_) => {}
+            }
+        }
+        for (name, (kind, before)) in &old {
+            if !seen.contains(name) {
+                data.push(ApiChangeRow {
+                    change: "removed".into(),
+                    name: name.clone(),
+                    kind: kind.clone(),
+                    path: file.clone(),
+                    line: 0,
+                    signature: None,
+                    was: Some(before.clone()),
+                });
+            }
+        }
+    }
+
+    data.sort_by(|a, b| a.path.cmp(&b.path).then(a.name.cmp(&b.name)));
+
+    // Grouped rather than one flat list with a `change` column: the text
+    // renderer shows a signature *instead of* the other fields, so a flat list
+    // would print an added and a removed row identically. Removals first — they
+    // are the breaking ones.
+    #[derive(Serialize)]
+    struct ApiDiff {
+        removed: Vec<ApiChangeRow>,
+        changed: Vec<ApiChangeRow>,
+        added: Vec<ApiChangeRow>,
+    }
+    let take = |data: &mut Vec<ApiChangeRow>, which: &str| -> Vec<ApiChangeRow> {
+        data.iter()
+            .filter(|r| r.change == which)
+            .map(|r| ApiChangeRow {
+                change: r.change.clone(),
+                name: r.name.clone(),
+                kind: r.kind.clone(),
+                path: r.path.clone(),
+                line: r.line,
+                signature: r.signature.clone(),
+                was: r.was.clone(),
+            })
+            .collect()
+    };
+    let out = ApiDiff {
+        removed: take(&mut data, "removed"),
+        changed: take(&mut data, "changed"),
+        added: take(&mut data, "added"),
+    };
+    let note = data
+        .is_empty()
+        .then(|| format!("the exported surface is unchanged since {compare_to}"));
+    s.emit_noted(out, note)
+}
+
+/// The declaration header of a definition: for a container kind the stored
+/// signature is the entire body (every field, doc comment and attribute), but a
+/// listing only needs the header, so it is cut at the body opener:
+/// `pub struct Edge { pub to: String, … }` becomes `pub struct Edge`. Functions
+/// and methods already stop before their body, and a constant's value *is* its
+/// content, so both are left alone.
+fn declaration_header(kind: &str, sig: Option<String>) -> Option<String> {
+    let sig = sig?;
+    if !CONTAINER_KINDS.contains(&kind) {
+        return Some(sig);
+    }
+    Some(match sig.split_once('{') {
+        Some((head, _)) => head.trim_end().to_string(),
+        None => sig,
+    })
 }
 
 #[derive(Serialize)]
@@ -755,29 +1138,55 @@ fn callees_of(
         return Ok(Vec::new());
     }
 
-    // Call sites inside the target body/bodies, keyed by the called name. Under
-    // `--examples` each also carries the expression as written and the line it
-    // sits on, resolved here while the body is in hand.
-    let mut idents: HashMap<String, CallSite> = HashMap::new();
+    // Names called inside the target body/bodies. Under `--examples` each also
+    // gets the call as written and the line it sits on, recorded here while the
+    // body is in hand. The receiver comes from the parse tree rather than from
+    // walking bytes backwards: `calls_in` already resolved `subprocess.run` to
+    // callee `run` on receiver `subprocess`, which is both cheaper and correct
+    // for chained or whitespace-separated receivers.
+    let mut idents: HashSet<String> = HashSet::new();
     let mut sites: HashMap<String, (String, i64)> = HashMap::new();
     {
         let mut body_stmt = s.db.conn.prepare("SELECT body FROM content_fts WHERE path = ?1")?;
-        for (tpath, sb, eb) in &targets {
-            let body: Option<String> = body_stmt.query_row([tpath], |r| r.get(0)).ok();
+        let mut span_stmt = s.db.conn.prepare(
+            "SELECT start_byte, end_byte FROM spans WHERE path = ?1 ORDER BY start_byte",
+        )?;
+        for (path, sb, eb) in &targets {
+            let body: Option<String> = body_stmt.query_row([path], |r| r.get(0)).ok();
             let Some(b) = body else { continue };
-            let Some(slice) = b.get(*sb..(*eb).min(b.len())) else { continue };
-            let before = idents.len();
-            collect_idents(slice, &mut idents);
-            if !examples || idents.len() == before {
+            let Some(slice) = b.get(*sb..(*eb).min(b.len())) else {
+                continue;
+            };
+            // Prefer the parse tree: it knows exactly which identifiers are
+            // being called, so a declaration, a macro name, a type in call
+            // position and prose are all handled without guessing. One parse per
+            // file that actually defines the symbol, which is at most a handful.
+            let lang = language_for(path).unwrap_or("");
+            if let Some(calls) = crate::callsite::calls_in(lang, &b) {
+                for (off, recv) in calls.iter().filter(|(off, _)| **off >= *sb && **off < *eb) {
+                    let Some(word) = ident_at(&b, *off) else { continue };
+                    if examples {
+                        let expr = match recv {
+                            Some(r) => format!("{r}.{word}"),
+                            None => word.clone(),
+                        };
+                        let line = b[..(*off).min(b.len())].bytes().filter(|c| *c == b'\n').count()
+                            as i64
+                            + 1;
+                        sites.entry(word.clone()).or_insert((expr, line));
+                    }
+                    idents.insert(word);
+                }
                 continue;
             }
-            // Line of each newly-found call, counted once per target body.
-            let line_of = |off: usize| b[..(*sb + off).min(b.len())].bytes().filter(|c| *c == b'\n').count() as i64 + 1;
-            for (called, site) in idents.iter() {
-                sites
-                    .entry(called.clone())
-                    .or_insert_with(|| (site.expr.clone(), line_of(site.offset)));
-            }
+            // No grammar for this language: fall back to the identifier scan,
+            // still skipping comment and string spans.
+            let prose: Vec<(usize, usize)> = span_stmt
+                .query_map([path], |r| {
+                    Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize))
+                })?
+                .collect::<std::result::Result<_, _>>()?;
+            collect_idents(slice, *sb, &prose, &mut idents);
         }
     }
     idents.remove(name);
@@ -787,7 +1196,7 @@ fn callees_of(
 
     // Look up only the referenced names via the facts(name) index, in chunks to
     // stay under SQLite's bound-parameter limit — instead of scanning every fact.
-    let ident_list: Vec<&String> = idents.keys().collect();
+    let ident_list: Vec<&String> = idents.iter().collect();
     let mut seen: HashSet<(String, String, i64)> = HashSet::new();
     let mut out = Vec::new();
     for chunk in ident_list.chunks(500) {
@@ -862,61 +1271,53 @@ fn callees_of(
 /// main source of callee noise. Real callees are always called, so nothing that
 /// is genuinely a callee is lost. (Still name-based, not type-resolved: a std
 /// `.remove()` can't be told apart from a local `remove`.)
-/// A call site found inside a caller's body.
-struct CallSite {
-    /// The call as written, including any receiver — `subprocess.run`.
-    expr: String,
-    /// Byte offset of the call within the slice it was found in.
-    offset: usize,
+/// The identifier beginning at byte `off`, if any.
+fn ident_at(text: &str, off: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    if off >= bytes.len() {
+        return None;
+    }
+    let mut end = off;
+    while end < bytes.len() && (bytes[end] == b'_' || bytes[end].is_ascii_alphanumeric()) {
+        end += 1;
+    }
+    (end > off).then(|| text[off..end].to_string())
 }
 
-fn collect_idents(text: &str, out: &mut HashMap<String, CallSite>) {
-    let chars: Vec<char> = text.chars().collect();
-    // Byte offset of each char, so a recorded site can be mapped back into the
-    // file; `chars` indices are not byte offsets once any non-ASCII appears.
-    let offsets: Vec<usize> = text.char_indices().map(|(b, _)| b).collect();
-    let n = chars.len();
-    let is_word = |c: char| c == '_' || c.is_alphanumeric();
+/// Identifiers in call position within `text`, skipping any that fall inside a
+/// comment or string. `base` is `text`'s byte offset within its file, so the
+/// sorted `prose` ranges (which are file-absolute) line up.
+fn collect_idents(
+    text: &str,
+    base: usize,
+    prose: &[(usize, usize)],
+    out: &mut HashSet<String>,
+) {
+    let in_prose = |off: usize| {
+        let abs = base + off;
+        let idx = prose.partition_point(|(s, _)| *s <= abs);
+        idx > 0 && prose[idx - 1].1 > abs
+    };
+
+    let bytes = text.as_bytes();
+    let is_word = |b: u8| b == b'_' || b.is_ascii_alphanumeric();
+    let n = bytes.len();
     let mut i = 0;
     while i < n {
-        if is_word(chars[i]) {
+        // Non-ASCII bytes are never part of an identifier codeq reports, and
+        // stepping by byte keeps offsets aligned with the span ranges.
+        if is_word(bytes[i]) {
             let start = i;
-            while i < n && is_word(chars[i]) {
+            while i < n && is_word(bytes[i]) {
                 i += 1;
             }
             // Peek past whitespace for a '(' — the mark of a call.
             let mut j = i;
-            while j < n && chars[j].is_whitespace() {
+            while j < n && bytes[j].is_ascii_whitespace() {
                 j += 1;
             }
-            if j < n && chars[j] == '(' && i - start >= 2 {
-                let name: String = chars[start..i].iter().collect();
-                // Walk back over a `.` / `::` / `->` receiver so the recorded
-                // expression is what the source says. A bare `run` and a
-                // `subprocess.run` are indistinguishable otherwise, which is
-                // exactly the over-match `callees` gets blamed for.
-                let mut q = start;
-                loop {
-                    let sep = if q >= 2 && chars[q - 1] == ':' && chars[q - 2] == ':' {
-                        2
-                    } else if q >= 2 && chars[q - 1] == '>' && chars[q - 2] == '-' {
-                        2
-                    } else if q >= 1 && chars[q - 1] == '.' {
-                        1
-                    } else {
-                        break;
-                    };
-                    let mut k = q - sep;
-                    while k > 0 && is_word(chars[k - 1]) {
-                        k -= 1;
-                    }
-                    if k == q - sep {
-                        break; // separator with no identifier before it
-                    }
-                    q = k;
-                }
-                let expr: String = chars[q..i].iter().collect();
-                out.entry(name).or_insert(CallSite { expr, offset: offsets[start] });
+            if j < n && bytes[j] == b'(' && i - start >= 2 && !in_prose(start) {
+                out.insert(text[start..i].to_string());
             }
         } else {
             i += 1;
@@ -972,7 +1373,8 @@ pub fn cmd_callers(
         let rows = resolve_rows(&s, name, resolved, callers, |c| c.path.as_str(), |c, v| {
             c.via = v;
         })?;
-        return s.emit(rows);
+        let note = note_if_empty(&s, &rows, name, "callers", path)?;
+        return s.emit_noted(rows, note);
     }
     // Breadth-first up the call tree: each hop expands the newly-found callers by
     // their enclosing symbol name. Deterministic; each caller reported once at its
@@ -1017,7 +1419,8 @@ pub fn cmd_callers(
             .then(a.path.cmp(&b.path))
             .then(a.line.cmp(&b.line))
     });
-    s.emit(hops)
+    let note = note_if_empty(&s, &hops, name, "callers", path)?;
+    s.emit_noted(hops, note)
 }
 
 /// `callees <name>` — what this symbol references (by name).
@@ -1032,7 +1435,9 @@ pub fn cmd_callees(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
-        return s.emit(callees_of(&s, name, path, resolved, examples)?);
+        let rows = callees_of(&s, name, path, resolved, examples)?;
+        let note = note_if_empty(&s, &rows, name, "callees", path)?;
+        return s.emit_noted(rows, note);
     }
     // Breadth-first down the call tree by callee name.
     let mut reported: HashSet<(String, String)> = HashSet::new();
@@ -1072,7 +1477,8 @@ pub fn cmd_callees(
             .then(a.path.cmp(&b.path))
             .then(a.line.cmp(&b.line))
     });
-    s.emit(hops)
+    let note = note_if_empty(&s, &hops, name, "callees", path)?;
+    s.emit_noted(hops, note)
 }
 
 #[derive(Serialize)]
@@ -1189,6 +1595,11 @@ pub fn cmd_path(
 #[derive(Serialize)]
 struct About {
     definitions: Vec<DefinitionRow>,
+    /// What the symbol contains (fields, variants, methods). Omitted entirely
+    /// for a function or anything else with no members, so the dossier does not
+    /// grow an empty section for the common case.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    members: Vec<MemberRow>,
     callers: Vec<Caller>,
     callees: Vec<Callee>,
 }
@@ -1200,8 +1611,24 @@ struct About {
 /// name), which is the useful "who uses this".
 pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
+    // `members` is theirs, the shared walk is mine: `explore` needs the same
+    // three lists, and letting the two commands gather them separately is how
+    // they would drift about who is in the neighbourhood.
     let (definitions, callers, callees) = symbol_graph(&s, name, path)?;
-    s.emit(About { definitions, callers, callees })
+    let data = About {
+        definitions,
+        members: members_of(&s, name, path, None, 0)?,
+        callers,
+        callees,
+    };
+    // A typo is the dangerous case here: every section comes back empty under
+    // valid headers, which reads like a real answer about a real symbol.
+    let note = if data.definitions.is_empty() {
+        note_if_empty(&s, &data.definitions, name, "definition", path)?
+    } else {
+        None
+    };
+    s.emit_noted(data, note)
 }
 
 /// The graph around `name`: its definition(s), who calls it, what it calls.
@@ -1239,6 +1666,11 @@ struct ExploreNode {
     line: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     signature: Option<String>,
+    /// Only carried on the focus: what the symbol says it does, which is the
+    /// point of exploring it. Callers and callees stay bare so the neighbourhood
+    /// listing does not turn into prose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    doc: Option<String>,
 }
 
 /// The one-call answer: the symbol's definition, who calls it, what it calls, and
@@ -1282,6 +1714,7 @@ pub fn cmd_explore(
             path: d.path.clone(),
             line: d.start_line,
             signature: d.signature.clone(),
+            doc: d.doc.clone(),
         })
         .collect();
     let caller_nodes: Vec<ExploreNode> = callers
@@ -1293,6 +1726,7 @@ pub fn cmd_explore(
                 path: c.path.clone(),
                 line: c.line as i64,
                 signature: None,
+                doc: None,
             })
         })
         .collect();
@@ -1304,6 +1738,7 @@ pub fn cmd_explore(
             path: c.path.clone(),
             line: c.line,
             signature: None,
+            doc: None,
         })
         .collect();
 
@@ -1342,14 +1777,18 @@ pub fn cmd_explore(
     let (budget, source, omitted) =
         crate::context::source_for(&s.db, &s.repo, &seeds, max_tokens)?.into_source();
 
-    s.emit(ExploreResult {
-        focus,
-        callers: caller_nodes,
-        callees: callee_nodes,
-        source,
-        budget,
-        omitted,
-    })
+    let note = note_if_empty(&s, &focus, name, "definition", path)?;
+    s.emit_noted(
+        ExploreResult {
+            focus,
+            callers: caller_nodes,
+            callees: callee_nodes,
+            source,
+            budget,
+            omitted,
+        },
+        note,
+    )
 }
 
 /// `at <path>:<line>` — the definition(s) enclosing a location, innermost first.
@@ -1362,21 +1801,23 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
     let line: i64 = line_str
         .parse()
         .map_err(|_| anyhow!("invalid line number in '{location}'"))?;
-    let suffix = format!("%/{path}");
+    // One file, resolved like `read`/`outline`: a bare `README.md` otherwise
+    // matched every README in the repo and mixed their definitions together.
+    let rel = resolve_file(&s, path)?;
 
     let mut stmt = s.db.conn.prepare(
         "SELECT name, kind, path, language,
                 start_line, start_col, end_line, end_col, start_byte, end_byte,
                 signature, doc, owner
          FROM facts
-         WHERE kind <> 'import' AND (path = ?1 OR path LIKE ?2)
-           AND start_line <= ?3 AND end_line >= ?3
+         WHERE kind <> 'import' AND path = ?1
+           AND start_line <= ?2 AND end_line >= ?2
          ORDER BY (end_byte - start_byte) ASC, path",
     )?;
-    let rows = stmt.query_map((path, &suffix, line), |r| {
+    let rows = stmt.query_map((&rel, line), |r| {
+        let kind: String = r.get(1)?;
         Ok(DefinitionRow {
             name: r.get(0)?,
-            kind: r.get(1)?,
             path: r.get(2)?,
             language: r.get(3)?,
             start_line: r.get(4)?,
@@ -1385,9 +1826,10 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
             end_col: r.get(7)?,
             start_byte: r.get(8)?,
             end_byte: r.get(9)?,
-            signature: r.get(10)?,
+            signature: declaration_header(&kind, r.get(10)?),
             doc: r.get(11)?,
             owner: r.get(12)?,
+            kind,
         })
     })?;
     let data: Vec<DefinitionRow> = rows.collect::<std::result::Result<_, _>>()?;
@@ -1419,29 +1861,185 @@ struct OutlineDef {
     doc: Option<String>,
 }
 
+/// One definition in an owner's file, as loaded for containment resolution.
+struct FileFact {
+    name: String,
+    kind: String,
+    start_byte: i64,
+    end_byte: i64,
+    line: i64,
+    signature: Option<String>,
+    doc: Option<String>,
+}
+
+#[derive(Serialize)]
+struct MemberRow {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    doc: Option<String>,
+    /// Which definition of NAME this member belongs to. Only emitted when NAME
+    /// resolves to more than one definition, where it is the disambiguator.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
+}
+
+/// `members <name>` — what a type contains: its fields, enum variants, and
+/// methods, in source order.
+///
+/// Containment is structural, not name-based: a member is a definition whose
+/// byte range sits inside NAME's, with no other definition in between (so a
+/// method's locals are not members of the class). That makes this the one graph
+/// command with no name-matching caveat — the relationship comes from the parse
+/// tree.
+///
+/// Languages that do not declare members (Ruby's `attr_accessor`, Python's
+/// `self.x = …` in `__init__`, Go interface methods) yield nothing rather than
+/// a guess.
+pub fn cmd_members(
+    cwd: &Path,
+    name: &str,
+    path: Option<&str>,
+    kind: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let data = members_of(&s, name, path, kind, limit)?;
+    let relation = match kind {
+        Some(k) => format!("members of kind '{k}'"),
+        None => "members (fields, variants or methods)".to_string(),
+    };
+    let note = note_if_empty_feat(&s, &data, name, &relation, path, Some("members"))?;
+    s.emit_noted(data, note)
+}
+
+fn members_of(
+    s: &Session,
+    name: &str,
+    path: Option<&str>,
+    kind: Option<&str>,
+    limit: usize,
+) -> Result<Vec<MemberRow>> {
+    // The owners: every definition of NAME (scoped by --path), each of which
+    // contributes the members inside its own byte range.
+    let mut owner_stmt = s.db.conn.prepare(
+        "SELECT path, start_byte, end_byte FROM facts
+         WHERE name = ?1 AND kind <> 'import'
+         ORDER BY path, start_byte",
+    )?;
+    let owners: Vec<(String, i64, i64)> = owner_stmt
+        .query_map([name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(p, _, _): &(String, i64, i64)| path.is_none_or(|f| p.contains(f)))
+        .collect();
+    let multiple_owners = owners.len() > 1;
+
+    // Every definition in an owner's file, so containment can be resolved
+    // without a second query per candidate.
+    let mut in_file = s.db.conn.prepare(
+        "SELECT name, kind, start_byte, end_byte, start_line, signature, doc
+         FROM facts WHERE path = ?1 AND kind <> 'import'
+         ORDER BY start_byte, end_byte DESC",
+    )?;
+
+    let mut data: Vec<MemberRow> = Vec::new();
+    for (owner_path, owner_start, owner_end) in &owners {
+        let defs: Vec<FileFact> = in_file
+            .query_map([owner_path], |r| {
+                Ok(FileFact {
+                    name: r.get(0)?,
+                    kind: r.get(1)?,
+                    start_byte: r.get(2)?,
+                    end_byte: r.get(3)?,
+                    line: r.get(4)?,
+                    signature: r.get(5)?,
+                    doc: r.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+
+        // Strictly inside the owner, and not the owner itself.
+        let inside = |start: i64, end: i64| {
+            start >= *owner_start
+                && end <= *owner_end
+                && (start != *owner_start || end != *owner_end)
+        };
+
+        for d in &defs {
+            if !inside(d.start_byte, d.end_byte) {
+                continue;
+            }
+            // Direct members only: skip anything nested inside another definition
+            // that is itself inside the owner (a method's locals, the fields of
+            // an inline struct).
+            let nested = defs.iter().any(|o| {
+                inside(o.start_byte, o.end_byte)
+                    && o.start_byte <= d.start_byte
+                    && o.end_byte >= d.end_byte
+                    && (o.start_byte != d.start_byte || o.end_byte != d.end_byte)
+            });
+            if nested {
+                continue;
+            }
+            if let Some(k) = kind {
+                if d.kind != k {
+                    continue;
+                }
+            }
+            data.push(MemberRow {
+                name: d.name.clone(),
+                kind: d.kind.clone(),
+                path: owner_path.clone(),
+                line: d.line,
+                signature: declaration_header(&d.kind, d.signature.clone()),
+                doc: d.doc.clone(),
+                owner: multiple_owners.then(|| format!("{owner_path}:{owner_start}")),
+            });
+            if limit > 0 && data.len() >= limit {
+                break;
+            }
+        }
+        if limit > 0 && data.len() >= limit {
+            break;
+        }
+    }
+
+    Ok(data)
+}
+
 /// `outline <file>` — the structure of a file top to bottom: every definition
 /// in source order, with its signature and a nesting depth so containment
 /// (methods within a class, nested functions) is visible.
 pub fn cmd_outline(cwd: &Path, file: &str, docs: bool, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
+    // Resolve to one file the same way `read` does: exact path wins, else a
+    // unique suffix match. Matching `path LIKE '%/README.md'` as well as the
+    // exact path merged every README in the repo into one interleaved outline.
+    let rel = resolve_file(&s, file)?;
     let mut stmt = s.db.conn.prepare(
         "SELECT name, kind, start_byte, end_byte, start_line, end_line, signature, doc
          FROM facts
-         WHERE kind <> 'import' AND (path = ?1 OR path LIKE ?2)
+         WHERE kind <> 'import' AND path = ?1
          ORDER BY start_byte, end_byte DESC",
     )?;
-    let suffix = format!("%/{file}");
     let defs: Vec<OutlineDef> = stmt
-        .query_map((file, &suffix), |r| {
+        .query_map([&rel], |r| {
+            let kind: String = r.get(1)?;
             Ok(OutlineDef {
                 name: r.get(0)?,
-                kind: r.get(1)?,
                 start_byte: r.get(2)?,
                 end_byte: r.get(3)?,
                 start_line: r.get(4)?,
                 end_line: r.get(5)?,
-                signature: r.get(6)?,
+                signature: declaration_header(&kind, r.get(6)?),
+                kind,
                 doc: r.get(7)?,
             })
         })?
@@ -1573,6 +2171,29 @@ pub fn cmd_read(
                 }
             }
         }
+
+        // A markdown heading owns everything down to the next heading of the
+        // same or higher level, so folding its whole range would collapse the
+        // document to its title. Fold the prose *between* consecutive headings
+        // instead, which leaves the full heading tree visible: a table of
+        // contents with each section's length, and `--symbol` to open one.
+        let mut heads = s.db.conn.prepare(
+            "SELECT start_line FROM facts
+             WHERE path = ?1 AND kind = 'heading' ORDER BY start_line",
+        )?;
+        let starts: Vec<usize> = heads
+            .query_map([&rel], |r| r.get::<_, i64>(0))?
+            .filter_map(|r| r.ok())
+            .map(|l| l.max(1) as usize)
+            .collect();
+        for (i, &sl) in starts.iter().enumerate() {
+            let el = starts.get(i + 1).map(|&s| s - 1).unwrap_or(n);
+            if el > sl && el - sl >= MIN_FOLD {
+                for ln in (sl + 1)..=el.min(n) {
+                    folded[ln - 1] = true;
+                }
+            }
+        }
     }
     print_folded(&file_lines, &folded);
     Ok(())
@@ -1615,7 +2236,9 @@ fn print_folded(lines: &[&str], folded: &[bool]) {
                 i += 1;
             }
             let count = i - start;
-            println!("        ⋮  {count} lines ({}–{})", start + 1, i);
+            // Range printed in the exact syntax `--lines` accepts, so the marker
+            // is a copy-pasteable next command rather than something to retype.
+            println!("        ... {count} lines ({}-{})", start + 1, i);
         } else {
             println!("{:6}  {}", i + 1, lines[i]);
             i += 1;
@@ -1860,15 +2483,75 @@ fn resolve_rows<T>(
 
 /// `deps <file> [--depth N]` — the internal files a file depends on, resolved
 /// from its imports; `--cycles` reports every import cycle in the repo instead.
+/// An import that resolved to no file in the repo.
+#[derive(Serialize)]
+struct ExternalRow {
+    module: String,
+    importers: usize,
+    /// An example importing file, so the claim is checkable.
+    path: String,
+    line: i64,
+    /// True when the module names a path that should have existed: a relative
+    /// reference (`./guide.md`, `../src/x`) or any markdown link. Those are
+    /// broken references, not third-party dependencies.
+    #[serde(skip_serializing_if = "is_false")]
+    broken: bool,
+}
+
 pub fn cmd_deps(
     cwd: &Path,
     file: Option<&str>,
     depth: usize,
     cycles: bool,
+    external: bool,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let graph = load_dep_graph(&s)?;
+
+    // Imports that resolve to nothing inside the repo. For code that is the
+    // third-party dependency list; for a markdown link, whose target is always a
+    // local file, it is a broken reference.
+    if external {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT f.path, f.name, f.start_line, files.language
+             FROM facts f JOIN files ON files.path = f.path
+             WHERE f.kind = 'import' ORDER BY f.path, f.start_line",
+        )?;
+        let rows: Vec<(String, String, i64, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+
+        let mut by_module: BTreeMap<String, ExternalRow> = BTreeMap::new();
+        for (path, module, line, lang) in rows {
+            if graph.resolves(&path, &module) {
+                continue;
+            }
+            let looks_like_a_path = module.starts_with("./")
+                || module.starts_with("../")
+                || lang.as_deref() == Some("markdown");
+            let entry = by_module.entry(module.clone()).or_insert(ExternalRow {
+                module,
+                importers: 0,
+                path,
+                line,
+                broken: looks_like_a_path,
+            });
+            entry.importers += 1;
+        }
+        let mut data: Vec<ExternalRow> = by_module.into_values().collect();
+        // Broken references first: they are defects, third-party imports are not.
+        data.sort_by(|a, b| {
+            b.broken
+                .cmp(&a.broken)
+                .then(b.importers.cmp(&a.importers))
+                .then(a.module.cmp(&b.module))
+        });
+        let note = data
+            .is_empty()
+            .then(|| "every import resolves to a file in this repo".to_string());
+        return s.emit_noted(data, note);
+    }
 
     if cycles {
         let data: Vec<CycleRow> = graph
@@ -2142,6 +2825,9 @@ pub struct SearchArgs<'a> {
     pub files_with_matches: bool,
     pub count: bool,
     pub limit: usize,
+    /// Search a buffer piped in on stdin instead of the repository index.
+    /// Explicit only, never inferred from whether stdin is a TTY.
+    pub stdin: bool,
 }
 
 /// `search <pattern>` — content search over indexed, non-binary files, with each
@@ -2149,8 +2835,6 @@ pub struct SearchArgs<'a> {
 /// no catastrophic backtracking); `--fixed` for a literal string. A strict
 /// superset of grep: same regex engine, plus structure grep cannot see.
 pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
-    let s = Session::open(cwd, false, out)?;
-
     let mut expr = if args.fixed {
         regex::escape(args.pattern)
     } else {
@@ -2210,6 +2894,16 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         call_only: false,
         qualifier: None,
     };
+
+    // Piped input never touches the index: no repo discovery, no refresh, no
+    // database. That keeps codeq usable as a plain filter outside a repository,
+    // and keeps this branch entirely off the indexed path the MCP server uses.
+    if args.stdin {
+        let data = scan_stdin(&re, &opts, args.language, search::STDIN_LABEL)?;
+        return emit_sessionless(&data, out);
+    }
+
+    let s = Session::open(cwd, false, out)?;
     let data = run_search(
         &s.db.conn,
         &re,
@@ -2294,6 +2988,11 @@ pub fn cmd_references(
             let definition = defsites.contains(&(h.path.clone(), h.line as i64));
             ReferenceRow { hit: h, definition, via: None }
         })
+        // A definition is not a call. `fn foo(` and `def foo(` are followed by
+        // `(` just as a call is, so the byte-level test cannot tell them apart —
+        // but the definition sites are already known exactly, so drop them.
+        // Same for `--on`: a declaration is not a qualified use.
+        .filter(|r| !((call_only || qualifier.is_some()) && r.definition))
         .collect();
     let references = resolve_rows(
         &s,
@@ -2304,7 +3003,8 @@ pub fn cmd_references(
         |r, v| r.via = v,
     )?;
 
-    s.emit(ReferencesResult { references, truncated })
+    let note = note_if_empty(&s, &references, name, "references", path)?;
+    s.emit_noted(ReferencesResult { references, truncated }, note)
 }
 
 #[derive(Serialize)]
@@ -2406,7 +3106,8 @@ pub fn cmd_implementors(
                 language: e.language,
             })
             .collect();
-    s.emit(data)
+    let note = note_if_empty_feat(&s, &data, name, "implementors or subtypes", path, Some("relations"))?;
+    s.emit_noted(data, note)
 }
 
 /// `supertypes <type>` — the traits / interfaces / base classes a type extends
@@ -2433,7 +3134,8 @@ pub fn cmd_supertypes(
                 language: e.language,
             })
             .collect();
-    s.emit(data)
+    let note = note_if_empty_feat(&s, &data, name, "supertypes (it extends nothing)", path, Some("relations"))?;
+    s.emit_noted(data, note)
 }
 
 #[derive(Serialize)]
@@ -2462,7 +3164,11 @@ fn name_is_used(
         before: 0,
         after: 0,
         out: OutMode::Matches,
-        in_filter: InFilter::Any,
+        // A name mentioned only in a comment ("TODO: wire up foo later") used to
+        // count as a use and mask genuinely dead code. A comment is never a use.
+        // String mentions still count: reflection, serde renames, config keys and
+        // SQL identifiers are real uses that live in string literals.
+        in_filter: InFilter::NotComment,
         limit: 0,
         call_only: false,
         qualifier: None,
@@ -2822,7 +3528,9 @@ pub fn cmd_unused(
         defsites.entry(n).or_default().insert((p, l));
     })?;
 
-    // The definitions eligible to be reported (scoped by path/kind).
+    // The definitions eligible to be reported (scoped by path/kind). A markdown
+    // heading is prose, not an API: nothing ever "calls" it, so every section in
+    // the repo would be reported as dead. Excluded unless asked for by --kind.
     let filters = Filters::new().like("path", path).eq("kind", kind);
     // A schema language exists to be consumed from outside the repository: every
     // GraphQL type and protobuf message is a contract for some other codebase, so
@@ -2831,11 +3539,14 @@ pub fn cmd_unused(
     // under-reports rather than misleads. A Terraform `output` is the same shape:
     // it exists so something outside can read it. Everything else stays: an
     // unreferenced CSS class or `variable` really is dead.
-    let sql = format!(
-        "SELECT name, kind, path, start_line, visibility FROM facts
-         WHERE kind <> 'import' AND name IS NOT NULL
-           AND (language IS NULL OR language NOT IN ('graphql', 'proto'))
-           AND NOT (language = 'hcl' AND kind = 'output'){} ORDER BY path, start_line",
+    // Markdown headings are prose, not definitions: nothing references a heading
+    // by name, so every one of them would read as dead code.
+    let exclude_headings = if kind == Some("heading") { "" } else { " AND kind <> 'heading'" };
+        let sql = format!(
+            "SELECT name, kind, path, start_line, visibility FROM facts
+             WHERE kind <> 'import' AND name IS NOT NULL{exclude_headings}
+               AND (language IS NULL OR language NOT IN ('graphql', 'proto'))
+               AND NOT (language = 'hcl' AND kind = 'output'){} ORDER BY path, start_line",
         filters.sql(),
     );
     let candidates: Vec<UnusedRow> = {
@@ -2880,7 +3591,13 @@ pub fn cmd_unused(
             }
         }
     }
-    s.emit(data)
+    // Nothing unused is a real answer, not a miss: say so, so an empty result is
+    // not read as "the command didn't work".
+    let note = data.is_empty().then(|| match path {
+        Some(p) => format!("no unused definitions in '{p}' (every one is referenced somewhere)"),
+        None => "no unused definitions (every one is referenced somewhere)".to_string(),
+    });
+    s.emit_noted(data, note)
 }
 
 /// Whether a path looks like a test file, across common frameworks. Heuristic —
@@ -3084,6 +3801,90 @@ fn resolve_test_rows(
     Ok((rows, truncated))
 }
 
+#[derive(Serialize)]
+struct UntestedRow {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+}
+
+/// `untested [<path>]` — exported definitions no test refers to.
+///
+/// `api` composed with `tests`, which an agent otherwise has to do one symbol at
+/// a time: a call per public definition just to learn which are uncovered.
+///
+/// Public only, because an unexported helper is usually covered through the
+/// exported thing that calls it, and reporting every private function would bury
+/// the answer. Heuristic in exactly the way `tests` is (a test is recognised by
+/// test-like path or name) and name-based like the rest of the graph, so it
+/// over-reports coverage rather than under-report it: a test that reaches the
+/// code without naming it is invisible here.
+pub fn cmd_untested(
+    cwd: &Path,
+    path: Option<&str>,
+    kind: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    let filters = Filters::new().like("path", path).eq("kind", kind);
+    let sql = format!(
+        "SELECT name, kind, path, start_line, signature FROM facts
+         WHERE visibility = 'public' AND kind <> 'import' AND kind <> 'heading'{}
+         ORDER BY path, start_line",
+        filters.sql(),
+    );
+    let candidates: Vec<UntestedRow> = {
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
+            let kind: String = r.get(1)?;
+            Ok(UntestedRow {
+                name: r.get(0)?,
+                path: r.get(2)?,
+                line: r.get(3)?,
+                signature: declaration_header(&kind, r.get(4)?),
+                kind,
+            })
+        })?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+
+    // One lookup per distinct name, not per definition.
+    let mut covered: HashMap<String, bool> = HashMap::new();
+    let mut data: Vec<UntestedRow> = Vec::new();
+    for cand in candidates {
+        // A definition that lives in a test file is test scaffolding, not
+        // production code that needs covering.
+        if is_test_path(&cand.path) {
+            continue;
+        }
+        let has_test = match covered.get(&cand.name) {
+            Some(&c) => c,
+            None => {
+                let c = !test_sites(&s, &cand.name, None)?.is_empty();
+                covered.insert(cand.name.clone(), c);
+                c
+            }
+        };
+        if !has_test {
+            data.push(cand);
+            if limit > 0 && data.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    let note = data.is_empty().then(|| match path {
+        Some(p) => format!("every public definition in '{p}' is referenced by a test"),
+        None => "every public definition is referenced by a test".to_string(),
+    });
+    s.emit_noted(data, note)
+}
+
 pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let tests = test_sites(&s, name, path)?;
@@ -3095,10 +3896,14 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         truncated: bool,
     }
-    s.emit(TestsData {
-        tests: rows,
-        truncated,
-    })
+    let note = note_if_empty(&s, &rows, name, "tests referencing it", path)?;
+    s.emit_noted(
+        TestsData {
+            tests: rows,
+            truncated,
+        },
+        note,
+    )
 }
 
 /// A definition pulled in as impacted: a transitive caller of a changed
@@ -3327,8 +4132,6 @@ struct FileDefs {
 
 #[derive(Serialize)]
 struct RepoMap {
-    /// How each ordered list is sorted, stated plainly so results are predictable.
-    ordering: &'static str,
     totals: MapTotals,
     languages: Vec<MapLang>,
     directories: Vec<DirStat>,
@@ -3468,7 +4271,6 @@ pub fn cmd_map(cwd: &Path, limit: usize, out: Out) -> Result<()> {
     manifests.truncate(cap);
 
     let data = RepoMap {
-        ordering: "lists ordered by their visible count (files/importers/definitions) desc, ties by name/path",
         totals,
         languages,
         directories,
@@ -3527,6 +4329,11 @@ pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
         "result_schema": RESULT_SCHEMA,
         "index_schema": SCHEMA_VERSION,
         "commands": commands,
+        // Per-language support, so "no results" can be told from "not supported".
+        "language_support": crate::facts::LANGUAGES
+            .iter()
+            .filter_map(|l| crate::facts::support(l))
+            .collect::<Vec<_>>(),
         // Languages with symbol + import extraction.
         "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte", "vue", "css", "powershell", "proto", "graphql", "hcl"],
         // Languages recognised for file classification (extraction may be absent).
@@ -3540,7 +4347,7 @@ pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
         "fact_kinds": [
             "function", "method", "struct", "enum", "union", "trait", "module",
             "constant", "typealias", "macro", "class", "interface", "type", "import",
-            "component", "field", "variant",
+            "component", "field", "variant", "heading",
         ],
         "notes": {
             "imports": "raw syntactic module strings; not resolved",
@@ -3553,8 +4360,14 @@ pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
             "freshness": "every command refreshes changed files before answering",
         },
     });
-    // Honor the global output mode like every other command: JSON on
-    // --json/--meta/--pretty, otherwise codeq's compact text.
+    emit_sessionless(&data, out)
+}
+
+/// Emit a result that has no session behind it — `capabilities`, and anything
+/// scanning piped input rather than the index. Honors the global output mode
+/// like every other command: JSON on --json/--meta/--pretty, otherwise codeq's
+/// compact text. There is no `repo`/`index` block because no index was read.
+fn emit_sessionless<T: Serialize>(data: &T, out: Out) -> Result<()> {
     if out.json || out.meta || out.pretty {
         let value = serde_json::json!({ "schema": RESULT_SCHEMA, "data": data });
         if out.pretty {
@@ -3563,7 +4376,10 @@ pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
             println!("{}", serde_json::to_string(&value)?);
         }
     } else {
-        print!("{}", crate::envelope::render_data_text(&data));
+        print!(
+            "{}",
+            crate::envelope::render_data_text(&serde_json::to_value(data)?)
+        );
     }
     Ok(())
 }

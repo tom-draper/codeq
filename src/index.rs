@@ -172,6 +172,10 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     let mut work: Vec<(String, PathBuf, i64, i64, i64)> = Vec::new();
     let mut wb = WalkBuilder::new(repo_root);
     wb.standard_filters(true); // .gitignore, .ignore, hidden, parents
+    // `parents(false)` when the root was pinned with --root: a dependency
+    // directory is ignored *by its parent repo*, and consulting that would make
+    // every file in it invisible. Ignore files inside the root still apply.
+    wb.parents(!repo.pinned);
     // `.codeqignore` — for trees that are *committed* but not code. Respecting
     // .gitignore is not enough on a data-heavy repo: an external user reported
     // ~2,100 files landing in the index as `(unknown)`, and every one of them was
@@ -270,6 +274,12 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             partial_failures,
         });
     }
+    // Build one extractor up front purely to validate: each worker constructs its
+    // own (a Parser is not Sync), and a failure there is a malformed query, i.e. a
+    // bug in codeq rather than anything about this repo. Without this check the
+    // workers would each bail and the index would come back empty and *silent* —
+    // indistinguishable from a repo with no source files.
+    Extractor::new().context("building the fact extractor (malformed query?)")?;
     let parse_failures = AtomicU64::new(0);
     let reindexed = {
         let workers = std::thread::available_parallelism()

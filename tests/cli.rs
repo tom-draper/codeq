@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 21);
+    assert_eq!(v["index"]["schema"], 22);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -2070,15 +2070,16 @@ fn unused_reports_only_definitions_with_no_use() {
 }
 
 #[test]
-fn unused_is_conservative_about_comment_mentions() {
-    // A symbol mentioned only in a comment is NOT dead-code-flagged: `unused`
-    // counts any mention (code/comment/string) as a use, so it under-reports
-    // rather than risk flagging something an agent might delete.
+fn unused_is_conservative_about_string_mentions() {
+    // `unused` under-reports rather than risk flagging something an agent might
+    // delete, so a mention in a *string* counts as a use: it may be reflection,
+    // a serde rename, a config key or a SQL identifier. (A mention in a comment
+    // does not count — see `a_comment_mention_no_longer_masks_dead_code`.)
     let f = Fixture::new();
-    f.write("a.rs", "fn ghost() {}\n// ghost is referenced here in prose\n");
+    f.write("a.rs", "fn ghost() {}\nfn main() { log(\"ghost is named here\"); }\nfn log(_: &str) {}\n");
     let names = field_set(&f.run(&["unused"]), "name");
     assert!(!names.contains(&"ghost".to_string()),
-            "a comment mention should count as a use: {names:?}");
+            "a string mention should count as a use: {names:?}");
 }
 
 #[test]
@@ -2421,7 +2422,7 @@ fn at_resolves_innermost_enclosing_definition() {
     let v = f.run(&["at", "m.py:3"]);
     let rows = v["data"].as_array().unwrap();
     assert_eq!(rows[0]["name"], "meth");
-    assert_eq!(rows[0]["kind"], "function");
+    assert_eq!(rows[0]["kind"], "method", "declared inside a class");
 }
 
 #[test]
@@ -2816,7 +2817,9 @@ fn read_folds_bodies_and_expands_verbatim() {
     // Default: big's body folded, small shown, signatures visible.
     let out = String::from_utf8(f.raw(&["read", "a.rs"]).stdout).unwrap();
     assert!(out.contains("fn big()"), "signature shown: {out}");
-    assert!(out.contains('⋮'), "body folded: {out}");
+    // The marker states the hidden range in the exact syntax `--lines` accepts,
+    // so it doubles as the next command rather than something to retype.
+    assert!(out.contains("... 11 lines (3-13)"), "body folded: {out}");
     assert!(!out.contains("let v5"), "folded body must be hidden: {out}");
     assert!(out.contains("fn small()"), "short fn stays inline");
 
@@ -2828,6 +2831,59 @@ fn read_folds_bodies_and_expands_verbatim() {
     let sym = String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "big"]).stdout).unwrap();
     assert!(sym.contains("let v5"), "symbol body verbatim: {sym}");
     assert!(sym.contains("2  fn big()"), "line-numbered from the def start: {sym}");
+}
+
+/// The text output contract (README "Output contract"): plain ASCII rows, no
+/// decoration, no prose, one row per line. Guards against decorative drift.
+#[test]
+fn text_output_stays_plain_ascii_rows() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "use std::collections::{\n    HashMap,\n    HashSet,\n};\n\
+         pub struct Edge {\n    pub to: String,\n    pub module: String,\n}\n\
+         pub fn go() -> Edge { Edge { to: String::new(), module: String::new() } }\n",
+    );
+
+    for args in [
+        vec!["map"],
+        vec!["symbols", "--signatures"],
+        vec!["definitions", "Edge"],
+        vec!["outline", "a.rs"],
+        vec!["about", "Edge"],
+        vec!["api"],
+        vec!["imports"],
+        vec!["callers", "Edge", "--depth", "2"],
+    ] {
+        let out = String::from_utf8(f.raw(&args).stdout).unwrap();
+        assert!(
+            out.is_ascii(),
+            "{args:?} must emit ASCII only (no arrows, ellipses, dashes): {out}"
+        );
+        for line in out.lines() {
+            assert!(
+                !line.trim_end().ends_with(':'),
+                "{args:?} emitted a locator with an empty payload: {line:?}"
+            );
+        }
+        // Indentation is depth, and the shallowest row shown is flush left.
+        if out.lines().any(|l| !l.is_empty()) {
+            assert!(
+                out.lines().any(|l| !l.starts_with(' ') && !l.is_empty()),
+                "{args:?} indented every row: {out}"
+            );
+        }
+    }
+
+    // A container's signature is its header, never its field list.
+    let defs = String::from_utf8(f.raw(&["definitions", "Edge"]).stdout).unwrap();
+    assert!(defs.contains("pub struct Edge"), "header shown: {defs}");
+    assert!(!defs.contains("pub to:"), "body must be cut: {defs}");
+
+    // A multi-line import fact still occupies exactly one row.
+    let imports = String::from_utf8(f.raw(&["imports"]).stdout).unwrap();
+    assert_eq!(imports.lines().count(), 1, "one row per line: {imports}");
+    assert!(imports.contains("HashMap, HashSet"), "collapsed: {imports}");
 }
 
 // ---------------------------------------------------------------------------
@@ -3953,4 +4009,1407 @@ fn context_accepts_multiple_seed_symbols() {
     assert!(names.contains(&"aa".to_string()) && names.contains(&"bb".to_string()),
             "both seeds should be returned: {names:?}");
     assert!(!names.contains(&"cc".to_string()), "unrequested symbol leaked: {names:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Piped input (--stdin)
+// ---------------------------------------------------------------------------
+
+/// Run codeq with `input` on stdin.
+fn piped(dir: &Path, args: &[&str], input: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::cargo_bin("codeq")
+        .unwrap()
+        .current_dir(dir)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn codeq");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().expect("run codeq")
+}
+
+/// The property that protects every other use of codeq: `--stdin` is opt-in and
+/// never inferred. An agent's shell hands the process a pipe rather than a TTY,
+/// so auto-detection would silently turn ordinary searches into a scan of an
+/// empty buffer, and the MCP server would answer nothing for every query.
+#[test]
+fn piped_input_is_never_inferred_only_opt_in() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub fn indexed_only() {}\n");
+
+    // Stdin is a pipe carrying text that does NOT contain the pattern; without
+    // --stdin the search must still come from the index and find the file.
+    let out = piped(f.path(), &["search", "indexed_only"], "nothing to see here\n");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success(), "search must not fail on a stray pipe");
+    assert!(text.contains("a.rs:1"), "must read the index, not stdin: {text}");
+    assert!(!text.contains("(stdin)"), "must not label rows stdin: {text}");
+}
+
+#[test]
+fn piped_input_searches_the_buffer_not_the_index() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub fn from_the_index() {}\n");
+
+    let out = piped(
+        f.path(),
+        &["search", "needle"],
+        "no match on this line\nhere is a needle\n",
+    );
+    assert!(out.status.success());
+    // Without --stdin the pipe is ignored entirely: nothing in the index matches.
+    assert!(String::from_utf8(out.stdout).unwrap().is_empty());
+
+    let out = piped(
+        f.path(),
+        &["search", "needle", "--stdin"],
+        "no match on this line\nhere is a needle\n",
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert_eq!(text.lines().count(), 1, "one row per matching line: {text}");
+    assert!(text.starts_with("(stdin):2:"), "located in the buffer: {text}");
+    assert!(!text.contains("from_the_index"), "index not consulted: {text}");
+}
+
+/// What piped input buys over grep: with --language the buffer is parsed, so
+/// matches carry their enclosing symbol and --in can separate code from prose.
+#[test]
+fn piped_input_with_language_annotates_and_filters() {
+    let f = Fixture::new();
+    let src = "// target lives in a comment\nfn holder() {\n    let s = \"target in a string\";\n    target();\n}\n";
+
+    let annotated = String::from_utf8(
+        piped(f.path(), &["search", "target", "--stdin", "--language", "rust"], src).stdout,
+    )
+    .unwrap();
+    assert!(
+        annotated.contains("[holder]"),
+        "match annotated with its enclosing definition: {annotated}"
+    );
+
+    for (filter, want, unwanted) in [
+        ("comments", "// target lives", "target()"),
+        ("strings", "target in a string", "// target lives"),
+        ("code", "target()", "// target lives"),
+    ] {
+        let out = String::from_utf8(
+            piped(
+                f.path(),
+                &["search", "target", "--stdin", "--language", "rust", "--in", filter],
+                src,
+            )
+            .stdout,
+        )
+        .unwrap();
+        assert!(out.contains(want), "--in {filter} keeps {want}: {out}");
+        assert!(!out.contains(unwanted), "--in {filter} drops {unwanted}: {out}");
+    }
+}
+
+/// `--in` needs spans, which need a language. Say so rather than silently
+/// returning everything (or nothing).
+#[test]
+fn piped_input_rejects_in_filter_without_a_language() {
+    let f = Fixture::new();
+    let out = piped(f.path(), &["search", "x", "--stdin", "--in", "code"], "x\n");
+    assert!(!out.status.success());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("--language"), "actionable message: {err}");
+}
+
+/// Piped input needs no repository and reads no index, so codeq works as a
+/// plain filter anywhere.
+#[test]
+fn piped_input_needs_no_repository() {
+    let empty = TempDir::new().unwrap();
+    let out = piped(empty.path(), &["search", "hit", "--stdin"], "a hit here\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8(out.stdout).unwrap().contains("(stdin):1:"));
+    assert!(
+        !empty.path().join(".codeq").exists(),
+        "must not create an index for a piped scan"
+    );
+}
+
+/// The other output modes work on a buffer too, so `--stdin` is a drop-in.
+#[test]
+fn piped_input_supports_count_and_context() {
+    let f = Fixture::new();
+    let input = "one\ntwo hit\nthree\nfour hit\n";
+
+    let counted =
+        String::from_utf8(piped(f.path(), &["search", "hit", "--stdin", "-c"], input).stdout)
+            .unwrap();
+    assert!(counted.contains("count=2"), "per-buffer count: {counted}");
+
+    let ctx = String::from_utf8(
+        piped(f.path(), &["search", "hit", "--stdin", "-C", "1"], input).stdout,
+    )
+    .unwrap();
+    assert!(ctx.contains("(stdin)-1- one"), "context before: {ctx}");
+    assert!(ctx.contains("(stdin)-3- three"), "context after: {ctx}");
+}
+
+// ---------------------------------------------------------------------------
+// members
+// ---------------------------------------------------------------------------
+
+#[test]
+fn members_lists_fields_and_variants() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "pub struct S {\n    pub a: u32,\n    b: String,\n}\npub enum E { A, B(u32) }\n",
+    );
+
+    let mut fields = field_set(&f.run(&["members", "S"]), "name");
+    fields.sort();
+    assert_eq!(fields, ["a", "b"], "struct fields");
+
+    let mut variants = field_set(&f.run(&["members", "E"]), "name");
+    variants.sort();
+    assert_eq!(variants, ["A", "B"], "enum variants");
+
+    // Kinds are distinguishable, and a field carries its declaration.
+    let rows = f.run(&["members", "S"]);
+    let row = &rows["data"][0];
+    assert_eq!(row["kind"], "field");
+    assert_eq!(row["path"], "a.rs");
+    assert!(
+        row["signature"].as_str().unwrap().contains("pub a: u32"),
+        "signature is the declaration: {row}"
+    );
+}
+
+/// Containment is structural, so unlike the name-based graph commands a member
+/// cannot be a false positive from a same-named symbol elsewhere, and a local
+/// inside a method is not a member of the class.
+#[test]
+fn members_are_structural_not_name_based() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "class C:\n    a: int = 1\n    def m(self):\n        local = 3\n",
+    );
+    // An unrelated class of the same name elsewhere, with different members.
+    f.write("b.py", "class C:\n    zzz = 9\n");
+
+    let scoped = field_set(&f.run(&["members", "C", "--path", "a.py"]), "name");
+    let has = |v: &[String], n: &str| v.iter().any(|x| x == n);
+    assert!(has(&scoped, "a"), "class attribute is a member: {scoped:?}");
+    assert!(
+        !has(&scoped, "local"),
+        "a local inside a method is not a member of the class: {scoped:?}"
+    );
+    assert!(!has(&scoped, "zzz"), "--path scopes to one owner: {scoped:?}");
+    // Methods are members of the class body they sit in.
+    assert!(has(&scoped, "m"), "method is a member: {scoped:?}");
+
+    // Unscoped, both same-named classes contribute, each tagged with its owner.
+    let both = f.run(&["members", "C"]);
+    let names = field_set(&both, "name");
+    assert!(has(&names, "a") && has(&names, "zzz"), "{names:?}");
+    assert!(
+        both["data"][0]["owner"].is_string(),
+        "owner disambiguates when the name resolves to several types: {both}"
+    );
+}
+
+#[test]
+fn members_kind_filter_separates_fields_from_methods() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "class C:\n    a = 1\n    def m(self):\n        pass\n",
+    );
+    assert_eq!(
+        field_set(&f.run(&["members", "C", "--kind", "field"]), "name"),
+        ["a"]
+    );
+    assert_eq!(
+        field_set(&f.run(&["members", "C", "--kind", "method"]), "name"),
+        ["m"],
+        "a def inside a class is a method, not a function"
+    );
+}
+
+/// `about` on a type answers "what is this and what's in it" in one call; on a
+/// function the section is absent rather than empty.
+#[test]
+fn about_includes_members_only_when_there_are_some() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct S { pub a: u32 }\npub fn go() {}\n");
+
+    let about_type = f.run(&["about", "S"]);
+    let members: Vec<&str> = about_type["data"]["members"]
+        .as_array()
+        .expect("members section present for a type")
+        .iter()
+        .map(|m| m["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(members, ["a"]);
+
+    let about_fn = f.run(&["about", "go"]);
+    assert!(
+        about_fn["data"].get("members").is_none(),
+        "no empty section for a symbol with no members: {about_fn}"
+    );
+}
+
+/// Members are declared syntax in many languages; each of these is verified
+/// against a real parse tree, not documentation.
+#[test]
+fn members_extracted_across_languages() {
+    let cases: &[(&str, &str, &str, &[&str])] = &[
+        ("a.go", "type S struct { A int; b string }", "S", &["A", "b"]),
+        (
+            "a.ts",
+            "class C { a: number = 1; private b: string; }",
+            "C",
+            &["a", "b"],
+        ),
+        ("a.js", "class C { a = 1; #b = 2; }", "C", &["a", "#b"]),
+        (
+            "a.java",
+            "class C { public int a; private String b; }",
+            "C",
+            &["a", "b"],
+        ),
+        ("a.c", "struct S { int a; char *b; };", "S", &["a", "b"]),
+        (
+            "a.cs",
+            "class C { public int A; public string B {get;set;} }",
+            "C",
+            &["A", "B"],
+        ),
+        (
+            "a.php",
+            "<?php class C { public int $a; private $b; }",
+            "C",
+            &["a", "b"],
+        ),
+        ("a.kt", "class C(val a: Int) { var b: String = \"\" }", "C", &["a", "b"]),
+        ("a.swift", "struct S { var a: Int\nlet b: String }", "S", &["a", "b"]),
+        ("a.scala", "case class C(a: Int) { val c: Int = 1 }", "C", &["a", "c"]),
+        ("a.dart", "class C { int a = 1; }", "C", &["a"]),
+        ("a.zig", "const P = struct { x: i32, y: i32 };", "P", &["x", "y"]),
+        ("a.sol", "contract C { uint a; }", "C", &["a"]),
+    ];
+
+    for (file, src, ty, want) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let got = field_set(&f.run(&["members", ty]), "name");
+        for w in *want {
+            assert!(
+                got.iter().any(|g| g == w),
+                "{file}: expected member {w}, got {got:?}"
+            );
+        }
+    }
+}
+
+/// Enum variants, where the language declares them.
+#[test]
+fn variants_extracted_across_languages() {
+    let cases: &[(&str, &str, &str, &[&str])] = &[
+        ("a.rs", "enum E { A, B }", "E", &["A", "B"]),
+        ("a.java", "enum E { X, Y }", "E", &["X", "Y"]),
+        ("a.cs", "enum E { X }", "E", &["X"]),
+        ("a.c", "enum E { X, Y };", "E", &["X", "Y"]),
+        ("a.php", "<?php enum E { case X; }", "E", &["X"]),
+        ("a.ts", "enum E { X = 1 }", "E", &["X"]),
+    ];
+    for (file, src, ty, want) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let got = field_set(&f.run(&["members", ty, "--kind", "variant"]), "name");
+        for w in *want {
+            assert!(
+                got.iter().any(|g| g == w),
+                "{file}: expected variant {w}, got {got:?}"
+            );
+        }
+    }
+}
+
+/// A malformed extraction query would make every worker bail, leaving an index
+/// that is empty and silent — indistinguishable from a repo with no code. The
+/// extractor is validated up front so that surfaces as an error instead.
+#[test]
+fn indexing_a_normal_repo_yields_facts() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct S { pub a: u32 }\n");
+    let stats = f.run(&["stats"]);
+    assert!(
+        stats["data"]["files"].as_i64().unwrap() > 0,
+        "index must not come back silently empty: {stats}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// docs in text output
+// ---------------------------------------------------------------------------
+
+/// `--docs` used to populate the JSON and be a silent no-op in the default text
+/// mode, so the flag looked broken unless you also passed `--json`. A flag that
+/// changes nothing visible is worse than a missing one.
+#[test]
+fn docs_are_visible_in_text_output_not_just_json() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "/// Adds two numbers.\npub fn add(a: u32, b: u32) -> u32 { a + b }\n",
+    );
+
+    let plain = String::from_utf8(f.raw(&["outline", "a.rs"]).stdout).unwrap();
+    assert!(plain.contains("pub fn add"), "signature shown: {plain}");
+    assert!(
+        !plain.contains("Adds two numbers"),
+        "docs stay off by default: {plain}"
+    );
+
+    let with_docs = String::from_utf8(f.raw(&["outline", "a.rs", "--docs"]).stdout).unwrap();
+    assert!(
+        with_docs.contains("// Adds two numbers."),
+        "--docs must change the text output, not only the JSON: {with_docs}"
+    );
+    assert_eq!(
+        with_docs.lines().count(),
+        plain.lines().count(),
+        "a doc rides on its definition's row, one row per line: {with_docs}"
+    );
+}
+
+/// The symbol-focused commands carry the doc, since "what does this do" is the
+/// question they exist to answer.
+#[test]
+fn symbol_dossiers_show_the_doc() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "/// Adds two numbers.\npub fn add(a: u32, b: u32) -> u32 { a + b }\n",
+    );
+
+    for args in [
+        vec!["definitions", "add"],
+        vec!["about", "add"],
+        vec!["explore", "add"],
+    ] {
+        let out = String::from_utf8(f.raw(&args).stdout).unwrap();
+        assert!(
+            out.contains("// Adds two numbers."),
+            "{args:?} should surface the doc: {out}"
+        );
+    }
+}
+
+/// A field's doc comment is part of understanding the type.
+#[test]
+fn members_carry_their_doc_comments() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "pub struct S {\n    /// How many times.\n    pub count: u32,\n    pub other: u32,\n}\n",
+    );
+    let out = String::from_utf8(f.raw(&["members", "S"]).stdout).unwrap();
+    assert!(out.contains("pub count: u32  // How many times."), "{out}");
+    assert!(
+        out.lines().any(|l| l.contains("other") && !l.contains("//")),
+        "an undocumented field carries no empty marker: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// empty-result diagnosis
+// ---------------------------------------------------------------------------
+
+/// stderr of a run, for the diagnostic note (stdout stays pure data).
+fn note_of(f: &Fixture, args: &[&str]) -> String {
+    String::from_utf8(f.raw(args).stderr).unwrap()
+}
+
+/// An empty result is ambiguous between "no such symbol", "no such relation",
+/// and "your filter removed everything". Each must say which it was.
+#[test]
+fn empty_results_explain_themselves() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct ScanOpts { pub limit: usize }\npub fn lonely() {}\n");
+
+    // 1. The name does not exist, and the near-miss is offered.
+    let note = note_of(&f, &["definitions", "ScanOpt"]);
+    assert!(note.contains("no symbol named 'ScanOpt'"), "{note}");
+    assert!(note.contains("closest: ScanOpts"), "suggests the real name: {note}");
+
+    // 2. The name exists but has none of the relation asked for.
+    let note = note_of(&f, &["callers", "lonely"]);
+    assert!(
+        note.contains("'lonely' is defined at a.rs:2") && note.contains("no callers"),
+        "{note}"
+    );
+
+    // 3. A --path filter removed every definition.
+    let note = note_of(&f, &["members", "ScanOpts", "--path", "nowhere"]);
+    assert!(
+        note.contains("nothing matches --path nowhere"),
+        "the filter is the reason, not the symbol: {note}"
+    );
+
+    // A name with no plausible neighbour gets no invented suggestion.
+    let note = note_of(&f, &["definitions", "zzzzzzzzzz"]);
+    assert!(note.contains("no symbol named"), "{note}");
+    assert!(!note.contains("closest:"), "no far-fetched guess: {note}");
+}
+
+/// The note must never be mistaken for data, and never pollute a pipe.
+#[test]
+fn the_note_is_diagnostic_not_data() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub fn lonely() {}\n");
+
+    let out = f.raw(&["callers", "nope_xyz"]);
+    assert!(out.status.success(), "an empty result is not an error");
+    assert!(
+        String::from_utf8(out.stdout).unwrap().is_empty(),
+        "stdout stays pure data in text mode"
+    );
+
+    // JSON carries it in the envelope, because the MCP server captures only
+    // stdout and the agent behind it is who needs to know.
+    let v = f.run(&["callers", "nope_xyz"]);
+    assert!(
+        v["note"].as_str().unwrap().contains("no symbol named 'nope_xyz'"),
+        "{v}"
+    );
+    assert!(v["data"].as_array().unwrap().is_empty(), "data is still empty");
+
+    // A non-empty result carries no note at all.
+    let v = f.run(&["definitions", "lonely"]);
+    assert!(v.get("note").is_none(), "no note when there are results: {v}");
+}
+
+/// `api` returning nothing almost always means "nothing here is public", which
+/// is very different from "wrong path".
+#[test]
+fn api_explains_an_empty_surface() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub(crate) fn restricted() {}\nfn private_fn() {}\n");
+
+    let note = note_of(&f, &["api", "a.rs"]);
+    assert!(note.contains("no public definitions"), "{note}");
+    assert!(
+        note.contains("restricted") && note.contains("private"),
+        "breaks down what is there instead: {note}"
+    );
+}
+
+/// Finding no dead code is a real answer, not a failure.
+#[test]
+fn unused_says_so_when_there_is_no_dead_code() {
+    let f = Fixture::new();
+    // Scoped to a.rs, whose only definition is called from b.rs. (Unscoped, the
+    // caller itself would be reported: nothing calls the root.)
+    f.write("a.rs", "pub fn used() {}\n");
+    f.write("b.rs", "fn root() { used(); }\n");
+    let note = note_of(&f, &["unused", "a.rs"]);
+    assert!(
+        note.contains("no unused definitions"),
+        "an empty result here means clean, and should say so: {note}"
+    );
+}
+
+/// The worst case: a typo gives valid-looking empty sections under real headers.
+#[test]
+fn about_and_explore_flag_a_misspelled_symbol() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct ScanOpts { pub limit: usize }\n");
+    for cmd in ["about", "explore"] {
+        let note = note_of(&f, &[cmd, "ScanOpt"]);
+        assert!(
+            note.contains("no symbol named 'ScanOpt'") && note.contains("ScanOpts"),
+            "{cmd}: empty sections must not read as a real answer: {note}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// markdown
+// ---------------------------------------------------------------------------
+
+const DOC: &str = "\
+# Title
+
+Intro prose.
+
+## Install
+
+Run it.
+
+```bash
+# not a heading: a shell comment inside a fence
+codeq index
+```
+
+### Details
+
+More prose about installing.
+
+## Usage
+
+See [the guide](./guide.md) and ![logo](assets/logo.png).
+Also [external](https://example.com) and [anchor](#usage).
+";
+
+#[test]
+fn markdown_headings_are_definitions() {
+    let f = Fixture::new();
+    f.write("doc.md", DOC);
+
+    let outline = f.run(&["outline", "doc.md"]);
+    let names = field_set(&outline, "name");
+    assert_eq!(names, ["Title", "Install", "Details", "Usage"], "in source order");
+
+    // Nesting comes from byte containment, as it does for every other language.
+    let depths: Vec<i64> = outline["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["depth"].as_i64().unwrap())
+        .collect();
+    assert_eq!(depths, [0, 1, 2, 1], "### nests under ##, which nests under #");
+
+    // A `#` line inside a fenced block is code, not structure.
+    assert!(
+        !names.iter().any(|n| n.contains("not a heading")),
+        "fenced content must not yield headings: {names:?}"
+    );
+}
+
+#[test]
+fn markdown_sections_are_readable_and_foldable() {
+    let f = Fixture::new();
+    f.write("doc.md", DOC);
+
+    // One section verbatim, instead of ingesting the whole document.
+    let section = String::from_utf8(f.raw(&["read", "doc.md", "--symbol", "Install"]).stdout).unwrap();
+    assert!(section.contains("## Install") && section.contains("Run it."), "{section}");
+    assert!(section.contains("### Details"), "a section includes its subsections");
+    assert!(!section.contains("## Usage"), "and stops at the next peer: {section}");
+
+    // Folded, a document becomes its table of contents: every heading visible,
+    // prose collapsed with a copy-pasteable line range.
+    let folded = String::from_utf8(f.raw(&["read", "doc.md"]).stdout).unwrap();
+    for h in ["# Title", "## Install", "### Details", "## Usage"] {
+        assert!(folded.contains(h), "heading {h} stays visible: {folded}");
+    }
+    assert!(!folded.contains("Run it."), "section prose folds: {folded}");
+    assert!(folded.contains("lines ("), "with a range marker: {folded}");
+}
+
+/// Fenced blocks are `strings` and prose is `comments`, so an agent can search
+/// the documented examples separately from the surrounding text.
+#[test]
+fn markdown_separates_examples_from_prose() {
+    let f = Fixture::new();
+    f.write("doc.md", DOC);
+
+    let in_code = String::from_utf8(
+        f.raw(&["search", "codeq", "--path", "doc.md", "--in", "strings"]).stdout,
+    )
+    .unwrap();
+    assert!(in_code.contains("codeq index"), "example found: {in_code}");
+
+    let in_prose = String::from_utf8(
+        f.raw(&["search", "prose", "--path", "doc.md", "--in", "comments"]).stdout,
+    )
+    .unwrap();
+    assert!(in_prose.contains("Intro prose"), "prose found: {in_prose}");
+    assert!(!in_prose.contains("codeq index"), "not the example: {in_prose}");
+
+    // Search hits carry the section they sit in, like code hits carry a function.
+    let hit = String::from_utf8(f.raw(&["search", "More prose", "--path", "doc.md"]).stdout).unwrap();
+    assert!(hit.contains("[Details]"), "annotated with its section: {hit}");
+}
+
+/// A link or image with a local target is a file reference, so the dependency
+/// commands cover documentation and its assets.
+#[test]
+fn markdown_local_links_and_images_are_file_references() {
+    let f = Fixture::new();
+    f.write("doc.md", DOC);
+    f.write("guide.md", "# Guide\n");
+
+    let imports = field_set(&f.run(&["imports", "doc.md"]), "module");
+    assert!(imports.iter().any(|i| i == "./guide.md"), "link: {imports:?}");
+    assert!(
+        imports.iter().any(|i| i == "assets/logo.png"),
+        "image: {imports:?}"
+    );
+    assert!(
+        !imports.iter().any(|i| i.contains("example.com")),
+        "an external URL names no file: {imports:?}"
+    );
+    assert!(
+        !imports.iter().any(|i| i.starts_with('#')),
+        "a bare anchor names no file: {imports:?}"
+    );
+
+    // Resolved into the dependency graph like any other import.
+    let deps = field_set(&f.run(&["deps", "doc.md"]), "path");
+    assert!(deps.iter().any(|p| p == "guide.md"), "{deps:?}");
+    assert!(
+        field_set(&f.run(&["importers", "guide.md"]), "path")
+            .iter()
+            .any(|p| p == "doc.md"),
+        "reverse direction works too"
+    );
+}
+
+/// Nothing ever references a heading by name, so without an exclusion every
+/// section in every document would be reported as dead code.
+#[test]
+fn unused_does_not_report_headings() {
+    let f = Fixture::new();
+    f.write("doc.md", DOC);
+    f.write("a.rs", "fn orphan() {}\n");
+
+    let kinds = field_set(&f.run(&["unused"]), "kind");
+    assert!(
+        !kinds.iter().any(|k| k == "heading"),
+        "prose is not dead code: {kinds:?}"
+    );
+    assert!(kinds.iter().any(|k| k == "function"), "real dead code still found");
+}
+
+/// A bare `README.md` used to match every README in the repo at once, merging
+/// their structures into one nonsensical outline.
+#[test]
+fn file_scoped_commands_resolve_to_one_file() {
+    let f = Fixture::new();
+    f.write("README.md", "# Root\n\nRoot prose.\n");
+    f.write("bench/README.md", "# Bench\n\nBench prose.\n");
+
+    let names = field_set(&f.run(&["outline", "README.md"]), "name");
+    assert_eq!(names, ["Root"], "the exact path wins: {names:?}");
+
+    let at = field_set(&f.run(&["at", "README.md:3"]), "name");
+    assert_eq!(at, ["Root"], "same resolution for at: {at:?}");
+}
+
+#[test]
+fn markdown_setext_headings_and_frontmatter() {
+    let f = Fixture::new();
+    f.write(
+        "doc.md",
+        "---\ntitle: meta\n---\n\nOld Style\n=========\n\nBody text.\n\nSub\n---\n\nMore.\n\nParagraph.\n\n---\n\nAfter a rule.\n",
+    );
+    let names = field_set(&f.run(&["outline", "doc.md"]), "name");
+    assert!(names.iter().any(|n| n == "Old Style"), "setext h1: {names:?}");
+    assert!(names.iter().any(|n| n == "Sub"), "setext h2: {names:?}");
+    assert!(
+        !names.iter().any(|n| n == "title: meta"),
+        "frontmatter is metadata, not a heading: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "Paragraph."),
+        "a --- after a blank line is a thematic break, not an underline: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// comments and strings are not uses
+// ---------------------------------------------------------------------------
+
+/// A stale `// TODO: wire up foo later` used to count as a use and hide genuinely
+/// dead code. A comment is never a use.
+#[test]
+fn a_comment_mention_no_longer_masks_dead_code() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn actually_dead() {}\n// TODO: wire up actually_dead later\nfn main() {}\n",
+    );
+    let names = field_set(&f.run(&["unused"]), "name");
+    assert!(
+        names.iter().any(|n| n == "actually_dead"),
+        "a comment must not mask dead code: {names:?}"
+    );
+}
+
+/// But a *string* mention can be a real use — reflection, `getattr`, serde
+/// renames, DI registration, SQL identifiers, config keys — so it still counts.
+/// `unused` under-reports rather than misleads, and deleting live code is the
+/// expensive mistake.
+#[test]
+fn a_string_mention_still_counts_as_a_use() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn kept_by_reflection() {}\nfn main() { dispatch(\"kept_by_reflection\"); }\nfn dispatch(_: &str) {}\n",
+    );
+    let names = field_set(&f.run(&["unused"]), "name");
+    assert!(
+        !names.iter().any(|n| n == "kept_by_reflection"),
+        "a string mention may be a real use: {names:?}"
+    );
+}
+
+/// A file codeq cannot parse has no spans, so nothing in it is *known* to be a
+/// comment. Those occurrences must still count, or the exclusion would report
+/// live code as dead.
+#[test]
+fn occurrences_in_unparsed_files_still_count_as_uses() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn referenced_from_config() {}\nfn main() {}\n");
+    f.write("config.toml", "handler = \"referenced_from_config\"\n");
+    let names = field_set(&f.run(&["unused"]), "name");
+    assert!(
+        !names.iter().any(|n| n == "referenced_from_config"),
+        "an unclassifiable file must not lose its occurrences: {names:?}"
+    );
+}
+
+/// `helper()` written inside a string or a comment is not a call.
+#[test]
+fn callees_ignores_calls_written_in_comments_and_strings() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn helper() {}\n\
+         fn only_mentions() {\n    let s = \"helper() in a string\";\n    // helper() in a comment\n}\n\
+         fn really_calls() { helper(); }\n",
+    );
+
+    let mentioned = field_set(&f.run(&["callees", "only_mentions"]), "name");
+    assert!(
+        mentioned.is_empty(),
+        "a mention in prose is not a callee: {mentioned:?}"
+    );
+
+    let called = field_set(&f.run(&["callees", "really_calls"]), "name");
+    assert_eq!(called, ["helper"], "a real call is still found");
+}
+
+/// `fn foo(` and `def foo(` are followed by `(` exactly as a call is, so the
+/// byte-level test cannot tell a definition from a call. The definition sites
+/// are known exactly, so they are dropped from the position filters.
+#[test]
+fn a_definition_is_not_a_call_site() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn parse_range(s: &str) -> u32 { 0 }\nfn user() { parse_range(\"x\"); }\n",
+    );
+
+    let calls = f.run(&["references", "parse_range", "--calls"]);
+    let lines: Vec<i64> = calls["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["line"].as_i64().unwrap())
+        .collect();
+    assert_eq!(lines, [2], "only the call site, not the declaration");
+
+    // Unfiltered, the definition is still reported and still flagged.
+    let all = f.run(&["references", "parse_range"]);
+    assert!(
+        all["data"]["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["definition"] == true),
+        "plain references still shows the definition: {all}"
+    );
+}
+
+/// A wrapped method chain is the same call as a single-line one. Whitespace,
+/// including newlines, must not decide whether `--on` finds it.
+#[test]
+fn on_receiver_survives_formatting() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct Db;\nimpl Db { fn query(&self) {} }\n\
+         fn f(db: Db) {\n    db.query();\n    db\n        .query();\n    db . query();\n}\n",
+    );
+    let lines: Vec<i64> = f.run(&["references", "query", "--on", "db"])["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["line"].as_i64().unwrap())
+        .collect();
+    assert_eq!(lines, [4, 6, 7], "same call, three formattings: {lines:?}");
+}
+
+/// Skipping whitespace must not loosen the receiver match itself.
+#[test]
+fn on_receiver_still_rejects_the_wrong_receiver() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct Db;\nimpl Db { fn query(&self) {} }\n\
+         fn g(db: Db, other: Db, mydb: Db) {\n    db.query();\n    other.query();\n    mydb.query();\n    db.inner.query();\n}\n",
+    );
+    let lines: Vec<i64> = f.run(&["references", "query", "--on", "db"])["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["line"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        lines, [4],
+        "a different receiver, a longer name ending in it, and a nested field \
+         must all be excluded: {lines:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// structural call sites
+// ---------------------------------------------------------------------------
+
+/// `--calls` and `--on` are answered from the parse tree, so the receiver is the
+/// expression as written rather than whatever bytes happen to precede the name.
+#[test]
+fn call_filters_use_the_parse_tree() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct Db;\nimpl Db { fn query(&self) {} }\n\
+         fn f(db: Db, other: Db, mydb: Db, a: Db) {\n\
+         \x20   db.query();\n\
+         \x20   db\n        .query();\n\
+         \x20   other.query();\n\
+         \x20   mydb.query();\n\
+         \x20   a.inner.query();\n\
+         \x20   conn().query();\n\
+         \x20   let s = \"db.query() in a string\";\n\
+         \x20   // db.query() in a comment\n}\n\
+         fn conn() -> Db { Db }\nfn query(x: u32) {}\n",
+    );
+
+    let lines = |args: &[&str]| -> Vec<i64> {
+        f.run(args)["data"]["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["line"].as_i64().unwrap())
+            .collect()
+    };
+
+    // Every call, and only calls: not the two declarations, not the string, not
+    // the comment.
+    assert_eq!(
+        lines(&["references", "query", "--calls"]),
+        [4, 6, 7, 8, 9, 10],
+        "call sites only"
+    );
+
+    // The receiver is `db` for exactly two of them; a longer name ending in
+    // `db`, a different receiver, and a nested field are all distinct.
+    assert_eq!(lines(&["references", "query", "--on", "db"]), [4, 6]);
+    assert_eq!(lines(&["references", "query", "--on", "other"]), [7]);
+    assert_eq!(lines(&["references", "query", "--on", "mydb"]), [8]);
+
+    // Receivers text could not express before: a nested field access and a
+    // call-valued receiver.
+    assert_eq!(
+        lines(&["references", "query", "--on", "a.inner"]),
+        [9],
+        "the receiver is the whole expression, not its last segment"
+    );
+    assert_eq!(
+        lines(&["references", "query", "--on", "conn()"]),
+        [10],
+        "a call-valued receiver resolves"
+    );
+    assert!(
+        lines(&["references", "query", "--on", "inner"]).is_empty(),
+        "`inner` is not the receiver of a.inner.query()"
+    );
+}
+
+/// The same call written across the grammars codeq knows. Each is checked
+/// against the real tree, not against documentation.
+#[test]
+fn call_sites_resolve_across_languages() {
+    let cases: &[(&str, &str, &str)] = &[
+        ("a.py", "def query(x): pass\ndb.query()\nother.query()\n", "db"),
+        ("a.js", "function query(x) {}\ndb.query();\nother.query();\n", "db"),
+        ("a.ts", "function query(x: number) {}\ndb.query();\n", "db"),
+        ("a.go", "package m\nfunc f() {\n\tdb.query()\n}\n", "db"),
+        ("A.java", "class T {\n  void query() {}\n  void f() {\n    db.query();\n  }\n}\n", "db"),
+        ("a.rb", "def query(x); end\ndb.query\n", "db"),
+        ("a.c", "void query(int x) {}\nvoid f() {\n  db->query();\n}\n", "db"),
+        ("a.cs", "class T {\n  void query() {}\n  void f() {\n    db.query();\n  }\n}\n", "db"),
+        ("a.php", "<?php\nfunction query($x) {}\n$db->query();\n", "$db"),
+        ("a.kt", "fun query() {}\nfun f() {\n  db.query()\n}\n", "db"),
+        ("a.swift", "func query() {}\nfunc f() {\n  db.query()\n}\n", "db"),
+        ("a.scala", "object M {\n  def query() = {}\n  def f() = {\n    db.query()\n  }\n}\n", "db"),
+        ("a.dart", "void query() {}\nvoid f() {\n  db.query();\n}\n", "db"),
+        ("a.zig", "fn query() void {}\nfn f() void {\n    db.query();\n}\n", "db"),
+        ("a.ex", "defmodule M do\n  def f do\n    db.query()\n  end\nend\n", "db"),
+        ("a.sol", "contract C {\n  function f() public {\n    db.query();\n  }\n}\n", "db"),
+        ("a.lua", "local function query() end\nlocal function f()\n  db.query()\nend\n", "db"),
+    ];
+
+    for (file, src, recv) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let hits = f.run(&["references", "query", "--on", recv])["data"]["references"]
+            .as_array()
+            .unwrap()
+            .len();
+        assert!(hits > 0, "{file}: --on {recv} found no call in:\n{src}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// deps --external
+// ---------------------------------------------------------------------------
+
+/// An import that resolves to no file in the repo is either a third-party
+/// dependency (code) or a broken reference (a local path that should exist).
+#[test]
+fn external_deps_separate_third_party_from_broken_links() {
+    let f = Fixture::new();
+    f.write("other.md", "# Other\n");
+    f.write("assets/real.png", "x");
+    f.write(
+        "doc.md",
+        "# Doc\n\nSee [good](./other.md) and ![img](assets/real.png).\n\
+         See [dead](./missing.md) and ![gone](assets/nope.png).\n\
+         An example of the syntax: `[x](./not-a-link.md)`.\n\
+         External [site](https://example.com) is fine.\n",
+    );
+    f.write("a.rs", "use serde::Serialize;\nfn f() {}\n");
+
+    let rows = f.run(&["deps", "--external"]);
+    let modules = field_set(&rows, "module");
+    let broken: Vec<&str> = rows["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["broken"] == true)
+        .map(|r| r["module"].as_str().unwrap())
+        .collect();
+
+    assert_eq!(
+        broken,
+        ["./missing.md", "assets/nope.png"],
+        "only the links that point at nothing: {modules:?}"
+    );
+    assert!(
+        !modules.iter().any(|m| m == "./other.md" || m == "assets/real.png"),
+        "a link that resolves is not external: {modules:?}"
+    );
+    assert!(
+        !modules.iter().any(|m| m.contains("example.com")),
+        "an external URL names no file, so it is not an import at all: {modules:?}"
+    );
+    // A third-party import is external but is not a defect.
+    assert!(
+        rows["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["module"] == "serde::Serialize" && r["broken"] != true),
+        "third-party imports are listed, unflagged: {modules:?}"
+    );
+}
+
+/// Documentation *about* markdown is full of link syntax inside backticks. An
+/// example is not a link. (Found by running `deps --external` on this repo, which
+/// reported its own README as having two dead links.)
+#[test]
+fn a_link_inside_inline_code_is_an_example_not_a_link() {
+    let f = Fixture::new();
+    f.write(
+        "doc.md",
+        "# Doc\n\nLinks (`[g](./guide.md)`, `![logo](assets/logo.png)`) are file references.\n",
+    );
+    let modules = field_set(&f.run(&["imports", "doc.md"]), "module");
+    assert!(
+        modules.is_empty(),
+        "inline code must not produce dependency edges: {modules:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// --root: reading a dependency
+// ---------------------------------------------------------------------------
+
+/// Dependency trees are gitignored, so their source is invisible to codeq: "how
+/// do I call this library function" could not be answered at all. `--root` takes
+/// a directory literally — no walking up to a Git toplevel, and no consulting
+/// the parent repo's ignore rules — so a dependency can be read like any repo.
+#[test]
+fn root_makes_an_ignored_dependency_readable() {
+    let f = Fixture::new();
+    // `.ignore` rather than `.gitignore`: gitignore semantics need a real .git
+    // directory, and both go through the same walker filters.
+    f.write(".ignore", "node_modules/\n");
+    f.write(
+        "node_modules/lodash/chunk.js",
+        "export function chunk(array, size) { return []; }\nexport function head(a) { return a[0]; }\n",
+    );
+    f.write("src/app.js", "import { chunk } from \"lodash\";\nchunk([1, 2], 1);\n");
+
+    // The dependency stays out of the ordinary index: it is not this repo's code.
+    let own = field_set(&f.run(&["definitions", "chunk"]), "path");
+    assert!(
+        !own.iter().any(|p| p.contains("node_modules")),
+        "an ignored tree must not leak into the repo's own index: {own:?}"
+    );
+
+    // Pointed at directly, it indexes and answers like any other tree.
+    let api = field_set(&f.run(&["--root", "node_modules/lodash", "api"]), "name");
+    let mut api = api;
+    api.sort();
+    assert_eq!(api, ["chunk", "head"], "the dependency's public API");
+
+    let src = String::from_utf8(
+        f.raw(&["--root", "node_modules/lodash", "read", "chunk.js", "--symbol", "chunk"])
+            .stdout,
+    )
+    .unwrap();
+    assert!(src.contains("export function chunk"), "its source: {src}");
+}
+
+// ---------------------------------------------------------------------------
+// language support, untested, api diff
+// ---------------------------------------------------------------------------
+
+/// codeq's support is uneven and always has been. Presenting flat lists made
+/// "no results" and "not supported" look identical; the matrix makes the
+/// difference queryable, and is derived from the queries so it cannot drift.
+#[test]
+fn capabilities_reports_per_language_support() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn x() {}\n");
+    let rows = f.run(&["capabilities"])["data"]["language_support"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let get = |lang: &str| {
+        rows.iter()
+            .find(|r| r["language"] == lang)
+            .unwrap_or_else(|| panic!("{lang} missing from the support matrix"))
+            .clone()
+    };
+
+    // Known-true and known-false cases, each documented in DOGFOOD.
+    assert_eq!(get("rust")["relations"], true);
+    assert_eq!(get("go")["relations"], false, "Go is structurally typed");
+    assert_eq!(get("c")["relations"], false, "C has no inheritance");
+    assert_eq!(get("ruby")["members"], true, "attr_accessor, read via a guard");
+    assert_eq!(get("bash")["imports"], true, "source ./lib.sh");
+    assert_eq!(get("zig")["relations"], false, "Zig has no inheritance");
+    assert_eq!(get("elixir")["members"], false, "no field declarations");
+    assert_eq!(get("markdown")["definitions"], true, "headings");
+    assert_eq!(get("markdown")["calls"], false);
+    for lang in ["rust", "python", "go", "markdown"] {
+        assert_eq!(get(lang)["spans"], true, "{lang} classifies comments/strings");
+    }
+}
+
+/// An unsupported feature is not evidence of absence, and must not read as one.
+#[test]
+fn an_unsupported_feature_says_so_instead_of_none() {
+    let f = Fixture::new();
+    f.write("a.go", "package m\ntype Reader interface { Read() }\n");
+    f.write("a.rs", "pub trait T {}\n");
+
+    let go = String::from_utf8(f.raw(&["implementors", "Reader"]).stderr).unwrap();
+    assert!(
+        go.contains("no inheritance edges for go") && go.contains("not evidence"),
+        "must distinguish unsupported from none: {go}"
+    );
+
+    let rust = String::from_utf8(f.raw(&["implementors", "T"]).stderr).unwrap();
+    assert!(
+        rust.contains("has no implementors"),
+        "Rust supports relations, so this is a real none: {rust}"
+    );
+}
+
+/// `api` composed with `tests`, which otherwise costs one call per public symbol.
+#[test]
+fn untested_reports_public_definitions_no_test_names() {
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "pub fn covered() {}\npub fn bare() {}\nfn private_helper() {}\n",
+    );
+    f.write("tests/t.rs", "#[test]\nfn works() { covered(); }\n");
+
+    let names = field_set(&f.run(&["untested"]), "name");
+    assert!(names.iter().any(|n| n == "bare"), "uncovered public fn: {names:?}");
+    assert!(!names.iter().any(|n| n == "covered"), "covered: {names:?}");
+    assert!(
+        !names.iter().any(|n| n == "private_helper"),
+        "private definitions are out of scope: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "works"),
+        "the test itself is not production code needing cover: {names:?}"
+    );
+}
+
+/// "Does this break anyone" is not answerable from a diff, which shows every
+/// edited line. This reports only the exported declarations that moved.
+#[test]
+fn api_diff_reports_the_exported_surface_only() {
+    let f = Fixture::new();
+    f.write(
+        "lib.rs",
+        "pub fn kept() {}\npub fn doomed() {}\npub fn shape(a: u32) {}\nfn internal() {}\n",
+    );
+    f.git_init_commit();
+
+    f.write(
+        "lib.rs",
+        "pub fn kept() {}\npub fn shape(a: u32, b: u32) {}\npub fn fresh() {}\nfn internal(x: u32) {}\n",
+    );
+
+    let d = f.run(&["api", "--compare-to", "HEAD"]);
+    let names = |k: &str| -> Vec<String> {
+        d["data"][k]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(names("removed"), ["doomed"]);
+    assert_eq!(names("added"), ["fresh"]);
+    assert_eq!(names("changed"), ["shape"], "same name, different signature");
+    let changed = &d["data"]["changed"][0];
+    assert!(
+        changed["was"].as_str().unwrap().contains("a: u32)"),
+        "the previous signature is shown: {changed}"
+    );
+    // An unexported change is not an API change, however much the diff shows.
+    for k in ["removed", "added", "changed"] {
+        assert!(!names(k).iter().any(|n| n == "internal"), "{k} leaked a private fn");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// coverage gaps closed
+// ---------------------------------------------------------------------------
+
+/// Inheritance for the languages that have it but codeq did not read. Each
+/// pattern was written against a dumped parse tree.
+#[test]
+fn relations_extracted_for_the_remaining_languages() {
+    let cases: &[(&str, &str)] = &[
+        ("a.scala", "class A extends B with C\n"),
+        ("a.kt", "class A : B(), C\n"),
+        ("a.swift", "class A: B, C {}\n"),
+        ("a.dart", "class A extends B implements C {}\n"),
+        ("a.sol", "contract A is B, C {}\n"),
+    ];
+    for (file, src) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let subs = field_set(&f.run(&["implementors", "B"]), "subtype");
+        assert_eq!(subs, ["A"], "{file}: A derives from B");
+        let supers = field_set(&f.run(&["supertypes", "A"]), "supertype");
+        assert!(supers.iter().any(|s| s == "B"), "{file}: {supers:?}");
+        assert!(supers.iter().any(|s| s == "C"), "{file}: {supers:?}");
+    }
+
+    // Dart is the one that distinguishes the two, so it must not flatten them.
+    let f = Fixture::new();
+    f.write("a.dart", "class A extends B implements C {}\n");
+    let rel = |name: &str| -> String {
+        f.run(&["implementors", name])["data"][0]["relation"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(rel("B"), "extends");
+    assert_eq!(rel("C"), "implements");
+}
+
+/// Imports expressed as calls rather than syntax, which is why they were missed.
+#[test]
+fn call_style_imports_are_extracted() {
+    let cases: &[(&str, &str, &str)] = &[
+        ("a.zig", "const std = @import(\"std\");\n", "std"),
+        ("a.lua", "local m = require(\"mod\")\n", "mod"),
+        ("a.sh", "source ./lib.sh\n", "./lib.sh"),
+        ("a.ex", "defmodule M do\n  alias Foo.Bar\nend\n", "Foo.Bar"),
+    ];
+    for (file, src, want) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let mods = field_set(&f.run(&["imports"]), "module");
+        assert!(mods.iter().any(|m| m == want), "{file}: {mods:?}");
+    }
+}
+
+/// Elixir spells a definition and an import the same way — both are macro calls —
+/// so the keyword has to be checked against what the match claims to be.
+#[test]
+fn elixir_tells_a_definition_from_an_import() {
+    let f = Fixture::new();
+    f.write("a.ex", "defmodule M do\n  alias Foo.Bar\n  def run do\n    :ok\n  end\nend\n");
+
+    let mods = field_set(&f.run(&["imports"]), "module");
+    assert_eq!(mods, ["Foo.Bar"], "defmodule defines, it does not import: {mods:?}");
+    let defs = field_set(&f.run(&["symbols"]), "name");
+    assert!(defs.iter().any(|d| d == "M"), "the module is a definition: {defs:?}");
+    assert!(defs.iter().any(|d| d == "run"));
+}
+
+/// Ruby declares fields through a method call, so `attr_accessor` needed the same
+/// guard mechanism as `require` — and the leading `:` is symbol syntax, not part
+/// of the field's name.
+#[test]
+fn ruby_attr_accessors_are_fields() {
+    let f = Fixture::new();
+    f.write("a.rb", "class C\n  attr_accessor :a, :b\n  attr_reader :c\n  def m; end\nend\n");
+
+    let mut fields = field_set(&f.run(&["members", "C", "--kind", "field"]), "name");
+    fields.sort();
+    assert_eq!(fields, ["a", "b", "c"], "no leading colons");
+    // Requires still work; the two share the call shape.
+    f.write("b.rb", "require 'json'\n");
+    assert!(field_set(&f.run(&["imports"]), "module").iter().any(|m| m == "json"));
+}
+
+// ---------------------------------------------------------------------------
+// method vs function
+// ---------------------------------------------------------------------------
+
+/// Several grammars use one node for both (Rust `function_item`, Python
+/// `function_definition`), so every method used to be reported as a plain
+/// function and `--kind method` was near-useless.
+#[test]
+fn functions_inside_a_type_are_methods() {
+    let cases: &[(&str, &str)] = &[
+        ("a.py", "class C:\n    def meth(self): pass\n"),
+        ("a.kt", "class C { fun meth() {} }\n"),
+        ("a.swift", "class C { func meth() {} }\n"),
+        ("a.scala", "class C {\n  def meth() = {}\n}\n"),
+        ("a.sol", "contract C {\n  function meth() public {}\n}\n"),
+        ("a.zig", "const C = struct {\n  fn meth(self: C) void {}\n};\n"),
+        ("a.rs", "struct S;\nimpl S { fn meth(&self) {} }\n"),
+    ];
+    for (file, src) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let kinds = field_set(&f.run(&["definitions", "meth"]), "kind");
+        assert_eq!(kinds, ["method"], "{file}: {src}");
+    }
+}
+
+/// Rust's `impl` holds methods *and* associated functions, and only a `self`
+/// parameter says which can be called on a value.
+#[test]
+fn rust_associated_functions_are_not_methods() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct S;\nimpl S {\n  fn meth(&self) {}\n  fn assoc() {}\n}\nfn free() {}\n",
+    );
+    let kind = |n: &str| field_set(&f.run(&["definitions", n]), "kind").join(",");
+    assert_eq!(kind("meth"), "method", "takes self, so s.meth()");
+    assert_eq!(kind("assoc"), "function", "no self: called as S::assoc()");
+    assert_eq!(kind("free"), "function");
+}
+
+/// A function nested inside a method is not itself a member of the type,
+/// however deeply the class sits above it.
+#[test]
+fn a_function_nested_in_a_method_is_not_a_method() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "class C:\n    def meth(self):\n        def inner():\n            pass\n",
+    );
+    assert_eq!(field_set(&f.run(&["definitions", "meth"]), "kind"), ["method"]);
+    assert_eq!(
+        field_set(&f.run(&["definitions", "inner"]), "kind"),
+        ["function"],
+        "nested, not a member"
+    );
+}
+
+/// A trait method declaration has no body, so the pattern requiring one missed
+/// it — yet it is the whole point of the trait.
+#[test]
+fn rust_trait_method_declarations_are_extracted() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub trait T {\n    fn required(&self);\n}\n");
+    let rows = f.run(&["definitions", "required"]);
+    assert_eq!(field_set(&rows, "kind"), ["method"]);
+    assert_eq!(
+        field_set(&f.run(&["members", "T", "--kind", "method"]), "name"),
+        ["required"],
+        "and it is a member of the trait"
+    );
+}
+
+/// A receiver disambiguates which same-named definition a call means, but codeq
+/// shows it rather than filtering on it: a receiver can be a value (`db.query()`)
+/// or a module path (`helpers::stem()`), and telling those apart needs name
+/// resolution codeq does not do. Pruning "a call with a receiver is not calling a
+/// free function" would discard the module case, which is a real call.
+#[test]
+fn call_sites_report_the_receiver_they_are_called_on() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "mod helpers { pub fn stem(s: &str) -> &str { s } }\n\
+         struct Db;\n\
+         impl Db { fn stem(&self) -> u32 { 0 } }\n\
+         fn use_them(db: Db) {\n    let a = helpers::stem(\"x\");\n    let b = db.stem();\n}\n",
+    );
+
+    // Both kinds exist, which is exactly when the receiver matters.
+    let mut kinds = field_set(&f.run(&["definitions", "stem"]), "kind");
+    kinds.sort();
+    assert_eq!(kinds, ["function", "method"]);
+
+    let rows = f.run(&["references", "stem", "--calls"]);
+    let by_line = |line: i64| -> String {
+        rows["data"]["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["line"] == line)
+            .and_then(|r| r["receiver"].as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    assert_eq!(by_line(5), "helpers", "a module path is a receiver too");
+    assert_eq!(by_line(6), "db", "and so is a value");
+
+    // Visible in text mode, not just JSON.
+    let text = String::from_utf8(f.raw(&["references", "stem", "--calls"]).stdout).unwrap();
+    assert!(text.contains("on=helpers") && text.contains("on=db"), "{text}");
+
+    // An unfiltered query parses nothing, so it reports no receiver.
+    let plain = f.run(&["references", "stem"]);
+    assert!(
+        plain["data"]["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r.get("receiver").is_none()),
+        "no receiver without a position filter: {plain}"
+    );
 }

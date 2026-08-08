@@ -41,7 +41,9 @@ buys a few things a byte scan cannot:
   this module, what breaks if I change it. `callers`, `callees`, `implementors`,
   `importers`, and `about` answer these directly.
 - Less to read. `outline` and `api` show a file or module from signatures and docstrings
-  alone, no bodies, so an agent grasps the shape for a fraction of the tokens.
+  alone, no bodies, so an agent grasps the shape for a fraction of the tokens. `members`
+  gives a type's fields and variants without opening the file, and is structural rather
+  than name-based, so it has none of the same-name ambiguity the call graph does.
 - Computed once, kept fresh. Each file is parsed once; only changed files (by size and
   mtime) are reparsed. The cost is amortized across a session of many queries against a
   mostly stable tree, which is the agent workload. For a single one-off text search a cold
@@ -52,6 +54,51 @@ Rust `regex` crate), adds the flags you would reach for `rg` to get (`-A`/`-B`/`
 `-c`, `-w`, `-g`), and does one thing grep cannot: `--in code|comments|strings` restricts
 matches by syntactic class, so you can find a TODO only in comments, or a literal only in
 real code.
+
+That extends to a pipeline. `--stdin` scans text piped in instead of the index, so codeq
+also stands in for grep where there is no repository to index:
+
+```bash
+git log --oneline -20 | codeq search '^fix' --stdin
+curl -s $URL | codeq search 'apiKey' --stdin --language javascript --in strings
+```
+
+Add `--language` and the buffer is parsed once, which gives the two things grep still
+cannot do on a stream: `--in code|comments|strings`, and the enclosing `[symbol]` on every
+match. Without it the scan is exact but has neither, and `--in` is rejected rather than
+silently ignored. A piped scan opens no index and needs no repo.
+
+`--stdin` is explicit and never inferred from whether stdin is a TTY. That is deliberate:
+an agent's shell usually hands the process an open pipe, so auto-detection would silently
+turn every ordinary `codeq search` into a scan of an empty buffer.
+
+Where structure is available, codeq uses it instead of matching characters. The
+`--calls` and `--on` precision filters parse the candidate files and read call sites
+off the tree, so a declaration is not a call, formatting is irrelevant, and the
+receiver is the expression as written (`--on a.inner`, or even `--on 'conn()'`)
+rather than whichever identifier happens to sit before the dot. That parse happens
+only when those filters are used, so ordinary queries pay nothing and the index does
+not grow. A name
+mentioned in a comment is not a use, so a stale `// TODO: wire up foo later` cannot
+hide dead code from `unused`; `helper()` written inside a string or a comment is not
+a call, so it is not a callee. A mention in a *string* still counts as a use, because
+reflection, serde renames, config keys and SQL identifiers are real uses that live in
+string literals, and a file codeq cannot parse keeps all of its occurrences rather
+than losing them.
+
+A function declared inside a type body is recorded as a `method` rather than a
+`function`, which several grammars do not distinguish for you: Rust's `function_item`
+and Python's `function_definition` are the same node whether or not they sit in an
+`impl` or a `class`. Rust additionally requires a `self` parameter, so an associated
+function called as `S::assoc()` stays a `function`. A nested function or closure is
+never a method, however deep the class above it.
+
+Support is uneven across the 21 languages, so `capabilities` reports a
+`language_support` matrix — which of definitions, imports, members, relations, spans
+and calls each language actually has, derived from the extraction queries rather than
+a hand-kept list. Go and C have no inheritance edges at all; Ruby declares no fields.
+When a command comes back empty for that reason it says so, rather than letting an
+unsupported language read as evidence of absence.
 
 The honest boundary: codeq's facts are syntactic, not deeply semantic. It knows an
 identifier is a function definition. It does not resolve a call to its definition across
@@ -66,7 +113,7 @@ How much does codeq actually save an agent? `bench/completion.py` runs, for each
 dozen realistic tasks, the exact tool sequence a competent agent would use to reach the
 same answer with generic tools (ripgrep to locate, then read a ~60-line window, never a
 strawman), and sums what the agent pays: tokens ingested (output bytes over 4) and tool
-calls. Across a corpus of 25 real open-source repositories, pinned by tag and spanning
+calls. Across a corpus of 20 real open-source repositories, pinned by tag and spanning
 every supported language:
 
 | Task | codeq tokens | generic tokens | saving | codeq calls | generic calls |
@@ -85,7 +132,12 @@ every supported language:
 | a file's imports (`imports`) | 9k | 8k | 0.9x | 25 | 39 |
 | **all 12 tasks** | **788k** | **4.08M** | **5.2x** | **300** | **1519** |
 
-Completing these tasks costs a generic-tool agent **5.2x the tokens and 5x the tool calls**.
+> **These numbers predate the merge of the component/clones and markdown/relations
+> lines and have not been re-measured on the combined code.** They came from a
+> 25-repo run; a parallel 20-repo run on the other line reported different figures
+> for the same tasks. Re-run `python3 bench/completion.py` before quoting them.
+
+Completing these tasks costs a generic-tool agent **5.5x the tokens and 5x the tool calls**.
 The `explore` win is mostly in round-trips: one call instead of about ten. codeq is not
 ahead everywhere, and the harness is built to say so: on plain reference search and
 single-line imports it is near parity with ripgrep, and `api` deliberately "loses" on
@@ -167,6 +219,39 @@ Cross-cutting flags: `--path <substr>` scopes a name-based lookup to matching fi
 `--fields a,b` trims output to the fields you want, and `--json` switches to the structured
 envelope.
 
+## Markdown is indexed like code
+
+A heading is a definition: it has a name, a byte range (down to the next heading of
+the same or higher level) and a nesting depth, which is exactly the model the code
+extractors produce. So the existing commands work on documentation with nothing new
+to learn:
+
+```
+$ codeq outline README.md          # the table of contents
+$ codeq read README.md             # folded to that ToC, with each section's range
+$ codeq read README.md --symbol "Output contract"   # just that section, verbatim
+$ codeq at README.md:230           # which section is this line in
+```
+
+Reading one section instead of a whole README is a large saving on exactly the files
+that are pure prose and do not compress.
+
+Fenced code blocks are `strings` and prose is `comments`, so `--in strings` searches
+the documented examples and `--in comments` searches the surrounding text (`--in code`
+is empty for markdown, which has none). Search hits carry their enclosing `[Section]`.
+
+Local links and images (`[g](./guide.md)`, `![logo](assets/logo.png)`) are file
+references, so `deps` and `importers` cover documentation and its assets; external
+URLs and bare `#anchor` links name no file and are skipped, and link syntax inside
+inline code is an example rather than a link. `codeq deps --external` lists every
+import that resolves to nothing: the third-party dependency list, with broken local
+references flagged. Headings are excluded
+from `unused`, since nothing ever references prose by name.
+
+Parsed line-wise rather than with a grammar: headings are unambiguous once fenced
+blocks are tracked, so a `# comment` inside a shell example is not mistaken for a
+heading. The `source` field records this (`lines/markdown` vs `treesitter/rust`).
+
 ## read, a folding file reader
 
 `codeq read <file>` is built for a token budget. It returns the file with long function
@@ -176,9 +261,9 @@ whole structure (imports, signatures, docstrings) cheaply, then open only what y
 ```
   20  impl Repo {
   23      pub fn discover(start: &Path) -> Result<Repo> {
-          ⋮  8 lines (24-31)
+          ... 8 lines (24-31)
   33      pub fn vcs(&self) -> &'static str {
-          ⋮  6 lines (34-39)
+          ... 6 lines (34-39)
 ```
 
 - `codeq read <file> --lines 24-31` for a verbatim, line-numbered slice.
@@ -223,14 +308,61 @@ result. Start with `codeq_map` to orient.
 
 ## Output contract
 
-Every result is `{"schema": "codeq.result.v1", "data": ...}`. Facts carry byte ranges,
-1-based line and column ranges, an extraction source (e.g. `treesitter/rust`), and a
-confidence.
+The default output is compact grep-style text; `--json` gives the envelope.
+
+**Text.** One result per line, `path:line:col: payload`, and nothing else. The rules,
+which apply to every command:
+
+- **No decoration.** No box drawing, dividers, banners, colour, or arrow glyphs. The
+  only structural marker is `# <key>` above each list when a result has several
+  (`about`, `map`, `affected`); a single-list result has no header at all.
+- **ASCII only.** Any range codeq prints is written in the syntax codeq accepts
+  (`44-64`, not `44–64`), so output is a copy-pasteable next command.
+- **No prose.** No explanation of how results were ordered or produced. Ordering
+  guarantees live in `--help`; provenance lives in `--json`.
+- **A field earns its place.** A column that is the same on every row (or derivable
+  from the path) is omitted; booleans are emitted only in the informative case
+  (`indexed=false` shows up, `indexed=true` does not).
+- **A flag must change the text output.** Anything that only shows up under
+  `--json` is a no-op from the default's point of view. A doc comment rides on its
+  definition's row as `  // <doc>`, so `--docs` visibly does something.
+- **Signatures are declaration headers**, not bodies: `pub struct Edge`, never the
+  field list.
+- **One row is one line.** Multi-line facts are collapsed to a single space.
+  Verbatim source (`read`, `explore`, `context`) is the one exception and is always
+  introduced by a locator line.
+- **Indentation only means depth**, two spaces per hop, relative to the shallowest
+  row shown.
+- **Stdout is pure data.** Index/staleness notes go to stderr, so a pipe stays clean.
+- **An empty result explains itself.** "No results" is ambiguous between no such
+  symbol, no such relation, and a filter that removed everything, so codeq says
+  which, with a near-miss suggestion when the name looks mistyped. The note goes to
+  stderr in text mode and into the envelope's `note` field under `--json` (the MCP
+  server captures only stdout). It is diagnostic, never data: `data` stays empty and
+  the exit status stays 0.
+
+**JSON.** Every result is `{"schema": "codeq.result.v1", "data": ...}`. Facts carry byte
+ranges, 1-based line and column ranges, an extraction source (e.g. `treesitter/rust`),
+and a confidence.
 
 codeq refreshes on read, so answers are almost always fresh and the metadata envelope is
 omitted unless it carries signal. Pass `--meta` to always include the `repo` and `index`
 blocks; they also appear on their own when something is noteworthy, like files being
 reparsed or a parse partially failing.
+
+## Reading a dependency
+
+A dependency tree is gitignored, so it stays out of the repo's own index — but that
+also made "how do I call this library function" unanswerable. `--root` points codeq
+at any directory and takes it literally: no walking up to a Git toplevel, and no
+consulting the parent repository's ignore rules.
+
+```
+$ codeq --root node_modules/lodash api
+$ codeq --root node_modules/lodash read chunk.js --symbol chunk
+```
+
+Every command works there, and the index lives in a `.codeq` inside that directory.
 
 ## How it works
 
@@ -257,10 +389,17 @@ reparsed or a parse partially failing.
 ## Development
 
 ```bash
-cargo test    # 153 integration tests drive the binary against fixture repos
+cargo test                     # integration tests, driving the binary against fixtures
+python3 bench/textmode.py      # text output carries the same facts as --json
+python3 bench/differential.py  # assertions over pinned real repos
 ```
 
 The tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,
 binary, unicode, and large files, non-git repos, deleted-file cascades), assert that `map`
 is byte-for-byte reproducible, and check the standing invariant that search always returns a
 superset of grep.
+
+`cargo test` uses small synthetic fixtures, so the two harnesses are part of the loop rather
+than an extra: `differential.py` runs the same invariants over 20 pinned open-source repos
+spanning every supported language, and writes each run to `bench/results/` so the trend lives
+in git.
