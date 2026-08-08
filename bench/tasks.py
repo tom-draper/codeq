@@ -13,18 +13,16 @@ to locate, then read the file), not a strawman.
 import json
 import os
 import re
-import subprocess
 import sys
-import time
+
+import corpus
+from corpus import CODEQ
 
 REPO = os.path.abspath(sys.argv[1])
-CODEQ = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "target", "release", "codeq"))
 
 
 def run(cmd):
-    t = time.perf_counter()
-    p = subprocess.run(cmd, cwd=REPO, capture_output=True)
-    return time.perf_counter() - t, p.stdout
+    return corpus.timed_run(cmd, REPO)
 
 
 def measure(steps):

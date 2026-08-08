@@ -37,8 +37,7 @@ from datetime import datetime, timezone
 import corpus  # noqa: E402  (same dir)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-CODEQ = os.path.join(ROOT, "target", "release", "codeq")
+CODEQ = corpus.CODEQ
 RESULTS = os.path.join(HERE, "results")
 TIMING_RUNS = 3
 FUZZ_K = 60        # identifiers superset-checked per repo

@@ -16,10 +16,15 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 CACHE = os.path.join(HERE, ".corpus")
 LOCK = os.path.join(CACHE, "LOCK.json")
+# The binary every harness measures. Release, never debug: a debug build is
+# several times slower and would make codeq look bad against system tools.
+CODEQ = os.path.join(ROOT, "target", "release", "codeq")
 
 # name, git url, pinned ref (tag), primary language. Kept small and varied so a
 # full run is minutes, not hours; add rows to widen coverage. Pinned tags are
@@ -98,10 +103,18 @@ def codeq_commit():
     """The codeq revision a benchmark run was produced by, so a results file can
     be tied to the code that produced it. Shared because every harness needs it
     and each had its own copy."""
-    root = os.path.dirname(HERE)
-    p = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"],
+    p = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"],
                        capture_output=True, text=True)
     return p.stdout.strip()[:12]
+
+
+def timed_run(cmd, cwd):
+    """Run `cmd` in `cwd`, returning (elapsed_seconds, stdout). Every harness
+    times subprocesses the same way, so they share one clock — measuring with
+    per-script copies invites them to drift apart and stop being comparable."""
+    t0 = time.perf_counter()
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True)
+    return time.perf_counter() - t0, p.stdout
 
 
 def repo_paths():

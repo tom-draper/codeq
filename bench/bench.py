@@ -11,19 +11,17 @@ for freshness, so the numbers are honest end-to-end costs.
 import json
 import os
 import re
-import subprocess
 import sys
-import time
+
+import corpus
+from corpus import CODEQ
 
 REPO = os.path.abspath(sys.argv[1])
-CODEQ = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "target", "release", "codeq"))
 RUNS = 5
 
 
 def run(cmd):
-    t0 = time.perf_counter()
-    p = subprocess.run(cmd, cwd=REPO, capture_output=True)
-    return time.perf_counter() - t0, p.stdout
+    return corpus.timed_run(cmd, REPO)
 
 
 def best(cmd):

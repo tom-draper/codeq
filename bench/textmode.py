@@ -20,9 +20,11 @@ import os
 import subprocess
 import sys
 
+import corpus
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-CODEQ = os.path.join(ROOT, "target", "release", "codeq")
+CODEQ = corpus.CODEQ
 REPO = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else ROOT
 
 
