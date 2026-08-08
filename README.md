@@ -14,10 +14,9 @@ agent that can trust the output has no reason to fall back to ad-hoc shell pipel
 
 > Status: working prototype. Symbol and import extraction covers Rust, Python, JavaScript,
 > TypeScript/TSX, Go, Java, Ruby, C, C++, C#, PHP, Bash, Lua, Scala, Kotlin, Swift, Dart, Zig,
-> Elixir, Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, and GraphQL. Other languages are
-> indexed as files and stay fully searchable. See
-> [DRAFT.md](./DRAFT.md) for the design rationale, and
-> [GEMINI.md](./GEMINI.md) / [GPT.md](./GPT.md) for the reviews that shaped it.
+> Elixir, Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, and HCL/Terraform. Other
+> languages are indexed as files and stay fully searchable. `codeq capabilities` is the
+> authoritative list. See [DRAFT.md](./DRAFT.md) for the design rationale.
 
 ## Install
 
