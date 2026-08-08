@@ -354,6 +354,27 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// The repo's directory SHAPE, folded to a depth, with each directory's file
+    /// and symbol counts aggregated from everything below it. Unlike `tree`(1) it
+    /// is ignore-aware (no node_modules/.git noise) and says where the *code* is,
+    /// not just where files are; unlike `map` it keeps the nesting.
+    Tree {
+        /// Restrict to paths containing this substring.
+        path: Option<String>,
+        /// Fold below this nesting level (counts still include everything below).
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+        /// Hide directories holding fewer than this many definitions — jumps
+        /// straight to where the code lives in a data- or asset-heavy repo.
+        #[arg(long, default_value_t = 0)]
+        min_symbols: i64,
+        /// Also list individual files (within --depth).
+        #[arg(long)]
+        files: bool,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// Definitions ranked by how often their name is referenced in code — the
     /// inverse of `unused`, for "what is load-bearing here?" in unfamiliar code.
     /// Counts are per *name* (name-based like every graph command), so a short
@@ -755,6 +776,13 @@ fn main() -> ExitCode {
             limit,
             out,
         ),
+        Command::Tree {
+            path,
+            depth,
+            min_symbols,
+            files,
+            limit,
+        } => commands::cmd_tree(&cwd, path.as_deref(), depth, min_symbols, files, limit, out),
         Command::Hotspots {
             path,
             kind,

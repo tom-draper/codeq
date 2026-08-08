@@ -23,7 +23,11 @@ refresh the index — every command auto-refreshes changed files first.
 ## What to run for what
 
 **Orient in an unfamiliar repo**
-- `codeq map` — high-level structure (languages, file/symbol counts, directories).
+- `codeq map` — high-level structure (languages, file/symbol counts, top-level directories).
+- `codeq tree [<path>]` — the directory shape with nesting kept, folded at `--depth`
+  (default 3); each directory reports the files and symbols of everything below it.
+  `--min-symbols 1` jumps straight to where the code is — the fastest orientation in a
+  repo full of data/assets. Ignore-aware, so no node_modules/.git noise.
 
 **Understand a file without reading all of it**
 - `codeq read <file>` — the file with long function bodies folded to signatures.

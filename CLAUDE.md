@@ -31,7 +31,12 @@ benchmarks — not as a step you run before querying.
   C#, Python, C, C++, PHP, Kotlin and Swift; the remaining languages return just
   the type. Python has no declaration site, so a member is its earliest class-body
   or `self.x =` assignment (`other.x =` is not a declaration).
-- **Orient:** `codeq map`
+- **Orient:** `codeq map` (grouped totals) · `codeq tree` (directory *shape*, folded
+  to `--depth`, each directory carrying the file and symbol counts of everything
+  below it). `map` collapses to top-level directories, so on a nested repo it hides
+  where the code is; `tree --min-symbols 1` goes straight to the directories that
+  hold any. Ignore-aware, so no `node_modules`/`.git` noise — on a 2,700-file data
+  repo it answers in 8 lines what `find -type d` needs 44 KB for.
 - **Understand a file cheaply:** `codeq read <file>` — folds long function bodies
   to signatures; read this instead of ingesting a whole large file.
 - **Read one definition / range (verbatim, line-numbered):**

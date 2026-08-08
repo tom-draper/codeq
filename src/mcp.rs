@@ -287,6 +287,16 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             flag(&mut args, a, "include_tests", "--include-tests");
             optn(&mut args, a, "limit", "--limit");
         }
+        "codeq_tree" => {
+            args.push("tree".into());
+            if let Some(p) = s(a, "path") {
+                pos.push(p.into());
+            }
+            optn(&mut args, a, "depth", "--depth");
+            optn(&mut args, a, "min_symbols", "--min-symbols");
+            flag(&mut args, a, "files", "--files");
+            optn(&mut args, a, "limit", "--limit");
+        }
         "codeq_hotspots" => {
             args.push("hotspots".into());
             if let Some(p) = s(a, "path") {
@@ -468,6 +478,9 @@ fn tools() -> Value {
         tool("codeq_unused",
             "Definitions with no reference anywhere outside their own definition site — candidate dead code. Conservative and name-based: a mention in a comment or string counts as a use, and a same-named symbol elsewhere masks it, so it under-reports rather than misleads. visibility is shown so a public symbol (maybe external API, not dead) is distinguishable from a private one. Test-file definitions are excluded by default (framework entry points look unused); set include_tests to include them. path/kind scope what is reported; the usage check is always repo-wide.",
             json!({ "path": str_, "kind": str_, "include_tests": bool_, "limit": num_ }), &[]),
+        tool("codeq_tree",
+            "The repo's directory SHAPE, folded to a depth, with each directory's file and symbol counts aggregated from everything below it. Use this to orient in an unfamiliar repo: unlike tree(1) it is ignore-aware (no node_modules/.git noise) and reports where the *code* is rather than just where files are; unlike codeq_map it keeps the nesting instead of collapsing to top-level directories. min_symbols=1 jumps straight to the directories that hold code, which is the fastest way to find the source in a data- or asset-heavy repo. depth defaults to 3; counts still include everything below the fold, so folding summarises rather than truncates.",
+            json!({ "path": str_, "depth": num_, "min_symbols": num_, "files": bool_, "limit": num_ }), &[]),
         tool("codeq_hotspots",
             "Definitions ranked by how often their name is referenced in code — the inverse of codeq_unused, and the fastest way to find what is load-bearing in a file or repo you have just met. One row per name (the count is a property of the name), with defs telling you how many definitions share it, and path/line pointing at the first. Set calls=true to count only call sites, which is what you usually want for functions: without it a name that is also a common variable scores high. Name-based, so a short common name (new, get, path) ranks high because many unrelated symbols spell it the same way — treat a row as 'this identifier carries weight' and use codeq_callers with calls=true for the precise question. path/kind/language scope what is reported; the count is always repo-wide.",
             json!({ "path": str_, "kind": str_, "language": str_, "calls": bool_, "min_refs": num_, "limit": num_ }), &[]),

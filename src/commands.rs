@@ -2457,6 +2457,138 @@ fn name_is_used(
         .any(|h| !ds.contains(&(h.path.clone(), h.line as i64))))
 }
 
+/// One directory in the repo's shape, with what it contains.
+#[derive(Serialize)]
+struct TreeRow {
+    path: String,
+    /// Nesting level, so the text renderer indents it.
+    depth: usize,
+    /// Files at or below here (not just immediate children).
+    files: i64,
+    /// Definitions at or below here — where the *code* actually is.
+    symbols: i64,
+    /// Immediate subdirectories, so a folded branch still shows it has shape.
+    dirs: i64,
+    /// Languages present, most files first.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    languages: String,
+}
+
+/// `tree [<path>]` — the repo's directory shape, annotated with what each
+/// directory contains and folded to a depth.
+///
+/// The gap this fills: `map` groups by *top-level* directory only, so on a repo
+/// like `src/pkg/{lib,api,data/<200 dirs>}` it reports one row — "src, 2677 files,
+/// 58 symbols" — which hides both where the code is and where the bulk is. `stats`
+/// gives totals, `files` gives a flat list; neither shows shape.
+///
+/// Deliberately not an ASCII `tree` clone. A plain hierarchy would be worse than
+/// `ls -R` for an agent; the value is in what `tree` can't do:
+///   * it is ignore-aware by construction (`.gitignore`/`.codeqignore`), so the
+///     `node_modules`/`.git` noise that makes real `tree` unusable never appears;
+///   * every directory carries its file and *symbol* counts, so "where is the
+///     code" is answerable without opening anything;
+///   * counts aggregate from everything below, so folding at `--depth` summarises
+///     rather than truncates — the token budget is bounded by depth, not by repo
+///     size.
+pub fn cmd_tree(
+    cwd: &Path,
+    path: Option<&str>,
+    depth: usize,
+    min_symbols: i64,
+    files_too: bool,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    // Definitions per file, so a directory can report the code it holds.
+    let mut per_file: HashMap<String, i64> = HashMap::new();
+    {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT path, COUNT(*) FROM facts
+             WHERE kind <> 'import' AND name IS NOT NULL GROUP BY path",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (p, n) = row?;
+            per_file.insert(p, n);
+        }
+    }
+
+    #[derive(Default)]
+    struct Agg {
+        files: i64,
+        symbols: i64,
+        children: HashSet<String>,
+        langs: HashMap<String, i64>,
+    }
+    let mut dirs: HashMap<String, Agg> = HashMap::new();
+    let mut file_rows: Vec<TreeRow> = Vec::new();
+
+    let filters = Filters::new().like("path", path);
+    let sql = format!("SELECT path, language FROM files WHERE 1=1{} ORDER BY path", filters.sql());
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+    })?;
+    for row in rows {
+        let (fpath, lang) = row?;
+        let syms = per_file.get(&fpath).copied().unwrap_or(0);
+        // Credit every ancestor, so a folded directory summarises its whole subtree
+        // instead of under-reporting what it holds.
+        let segs: Vec<&str> = fpath.split('/').collect();
+        for i in 0..segs.len().saturating_sub(1) {
+            let dir = segs[..=i].join("/");
+            let e = dirs.entry(dir.clone()).or_default();
+            e.files += 1;
+            e.symbols += syms;
+            if let Some(l) = &lang {
+                *e.langs.entry(l.clone()).or_insert(0) += 1;
+            }
+            if i + 2 < segs.len() {
+                e.children.insert(segs[..=i + 1].join("/"));
+            }
+        }
+        if files_too && segs.len() - 1 <= depth {
+            let d = segs.len() - 1;
+            file_rows.push(TreeRow {
+                path: fpath.clone(),
+                depth: d,
+                files: 1,
+                symbols: syms,
+                dirs: 0,
+                languages: lang.unwrap_or_default(),
+            });
+        }
+    }
+
+    let mut data: Vec<TreeRow> = dirs
+        .into_iter()
+        .filter(|(d, _)| d.split('/').count() <= depth)
+        .filter(|(_, a)| a.symbols >= min_symbols)
+        .map(|(d, a)| {
+            let mut langs: Vec<(String, i64)> = a.langs.into_iter().collect();
+            langs.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+            TreeRow {
+                depth: d.split('/').count() - 1,
+                path: d,
+                files: a.files,
+                symbols: a.symbols,
+                dirs: a.children.len() as i64,
+                languages: langs.into_iter().map(|(l, _)| l).collect::<Vec<_>>().join(","),
+            }
+        })
+        .collect();
+    data.extend(file_rows);
+    // Path order, so the listing reads as a tree rather than a ranking.
+    data.sort_by(|a, b| a.path.cmp(&b.path));
+    if limit > 0 {
+        data.truncate(limit);
+    }
+    s.emit(data)
+}
+
 /// One *name* ranked by how often it is referenced in code.
 ///
 /// Deliberately one row per name, not per definition: the count is a property of

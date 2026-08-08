@@ -2099,6 +2099,41 @@ fn unused_excludes_test_files_by_default() {
 }
 
 #[test]
+fn tree_reports_shape_with_counts_aggregated_from_below() {
+    let f = Fixture::new();
+    f.write("src/app/main.rs", "fn a() {}\nfn b() {}\n");
+    f.write("src/app/deep/util.rs", "fn c() {}\n");
+    f.write("data/x.json", "{}\n");
+    f.write("data/y.json", "{}\n");
+
+    let rows = f.run(&["tree"])["data"].as_array().unwrap().clone();
+    let row = |p: &str| {
+        rows.iter().find(|r| r["path"] == p).unwrap_or_else(|| panic!("no {p}: {rows:?}")).clone()
+    };
+
+    // A parent counts everything beneath it, not just its own children.
+    assert_eq!(row("src")["files"].as_i64(), Some(2), "{rows:?}");
+    assert_eq!(row("src")["symbols"].as_i64(), Some(3), "{rows:?}");
+    assert_eq!(row("src")["depth"].as_i64(), Some(0));
+    assert_eq!(row("src/app")["depth"].as_i64(), Some(1));
+    assert_eq!(row("src/app")["dirs"].as_i64(), Some(1), "immediate subdirs");
+    assert_eq!(row("data")["symbols"].as_i64(), Some(0), "json holds no definitions");
+
+    // --min-symbols skips the data tree entirely.
+    let coded = field_set(&f.run(&["tree", "--min-symbols", "1"]), "path");
+    assert!(coded.contains(&"src".to_string()), "{coded:?}");
+    assert!(!coded.contains(&"data".to_string()), "data should be hidden: {coded:?}");
+
+    // Folding summarises rather than truncates: `src` still reports all 3 symbols.
+    let shallow = f.run(&["tree", "--depth", "1"])["data"].as_array().unwrap().clone();
+    let paths: Vec<&str> = shallow.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    assert!(paths.contains(&"src"), "{paths:?}");
+    assert!(!paths.contains(&"src/app"), "should be folded away: {paths:?}");
+    let src = shallow.iter().find(|r| r["path"] == "src").unwrap();
+    assert_eq!(src["symbols"].as_i64(), Some(3), "folded row must keep the total");
+}
+
+#[test]
 fn callees_examples_show_the_qualified_call_expression() {
     // The motivating case: a module-qualified call is attributed by name, so
     // `subprocess.run(...)` lists every definition named `run`. The row now says
