@@ -1096,12 +1096,32 @@ struct About {
 /// name), which is the useful "who uses this".
 pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let data = About {
-        definitions: definitions_of(&s, name, path, 0)?,
-        callers: callers_of(&s, name, None, false, None, false)?,
-        callees: callees_of(&s, name, path, false)?,
-    };
-    s.emit(data)
+    let (definitions, callers, callees) = symbol_graph(&s, name, path)?;
+    s.emit(About { definitions, callers, callees })
+}
+
+/// The graph around `name`: its definition(s), who calls it, what it calls.
+///
+/// Shared by `about` and `explore`, which walk the same neighbourhood and then
+/// present it two different ways — `about` keeps every field of each node (doc
+/// comments, the `test` flag on callers, byte offsets, `owner`), `explore` trims
+/// the nodes and spends the budget on verbatim source instead. Reported from
+/// outside as "the same command twice", which the names invite; keeping the walk
+/// in one place at least means the two can't answer differently about *who* is in
+/// the neighbourhood.
+///
+/// Callers stay repo-wide — a textual "who uses this" — while the focus and its
+/// callees honour `path`, so a common name doesn't merge unrelated symbols.
+fn symbol_graph(
+    s: &Session,
+    name: &str,
+    path: Option<&str>,
+) -> Result<(Vec<DefinitionRow>, Vec<Caller>, Vec<Callee>)> {
+    Ok((
+        definitions_of(s, name, path, 0)?,
+        callers_of(s, name, None, false, None, false)?,
+        callees_of(s, name, path, false)?,
+    ))
 }
 
 /// A node in an `explore` graph: a definition (focus) or one of its immediate
@@ -1146,12 +1166,9 @@ pub fn cmd_explore(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
-    // The graph around `name`: its definition(s), who calls it, what it calls.
-    // Callers stay repo-wide (textual "who uses this"); focus and callees honour
-    // `--path` so a common name doesn't merge unrelated symbols.
-    let defs = definitions_of(&s, name, path, 0)?;
-    let callers = callers_of(&s, name, None, false, None, false)?;
-    let callees = callees_of(&s, name, path, false)?;
+    // The same neighbourhood `about` reports; explore trims the nodes and spends
+    // the token budget on verbatim source instead.
+    let (defs, callers, callees) = symbol_graph(&s, name, path)?;
 
     let focus: Vec<ExploreNode> = defs
         .iter()

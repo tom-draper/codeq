@@ -41,8 +41,21 @@ benchmarks — not as a step you run before querying.
   into the Edit tool's `old_string`, so you skip the grep-for-the-line →
   read-the-region → strip-prefixes dance. With `--symbol` it requires a single
   match (a clean anchor); scope with `--lines A-B` if a name is ambiguous.
-- **Understand a symbol before editing:** `codeq about NAME` (definition +
-  callers + callees, one call)
+- **Understand a symbol before editing, without pulling in source:** `codeq about
+  NAME` — the same neighbourhood `explore` walks, minus the code and plus fuller
+  metadata per node (doc comment, `owner`, which callers are tests). Source is the
+  only axis the two differ on: `explore` to change code, `about` for the metadata
+  or a cheap "where does this live".
+- **What's at this line?** `codeq at <file>:<line>` — the definition enclosing a
+  position. For turning a stack frame, a diff hunk or a grep hit into a symbol.
+- **Assemble a token-budgeted bundle:** `codeq context --symbols a,b` — verbatim
+  source for several named symbols under one budget, or `--changed --compare-to
+  <ref>` to seed from a diff. `explore` is this plus the graph for one symbol;
+  reach for `context` when you already know the set you want.
+- **List files / imports:** `codeq files [PATTERN]` (indexed files; `--language`)
+  · `codeq imports [PATH]` (raw, unresolved module strings, filtered to importing
+  files whose path contains PATH) · `codeq importers <QUERY>` (files importing a
+  module; a path like `src/db.rs` is reduced to its stem `db`).
 - **Learn a module's public API (how to call it):** `codeq api <path>` — only the
   *exported* definitions, with signatures, instead of reading whole files. "Public"
   is each language's own notion (Rust `pub`, JS/TS `export`, Go capitalization,
@@ -111,6 +124,12 @@ benchmarks — not as a step you run before querying.
 - **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
   - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
     templates. codeq's own SQL lives in string literals, so `--in code` finds none.
+  - **It has grep's flags too, so you never need to shell out:** `--fixed` (literal,
+    not regex), `-i`, `-w`, `-g '*.rs' -g '!tests/'` (repeatable include/exclude
+    globs), `-l` (paths only), `-c` (counts), `-B`/`-A`/`-C`, `--path`, `--language`,
+    `--limit` (default 100 — raise it or pass 0 before concluding "no more hits").
+  - `--path` / `--language` / `--limit` are on `references` and most list commands
+    as well; narrow with them instead of post-filtering the output.
 - **Structural (AST) search:** `codeq astgrep '$X.unwrap()' --language rust` — match
   syntax, not text. `$VAR`/`$_` = one node (repeated `$VAR` binds the same);
   `$$$` = any run of siblings, so `foo($$$)` matches any arg count. For "all calls

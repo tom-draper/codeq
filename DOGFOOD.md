@@ -4,6 +4,60 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-08 — reply to the `persona` report: three fixed, one claim corrected
+
+Working through the external entry below. Two of its findings were right and are
+fixed; one was right about the symptom and wrong about the cause; one rested on a
+premise that turns out to be false, which changed what the fix should be.
+
+**`capabilities` drift — fixed, and found twice independently.** The same bug
+surfaced in a codeq-on-codeq session the same day, with the same nine missing
+commands. It now derives from clap's subcommand list, exactly as the report
+recommended, with `capabilities_lists_every_command_the_cli_accepts` asserting
+set-equality against `--help`. The report's framing was sharper than the internal
+one: `capabilities` is what an *MCP host* reads, so an agent discovering codeq
+through MCP could never learn `explore` existed.
+
+**Docs underselling the surface — confirmed and fixed.** Checked rather than
+assumed: `CLAUDE.md` contained *zero* occurrences of `at`, `context`, `files`,
+`imports`, `importers`, `--glob` and `--limit`. All are now documented in both
+`CLAUDE.md` and the skill file, including that `search --limit` defaults to 100 —
+the kind of default that silently turns "no more hits" into a wrong conclusion.
+
+**`about` vs `explore` — the premise was wrong, so the fix is different.** The
+report says "the *only* difference is whether verbatim source is included". It
+isn't. `about` returns full `DefinitionRow`/`Caller`/`Callee` rows — doc comment,
+`owner`, byte offsets, the `test` flag on callers — while `explore` trims each node
+to name/kind/path/line/signature and spends the budget on source instead. They are
+two different products, and the suggested fix (fold into one command with
+`--source`, defaulting to today's `about`) would have quietly cost every `about`
+consumer the doc comments and the test flags.
+
+That a careful user reading real output concluded they were the same command twice
+is the actual finding: the names hide a *bigger* difference than the report thought.
+So the walk is now shared (`symbol_graph`, so the two can never disagree about who
+is in the neighbourhood) while the presentations stay distinct, and every place an
+agent discovers them — CLI help, MCP tool descriptions, `CLAUDE.md`, the skill file
+— now states the axis explicitly and points at the other command.
+
+**Ignoring data trees — right symptom, wrong cause.** The report proposes
+"respecting `.gitignore` or a `.codeqignore`". codeq is *already* gitignore-aware:
+`src/index.rs` builds its walker with `standard_filters(true)` (.gitignore, .ignore,
+hidden, parents). Checked persona directly: **2,686 tracked files, 2,386 of them
+`.json`/`.png`, and only 10 ignored**. The data is committed, so gitignore support
+was never going to help. The real request is a `.codeqignore` (or an opt-out for
+files of unrecognised language). Recording this because implementing the first half
+of that suggestion would have shipped a no-op and closed the issue.
+
+**Still open from the report:** rename `path` -> `callpath`/`chain`/`route` (their
+strongest rename, and I agree — in a code CLI "path" reads as a file path first);
+a "hotspots"/most-referenced view as the inverse of `unused`; and the `map`/`stats`,
+`definitions`/`symbols` naming pairs.
+
+**Process note:** this log says "new entries at the top", and the external report
+followed that. My own recent entries went to the bottom, so the file now has two
+conventions. Top is the documented one.
+
 ## 2026-08-08 — external dogfood: codeq on the `persona` repo (naming + a capabilities-drift bug)
 
 First sustained use of codeq on a *different* project (a Python demographic

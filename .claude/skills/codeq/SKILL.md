@@ -35,8 +35,10 @@ refresh the index — every command auto-refreshes changed files first.
   block tagged focus/caller/callee). Use it instead of a `definitions` → `callers` → `read`
   → `read` sequence when you need to understand or edit a function/type. `--max-tokens`
   caps the source; the definition is always kept, and anything dropped is listed.
-- `codeq about <NAME>` — lighter: definition(s) + callers + callees, no source bodies.
-  Also the fastest way to find *which file* a symbol lives in.
+- `codeq about <NAME>` — the same neighbourhood with **no source**, but fuller metadata
+  per node (doc comment, `owner`, which callers are tests). Source is the only axis the
+  two differ on: `explore` to change code, `about` for metadata or a cheap "which file
+  does this live in".
 - `codeq read <file> --symbol <NAME>` — that definition's source, line-numbered. Add
   `--raw` for exact bytes with no line-number prefix (to copy it verbatim).
 
@@ -63,6 +65,15 @@ refresh the index — every command auto-refreshes changed files first.
 **What a symbol / file depends on**
 - `codeq callees <NAME>` — what NAME calls.
 - `codeq deps <file>` — internal files a file imports (`codeq deps --cycles` for cycles).
+- `codeq imports [PATH]` — raw, unresolved module strings. `codeq importers <QUERY>` —
+  files importing a module (a path like `src/db.rs` is reduced to its stem `db`).
+
+**Position and bundles**
+- `codeq at <file>:<line>` — the definition enclosing a position. Turns a stack frame,
+  diff hunk or grep hit into a symbol.
+- `codeq context --symbols a,b` — verbatim source for several symbols under one token
+  budget (`--changed --compare-to <ref>` seeds from a diff instead).
+- `codeq files [PATTERN]` — indexed files, with `--language`.
 
 **API surface / cleanup**
 - `codeq api <path>` — the public/exported definitions of a file or directory.
@@ -73,7 +84,10 @@ refresh the index — every command auto-refreshes changed files first.
 
 **Search**
 - `codeq search <REGEX>` — content search; each match annotated with its enclosing
-  symbol. `--in code|comments|strings` to scope. A superset of grep.
+  symbol. `--in code|comments|strings` to scope. A superset of grep — it also has
+  `--fixed`, `-i`, `-w`, `-g '*.rs' -g '!tests/'` (repeatable globs), `-l`, `-c`,
+  `-B`/`-A`/`-C`, `--path`, `--language`, `--limit`. **`--limit` defaults to 100**:
+  raise it (or pass 0) before concluding there are no further hits.
 - `codeq astgrep '<PATTERN>' --language <lang>` — structural (AST) search, e.g.
   `codeq astgrep '$X.unwrap()' --language rust`. Scope to files with `--path <substr>`.
   Each match is annotated with the `[symbol]` it sits inside.

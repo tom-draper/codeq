@@ -234,7 +234,10 @@ enum Command {
         #[arg(long)]
         path: Option<String>,
     },
-    /// Dossier for a symbol: definition(s) + callers + callees, in one call.
+    /// Symbol dossier WITHOUT source: definition(s) + callers + callees, with full
+    /// metadata on each (doc comment, signature, owner, which callers are tests).
+    /// Use `explore` for the same neighbourhood WITH verbatim source but trimmed
+    /// metadata — source is the axis these two differ on.
     About {
         /// Exact symbol name.
         name: String,
@@ -243,10 +246,11 @@ enum Command {
         #[arg(long)]
         path: Option<String>,
     },
-    /// One-call answer for a symbol: its definition, callers, and callees, plus
-    /// the verbatim source of that whole neighbourhood, budgeted and grouped by
-    /// file. Structure and code in one shot, instead of definitions then callers
-    /// then several reads.
+    /// Symbol dossier WITH source: definition + callers + callees, plus the
+    /// verbatim source of that whole neighbourhood, budgeted and grouped by file.
+    /// Structure and code in one shot, instead of definitions then callers then
+    /// several reads. Start here to understand or change a symbol. Use `about` for
+    /// the same neighbourhood WITHOUT source but with fuller per-node metadata.
     Explore {
         /// Exact symbol name to explore.
         name: String,
