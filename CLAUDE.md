@@ -89,7 +89,7 @@ benchmarks — not as a step you run before querying.
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For impact / reachability.
-  - **Call chain between two symbols:** `codeq path FROM TO` — the shortest chain
+  - **Call chain between two symbols:** `codeq callpath FROM TO` — the shortest chain
     where FROM calls … calls TO, shown step by step (empty if unreachable within
     `--max-depth`, default 8). Reachability *with the route*, vs `callees --depth`
     which only says whether/at what depth.
@@ -121,6 +121,13 @@ benchmarks — not as a step you run before querying.
   so it under-reports rather than mislead. Shows `visibility` (a `public` hit may
   be external API, not dead); tests excluded unless `--include-tests` — same
   recognition as `codeq tests`, so a Rust `mod tests` unit test is not dead code.
+- **What's load-bearing here?** `codeq hotspots [<path>]` — definitions ranked by
+  how often their name is referenced in code; the inverse of `unused`, for meeting
+  an unfamiliar file. One row per *name* (the count is a property of the name),
+  with `defs` showing how many definitions share it. Add `--calls` to count only
+  call sites — without it a function whose name is also a common variable (`s`,
+  `new`) scores on every mention. Read a row as "this identifier carries weight",
+  then `callers NAME --calls` for the precise question.
 - **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
   - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
     templates. codeq's own SQL lives in string literals, so `--in code` finds none.

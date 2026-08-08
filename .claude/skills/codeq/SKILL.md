@@ -58,9 +58,10 @@ refresh the index — every command auto-refreshes changed files first.
   `codeq callees <NAME> --depth 3` (down).
 
 **Trace control flow**
-- `codeq path <FROM> <TO>` — the shortest call chain from FROM to TO. Names resolve
+- `codeq callpath <FROM> <TO>` — the shortest call chain from FROM to TO (nothing to do
+  with file paths; `path` remains as an alias). Names resolve
   across ALL languages, so a common name like `main` may land in a Python/JS file —
-  scope the start with `--path`: `codeq path main write --path src/main.rs`.
+  scope the start with `--path`: `codeq callpath main write --path src/main.rs`.
 
 **What a symbol / file depends on**
 - `codeq callees <NAME>` — what NAME calls.
@@ -81,6 +82,9 @@ refresh the index — every command auto-refreshes changed files first.
   output = none found). Conservative and name-based, so it under-reports.
 - `codeq implementors <TYPE>` / `codeq supertypes <TYPE>` — who implements/extends a
   trait/interface/class, and what a type derives from.
+- `codeq hotspots [<path>]` — the inverse of `unused`: definitions ranked by how often
+  their name is referenced. One row per name; `--calls` counts only call sites (use it
+  for functions — otherwise a name that is also a common variable dominates).
 
 **Search**
 - `codeq search <REGEX>` — content search; each match annotated with its enclosing
@@ -95,8 +99,8 @@ refresh the index — every command auto-refreshes changed files first.
 ## Gotchas
 - **Symbol lookups match by NAME across the whole repo, in every language.** For a
   common/ambiguous name (`new`, `build`, `main`), scope with `--path <substr>` —
-  supported on `about`, `callers`, `callees`, `definitions`, `references`, `path`,
-  `implementors`, `unused`, `astgrep`, and more. Don't know a symbol's file? Run
+  supported on `about`, `callers`, `callees`, `definitions`, `references`,
+  `implementors`, `unused`, `astgrep`, `callpath`, and more. Don't know a symbol's file? Run
   `codeq about <NAME>` — it shows the definition file(s).
 - **callers/references are textual (name-based), not type-resolved.** A row with a
   blank symbol is a module-level mention (e.g. an `import`/`use`), not a real call —

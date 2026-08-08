@@ -2099,6 +2099,85 @@ fn unused_excludes_test_files_by_default() {
 }
 
 #[test]
+fn hotspots_ranks_by_reference_count_and_is_one_row_per_name() {
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "pub fn hot() {}\npub fn cold() {}\npub fn unref() {}\n\
+         pub fn a() { hot(); hot(); cold(); }\n\
+         pub fn b() { hot(); }\n",
+    );
+    let rows = f.run(&["hotspots"])["data"].as_array().unwrap().clone();
+    let by: std::collections::HashMap<String, i64> = rows
+        .iter()
+        .map(|r| (r["name"].as_str().unwrap().to_string(), r["refs"].as_i64().unwrap()))
+        .collect();
+
+    assert_eq!(by.get("hot"), Some(&3), "three call sites: {by:?}");
+    assert_eq!(by.get("cold"), Some(&1), "{by:?}");
+    // The declaration is not a use of itself, so a never-used fn drops out at the
+    // default --min-refs 1.
+    assert!(!by.contains_key("unref"), "unreferenced fn should not rank: {by:?}");
+    // Most-referenced first.
+    assert_eq!(rows[0]["name"].as_str().unwrap(), "hot", "not sorted by refs: {rows:?}");
+}
+
+#[test]
+fn hotspots_collapses_same_named_definitions_into_one_row() {
+    // The count is a property of the *name*, so two definitions spelling it the
+    // same must not print the same number twice.
+    let f = Fixture::new();
+    f.write("a.rs", "fn shared() {}\nfn ca() { shared(); }\n");
+    f.write("b.rs", "fn shared() {}\nfn cb() { shared(); }\n");
+
+    let rows = f.run(&["hotspots"])["data"].as_array().unwrap().clone();
+    let shared: Vec<_> = rows.iter().filter(|r| r["name"] == "shared").collect();
+    assert_eq!(shared.len(), 1, "one row per name expected: {rows:?}");
+    assert_eq!(shared[0]["defs"].as_i64(), Some(2), "defs should report the collapse");
+    assert_eq!(shared[0]["refs"].as_i64(), Some(2), "both call sites counted");
+}
+
+#[test]
+fn hotspots_calls_mode_excludes_bare_mentions_and_declarations() {
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "fn target() {}\nfn use_it() { target(); let f = target; }\n\
+         // target in a comment\nfn s() -> &'static str { \"target in a string\" }\n",
+    );
+    // Default counts the bare mention too; comment and string never count.
+    let all = field_set(&f.run(&["hotspots"]), "name");
+    assert!(all.contains(&"target".to_string()), "{all:?}");
+
+    let refs = |args: &[&str]| -> i64 {
+        f.run(args)["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == "target")
+            .map(|r| r["refs"].as_i64().unwrap())
+            .unwrap_or(0)
+    };
+    assert_eq!(refs(&["hotspots"]), 2, "call site + bare mention, not comment/string");
+    assert_eq!(refs(&["hotspots", "--calls"]), 1, "only the call site");
+}
+
+#[test]
+fn callpath_is_the_command_name_and_path_still_works() {
+    // Renamed because "path" reads as a file path in a code CLI; the old name
+    // stays an alias so existing scripts and cached MCP tool lists keep working.
+    let f = Fixture::new();
+    f.write("a.rs", "fn top() { mid(); }\nfn mid() { bottom(); }\nfn bottom() {}\n");
+
+    let new = f.run(&["callpath", "top", "bottom"]);
+    let old = f.run(&["path", "top", "bottom"]);
+    assert_eq!(new["data"], old["data"], "alias must behave identically");
+    let steps = new["data"].as_array().unwrap();
+    let names: Vec<&str> = steps.iter().map(|s| s["symbol"].as_str().unwrap()).collect();
+    assert_eq!(names, ["top", "mid", "bottom"], "{steps:?}");
+}
+
+#[test]
 fn unused_excludes_rust_unit_tests_in_a_cfg_test_module() {
     // Rust's dominant idiom puts unit tests in a `mod tests` inside the file
     // under test: the path is ordinary and the fn names are prose, so neither

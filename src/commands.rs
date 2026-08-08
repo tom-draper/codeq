@@ -2389,6 +2389,203 @@ fn name_is_used(
         .any(|h| !ds.contains(&(h.path.clone(), h.line as i64))))
 }
 
+/// One *name* ranked by how often it is referenced in code.
+///
+/// Deliberately one row per name, not per definition: the count is a property of
+/// the name (codeq's references are textual), so emitting a row per definition
+/// printed the same number several times over — the first draft's top twelve rows
+/// for this repo were twelve definitions of `path`, all reading `refs=481`.
+/// `defs` carries what that collapsed, and `path`/`line` point at the first of
+/// them so the row is still somewhere to go.
+#[derive(Serialize)]
+struct HotspotRow {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    refs: i64,
+    defs: i64,
+}
+
+/// Call `f(offset, token)` for every identifier-like run in `body`.
+///
+/// A word byte is an ASCII alphanumeric, `_`, or *any* non-ASCII byte. Including
+/// the high bytes matters: without them `café` would split into `caf` + the
+/// accented tail, and a definition named `caf` would collect phantom references.
+/// A run therefore only ever ends on an ASCII non-word byte, so the slice bounds
+/// are always UTF-8 char boundaries.
+fn for_each_ident(body: &str, mut f: impl FnMut(usize, &str)) {
+    fn is_word(c: u8) -> bool {
+        c == b'_' || c.is_ascii_alphanumeric() || c >= 0x80
+    }
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if is_word(bytes[i]) {
+            let start = i;
+            while i < bytes.len() && is_word(bytes[i]) {
+                i += 1;
+            }
+            f(start, &body[start..i]);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// `hotspots [<path>]` — definitions ranked by how many times their name appears
+/// in code: the inverse of `unused`, and the "what is load-bearing here?" view for
+/// a file or repo you've just met. Asked for by an external user who had `unused`
+/// for dead code and `map` for file-level counts, but no way to find the symbols
+/// that actually carry a module.
+///
+/// Counted in one pass over the indexed bodies rather than one scan per name, so
+/// it costs about a single `search` instead of `unused`'s scan-per-definition.
+/// Occurrences inside comment and string spans don't count, and files in a
+/// language codeq can't parse are skipped — the same "references in code" rule
+/// `callers` uses. Each definition's own declaration is subtracted, so `refs` is
+/// uses *elsewhere*; a recursive call counts, because it is one.
+///
+/// Name-based like every graph command, and here that bites harder than usual:
+/// counts are per *name*, so two definitions sharing a name report the same total,
+/// and a short common name (`new`, `path`, `get`) ranks high because many unrelated
+/// symbols spell it the same way. Read it as "this identifier is load-bearing",
+/// not "this definition has N callers" — `callers NAME --calls` is the precise
+/// question. `--kind`/`--path`/`--language` scope what is reported; the count is
+/// always repo-wide.
+pub fn cmd_hotspots(
+    cwd: &Path,
+    path: Option<&str>,
+    kind: Option<&str>,
+    language: Option<&str>,
+    calls_only: bool,
+    min_refs: i64,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    // The definitions to rank. Scoped for *reporting* only — the count below is
+    // repo-wide, because a reference from an unscoped file is still a reference.
+    let filters = Filters::new().like("path", path).eq("kind", kind).eq("language", language);
+    let sql = format!(
+        "SELECT name, kind, path, start_line FROM facts
+         WHERE kind <> 'import' AND name IS NOT NULL{} ORDER BY path, start_line",
+        filters.sql(),
+    );
+    let candidates: Vec<(String, String, String, i64)> = {
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    if candidates.is_empty() {
+        return s.emit(Vec::<HotspotRow>::new());
+    }
+    let wanted: HashSet<&str> = candidates.iter().map(|(n, _, _, _)| n.as_str()).collect();
+
+    // Every definition site of a wanted name, repo-wide. A declaration is not a
+    // use of itself, and it can't be filtered out arithmetically: `fn new(` puts
+    // the name in call position, so subtracting a per-name declaration count was
+    // wrong in one direction for functions and in the other for structs. Skipping
+    // the *site* is what `unused` already does, and it is right for both.
+    // Keyed by name as well as position: `unused` can use (path, line) because it
+    // asks about one name at a time, but here a single line often declares one
+    // symbol and calls another — `fn a() { hot(); }` — and dropping the name
+    // silently discarded every such call site.
+    let mut defsites: HashSet<(String, String, i64)> = HashSet::new();
+    let mut declarations: HashMap<String, i64> = HashMap::new();
+    {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT name, path, start_line FROM facts
+             WHERE kind <> 'import' AND name IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+        })?;
+        for row in rows {
+            let (name, path, line) = row?;
+            if wanted.contains(name.as_str()) {
+                *declarations.entry(name.clone()).or_insert(0) += 1;
+                defsites.insert((name, path, line));
+            }
+        }
+    }
+
+    // One pass over every indexed body, counting only the names we care about.
+    let mut counts: HashMap<&str, i64> = HashMap::new();
+    {
+        let mut stmt = s.db.conn.prepare("SELECT path, language, body FROM content_fts")?;
+        let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let rel = row.get_ref(0)?.as_str()?;
+            let lang: Option<String> = row.get(1)?;
+            // Unparseable files have no comment/string spans, so every match in
+            // them would look like code. `callers` skips them; so do we.
+            if !crate::facts::has_spans(lang.as_deref().unwrap_or("")) {
+                continue;
+            }
+            let spans: Vec<_> = span_stmt
+                .query_map([rel], crate::search::span_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let body = row.get_ref(2)?.as_str()?;
+            let bytes = body.as_bytes();
+            // Byte offset of each line start, so an occurrence can be matched
+            // against the definition sites recorded above (which are line-based).
+            let mut line_starts: Vec<usize> = vec![0];
+            line_starts.extend(bytes.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i + 1));
+            for_each_ident(body, |off, tok| {
+                if let Some(name) = wanted.get(tok) {
+                    if crate::search::class_at(&spans, off).is_some() {
+                        return; // inside a comment or string literal
+                    }
+                    if calls_only && !crate::search::is_call_position(bytes, off, off + tok.len()) {
+                        return;
+                    }
+                    let line = line_starts.partition_point(|&s| s <= off) as i64;
+                    if defsites.contains(&((*name).to_string(), rel.to_string(), line)) {
+                        return; // this name's own declaration
+                    }
+                    *counts.entry(name).or_insert(0) += 1;
+                }
+            });
+        }
+    }
+
+    // Collapse to one row per name. `candidates` is ordered by (path, start_line),
+    // so the first definition seen for a name is the representative.
+    let mut seen_names: HashSet<&str> = HashSet::new();
+    let mut data: Vec<HotspotRow> = Vec::new();
+    for (name, kind, path, line) in &candidates {
+        if !seen_names.insert(name.as_str()) {
+            continue;
+        }
+        let declared = declarations.get(name).copied().unwrap_or(0);
+        let refs = counts.get(name.as_str()).copied().unwrap_or(0);
+        if refs < min_refs {
+            continue;
+        }
+        data.push(HotspotRow {
+            name: name.clone(),
+            kind: kind.clone(),
+            path: path.clone(),
+            line: *line,
+            refs,
+            defs: declared,
+        });
+    }
+    // Most-referenced first; ties by location so the order is stable.
+    data.sort_by(|a, b| {
+        b.refs.cmp(&a.refs).then(a.path.cmp(&b.path)).then(a.line.cmp(&b.line))
+    });
+    if limit > 0 {
+        data.truncate(limit);
+    }
+    s.emit(data)
+}
+
 /// `unused [<path>]` — definitions with no reference anywhere outside their own
 /// definition site (candidate dead code). Reports `visibility` so a public
 /// symbol (possibly part of an external API, not dead) is distinguishable from a

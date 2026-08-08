@@ -130,11 +130,14 @@ Trace relationships (matched by name):
 - `codeq callers <name>` and `codeq callees <name>` show who calls it and what it calls.
   `--depth N` walks the tree; `callers --examples` prints the actual call line at each site.
 - `codeq references <name>` lists every use, each tagged with its enclosing definition.
-- `codeq path <from> <to>` finds the shortest call chain between two symbols.
+- `codeq callpath <from> <to>` finds the shortest call chain between two symbols.
 - `codeq implementors <type>` and `codeq supertypes <type>` show who implements or extends a
   type, and what it derives from.
 - `codeq tests <name>` finds the tests that exercise a symbol.
 - `codeq unused [path]` lists definitions with no reference anywhere (candidate dead code).
+- `codeq hotspots [path]` is its inverse: definitions ranked by how often they are
+  referenced, for finding what carries an unfamiliar module. `--calls` counts only
+  call sites.
 - `codeq clones` groups definitions whose syntax shape is identical up to renaming — the
   same code written twice. Exact, not fuzzy: shapes match or they don't, so there is no
   similarity score to interpret. `--min-nodes` sets how much code a shared shape must

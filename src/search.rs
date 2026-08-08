@@ -87,8 +87,24 @@ impl InFilter {
     }
 }
 
+/// SQL selecting a file's cached comment/string spans, sorted. Statement text
+/// rather than a helper that runs it: both callers prepare once and step it per
+/// file, so sharing the query keeps one notion of a span without moving the
+/// `prepare` into a hot loop.
+pub(crate) const SPANS_SQL: &str =
+    "SELECT start_byte, end_byte, kind FROM spans WHERE path = ?1 ORDER BY start_byte";
+
+/// Map a [`SPANS_SQL`] row to `(start, end, class)`.
+pub(crate) fn span_row(r: &rusqlite::Row) -> rusqlite::Result<(usize, usize, Span)> {
+    Ok((
+        r.get::<_, i64>(0)? as usize,
+        r.get::<_, i64>(1)? as usize,
+        Span::from_i64(r.get::<_, i64>(2)?).unwrap_or(Span::Str),
+    ))
+}
+
 /// The class of byte offset `off` given sorted, non-overlapping `spans`.
-fn class_at(spans: &[(usize, usize, Span)], off: usize) -> Option<Span> {
+pub(crate) fn class_at(spans: &[(usize, usize, Span)], off: usize) -> Option<Span> {
     let idx = spans.partition_point(|(s, _, _)| *s <= off);
     if idx == 0 {
         return None;
@@ -127,7 +143,7 @@ fn is_ident_byte(b: u8) -> bool {
 /// nothing at all for a component that is plainly used. Both forms count, since
 /// the question `--calls` answers — "where is this actually used, not merely
 /// named?" — is the same one.
-fn is_call_position(bytes: &[u8], start: usize, end: usize) -> bool {
+pub(crate) fn is_call_position(bytes: &[u8], start: usize, end: usize) -> bool {
     // `<Name` / `</Name` — markup instantiation.
     let mut i = start;
     while i > 0 && (bytes[i - 1] == b' ' || bytes[i - 1] == b'\t') {
@@ -274,9 +290,7 @@ pub(crate) fn run_search(
     )?;
     // Comment/string spans are cached in the index (extracted once), so --in is
     // a lookup, not a per-query re-parse.
-    let mut span_stmt = conn.prepare(
-        "SELECT start_byte, end_byte, kind FROM spans WHERE path = ?1 ORDER BY start_byte",
-    )?;
+    let mut span_stmt = conn.prepare(SPANS_SQL)?;
 
     let mut files: Vec<String> = Vec::new();
     let mut counts: Vec<FileCount> = Vec::new();
@@ -311,13 +325,7 @@ pub(crate) fn run_search(
             if !has_spans(lang.as_deref().unwrap_or("")) {
                 continue;
             }
-            let srows = span_stmt.query_map([rel], |r| {
-                Ok((
-                    r.get::<_, i64>(0)? as usize,
-                    r.get::<_, i64>(1)? as usize,
-                    Span::from_i64(r.get::<_, i64>(2)?).unwrap_or(Span::Str),
-                ))
-            })?;
+            let srows = span_stmt.query_map([rel], span_row)?;
             srows.collect::<std::result::Result<Vec<_>, _>>()?
         } else {
             Vec::new()

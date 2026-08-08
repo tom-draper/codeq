@@ -225,8 +225,10 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "max_tokens", "--max-tokens");
         }
-        "codeq_path" => {
-            args.push("path".into());
+        // `codeq_path` was the old name; still accepted so a host holding a cached
+        // tool list keeps working after the rename.
+        "codeq_callpath" | "codeq_path" => {
+            args.push("callpath".into());
             pos.push(s(a, "from")?.into());
             pos.push(s(a, "to")?.into());
             optn(&mut args, a, "max_depth", "--max-depth");
@@ -282,6 +284,17 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             }
             opt(&mut args, a, "kind", "--kind");
             flag(&mut args, a, "include_tests", "--include-tests");
+            optn(&mut args, a, "limit", "--limit");
+        }
+        "codeq_hotspots" => {
+            args.push("hotspots".into());
+            if let Some(p) = s(a, "path") {
+                pos.push(p.into());
+            }
+            opt(&mut args, a, "kind", "--kind");
+            opt(&mut args, a, "language", "--language");
+            flag(&mut args, a, "calls", "--calls");
+            optn(&mut args, a, "min_refs", "--min-refs");
             optn(&mut args, a, "limit", "--limit");
         }
         "codeq_api" => {
@@ -427,8 +440,8 @@ fn tools() -> Value {
         tool("codeq_about",
             "One-call dossier before editing a symbol, WITHOUT source: its definition(s) with signature and doc comment, its callers (who breaks, with test call sites flagged), and its callees (what it depends on). Replaces several separate lookups. path scopes the definition and callees to matching files to disambiguate a common name. Same neighbourhood as codeq_explore, which adds the verbatim source but trims the per-node metadata — reach for codeq_explore when you intend to change the code, and this when you want the metadata or a cheap 'where does this live'.",
             json!({ "name": str_, "path": str_ }), &["name"]),
-        tool("codeq_path",
-            "The shortest call chain from one symbol to another (from calls … calls to), if one exists — reachability with the route shown, e.g. how an entry point reaches a low-level function. Name-based; empty when unreachable within max_depth (default 8). path scopes the start symbol to matching files, to disambiguate a common/cross-language `from` like `main`.",
+        tool("codeq_callpath",
+            "The shortest CALL chain from one symbol to another (from calls … calls to), if one exists — reachability with the route shown, e.g. how an entry point reaches a low-level function. Nothing to do with file paths. Name-based; empty when unreachable within max_depth (default 8). path scopes the start symbol to matching files, to disambiguate a common/cross-language `from` like `main`.",
             json!({ "from": str_, "to": str_, "max_depth": num_, "path": str_ }), &["from", "to"]),
         tool("codeq_outline",
             "The structure of a file top to bottom: its definitions with signatures and nesting depth.",
@@ -454,6 +467,9 @@ fn tools() -> Value {
         tool("codeq_unused",
             "Definitions with no reference anywhere outside their own definition site — candidate dead code. Conservative and name-based: a mention in a comment or string counts as a use, and a same-named symbol elsewhere masks it, so it under-reports rather than misleads. visibility is shown so a public symbol (maybe external API, not dead) is distinguishable from a private one. Test-file definitions are excluded by default (framework entry points look unused); set include_tests to include them. path/kind scope what is reported; the usage check is always repo-wide.",
             json!({ "path": str_, "kind": str_, "include_tests": bool_, "limit": num_ }), &[]),
+        tool("codeq_hotspots",
+            "Definitions ranked by how often their name is referenced in code — the inverse of codeq_unused, and the fastest way to find what is load-bearing in a file or repo you have just met. One row per name (the count is a property of the name), with defs telling you how many definitions share it, and path/line pointing at the first. Set calls=true to count only call sites, which is what you usually want for functions: without it a name that is also a common variable scores high. Name-based, so a short common name (new, get, path) ranks high because many unrelated symbols spell it the same way — treat a row as 'this identifier carries weight' and use codeq_callers with calls=true for the precise question. path/kind/language scope what is reported; the count is always repo-wide.",
+            json!({ "path": str_, "kind": str_, "language": str_, "calls": bool_, "min_refs": num_, "limit": num_ }), &[]),
         tool("codeq_api",
             "The public API surface of a file or directory: the definitions it exports for outside use, with signatures. \"Public\" is each language's own notion (Rust pub, JS/TS export, Go capitalization, Python non-underscore, a public modifier in Java/C#/PHP, non-static in C/C++); pub(crate)/protected are excluded. Use it to learn how to call an unfamiliar module without reading whole files. path scopes to a file/dir substring; kind filters to one kind (function, struct, class, …).",
             json!({ "path": str_, "kind": str_, "limit": num_ }), &[]),

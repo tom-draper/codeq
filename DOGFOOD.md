@@ -4,6 +4,59 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-08 — closing the `persona` report: `hotspots`, `callpath`, and two naming pairs
+
+The remaining three items from the external report. Two were naming, one was a new
+command, and the new command needed two design corrections before it was worth
+shipping — both caught by looking at its actual output rather than at the code.
+
+**`hotspots` — the inverse of `unused`.** Definitions ranked by how often their name
+is referenced in code. Counted in *one* pass over the indexed bodies (tokenize, look
+each identifier up in the candidate set) rather than `unused`'s scan-per-name, so it
+costs about a single `search` instead of ~700ms of repeated scans. Comment and string
+spans don't count and unparseable files are skipped, reusing `search`'s own span
+machinery so `hotspots` and `callers` can't disagree about what "in code" means.
+
+Two things were wrong in the first working version:
+
+- **One row per definition, when the count is per name.** The top twelve rows for
+  `src/` were twelve different definitions of `path`, each reading `refs=481`. True,
+  useless, and actively misleading — it looks like twelve findings. Now one row per
+  name, with `defs` reporting how many definitions collapsed into it.
+- **`--calls` scored *higher* than counting everything**, which is impossible for a
+  subset. Two causes, and I nearly accepted a bad explanation for the first: a
+  declaration `fn new(` puts the name in call position, so declarations were counted
+  in that mode; and the two numbers I was comparing came from either side of a
+  reindex, so part of the gap was the tree changing under me. Fixed by skipping the
+  declaration *site* — the same thing `unused` does — and re-measured against a
+  stable index, where `--calls` is now a strict subset for all 622 names.
+
+A third bug the tests caught, not the eyeballing: I keyed definition sites by
+`(path, line)`, copying `unused`. That works there because `unused` asks about one
+name at a time, but `hotspots` counts every name at once, and one line routinely
+declares one symbol while calling another — `fn a() { hot(); }`. Every such call site
+was silently dropped. On this repo the counts still looked plausible; on the
+three-line fixture the answer was empty. Small fixtures find what big ones hide.
+
+`--calls` earns its place: it takes `s` (a one-character helper in `mcp.rs`) from
+`refs=372` to `refs=48`, because without it every local variable named `s` in the
+repo reads as a reference. The command is still name-based and says so loudly — this
+is "which identifier carries weight", not "this definition has N callers".
+
+**`path` -> `callpath`.** The report's strongest rename, and right: in a *code* CLI
+"path" reads as a file path, so `codeq path a b` scans as "the path to file a". The
+old name stays as a clap alias, and the MCP server still accepts `codeq_path` so a
+host holding a cached tool list keeps working. Renaming cost nothing in
+`capabilities`, which now derives from clap — the rename and the new command both
+appeared there with no separate step. That is the drift fix paying for itself the
+same day it shipped.
+
+**`map`/`stats` and `definitions`/`symbols` — help text, not renames.** Both pairs
+have defensible names; what was missing was any statement of *which to reach for*.
+Each now leads with the distinction in caps (BROWSE many vs JUMP TO one; WHOLE-REPO
+TOTALS vs REPO BROKEN DOWN) and names its counterpart. Renaming would have broken
+scripts to fix a sentence.
+
 ## 2026-08-08 — reply to the `persona` report: three fixed, one claim corrected
 
 Working through the external entry below. Two of its findings were right and are

@@ -114,7 +114,9 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
-    /// List defined symbols (functions, structs, classes, …).
+    /// BROWSE many symbols: list definitions matching a pattern/kind/path, e.g.
+    /// "every struct in src/". Use `definitions` instead when you know the exact
+    /// name and want to jump to it.
     Symbols {
         /// Substring to match against symbol names.
         pattern: Option<String>,
@@ -145,7 +147,8 @@ enum Command {
         #[arg(long)]
         docs: bool,
     },
-    /// Locate the definition(s) of an exact symbol name.
+    /// JUMP TO one symbol: where an EXACT name is defined (several rows only when
+    /// the name is defined more than once). Use `symbols` to browse by pattern.
     Definitions {
         /// Exact symbol name to resolve.
         symbol: String,
@@ -221,6 +224,9 @@ enum Command {
     },
     /// The shortest call chain from one symbol to another (`from` calls … calls
     /// `to`), if one exists — reachability with the route shown. Name-based.
+    /// (Was `path`, which still works: in a code CLI "path" reads as a *file*
+    /// path first, so `codeq path a b` scanned as "the path to file a".)
+    #[command(name = "callpath", alias = "path")]
     Path {
         /// The symbol the chain starts at.
         from: String,
@@ -341,6 +347,34 @@ enum Command {
         include_tests: bool,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
+    /// Definitions ranked by how often their name is referenced in code — the
+    /// inverse of `unused`, for "what is load-bearing here?" in unfamiliar code.
+    /// Counts are per *name* (name-based like every graph command), so a short
+    /// common name ranks high because many unrelated symbols spell it the same
+    /// way: read a row as "this identifier carries weight", then use
+    /// `callers NAME --calls` for the precise question.
+    Hotspots {
+        /// Restrict the reported definitions to paths containing this substring
+        /// (the count stays repo-wide).
+        path: Option<String>,
+        /// Only this kind (e.g. function, struct, class).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Only this language.
+        #[arg(long)]
+        language: Option<String>,
+        /// Count only call sites — `NAME(` — instead of every mention. Cuts the
+        /// noise from names that are also common variables (a function `s` scores
+        /// high otherwise, because every `s` in the repo looks like a reference).
+        #[arg(long)]
+        calls: bool,
+        /// Drop definitions referenced fewer than this many times.
+        #[arg(long, default_value_t = 1)]
+        min_refs: i64,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 30)]
         limit: usize,
     },
     /// Test functions that reference a symbol — "which tests exercise X".
@@ -499,10 +533,13 @@ enum Command {
         #[arg(long)]
         plan: bool,
     },
-    /// Summary counts for the current index.
+    /// WHOLE-REPO TOTALS in a few lines: how many files, symbols and imports, and
+    /// how fresh the index is. Use `map` for the same repo broken down.
     Stats {
     },
-    /// Factual aggregation of the index for orientation (grouped counts).
+    /// REPO BROKEN DOWN for orientation: counts grouped by language, directory,
+    /// imported module and file — what is here and where the weight sits. Start
+    /// here in an unfamiliar codebase; use `stats` for the one-line totals.
     Map {
         /// Max rows per list (0 = unlimited).
         #[arg(long, default_value_t = 20)]
@@ -710,6 +747,23 @@ fn main() -> ExitCode {
             path.as_deref(),
             kind.as_deref(),
             include_tests,
+            limit,
+            out,
+        ),
+        Command::Hotspots {
+            path,
+            kind,
+            language,
+            calls,
+            min_refs,
+            limit,
+        } => commands::cmd_hotspots(
+            &cwd,
+            path.as_deref(),
+            kind.as_deref(),
+            language.as_deref(),
+            calls,
+            min_refs,
             limit,
             out,
         ),
