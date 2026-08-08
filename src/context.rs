@@ -145,7 +145,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
 
     if !req.symbols.is_empty() {
         modes.push("symbols");
-        for d in defs_by_names(db, &req.symbols)? {
+        for d in defs_by_column(db, "name", &req.symbols)? {
             if seen.insert((d.path.clone(), d.start_byte)) {
                 defs.push(d);
             }
@@ -159,7 +159,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         // seed the whole file.
         let ranges = repo.changed_line_ranges(&req.compare_to)?;
         let paths: Vec<String> = ranges.keys().cloned().collect();
-        for d in defs_by_paths(db, &paths)? {
+        for d in defs_by_column(db, "path", &paths)? {
             let touched = ranges.get(&d.path).is_some_and(|hunks| {
                 let ds = d.start_line.max(0) as usize;
                 let de = d.end_line.max(0) as usize;
@@ -207,7 +207,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         let names: Vec<String> = refs.into_iter().collect();
         let mut neighbors: Vec<Def> = Vec::new();
         let mut added: HashSet<(String, usize)> = HashSet::new();
-        for d in defs_by_names(db, &names)? {
+        for d in defs_by_column(db, "name", &names)? {
             let key = (d.path.clone(), d.start_byte);
             if !seed_keys.contains(&key) && added.insert(key) {
                 neighbors.push(d);
@@ -452,43 +452,25 @@ fn row_to_def(r: &rusqlite::Row) -> rusqlite::Result<Def> {
 const DEF_COLUMNS: &str =
     "name, kind, path, language, start_byte, end_byte, start_line, end_line";
 
-/// Load definitions whose name is in `names`, via the facts(name) index, in
-/// chunks to stay under SQLite's bound-parameter limit.
-fn defs_by_names(db: &Db, names: &[String]) -> Result<Vec<Def>> {
+/// Load definitions matching a set of values in one indexed column, in chunks to
+/// stay under SQLite's bound-parameter limit.
+///
+/// `column` is `name` or `path`; both are indexed, and the two call sites were
+/// otherwise the same function written twice.
+fn defs_by_column(db: &Db, column: &str, values: &[String]) -> Result<Vec<Def>> {
+    debug_assert!(matches!(column, "name" | "path"), "column is not interpolable from input");
     let mut out = Vec::new();
-    for chunk in names.chunks(500) {
+    for chunk in values.chunks(500) {
         if chunk.is_empty() {
             continue;
         }
         let ph = vec!["?"; chunk.len()].join(",");
         let sql = format!(
-            "SELECT {DEF_COLUMNS} FROM facts WHERE kind <> 'import' AND name IN ({ph})"
+            "SELECT {DEF_COLUMNS} FROM facts WHERE kind <> 'import' AND {column} IN ({ph})"
         );
         let mut stmt = db.conn.prepare(&sql)?;
         let params: Vec<&dyn rusqlite::ToSql> =
-            chunk.iter().map(|n| n as &dyn rusqlite::ToSql).collect();
-        let rows = stmt.query_map(params.as_slice(), row_to_def)?;
-        for r in rows {
-            out.push(r?);
-        }
-    }
-    Ok(out)
-}
-
-/// Load definitions in files whose path is in `paths`, via the facts(path) index.
-fn defs_by_paths(db: &Db, paths: &[String]) -> Result<Vec<Def>> {
-    let mut out = Vec::new();
-    for chunk in paths.chunks(500) {
-        if chunk.is_empty() {
-            continue;
-        }
-        let ph = vec!["?"; chunk.len()].join(",");
-        let sql = format!(
-            "SELECT {DEF_COLUMNS} FROM facts WHERE kind <> 'import' AND path IN ({ph})"
-        );
-        let mut stmt = db.conn.prepare(&sql)?;
-        let params: Vec<&dyn rusqlite::ToSql> =
-            chunk.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+            chunk.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
         let rows = stmt.query_map(params.as_slice(), row_to_def)?;
         for r in rows {
             out.push(r?);

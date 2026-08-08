@@ -1865,3 +1865,39 @@ Honest cost, measured rather than assumed: a cold index of 78 files goes from
 Warm queries are unchanged at 5ms. That seemed worth it for a capability that
 answers "is this already implemented?" — but it is a real cost and belongs in the
 docs, not hidden.
+
+## Using clones on codeq itself — and what it means to *not* act on one
+
+`clones` reported 13 groups in this repository. Three were worth fixing:
+
+- `defs_by_names` / `defs_by_paths` (148 nodes) — the same loader written twice for
+  two indexed columns. Merged into `defs_by_column`.
+- `cmd_implementors` / `cmd_supertypes` (202 nodes) — letter for letter the same
+  function with `subtype` and `supertype` swapped. The query is now shared; 202 -> 117.
+- `codeq_commit` in two bench harnesses — moved to `corpus.py`, which both already
+  imported.
+
+The other ten are the interesting part, because the right response to a true report
+is often "yes, and that is fine":
+
+- **`pick` in bench.py and tasks.py** is structurally identical and *behaviourally
+  different* — one rebuilds the index and picks a `clean_name`, the other warms it
+  and picks a `clean_class`. Merging would have been a bug. This is the clearest
+  argument for reporting structure as a fact rather than emitting a "duplication
+  score" that implies an action.
+- **CLI enum variants** (`Implementors`/`Supertypes`, `Files`/`Api`, …) are
+  declarative clap definitions; identical shape is what a uniform CLI *is*.
+- **`ImplementorRow` / `SupertypeRow`** differ only in a field name, and that field
+  name is the output contract.
+- **`opt` / `optn`** and **`print_range` / `print_range_raw`** would each collapse
+  into one function plus a flag, which reads worse at every call site than two
+  names that say what they do.
+- The residual `cmd_implementors` / `cmd_supertypes` group is now just the mapping
+  boilerplate that exists *because* the two commands present the same rows under
+  different names. Collapsing it needs a generic over the row type — more code than
+  it removes. Stopping here rather than forcing the number down is the point: a
+  tool that makes you game its own metric is worse than one you can ignore.
+
+Also settled: `changed --since-index` is dropped rather than built. Every query
+auto-refreshes, so there is no retained baseline to diff against; making it work
+needs a stored snapshot, and codeq stays stateless.

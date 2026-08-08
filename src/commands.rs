@@ -2217,6 +2217,67 @@ struct ImplementorRow {
     language: Option<String>,
 }
 
+#[derive(Serialize)]
+struct SupertypeRow {
+    /// The trait / interface / base class this type extends or implements.
+    supertype: String,
+    /// How it relates: "implements" or "extends".
+    relation: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+}
+
+/// One `impls` edge, before it is presented under either command's field names.
+struct ImplEdge {
+    other: String,
+    relation: String,
+    path: String,
+    line: i64,
+    language: Option<String>,
+}
+
+/// The `impls` edges touching `name`, read in one direction.
+///
+/// `implementors` and `supertypes` are the same query with `subtype` and
+/// `supertype` swapped — which is why they were, letter for letter, the same
+/// function written twice. They still present different field names (`subtype`
+/// vs `supertype`), because that is the output contract, so only the query is
+/// shared and each command names its own result.
+fn impl_edges(
+    s: &Session,
+    select: &str,
+    matched: &str,
+    name: &str,
+    relation: Option<&str>,
+    path: Option<&str>,
+    limit: usize,
+) -> Result<Vec<ImplEdge>> {
+    debug_assert!(
+        matches!(select, "subtype" | "supertype") && matches!(matched, "subtype" | "supertype"),
+        "columns are fixed, never caller input"
+    );
+    let filters = Filters::new().eq("relation", relation).like("path", path);
+    let sql = format!(
+        "SELECT {select}, relation, path, line, language
+         FROM impls WHERE {matched} = ?{} ORDER BY path, line{}",
+        filters.sql(),
+        limit_clause(limit),
+    );
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_with(&[&name], &filters).as_slice(), |r| {
+        Ok(ImplEdge {
+            other: r.get(0)?,
+            relation: r.get(1)?,
+            path: r.get(2)?,
+            line: r.get(3)?,
+            language: r.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
 /// `implementors <type>` — the types that implement or extend a trait /
 /// interface / base class. Covers the inheritance edges the call graph doesn't:
 /// `impl T for X` (Rust), `class X extends Y` / `implements I` (Java/TS/PHP/…),
@@ -2232,37 +2293,18 @@ pub fn cmd_implementors(
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let filters = Filters::new().eq("relation", relation).like("path", path);
-    let sql = format!(
-        "SELECT subtype, relation, path, line, language
-         FROM impls WHERE supertype = ?{} ORDER BY path, line{}",
-        filters.sql(),
-        limit_clause(limit),
-    );
-    let mut stmt = s.db.conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_with(&[&name], &filters).as_slice(), |r| {
-        Ok(ImplementorRow {
-            subtype: r.get(0)?,
-            relation: r.get(1)?,
-            path: r.get(2)?,
-            line: r.get(3)?,
-            language: r.get(4)?,
-        })
-    })?;
-    let data: Vec<ImplementorRow> = rows.collect::<std::result::Result<_, _>>()?;
+    let data: Vec<ImplementorRow> =
+        impl_edges(&s, "subtype", "supertype", name, relation, path, limit)?
+            .into_iter()
+            .map(|e| ImplementorRow {
+                subtype: e.other,
+                relation: e.relation,
+                path: e.path,
+                line: e.line,
+                language: e.language,
+            })
+            .collect();
     s.emit(data)
-}
-
-#[derive(Serialize)]
-struct SupertypeRow {
-    /// The trait / interface / base class this type extends or implements.
-    supertype: String,
-    /// How it relates: "implements" or "extends".
-    relation: String,
-    path: String,
-    line: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    language: Option<String>,
 }
 
 /// `supertypes <type>` — the traits / interfaces / base classes a type extends
@@ -2278,24 +2320,17 @@ pub fn cmd_supertypes(
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let filters = Filters::new().eq("relation", relation).like("path", path);
-    let sql = format!(
-        "SELECT supertype, relation, path, line, language
-         FROM impls WHERE subtype = ?{} ORDER BY path, line{}",
-        filters.sql(),
-        limit_clause(limit),
-    );
-    let mut stmt = s.db.conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_with(&[&name], &filters).as_slice(), |r| {
-        Ok(SupertypeRow {
-            supertype: r.get(0)?,
-            relation: r.get(1)?,
-            path: r.get(2)?,
-            line: r.get(3)?,
-            language: r.get(4)?,
-        })
-    })?;
-    let data: Vec<SupertypeRow> = rows.collect::<std::result::Result<_, _>>()?;
+    let data: Vec<SupertypeRow> =
+        impl_edges(&s, "supertype", "subtype", name, relation, path, limit)?
+            .into_iter()
+            .map(|e| SupertypeRow {
+                supertype: e.other,
+                relation: e.relation,
+                path: e.path,
+                line: e.line,
+                language: e.language,
+            })
+            .collect();
     s.emit(data)
 }
 

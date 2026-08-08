@@ -302,12 +302,6 @@ def run_repo(name, lang, path):
             "actions": actions, "invariants": invariants, "fuzz": fuzz}
 
 
-def codeq_commit():
-    p = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"],
-                       capture_output=True, text=True)
-    return p.stdout.strip()[:12]
-
-
 def _median(xs):
     return round(sorted(xs)[len(xs) // 2], 3) if xs else None
 
@@ -391,7 +385,7 @@ def main():
                              "missing": fz["missing"], "crash": fz["crash"]})
     result = {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "codeq_commit": codeq_commit(),
+        "codeq_commit": corpus.codeq_commit(),
         "per_command": pc,
         "summary": summarize(repos, pc),
         "per_repo": {n: {"lang": r["lang"], "index_ms": r["index_ms"],

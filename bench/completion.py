@@ -340,11 +340,6 @@ def run_repo(path):
     return {"target": S, "file": F, "tasks": out}
 
 
-def codeq_commit():
-    p = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True)
-    return p.stdout.strip()[:12]
-
-
 def main():
     if not os.path.exists(CODEQ):
         sys.exit("build release binary first: cargo build --release")
@@ -391,7 +386,7 @@ def main():
 
     result = {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "codeq_commit": codeq_commit(),
+        "codeq_commit": corpus.codeq_commit(),
         "repos": len(repos),
         "totals": {"codeq_tokens": cqt, "baseline_tokens": blt,
                    "token_ratio": round(blt / max(cqt, 1), 2),

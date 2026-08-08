@@ -94,6 +94,16 @@ def sync():
     print(f"synced {len(lock)}/{len(REPOS)} repos -> {CACHE}")
 
 
+def codeq_commit():
+    """The codeq revision a benchmark run was produced by, so a results file can
+    be tied to the code that produced it. Shared because every harness needs it
+    and each had its own copy."""
+    root = os.path.dirname(HERE)
+    p = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"],
+                       capture_output=True, text=True)
+    return p.stdout.strip()[:12]
+
+
 def repo_paths():
     """Yield (name, lang, abspath) for every synced repo. Runs sync if empty."""
     if not os.path.isdir(CACHE):
