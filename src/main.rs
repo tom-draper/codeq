@@ -800,7 +800,15 @@ fn main() -> ExitCode {
         ),
         Command::Stats {} => commands::cmd_stats(&cwd, out),
         Command::Map { limit } => commands::cmd_map(&cwd, limit, out),
-        Command::Capabilities {} => commands::cmd_capabilities(out),
+        Command::Capabilities {} => {
+            // Ask clap what subcommands exist instead of keeping a second list in
+            // sync by hand — the hand-written one had silently gone stale.
+            let cmd = <Cli as clap::CommandFactory>::command();
+            let mut names: Vec<&str> =
+                cmd.get_subcommands().map(|c| c.get_name()).filter(|n| *n != "help").collect();
+            names.sort_unstable();
+            commands::cmd_capabilities(&names, out)
+        }
         Command::Mcp => mcp::serve(),
         Command::Install {
             dry_run,

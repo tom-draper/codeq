@@ -4,6 +4,71 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-08 — external dogfood: codeq on the `persona` repo (naming + a capabilities-drift bug)
+
+First sustained use of codeq on a *different* project (a Python demographic
+generator, ~12 code files buried in ~2,700 data/asset files) rather than on
+codeq itself. It carried a real refactor: `clones --min-nodes 20` directly
+surfaced a cross-module duplicate (`cli.format_location` ≡ `generate._fmt_label`)
+I'd otherwise have missed, and `references` found every tested call site before I
+touched anything. The exploration surface is genuinely strong — the friction was
+naming and discoverability, not missing power. Findings, worst first:
+
+- **BUG — `capabilities` under-reports the command set (discovery drift).**
+  `codeq capabilities` lists 23 commands; `codeq --help` has ~32. Missing from
+  `capabilities`: **`explore`, `path`, `api`, `affected`, `unused`,
+  `implementors`, `supertypes`, `deps`, `install`**. Repro:
+  ```
+  comm -13 <(codeq capabilities | sed -n '/^# commands/,/^#/p' | grep -vE '^#' | sort) \
+           <(codeq --help | awk '/^Commands:/{f=1;next} /^Options:/{f=0} f && $1 ~ /^[a-z]/ {print $1}' | sort)
+  ```
+  For a tool whose whole pitch is "built for AI agents," the machine-readable
+  manifest is exactly what an MCP host reads to learn what exists — so an agent
+  discovering via `capabilities` can never learn about `explore` or
+  `implementors`. Highest-value fix: generate `capabilities` from the same
+  command registry as the CLI so the two can't diverge (a test asserting
+  set-equality would have caught this).
+
+- **Rename `path` → `callpath` / `chain` / `route`.** In a *code* CLI, "path"
+  parses as a file path first; `codeq path from to` is easy to misread as
+  "the path to file `from`". Any of the alternatives is unambiguous. Strongest
+  rename.
+
+- **`about` vs `explore` are the same concept under two undifferentiated names.**
+  Both are a symbol dossier; the *only* difference is whether verbatim source is
+  included — and nothing in either name signals which. You must know the docs to
+  choose. Suggest folding into one command with `--source/--no-source` (default
+  no-source = today's `about`), or renaming so the code-vs-no-code axis is
+  visible. Compounded by the bug above: `capabilities` lists `about` but not
+  `explore`, so an agent only ever sees the sourceless one.
+
+- **`map` vs `stats`** — both described as "counts"; the names don't convey that
+  `map` is a grouped orientation breakdown and `stats` is summary totals.
+  **`definitions` vs `symbols`** (minor) — `definitions NAME` is a single exact
+  lookup, `symbols` is a listing; a name like `locate`/`def` for the singular
+  case would separate them at a glance.
+
+- **Capability wish — an inverse of `unused`: a "hotspots" / most-referenced
+  view.** `unused` finds dead code and `map` ranks files by definition count, but
+  there's no "which *symbols* are most referenced." Dropping into an unfamiliar
+  file (`generate.py`) cold, that's what I wanted: show the load-bearing symbols
+  first. Composes from data already in the index (reference counts per def).
+
+- **Docs undersell the surface (discoverability).** The `CLAUDE.md` an agent
+  actually reads omits `at`, `context`, `files`, `imports`, `importers`, and
+  never mentions the `--path` / `--language` / `--glob` / `--limit` filters on
+  `search`/`references`. Working from it I nearly proposed features that already
+  exist (`at file:line` reverse lookup, `search --glob`, `--limit`) — the gap was
+  discoverability, not capability. Once the drift bug is fixed, generating the
+  doc's command inventory from `capabilities` keeps them honest.
+
+- **Repo-specific friction — data-heavy trees inflate the index.** On persona,
+  `map`/`stats` report ~2,108 files classified `(unknown)` (280 data JSONs + PNGs
+  per country) and each query reindexes ~2,683 files. Respecting `.gitignore` or a
+  `.codeqignore` to skip data/asset trees would cut cold-index cost and the
+  `(unknown)` noise on non-code-dominated repos. (`.codeq/` self-ignores cleanly —
+  verified it never touched the host repo's git status — so no complaint there.)
+
 ## 2026-07-14 — session 19: tests-linkage (`codeq tests NAME`)
 
 The 3rd capability wish: "which tests exercise X". New `codeq tests <name>` reuses
@@ -1901,3 +1966,108 @@ is often "yes, and that is fine":
 Also settled: `changed --since-index` is dropped rather than built. Every query
 auto-refreshes, so there is no retained baseline to diff against; making it work
 needs a stored snapshot, and codeq stays stateless.
+
+---
+
+## Round: turning codeq on codeq for refactoring work
+
+The brief was "use codeq to find refactoring work, and report anything you trip
+over while doing it". Both halves paid out, and the bugs were worth more than the
+refactoring.
+
+### The cross-check that mattered: `tests` was answering "none" for covered code
+
+`codeq unused src` reported exactly three definitions — all three of them test
+functions in `src/install.rs`. That is a 100% false-positive rate on the command
+whose entire premise is that it under-reports rather than misleads.
+
+Pulling the thread with two commands that must agree:
+
+```
+codeq tests apply --path src/install.rs      -> empty
+codeq references apply --path src/install.rs -> 7 call sites in 3 test functions
+```
+
+`tests` says nothing exercises `apply`. `references` says three test functions call
+it seven times. Both cannot be right.
+
+The cause: `is_test_path` knew test *directories and filenames*, and `is_test_name`
+knew test-like *function names*. Rust's dominant unit-test idiom — `#[cfg(test)]
+mod tests` inside the very file under test — has neither. The path is ordinary and
+the function names are prose (`installs_into_a_detected_agent_and_is_idempotent`).
+
+This one stings for two reasons. First, the limitation was *already written down*
+in the doc comment on `tests` ("can't see attribute-only tests… may be missed"), so
+it was a known gap that nobody had priced. Documenting a hole is not the same as
+knowing how big it is: the honest measurement is that on codeq's own repository the
+command was blind to every unit test in the crate. Second, an empty result from
+`tests` doesn't read as "I can't see those" — the skill documentation explicitly
+tells an agent that empty means "only exercised indirectly". So the failure mode
+was a confident wrong answer on the exact edit-then-find-the-test loop the command
+exists to serve.
+
+The fix needed no extraction change, because codeq already indexes the enclosing
+`mod tests` as a fact with a line span. A definition inside a test-like container
+is now a test. It generalises for free: a Python `class TestFoo` or a Java
+`class FooTest` in an ordinary path classifies its methods the same way.
+
+While fixing it, a fourth copy of the notion turned up: `callers_of` carried its own
+inline predicate (`path.contains("test")`, name starts with `test`/`Test`) which is
+both weaker *and* wronger than the other two — `path.contains("test")` matches
+`src/latest.rs`. Four notions of "is this a test", differently wrong, in one file.
+There is now one, `is_test_site`, and `tests`, `callers` and `unused` agree.
+
+### `capabilities` had gone nine commands stale
+
+The command whose only job is to tell an agent what codeq can do listed 23 of 32
+commands. Missing: `affected`, `api`, `deps`, `explore`, `implementors`, `install`,
+`path`, `supertypes`, `unused` — including `explore`, the tool an agent should
+reach for first.
+
+It was a hand-maintained array. It is now derived from clap's own subcommand list,
+so it cannot drift, and a test cross-checks it against the parser's help output.
+The bug was found the same way as the last one: asking two sources that must agree
+(`capabilities` vs `--help`) and diffing them.
+
+### The refactoring findings themselves
+
+Less dramatic than the bugs, and mostly one root cause:
+
+- **`commands.rs` is 108 KB / 3,117 lines / 71 functions / 30 command handlers.**
+  The obvious split is by domain, but splitting it is cosmetic without the next item.
+- **There is no query layer.** `codeq search 'SELECT ' --in strings` counts 43 raw
+  SQL statements in `commands.rs` against 2 in `db.rs`. `db.rs` is schema and
+  migration only; every handler hand-writes its own SQL. This is *why* the same
+  definition-loading shape kept recurring — the clone groups merged last round were
+  symptoms, not the disease.
+- **The command surface is specified three times** — the clap enum, `build_args` in
+  the MCP server, and the `capabilities` list. This has now cost real bugs twice:
+  `codeq_astgrep` broke in the MCP copy, and the `capabilities` copy rotted.
+  Deriving `capabilities` from clap fixes one third of it; `build_args` remains.
+- **Long functions:** `refresh` 317, `main` 278, `build_args` 238, `harvest` 224,
+  `Extractor::new` 207.
+
+### A clone group I got wrong last round
+
+`run()` in `bench.py` and `tasks.py` was reported by `clones` and I left it, having
+lumped it in with the `pick` pair. It was a genuine duplicate — identical but for a
+local variable name (`t0` vs `t`). Lifted to `corpus.timed_run`, which also absorbed
+`completion.py`'s near-copy (same body, returns milliseconds) and the `CODEQ` path
+constant that five harnesses each computed for themselves in two different spellings.
+
+Worth recording as a process point: `clones` reported this correctly and I dismissed
+it. The tool's job is to hand you exact structural equality; deciding is still the
+reader's, and the reader can be wrong in *both* directions.
+
+### Feature gap: `callees` cannot show its own evidence
+
+`codeq about codeq_commit` reports four `run` functions as callees. The body calls
+no `run` — it calls `subprocess.run(...)`, and the name-based matcher attributes the
+qualified call to every definition named `run` in the repo. `--resolved` correctly
+returns empty, but you only reach for it if you already suspect the answer.
+
+`callers` has `--examples` to surface the call expression, and `--on` to filter by
+receiver. `callees` has neither. Showing `subprocess.run` in the row would make the
+over-match self-evident without the reader needing to suspect anything, and
+module-qualified calls are the norm in Python and JS, so this is a broad noise class
+rather than a corner case. Not built yet; recorded here as the next obvious gap.

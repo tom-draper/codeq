@@ -631,18 +631,14 @@ fn callers_of(
         }
     }
 
+    let scopes = TestScopes::load(&s.db.conn)?;
     let mut out = Vec::new();
     for key in order {
         let (mut h, _) = match pick.remove(&key) {
             Some(v) => v,
             None => continue,
         };
-        let test = h.path.contains("test")
-            || h.path.contains("spec")
-            || h.symbol
-                .as_deref()
-                .map(|s| s.starts_with("test") || s.starts_with("Test"))
-                .unwrap_or(false);
+        let test = is_test_site(&h.path, h.symbol.as_deref(), h.line as i64, &scopes);
         // Under --examples, surface the call site's line/column and source text so
         // the row reads as a usage example (rendered grep-style by the envelope).
         let (col, text) = if examples {
@@ -2442,13 +2438,16 @@ pub fn cmd_unused(
     };
 
     // Scan each distinct name once; keep the defs whose name is never used.
+    let scopes = TestScopes::load(&s.db.conn)?;
     let mut used: HashMap<String, bool> = HashMap::new();
     let mut data: Vec<UnusedRow> = Vec::new();
     for cand in candidates {
         // Test functions are invoked by the test runner (by discovery/attribute),
         // not referenced by name, so they always look unused — exclude them by
-        // default so real dead code isn't buried under every test.
-        if !include_tests && is_test_path(&cand.path) {
+        // default so real dead code isn't buried under every test. The path alone
+        // is not enough: a Rust unit test lives in a `mod tests` inside the file
+        // it tests, so every one of them used to be reported as dead.
+        if !include_tests && is_test_site(&cand.path, Some(&cand.name), cand.line, &scopes) {
             continue;
         }
         let is_used = match used.get(&cand.name) {
@@ -2506,10 +2505,69 @@ fn is_test_name(name: &str) -> bool {
         || name.ends_with("_spec")
 }
 
+/// Test-like *containers* — a Rust `#[cfg(test)] mod tests`, a `class FooTest` —
+/// as line spans, keyed by file.
+///
+/// Rust's dominant unit-test idiom puts tests in a module inside the very file
+/// under test, where neither the path nor the function name says "test". Without
+/// this, `tests <fn>` answered "none" for a function whose tests sit twenty lines
+/// below it, and `unused` reported every one of those tests as dead code.
+/// codeq already indexes the enclosing `mod` as a fact, so containment needs no
+/// extraction change — and it generalises: a Python `class TestFoo` or a Java
+/// `class FooTest` in an ordinary path classifies its methods the same way.
+struct TestScopes {
+    by_path: HashMap<String, Vec<(i64, i64)>>,
+}
+
+impl TestScopes {
+    fn load(conn: &rusqlite::Connection) -> Result<TestScopes> {
+        let mut stmt = conn.prepare(
+            "SELECT path, name, start_line, end_line FROM facts
+             WHERE kind IN ('module', 'class') AND name IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+            ))
+        })?;
+        let mut by_path: HashMap<String, Vec<(i64, i64)>> = HashMap::new();
+        for row in rows {
+            let (path, name, start, end) = row?;
+            // A container with no recorded end can't bound anything — skip it
+            // rather than guess a span and swallow the rest of the file.
+            if let (true, Some(end)) = (is_test_name(&name), end) {
+                by_path.entry(path).or_default().push((start, end));
+            }
+        }
+        Ok(TestScopes { by_path })
+    }
+
+    /// Whether `line` of `path` falls inside a test-like container.
+    fn contains(&self, path: &str, line: i64) -> bool {
+        self.by_path
+            .get(path)
+            .is_some_and(|spans| spans.iter().any(|&(start, end)| line >= start && line <= end))
+    }
+}
+
+/// Whether a definition site is a test — its file, its own name, or the container
+/// it sits in says so. The three signals are always weighed together, so `tests`,
+/// `callers` and `unused` agree on what a test is instead of each carrying its own
+/// (differently wrong) notion.
+fn is_test_site(path: &str, symbol: Option<&str>, line: i64, scopes: &TestScopes) -> bool {
+    is_test_path(path)
+        || symbol.is_some_and(is_test_name)
+        || scopes.contains(path, line)
+}
+
 /// `tests <name>` — the test functions that reference `name`. A reference counts
-/// as a test when its file looks like a test file or its enclosing function name
-/// looks like a test. Name-based, like `references`; can't see attribute-only
-/// tests (Rust `#[cfg(test)]` unit fns in a non-test path may be missed).
+/// as a test when its file looks like a test file, its enclosing function name
+/// looks like a test, or it sits inside a test-like module/class (see
+/// [`TestScopes`]). Name-based, like `references`: codeq reads no attributes, so
+/// a `#[test]` fn outside a test path, name and module is still missed.
 #[derive(Serialize)]
 struct TestRow {
     path: String,
@@ -2541,6 +2599,7 @@ fn test_sites(
         _ => unreachable!("tests always uses Matches mode"),
     };
 
+    let scopes = TestScopes::load(&s.db.conn)?;
     let mut tests: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
     for h in &hits {
         let sym = match &h.symbol {
@@ -2548,7 +2607,7 @@ fn test_sites(
             _ => continue,
         };
         let is_fn = matches!(h.kind.as_deref(), Some("function") | Some("method"));
-        if is_fn && (is_test_path(&h.path) || is_test_name(sym)) {
+        if is_fn && is_test_site(&h.path, Some(sym), h.line as i64, &scopes) {
             tests.insert((h.path.clone(), sym.clone()));
         }
     }
@@ -3043,16 +3102,16 @@ fn is_manifest(path: &str) -> bool {
 
 /// Self-description so an agent can discover what codeq supports without
 /// guessing. Deliberately does not require (or refresh) an index.
-pub fn cmd_capabilities(out: Out) -> Result<()> {
+///
+/// `commands` is passed in from the clap parser rather than written out here.
+/// The hand-maintained list drifted: it had gone nine commands stale — including
+/// `explore`, the one an agent should reach for first — so the command whose only
+/// job is to say what codeq can do was under-selling it by a quarter.
+pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
     let data = serde_json::json!({
         "result_schema": RESULT_SCHEMA,
         "index_schema": SCHEMA_VERSION,
-        "commands": [
-            "index", "files", "changed", "stats", "map",
-            "symbols", "definitions", "callers", "callees", "about",
-            "references", "outline", "at", "read", "search",
-            "imports", "importers", "astgrep", "tests", "clones", "context", "capabilities", "mcp",
-        ],
+        "commands": commands,
         // Languages with symbol + import extraction.
         "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte", "vue", "css", "powershell", "proto", "graphql", "hcl"],
         // Languages recognised for file classification (extraction may be absent).

@@ -230,6 +230,37 @@ fn capabilities_describes_the_tool() {
     assert!(text.contains("# commands"), "capabilities text missing sections: {text}");
 }
 
+#[test]
+fn capabilities_lists_every_command_the_cli_accepts() {
+    // `commands` was hand-written and drifted nine commands behind the parser —
+    // `explore` among them, so the one command whose job is to say what codeq can
+    // do was hiding the tool an agent should reach for first. It is now derived
+    // from clap; this cross-checks it against the parser's own help so any future
+    // drift fails the build instead of quietly under-selling the tool.
+    let f = Fixture::new();
+    let listed = field_names(&f.run(&["capabilities"])["data"]["commands"]);
+
+    // Subcommands are the `^  <name>` rows of the help's Commands: block; any
+    // wrapped description line is indented further, so it can't be mistaken for one.
+    let help = String::from_utf8_lossy(&f.raw(&["--help"]).stdout).into_owned();
+    let accepted: Vec<String> = help
+        .lines()
+        .skip_while(|l| !l.starts_with("Commands:"))
+        .skip(1)
+        .take_while(|l| !l.starts_with("Options:"))
+        .filter(|l| l.starts_with("  ") && !l.starts_with("   "))
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|n| *n != "help") // clap's own, not a codeq capability
+        .map(str::to_string)
+        .collect();
+
+    assert!(accepted.len() > 20, "help parsing found too few commands: {accepted:?}");
+    for name in &accepted {
+        assert!(listed.contains(name), "capabilities omits `{name}`: {listed:?}");
+    }
+    assert_eq!(listed.len(), accepted.len(), "capabilities lists commands the CLI rejects");
+}
+
 // ---------------------------------------------------------------------------
 // Inventory + ignore handling
 // ---------------------------------------------------------------------------
@@ -2068,6 +2099,27 @@ fn unused_excludes_test_files_by_default() {
 }
 
 #[test]
+fn unused_excludes_rust_unit_tests_in_a_cfg_test_module() {
+    // Rust's dominant idiom puts unit tests in a `mod tests` inside the file
+    // under test: the path is ordinary and the fn names are prose, so neither
+    // the path nor the name heuristic sees them. They used to be reported as
+    // dead code — on codeq itself, every row `unused` produced was one of these.
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "fn dead() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn returns_one() {}\n}\n",
+    );
+
+    let def = field_set(&f.run(&["unused"]), "name");
+    assert!(def.contains(&"dead".to_string()), "real dead code missing: {def:?}");
+    assert!(!def.contains(&"returns_one".to_string()), "unit test reported as dead: {def:?}");
+
+    // Still reachable when you ask for tests explicitly.
+    let inc = field_set(&f.run(&["unused", "--include-tests"]), "name");
+    assert!(inc.contains(&"returns_one".to_string()), "{inc:?}");
+}
+
+#[test]
 fn path_finds_shortest_call_chain() {
     let f = Fixture::new();
     f.write(
@@ -3426,6 +3478,40 @@ fn tests_linkage_finds_tests_in_test_files() {
         .collect();
     assert!(names.contains(&"test_widget_works".to_string()), "{names:?}");
     assert!(!names.contains(&"test_other_only".to_string()), "doesn't reference widget: {names:?}");
+}
+
+#[test]
+fn tests_linkage_finds_rust_unit_tests_in_a_cfg_test_module() {
+    // The enclosing `mod tests` is the only signal: `src/lib.rs` is not a test
+    // path and `returns_one` is not a test-like name. `tests widget` used to
+    // answer "none" for a function whose test sits six lines below it — and an
+    // empty result reads as "no test covers this", so it was a confident lie.
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "pub fn widget() -> i32 { 1 }\npub fn other() {}\n\n\
+         #[cfg(test)]\n\
+         mod tests {\n\
+         \x20   use super::*;\n\n\
+         \x20   #[test]\n\
+         \x20   fn returns_one() {\n\
+         \x20       assert_eq!(widget(), 1);\n\
+         \x20   }\n\n\
+         \x20   #[test]\n\
+         \x20   fn touches_other() {\n\
+         \x20       other();\n\
+         \x20   }\n\
+         }\n",
+    );
+    let names: Vec<String> = f.run(&["tests", "widget"])["data"]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(names.contains(&"returns_one".to_string()), "unit test not linked: {names:?}");
+    assert!(!names.contains(&"touches_other".to_string()),
+            "doesn't reference widget: {names:?}");
 }
 
 #[test]

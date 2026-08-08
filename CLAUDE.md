@@ -89,7 +89,11 @@ benchmarks — not as a step you run before querying.
     traits / interfaces / base classes NAME extends or implements (as written at
     the declaration, not transitively resolved).
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
-  reference NAME (by test-file path or test-like name). For the edit→find-the-test loop.
+  reference NAME. A test is recognised by test-file path, test-like name, *or* a
+  test-like enclosing module/class — so Rust's `#[cfg(test)] mod tests` inside the
+  file under test counts, as do Python `class TestFoo` / Java `class FooTest`.
+  codeq reads no attributes, so a `#[test]` fn with none of those three still
+  slips through. For the edit→find-the-test loop.
 - **What a diff affects:** `codeq affected --compare-to <ref>` — the definitions the
   diff touched, their transitive callers (impacted, `--depth N`), and the test
   *files* to re-run. Composes `changed --symbols` + a caller BFS + `tests`; name-based,
@@ -102,7 +106,8 @@ benchmarks — not as a step you run before querying.
   anywhere outside their own definition site. Conservative (a comment/string
   mention counts as a use; name-based, so a same-named symbol elsewhere masks it)
   so it under-reports rather than mislead. Shows `visibility` (a `public` hit may
-  be external API, not dead); test-file defs excluded unless `--include-tests`.
+  be external API, not dead); tests excluded unless `--include-tests` — same
+  recognition as `codeq tests`, so a Rust `mod tests` unit test is not dead code.
 - **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
   - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
     templates. codeq's own SQL lives in string literals, so `--in code` finds none.
