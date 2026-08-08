@@ -81,7 +81,12 @@ benchmarks — not as a step you run before querying.
       so one command answers "who calls it *and how*". For every call site rather
       than one per caller, use `references NAME --calls`. Composes with the filters.
   - **`callees` is already call-position only** (a bare mention of a name isn't a
-    callee), so it needs no `--calls`; it does take `--resolved`, which keeps only
+    callee), so it needs no `--calls`. `--examples` adds `call` — the call as
+    *written*, receiver included (`subprocess.run`, not `run`) — plus `call_line`.
+    That is usually the fastest way to spot a name collision: a module-qualified
+    call is attributed to every definition sharing the bare name, so
+    `callees codeq_commit` lists four unrelated `run`s, and `--examples` shows all
+    four came from one `subprocess.run`. It also takes `--resolved`, which keeps only
     callees whose definition file NAME's *own* file can reach through imports (tags
     each `via` same-file / imported) — pruning the name-based over-match where a
     common callee name (`new`, `open`) matches unrelated same-named defs in
@@ -154,6 +159,15 @@ benchmarks — not as a step you run before querying.
 - **What a type holds:** `codeq symbols --owner Config` — the members a type
   declares, without dumping every field in the repo.
 - **Trim tokens on list output:** append `--fields a,b`
+
+## Excluding files
+
+codeq honours `.gitignore`/`.ignore`, plus a **`.codeqignore`** for trees that are
+*committed* but not code (vendored data, fixtures, generated assets) — gitignore
+cannot help there by definition. Gitignore syntax and precedence-over-`.gitignore`,
+with git's own sharp edge: `!data/keep.json` will not resurrect a file under an
+excluded `data/`, because the walk never descends into it. Exclude `data/*.json`
+instead. Editing it takes effect on the next query — no reindex step.
 
 ## Known limitations (found by dogfooding — don't be misled)
 

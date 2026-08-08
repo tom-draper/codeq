@@ -221,6 +221,11 @@ enum Command {
         /// files) at the risk of dropping a real callee behind an unresolved import.
         #[arg(long)]
         resolved: bool,
+        /// Show the call as written, with its receiver — `subprocess.run`, not
+        /// `run` — plus the line it sits on, so a name-based over-match is
+        /// visible without having to suspect it first.
+        #[arg(long)]
+        examples: bool,
     },
     /// The shortest call chain from one symbol to another (`from` calls … calls
     /// `to`), if one exists — reachability with the route shown. Name-based.
@@ -677,8 +682,8 @@ fn main() -> ExitCode {
             examples,
             out,
         ),
-        Command::Callees { name, path, depth, resolved } => {
-            commands::cmd_callees(&cwd, &name, path.as_deref(), depth, resolved, out)
+        Command::Callees { name, path, depth, resolved, examples } => {
+            commands::cmd_callees(&cwd, &name, path.as_deref(), depth, resolved, examples, out)
         }
         Command::Path {
             from,

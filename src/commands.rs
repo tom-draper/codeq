@@ -670,6 +670,18 @@ struct Callee {
     /// graph (only set under `--resolved`): same-file / imported.
     #[serde(skip_serializing_if = "Option::is_none")]
     via: Option<String>,
+    /// The call as actually written inside the caller — `subprocess.run`, not
+    /// `run` (only under `--examples`). The single most useful thing for spotting
+    /// a name-based over-match: `about codeq_commit` listed four unrelated `run`
+    /// definitions as callees, and the body calls `subprocess.run`. You had to
+    /// already suspect the answer to reach for `--resolved`; this shows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call: Option<String>,
+    /// Line of that call site, in the *caller's* file (only under `--examples`).
+    /// `path`/`line` stay on the callee's definition — that is what `callees` is
+    /// for; this is the evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call_line: Option<i64>,
 }
 
 /// Definitions referenced by name inside `name`'s body — its (textual) callees.
@@ -681,6 +693,7 @@ fn callees_of(
     name: &str,
     path: Option<&str>,
     resolved: bool,
+    examples: bool,
 ) -> Result<Vec<Callee>> {
     let targets: Vec<(String, usize, usize)> = {
         let mut sql = String::from(
@@ -706,15 +719,28 @@ fn callees_of(
         return Ok(Vec::new());
     }
 
-    let mut idents: HashSet<String> = HashSet::new();
+    // Call sites inside the target body/bodies, keyed by the called name. Under
+    // `--examples` each also carries the expression as written and the line it
+    // sits on, resolved here while the body is in hand.
+    let mut idents: HashMap<String, CallSite> = HashMap::new();
+    let mut sites: HashMap<String, (String, i64)> = HashMap::new();
     {
         let mut body_stmt = s.db.conn.prepare("SELECT body FROM content_fts WHERE path = ?1")?;
-        for (path, sb, eb) in &targets {
-            let body: Option<String> = body_stmt.query_row([path], |r| r.get(0)).ok();
-            if let Some(b) = body {
-                if let Some(slice) = b.get(*sb..(*eb).min(b.len())) {
-                    collect_idents(slice, &mut idents);
-                }
+        for (tpath, sb, eb) in &targets {
+            let body: Option<String> = body_stmt.query_row([tpath], |r| r.get(0)).ok();
+            let Some(b) = body else { continue };
+            let Some(slice) = b.get(*sb..(*eb).min(b.len())) else { continue };
+            let before = idents.len();
+            collect_idents(slice, &mut idents);
+            if !examples || idents.len() == before {
+                continue;
+            }
+            // Line of each newly-found call, counted once per target body.
+            let line_of = |off: usize| b[..(*sb + off).min(b.len())].bytes().filter(|c| *c == b'\n').count() as i64 + 1;
+            for (called, site) in idents.iter() {
+                sites
+                    .entry(called.clone())
+                    .or_insert_with(|| (site.expr.clone(), line_of(site.offset)));
             }
         }
     }
@@ -725,7 +751,7 @@ fn callees_of(
 
     // Look up only the referenced names via the facts(name) index, in chunks to
     // stay under SQLite's bound-parameter limit — instead of scanning every fact.
-    let ident_list: Vec<&String> = idents.iter().collect();
+    let ident_list: Vec<&String> = idents.keys().collect();
     let mut seen: HashSet<(String, String, i64)> = HashSet::new();
     let mut out = Vec::new();
     for chunk in ident_list.chunks(500) {
@@ -748,12 +774,15 @@ fn callees_of(
         for row in rows {
             let (n, k, p, l) = row?;
             if n != name && seen.insert((n.clone(), p.clone(), l)) {
+                let site = sites.get(&n);
                 out.push(Callee {
                     name: n,
                     kind: k,
                     path: p,
                     line: l,
                     via: None,
+                    call: site.map(|(e, _)| e.clone()),
+                    call_line: site.map(|(_, l)| *l),
                 });
             }
         }
@@ -797,14 +826,26 @@ fn callees_of(
 /// main source of callee noise. Real callees are always called, so nothing that
 /// is genuinely a callee is lost. (Still name-based, not type-resolved: a std
 /// `.remove()` can't be told apart from a local `remove`.)
-fn collect_idents(text: &str, out: &mut HashSet<String>) {
+/// A call site found inside a caller's body.
+struct CallSite {
+    /// The call as written, including any receiver — `subprocess.run`.
+    expr: String,
+    /// Byte offset of the call within the slice it was found in.
+    offset: usize,
+}
+
+fn collect_idents(text: &str, out: &mut HashMap<String, CallSite>) {
     let chars: Vec<char> = text.chars().collect();
+    // Byte offset of each char, so a recorded site can be mapped back into the
+    // file; `chars` indices are not byte offsets once any non-ASCII appears.
+    let offsets: Vec<usize> = text.char_indices().map(|(b, _)| b).collect();
     let n = chars.len();
+    let is_word = |c: char| c == '_' || c.is_alphanumeric();
     let mut i = 0;
     while i < n {
-        if chars[i] == '_' || chars[i].is_alphanumeric() {
+        if is_word(chars[i]) {
             let start = i;
-            while i < n && (chars[i] == '_' || chars[i].is_alphanumeric()) {
+            while i < n && is_word(chars[i]) {
                 i += 1;
             }
             // Peek past whitespace for a '(' — the mark of a call.
@@ -813,7 +854,33 @@ fn collect_idents(text: &str, out: &mut HashSet<String>) {
                 j += 1;
             }
             if j < n && chars[j] == '(' && i - start >= 2 {
-                out.insert(chars[start..i].iter().collect());
+                let name: String = chars[start..i].iter().collect();
+                // Walk back over a `.` / `::` / `->` receiver so the recorded
+                // expression is what the source says. A bare `run` and a
+                // `subprocess.run` are indistinguishable otherwise, which is
+                // exactly the over-match `callees` gets blamed for.
+                let mut q = start;
+                loop {
+                    let sep = if q >= 2 && chars[q - 1] == ':' && chars[q - 2] == ':' {
+                        2
+                    } else if q >= 2 && chars[q - 1] == '>' && chars[q - 2] == '-' {
+                        2
+                    } else if q >= 1 && chars[q - 1] == '.' {
+                        1
+                    } else {
+                        break;
+                    };
+                    let mut k = q - sep;
+                    while k > 0 && is_word(chars[k - 1]) {
+                        k -= 1;
+                    }
+                    if k == q - sep {
+                        break; // separator with no identifier before it
+                    }
+                    q = k;
+                }
+                let expr: String = chars[q..i].iter().collect();
+                out.entry(name).or_insert(CallSite { expr, offset: offsets[start] });
             }
         } else {
             i += 1;
@@ -924,11 +991,12 @@ pub fn cmd_callees(
     path: Option<&str>,
     depth: usize,
     resolved: bool,
+    examples: bool,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
-        return s.emit(callees_of(&s, name, path, resolved)?);
+        return s.emit(callees_of(&s, name, path, resolved, examples)?);
     }
     // Breadth-first down the call tree by callee name.
     let mut reported: HashSet<(String, String)> = HashSet::new();
@@ -938,7 +1006,7 @@ pub fn cmd_callees(
     'walk: for d in 1..=depth {
         let mut next: Vec<String> = Vec::new();
         for sym in &frontier {
-            for c in callees_of(&s, sym, path, false)? {
+            for c in callees_of(&s, sym, path, false, false)? {
                 if !reported.insert((c.path.clone(), c.name.clone())) {
                     continue;
                 }
@@ -1032,7 +1100,7 @@ pub fn cmd_path(
         for node in &frontier {
             // Scope only the start symbol's callees; hops after it follow anywhere.
             let scope = if node.as_str() == from { path } else { None };
-            let mut callees = callees_of(&s, node, scope, false)?;
+            let mut callees = callees_of(&s, node, scope, false, false)?;
             callees.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)).then(a.line.cmp(&b.line)));
             for c in callees {
                 if !visited.insert(c.name.clone()) {
@@ -1120,7 +1188,7 @@ fn symbol_graph(
     Ok((
         definitions_of(s, name, path, 0)?,
         callers_of(s, name, None, false, None, false)?,
-        callees_of(s, name, path, false)?,
+        callees_of(s, name, path, false, false)?,
     ))
 }
 

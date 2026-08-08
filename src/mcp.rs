@@ -213,6 +213,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "depth", "--depth");
             flag(&mut args, a, "resolved", "--resolved");
+            flag(&mut args, a, "examples", "--examples");
         }
         "codeq_about" => {
             args.push("about".into());
@@ -435,8 +436,8 @@ fn tools() -> Value {
             "The distinct definitions that reference a symbol (its callers), with test sites flagged — what could break if you change it. Textual, not type-resolved. path restricts to callers in matching files. depth (default 1) walks transitively up the call tree, each result tagged with its hop distance. Precision filters (direct callers only): resolved=true prunes callers whose file can't reach a definition through imports; calls=true keeps only call sites NAME(); on='RECV' keeps only calls qualified by that receiver/type (RECV.NAME / RECV::NAME) to disambiguate a common method name. examples=true surfaces the actual call expression at each site (one representative per caller) — how the symbol is really invoked; for every call site use codeq_references with calls=true.",
             json!({ "name": str_, "path": str_, "depth": num_, "resolved": bool_, "calls": bool_, "on": str_, "examples": bool_ }), &["name"]),
         tool("codeq_callees",
-            "The definitions referenced by name inside a symbol's body (its callees) — what it depends on. Already call-position only (a bare mention isn't a callee). path scopes to the symbol's definition(s). depth (default 1) walks transitively down the call tree. resolved=true (direct callees only) keeps only callees whose definition file the symbol's own file can reach through imports, pruning unrelated same-named definitions in unreachable files.",
-            json!({ "name": str_, "path": str_, "depth": num_, "resolved": bool_ }), &["name"]),
+            "The definitions referenced by name inside a symbol's body (its callees) — what it depends on. Already call-position only (a bare mention isn't a callee). path scopes to the symbol's definition(s). depth (default 1) walks transitively down the call tree. resolved=true (direct callees only) keeps only callees whose definition file the symbol's own file can reach through imports, pruning unrelated same-named definitions in unreachable files. examples=true adds `call` — the call as written, with its receiver (`subprocess.run`, not `run`) — and `call_line`; use it to see at a glance whether a row is a real callee or a name collision, since a module-qualified call is attributed to every definition sharing the bare name.",
+            json!({ "name": str_, "path": str_, "depth": num_, "resolved": bool_, "examples": bool_ }), &["name"]),
         tool("codeq_about",
             "One-call dossier before editing a symbol, WITHOUT source: its definition(s) with signature and doc comment, its callers (who breaks, with test call sites flagged), and its callees (what it depends on). Replaces several separate lookups. path scopes the definition and callees to matching files to disambiguate a common name. Same neighbourhood as codeq_explore, which adds the verbatim source but trims the per-node metadata — reach for codeq_explore when you intend to change the code, and this when you want the metadata or a cheap 'where does this live'.",
             json!({ "name": str_, "path": str_ }), &["name"]),

@@ -115,8 +115,15 @@ refresh the index — every command auto-refreshes changed files first.
     `s`, not `Session` — so use `--calls` there instead.
   - `--resolved` — drops occurrences whose file can't reach a definition of NAME via imports.
 - **`callees` is already call-only** (a bare mention isn't a callee), so it needs no
-  `--calls`. It does take `--resolved`, which keeps only callees whose definition file
+  `--calls`. Add `--examples` to see the call as written with its receiver
+  (`subprocess.run`, not `run`) — the quickest way to tell a real callee from a
+  name collision. It does take `--resolved`, which keeps only callees whose definition file
   the symbol's own file can reach via imports — pruning unrelated same-named defs (a
   common `new`/`open` matching every same-named definition repo-wide).
 - **Trim output tokens** with `--fields name,path,line`.
 - Default output is text; use `--json` only when you need to parse it programmatically.
+
+## Excluding files
+codeq honours `.gitignore`/`.ignore` and a `.codeqignore` for committed-but-not-code
+trees (data, fixtures, generated assets). Gitignore syntax; note that `!keep.json`
+cannot re-include a file under an excluded `data/` — exclude `data/*.json` instead.

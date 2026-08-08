@@ -170,9 +170,18 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     // (re)processing — unchanged files short-circuit on the stat fast path.
     let now = now_ns();
     let mut work: Vec<(String, PathBuf, i64, i64, i64)> = Vec::new();
-    let walker = WalkBuilder::new(repo_root)
-        .standard_filters(true) // .gitignore, .ignore, hidden, parents
-        .build();
+    let mut wb = WalkBuilder::new(repo_root);
+    wb.standard_filters(true); // .gitignore, .ignore, hidden, parents
+    // `.codeqignore` — for trees that are *committed* but not code. Respecting
+    // .gitignore is not enough on a data-heavy repo: an external user reported
+    // ~2,100 files landing in the index as `(unknown)`, and every one of them was
+    // tracked, so nothing gitignore-based could ever have excluded them. Takes
+    // precedence over .gitignore (the `ignore` crate orders custom files highest).
+    // Gitignore semantics otherwise, including the sharp edge: `!data/keep.json`
+    // cannot resurrect a file under an excluded `data/`, because the walk never
+    // descends — exclude `data/*.json` instead if you need to re-include one.
+    wb.add_custom_ignore_filename(".codeqignore");
+    let walker = wb.build();
     for dent in walker {
         let dent = match dent {
             Ok(d) => d,
@@ -195,7 +204,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             // Ignore files change which paths get indexed, but they're hidden
             // (never walked), so an in-place `.gitignore`/`.ignore` edit bumps
             // no cached mtime — track them here or freshness would miss it.
-            for ig in [".gitignore", ".ignore"] {
+            for ig in [".gitignore", ".ignore", ".codeqignore"] {
                 if let Some(m) = std::fs::metadata(abs.join(ig)).ok().as_ref().and_then(mtime_ns_of) {
                     let key = if rel.is_empty() { ig.to_string() } else { format!("{rel}/{ig}") };
                     dirs_seen.insert(key, m);

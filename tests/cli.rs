@@ -2099,6 +2099,53 @@ fn unused_excludes_test_files_by_default() {
 }
 
 #[test]
+fn callees_examples_show_the_qualified_call_expression() {
+    // The motivating case: a module-qualified call is attributed by name, so
+    // `subprocess.run(...)` lists every definition named `run`. The row now says
+    // which expression produced it, so the over-match is visible without having
+    // to already suspect it and reach for --resolved.
+    let f = Fixture::new();
+    f.write("lib.py", "def run():\n    pass\n");
+    f.write(
+        "app.py",
+        "import subprocess\ndef go():\n    subprocess.run(['ls'])\n",
+    );
+
+    let plain = f.run(&["callees", "go"])["data"].as_array().unwrap().clone();
+    let run_row = plain.iter().find(|r| r["name"] == "run").expect("run is a callee");
+    assert!(run_row.get("call").is_none(), "call must be opt-in: {run_row:?}");
+
+    let ex = f.run(&["callees", "go", "--examples"])["data"].as_array().unwrap().clone();
+    let run_row = ex.iter().find(|r| r["name"] == "run").expect("run is a callee");
+    assert_eq!(run_row["call"].as_str(), Some("subprocess.run"), "{run_row:?}");
+    assert_eq!(run_row["call_line"].as_i64(), Some(3), "line in the caller's file");
+}
+
+#[test]
+fn codeqignore_excludes_committed_trees_gitignore_cannot() {
+    // Data committed to the repo is invisible to .gitignore by definition, so a
+    // data-heavy repo had no way to keep it out of the index.
+    let f = Fixture::new();
+    f.write("src.rs", "fn keep() {}\n");
+    f.write("data/a.json", "{\"a\":1}\n");
+    f.write("data/b.json", "{\"b\":2}\n");
+    assert_eq!(f.run(&["files"])["data"].as_array().unwrap().len(), 3);
+
+    f.write(".codeqignore", "data/\n");
+    let after = field_set(&f.run(&["files"]), "path");
+    assert!(after.contains(&"src.rs".to_string()), "code must survive: {after:?}");
+    assert!(!after.iter().any(|p| p.starts_with("data/")), "data not excluded: {after:?}");
+
+    // Negation works against a file pattern. It does NOT resurrect a file whose
+    // parent directory was excluded (`data/`) — the walker never descends, exactly
+    // as git behaves — so the pattern has to exclude files, not the directory.
+    f.write(".codeqignore", "data/*.json\n!data/b.json\n");
+    let back = field_set(&f.run(&["files"]), "path");
+    assert!(back.contains(&"data/b.json".to_string()), "negation ignored: {back:?}");
+    assert!(!back.contains(&"data/a.json".to_string()), "{back:?}");
+}
+
+#[test]
 fn hotspots_ranks_by_reference_count_and_is_one_row_per_name() {
     let f = Fixture::new();
     f.write(
