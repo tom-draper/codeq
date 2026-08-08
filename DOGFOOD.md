@@ -4,6 +4,91 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-08 — `tree`, `callees --examples`, `.codeqignore`, and a refactor I talked myself out of
+
+### `tree` — the orientation gap `map` couldn't reach
+
+`map` groups by *top-level* directory. On a nested repo that is close to useless:
+on `persona` it reports one row, `src files=2677 symbols=58`, which hides both
+where the code is and where the bulk is. `stats` gives totals, `files` gives a flat
+list. Nothing showed shape.
+
+`codeq tree` reports the directory hierarchy folded to `--depth`, with each
+directory's file and symbol counts aggregated from *everything below it*, so
+folding summarises instead of truncating. On persona, eight lines:
+
+```
+src/persona/api:     files=3    symbols=15
+src/persona/data:    files=2667 symbols=0   dirs=194
+src/persona/lib:     files=3    symbols=30
+src/persona/scripts: files=2    symbols=9
+```
+
+That is the whole story of the repo — all 54 symbols live in 8 files, and 2,667
+files hold no code at all. `--min-symbols 1` drops the data tree entirely: 386
+bytes against 44 KB for `find . -type d`, and unlike `find` it answers the question
+rather than listing paths.
+
+Deliberately not an ASCII `tree` clone. A plain hierarchy would be *worse* than
+`ls -R` for an agent. The three things that make it worth having are the three
+things `tree(1)` can't do: it is ignore-aware by construction (no `node_modules`
+noise), it counts symbols rather than files, and its output is bounded by depth
+rather than by repo size.
+
+### `callees --examples`
+
+The gap recorded last round. `callees` reports what a symbol calls, name-based, so
+`subprocess.run(...)` is attributed to every definition named `run` in the repo —
+four of them here. `--resolved` fixed it, but only if you already suspected the
+answer was wrong. Now `--examples` shows the call *as written*, receiver included:
+
+```
+bench/bench.py:23: function run call=subprocess.run call_line=106
+```
+
+Four rows, one obvious cause. The over-match no longer needs to be suspected to be
+seen — which is the difference between a limitation and a trap.
+
+### `.codeqignore`
+
+The external report asked for this and mis-diagnosed it (see below); the fix is
+real regardless. `.gitignore` cannot exclude *committed* data, and data-heavy repos
+commit their data. Custom ignore file, gitignore syntax, highest precedence,
+picked up on the next query with no reindex step — the freshness tracker already
+watched `.gitignore`/`.ignore` mtimes, so it was one entry in that array.
+
+One sharp edge worth knowing, inherited from git and confirmed by a failing test I
+had written wrong: `!data/keep.json` will *not* resurrect a file under an excluded
+`data/`, because the walk never descends. Exclude `data/*.json` instead.
+
+### The `commands.rs` refactor — measured, then declined
+
+I had claimed twice that `commands.rs` needed splitting, and that the real leverage
+was a query layer, citing "43 raw SQL statements here against 2 in `db.rs`". Before
+doing the work I measured what that number actually means:
+
+- **49 SELECT literals, but 37 distinct shapes.** Only about a dozen repeat, mostly
+  twice. The commands ask genuinely different questions. A "query layer" would have
+  been 37 pass-through functions — indirection wearing the costume of abstraction.
+- **The file's size costs 0.9s** on an incremental rebuild. The compile argument I
+  had implied does not exist.
+- Navigating 3,600 lines was never the bottleneck this session: `read --symbol` and
+  `outline` addressed it by name every time. codeq solving the problem is a reason
+  not to solve it again structurally.
+
+What *was* real: three query shapes duplicated verbatim — definition sites of one
+name (`callers`/`references`), all definition sites (`unused`/`hotspots`), and the
+file-path list (two dependency-graph helpers). Those are now `def_sites_of`,
+`for_each_def_site` and `all_file_paths`; 49 SELECT literals down to 46, and more
+importantly the pairs that could silently drift apart on a `kind <> 'import'`
+clause now can't.
+
+The 3,600-line split is left undone on purpose. It is a move-only diff that would
+degrade `git blame` on the file I have been actively debugging, in exchange for a
+benefit I could not measure. Recording it here as a decision rather than a backlog
+item: the argument I originally made for it was wrong, and finding that out cost
+one `python3` script.
+
 ## 2026-08-08 — closing the `persona` report: `hotspots`, `callpath`, and two naming pairs
 
 The remaining three items from the external report. Two were naming, one was a new
