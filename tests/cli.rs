@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 17);
+    assert_eq!(v["index"]["schema"], 22);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -228,6 +228,37 @@ fn capabilities_describes_the_tool() {
     let text = String::from_utf8_lossy(&f.raw(&["capabilities"]).stdout).into_owned();
     assert!(!text.contains("\"schema\""), "capabilities text mode dumped JSON: {text}");
     assert!(text.contains("# commands"), "capabilities text missing sections: {text}");
+}
+
+#[test]
+fn capabilities_lists_every_command_the_cli_accepts() {
+    // `commands` was hand-written and drifted nine commands behind the parser —
+    // `explore` among them, so the one command whose job is to say what codeq can
+    // do was hiding the tool an agent should reach for first. It is now derived
+    // from clap; this cross-checks it against the parser's own help so any future
+    // drift fails the build instead of quietly under-selling the tool.
+    let f = Fixture::new();
+    let listed = field_names(&f.run(&["capabilities"])["data"]["commands"]);
+
+    // Subcommands are the `^  <name>` rows of the help's Commands: block; any
+    // wrapped description line is indented further, so it can't be mistaken for one.
+    let help = String::from_utf8_lossy(&f.raw(&["--help"]).stdout).into_owned();
+    let accepted: Vec<String> = help
+        .lines()
+        .skip_while(|l| !l.starts_with("Commands:"))
+        .skip(1)
+        .take_while(|l| !l.starts_with("Options:"))
+        .filter(|l| l.starts_with("  ") && !l.starts_with("   "))
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|n| *n != "help") // clap's own, not a codeq capability
+        .map(str::to_string)
+        .collect();
+
+    assert!(accepted.len() > 20, "help parsing found too few commands: {accepted:?}");
+    for name in &accepted {
+        assert!(listed.contains(name), "capabilities omits `{name}`: {listed:?}");
+    }
+    assert_eq!(listed.len(), accepted.len(), "capabilities lists commands the CLI rejects");
 }
 
 // ---------------------------------------------------------------------------
@@ -803,6 +834,43 @@ fn callers_callees_and_about() {
 }
 
 #[test]
+fn callers_prefer_a_usage_site_over_an_import_as_the_anchor() {
+    let f = Fixture::new();
+    // A Svelte component's definition spans its whole file, so it encloses its
+    // own imports. Only one row survives per (file, enclosing symbol), so the
+    // import at line 2 and the `<Card />` at line 6 compete — and the import
+    // used to win by being first, hiding where the component is actually used.
+    f.write("Card.svelte", "<div><slot /></div>\n");
+    f.write(
+        "Page.svelte",
+        "<script>\n  import Card from './Card.svelte';\n</script>\n\n\
+         <main>\n  <Card />\n</main>\n",
+    );
+    let v = f.run(&["callers", "Card"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["path"], "Page.svelte");
+    assert_eq!(rows[0]["line"], 6, "anchor must be <Card />, not the import");
+
+    // But an import is still a valid last-resort anchor: the default `callers`
+    // is a textual superset (`--calls` is the way to narrow it), so a file that
+    // imports the name and never uses it stays listed.
+    f.write("lib.js", "export function helper() { return 1; }\n");
+    f.write(
+        "app.js",
+        "import { helper } from './lib';\n\nfunction run() {\n  return helper();\n}\n",
+    );
+    f.write("shelf.js", "import { helper } from './lib';\nexport const x = 1;\n");
+
+    let v = f.run(&["callers", "helper"]);
+    let rows = v["data"].as_array().unwrap();
+    let paths: Vec<&str> = rows.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    assert!(paths.contains(&"shelf.js"), "superset default lost a row: {paths:?}");
+    let run_row = rows.iter().find(|r| r["symbol"] == "run").expect("run caller");
+    assert_eq!(run_row["line"], 4);
+}
+
+#[test]
 fn callers_resolved_prunes_unreachable_and_tags_via() {
     let f = Fixture::new();
     f.write("def.rs", "pub fn target() {}\nfn self_caller() { target(); }\n");
@@ -915,6 +983,628 @@ fn explore_forces_focus_source_under_a_tight_budget() {
 }
 
 #[test]
+fn members_are_definitions_and_name_the_type_that_declares_them() {
+    // A member name alone identifies nothing — `id`, `name` and `retries` recur
+    // across unrelated types — so a field fact is only useful with its owner.
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct Config { pub retries: u32, name: String }\npub enum Mode { Fast, Slow }\n");
+    f.write("g.go", "type Server struct { Host string }\n");
+    f.write("t.ts", "export class Widget { public width: number = 1; private secret: string = \"s\"; }\n");
+    f.write("J.java", "class Account { private int balance; public String holder; }\n");
+
+    // The case that used to return nothing at all.
+    let v = f.run(&["definitions", "retries"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{v}");
+    assert_eq!(rows[0]["kind"], "field");
+    assert_eq!(rows[0]["owner"], "Config", "a field must name its type: {v}");
+
+    // Enum variants likewise.
+    let v = f.run(&["definitions", "Fast"]);
+    assert_eq!(v["data"][0]["kind"], "variant", "{v}");
+    assert_eq!(v["data"][0]["owner"], "Mode", "{v}");
+
+    // Extraction reaches the other grammars, and each owner is the *nearest*
+    // type rather than whatever else encloses it.
+    for (name, owner) in [("Host", "Server"), ("width", "Widget"), ("balance", "Account")] {
+        let v = f.run(&["definitions", name]);
+        assert_eq!(v["data"][0]["owner"], owner, "{name}: {v}");
+    }
+
+    // A member's own modifier decides its visibility. Before, a private field in
+    // an *exported* class inherited the class's visibility and showed up as API.
+    let api: Vec<String> = field_set(&f.run(&["api", "t.ts"]), "name");
+    assert!(api.contains(&"width".to_string()), "{api:?}");
+    assert!(!api.contains(&"secret".to_string()), "private field leaked into api: {api:?}");
+    let api: Vec<String> = field_set(&f.run(&["api", "J.java"]), "name");
+    assert!(api.contains(&"holder".to_string()) && !api.contains(&"balance".to_string()), "{api:?}");
+
+    // Non-members must not sprout an owner.
+    let v = f.run(&["definitions", "Config"]);
+    assert!(v["data"][0]["owner"].is_null(), "a type has no owner: {v}");
+}
+
+#[test]
+fn clones_are_exact_structural_matches_not_a_similarity_score() {
+    let f = Fixture::new();
+    // Same shape, different names *and* different literals: a type-2 clone.
+    f.write(
+        "a.rs",
+        "pub fn total(items: &[i32]) -> i32 {\n    let mut acc = 0;\n    for it in items {\n        acc += it * 2;\n    }\n    acc\n}\n\
+         pub fn weight(rows: &[i32]) -> i32 {\n    let mut sum = 0;\n    for r in rows {\n        sum += r * 3;\n    }\n    sum\n}\n",
+    );
+    // Structurally different: an `if` where the others have none.
+    f.write(
+        "b.rs",
+        "pub fn other(xs: &[i32]) -> i32 {\n    let mut acc = 0;\n    for x in xs {\n        if *x > 0 {\n            acc += x;\n        }\n    }\n    acc\n}\n",
+    );
+
+    let v = f.run(&["clones", "--min-nodes", "10"]);
+    let rows = v["data"].as_array().unwrap();
+    let names: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"total") && names.contains(&"weight"), "{v}");
+    assert!(!names.contains(&"other"), "a different shape is not a clone: {v}");
+    // Every row in a group carries the same shape and the group size.
+    assert_eq!(rows[0]["shape"], rows[1]["shape"]);
+    assert_eq!(rows[0]["group"], 2);
+
+    // `min_nodes` filters by how much code is involved; it does not rank.
+    let big = f.run(&["clones", "--min-nodes", "10000"]);
+    assert!(big["data"].as_array().unwrap().is_empty(), "{big}");
+
+    // Trivial definitions share a shape truthfully but uselessly, so they carry
+    // none at all and can never form a group.
+    f.write("c.rs", "pub fn a() {}\npub fn b() {}\n");
+    let v = f.run(&["clones", "--min-nodes", "1"]);
+    let names: Vec<&str> = v["data"].as_array().unwrap().iter()
+        .map(|r| r["name"].as_str().unwrap()).collect();
+    assert!(!names.contains(&"a"), "empty fns must not be reported: {names:?}");
+}
+
+#[test]
+fn members_extract_for_zig_solidity_dart_and_scala() {
+    let f = Fixture::new();
+    // Zig binds a type to a name rather than declaring it with one, so the
+    // struct is anonymous and `Point` sits on the enclosing declaration — every
+    // field was ownerless, and therefore dropped, until the owner lookup
+    // followed that binding.
+    f.write("z.zig", "const Point = struct { x: i32, y: i32 };\n");
+    f.write("W.sol", "contract Wallet {\n  uint256 public balance;\n  enum State { Open, Closed }\n}\n");
+    f.write("d.dart", "class Widget {\n  int size = 1;\n}\nenum Mode { fast, slow }\n");
+    f.write("s.scala", "class Server {\n  val port: Int = 80\n  var live: Boolean = true\n}\n");
+
+    for (name, owner) in [
+        ("x", "Point"), ("balance", "Wallet"), ("size", "Widget"),
+        ("port", "Server"), ("live", "Server"),
+    ] {
+        let v = f.run(&["definitions", name]);
+        assert_eq!(v["data"][0]["owner"], owner, "{name}: {v}");
+    }
+    for (name, owner) in [("Open", "State"), ("fast", "Mode")] {
+        let v = f.run(&["definitions", name]);
+        assert_eq!(v["data"][0]["owner"], owner, "{name}: {v}");
+        assert_eq!(v["data"][0]["kind"], "variant", "{name}: {v}");
+    }
+}
+
+#[test]
+fn deps_resolves_an_import_that_names_a_directory() {
+    // Most imports name a *directory*, not a file — `./utils` means
+    // `utils/index.js`, `from pkg import x` means `pkg/__init__.py` — and stem
+    // matching alone never resolved any of them, so the dependency graph silently
+    // missed the dominant idiom in its two largest ecosystems.
+    let f = Fixture::new();
+    f.write("app.js", "import { helper } from './utils';\nexport function run() { return helper(); }\n");
+    f.write("utils/index.js", "export function helper() { return 1 }\n");
+    f.write("main.py", "from pkg import thing\n");
+    f.write("pkg/__init__.py", "def thing(): pass\n");
+    // An ordinary file import must keep working.
+    f.write("b.js", "import { x } from './plain';\n");
+    f.write("plain.js", "export const x = 1;\n");
+
+    let deps = field_set(&f.run(&["deps", "app.js"]), "path");
+    assert!(deps.contains(&"utils/index.js".to_string()), "{deps:?}");
+    let deps = field_set(&f.run(&["deps", "main.py"]), "path");
+    assert!(deps.contains(&"pkg/__init__.py".to_string()), "{deps:?}");
+    let deps = field_set(&f.run(&["deps", "b.js"]), "path");
+    assert!(deps.contains(&"plain.js".to_string()), "direct file import broke: {deps:?}");
+}
+
+#[test]
+fn symbols_can_be_filtered_by_the_type_that_owns_them() {
+    // Members are only addressable together with their type, so the owner has to
+    // be queryable — otherwise "what does this type hold?" means fetching every
+    // field in the repository and filtering by hand.
+    let f = Fixture::new();
+    f.write("a.rs", "pub struct Config { pub retries: u32, pub name: String }\npub struct Other { pub retries: u32 }\n");
+
+    let mine = field_set(&f.run(&["symbols", "--owner", "Config", "--limit", "0"]), "name");
+    assert_eq!(mine.len(), 2, "{mine:?}");
+    assert!(mine.contains(&"retries".to_string()) && mine.contains(&"name".to_string()), "{mine:?}");
+
+    // The same name under a different type is a different member.
+    let v = f.run(&["symbols", "--owner", "Other", "--limit", "0"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{v}");
+    assert_eq!(rows[0]["name"], "retries");
+}
+
+#[test]
+fn graphql_implements_is_a_type_relation() {
+    // `implements_interfaces` nests left-recursively rather than listing siblings,
+    // so a single pattern bound only the outermost interface.
+    let f = Fixture::new();
+    f.write(
+        "s.graphql",
+        "interface A { id: ID! }\ninterface B { id: ID! }\ninterface C { id: ID! }\n\
+         type User implements A & B & C { id: ID! }\ntype Post implements A { id: ID! }\n",
+    );
+    let supers = field_set(&f.run(&["supertypes", "User"]), "supertype");
+    assert_eq!(supers, vec!["A", "B", "C"], "every interface, not just the last: {supers:?}");
+    let impls = field_set(&f.run(&["implementors", "A"]), "subtype");
+    assert!(impls.contains(&"User".to_string()) && impls.contains(&"Post".to_string()), "{impls:?}");
+}
+
+#[test]
+fn calls_filter_recognises_markup_instantiation() {
+    // `--calls` tested for `Name(`, which a component is never spelled with — so
+    // it returned nothing for a component that is plainly used.
+    let f = Fixture::new();
+    f.write("Btn.svelte", "<script>export let label = 'x'</script>\n<button>{label}</button>\n");
+    f.write(
+        "Page.svelte",
+        "<script>\n  import Btn from './Btn.svelte';\n  // Btn is mentioned here\n  const x = Btn;\n</script>\n<Btn />\n",
+    );
+    let v = f.run(&["references", "Btn", "--calls"]);
+    let refs = v["data"]["references"].as_array().unwrap();
+    assert_eq!(refs.len(), 1, "only the instantiation counts: {v}");
+    assert_eq!(refs[0]["line"], 6, "{v}");
+    // The import, the comment and the assignment are all mentions, not uses.
+    assert!(f.run(&["callers", "Btn", "--calls"])["data"].as_array().unwrap().len() == 1);
+}
+
+#[test]
+fn unused_ignores_definitions_that_exist_to_be_consumed_elsewhere() {
+    // A GraphQL type or protobuf message is a contract for another codebase, so
+    // "nothing here references it" is its normal state, not a finding — reporting
+    // them buries the real hits.
+    let f = Fixture::new();
+    f.write("s.graphql", "type User { id: ID! }\n");
+    f.write("u.proto", "syntax = \"proto3\";\nmessage Order { string id = 1; }\n");
+    f.write("main.tf", "variable \"region\" { default = \"eu\" }\n\
+                        output \"url\" { value = var.region }\n\
+                        variable \"unused_var\" {}\n");
+    f.write("a.css", ".primary { color: red }\n.orphan { color: blue }\n");
+    f.write("page.html", "<div class=\"primary\">x</div>\n");
+
+    let dead = field_set(&f.run(&["unused"]), "name");
+    // Real dead code survives: nothing references these.
+    assert!(dead.contains(&"orphan".to_string()), "dead CSS class: {dead:?}");
+    assert!(dead.contains(&"unused_var".to_string()), "dead variable: {dead:?}");
+    // Contracts and externally-read values do not.
+    for quiet in ["User", "Order", "url", "primary", "region"] {
+        assert!(!dead.contains(&quiet.to_string()), "{quiet} should not be reported: {dead:?}");
+    }
+}
+
+#[test]
+fn hcl_blocks_are_named_by_their_last_label_and_owned_by_their_type() {
+    // A block's identity lives in its labels, and which label is the name depends
+    // on how many there are — so this cannot be a query, and a first attempt that
+    // tried produced two facts per resource and named the wrong one.
+    let f = Fixture::new();
+    f.write(
+        "main.tf",
+        "# infra\nterraform { required_version = \">= 1.0\" }\n\
+         \nvariable \"region\" { default = \"eu-west-1\" }\n\
+         \nlocals {\n  bucket_prefix = \"acme\"\n}\n\
+         \nresource \"aws_s3_bucket\" \"logs\" {\n  lifecycle { prevent_destroy = true }\n}\n\
+         \ndata \"aws_ami\" \"ubuntu\" { most_recent = true }\n\
+         \nmodule \"vpc\" {\n  source = \"./modules/vpc\"\n}\n\
+         \noutput \"arn\" { value = aws_s3_bucket.logs.arn }\n",
+    );
+
+    let by_name = |n: &str| -> Value {
+        let v = f.run(&["definitions", n]);
+        v["data"][0].clone()
+    };
+
+    // One label: the label names it, the keyword owns it.
+    assert_eq!(by_name("region")["kind"], "variable");
+    assert_eq!(by_name("region")["owner"], "variable");
+    // Two labels: the *last* names it, the first is its type.
+    let logs = by_name("logs");
+    assert_eq!(logs["kind"], "resource");
+    assert_eq!(logs["owner"], "aws_s3_bucket", "named by last label, owned by type: {logs}");
+    assert_eq!(by_name("ubuntu")["owner"], "aws_ami");
+    // `locals` declares one name per attribute, referenced as `local.x`.
+    assert_eq!(by_name("bucket_prefix")["owner"], "local");
+
+    // Unlabelled blocks have no identity: `terraform` and the nested `lifecycle`
+    // must not become definitions.
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    assert!(!syms.contains(&"terraform".to_string()), "{syms:?}");
+    assert!(!syms.contains(&"lifecycle".to_string()), "{syms:?}");
+
+    // A module's `source` is an import, so `importers` finds it.
+    let imports = field_set(&f.run(&["imports", "main.tf"]), "module");
+    assert_eq!(imports, vec!["./modules/vpc".to_string()], "only the source: {imports:?}");
+
+    // The naming rule exists so that reference sites resolve: Terraform writes
+    // `aws_s3_bucket.logs.arn`, and naming the block `logs` is what makes that
+    // findable — and it lands inside the `output` that uses it.
+    let v = f.run(&["references", "logs"]);
+    let refs = v["data"]["references"].as_array().unwrap();
+    let use_site = refs
+        .iter()
+        .find(|r| r["text"].as_str().unwrap_or_default().contains("aws_s3_bucket.logs.arn"))
+        .unwrap_or_else(|| panic!("no use site for the resource: {v}"));
+    assert_eq!(use_site["symbol"], "arn", "attributed to the enclosing output: {v}");
+    assert!(use_site["definition"].is_null(), "a use is not the declaration: {v}");
+}
+
+#[test]
+fn extracts_css_powershell_protobuf_and_graphql() {
+    let f = Fixture::new();
+    f.write("a.css", "/* theme */\n.primary { color: red }\n#hero { top: 0 }\n@keyframes fade { from { opacity: 0 } }\n");
+    f.write("s.ps1", "function Get-Thing {\n  return 1\n}\nclass Widget { [int] $Size }\n");
+    f.write(
+        "u.proto",
+        "syntax = \"proto3\";\nimport \"other.proto\";\nmessage User { string email = 1; }\n\
+         enum Role { ADMIN = 0; }\nservice Users { rpc GetUser (User) returns (User); }\n",
+    );
+    f.write("s.graphql", "type User { id: ID!\n  email: String }\nenum Role { ADMIN }\ninterface Node { id: ID! }\n");
+
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    for want in [
+        "primary", "hero", "fade",           // css selectors and keyframes
+        "Get-Thing", "Widget",               // powershell
+        "User", "Role", "Users", "GetUser",  // protobuf message/enum/service/rpc
+        "Node",                              // graphql interface
+    ] {
+        assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
+    }
+
+    // Members of a protobuf message and a GraphQL type carry their owner, so the
+    // grammars that spell the name out per construct (`message_name`) resolve too.
+    let v = f.run(&["definitions", "email"]);
+    let owners: Vec<&str> = v["data"].as_array().unwrap().iter()
+        .filter_map(|r| r["owner"].as_str()).collect();
+    assert_eq!(owners, ["User", "User"], "proto and graphql fields need owners: {v}");
+
+    // A protobuf import is a module string like any other.
+    let imports = field_set(&f.run(&["imports", "u.proto"]), "module");
+    assert!(imports.contains(&"other.proto".to_string()), "{imports:?}");
+
+    // Spans: CSS comments are classified, which is what closes the `<style>` hole
+    // in Svelte and Vue components.
+    let count = |needle: &str, kind: &str| -> i64 {
+        f.run(&["search", needle, "--in", kind, "-c"])["data"]["counts"]
+            .as_array().unwrap().iter().map(|c| c["count"].as_i64().unwrap()).sum()
+    };
+    assert_eq!(count("theme", "comments"), 1);
+    assert_eq!(count("theme", "code"), 0);
+}
+
+#[test]
+fn python_attributes_are_members_despite_having_no_declaration_site() {
+    // Python declares an attribute by assigning it, so there is no single
+    // declaration to capture: the same attribute is assigned in whichever methods
+    // touch it, and an assignment through some *other* object is not a
+    // declaration at all.
+    let f = Fixture::new();
+    f.write(
+        "p.py",
+        "class Config:\n    DEFAULT = 3\n    timeout: float = 1.5\n\
+         \n    def __init__(self):\n        self.retries = 3\n\
+         \n    def reset(self):\n        self.retries = 0\n\
+         \ndef helper(other):\n    other.retries = 99\n",
+    );
+
+    let members = field_set(&f.run(&["symbols", "--kind", "field", "--limit", "0"]), "name");
+    for want in ["DEFAULT", "timeout", "retries"] {
+        assert!(members.contains(&want.to_string()), "missing {want}: {members:?}");
+    }
+
+    // Assigned in two methods, but it is one member — reported at the earliest.
+    let v = f.run(&["definitions", "retries"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "one member per (name, owner): {v}");
+    assert_eq!(rows[0]["start_line"], 6, "earliest declaration wins: {v}");
+    assert_eq!(rows[0]["owner"], "Config");
+
+    // `other.retries = 99` sits in a plain function: not self-qualified, and no
+    // enclosing type, so it is not a member.
+    assert!(
+        rows.iter().all(|r| r["start_line"] != 11),
+        "an assignment through another object is not a declaration: {v}"
+    );
+}
+
+#[test]
+fn an_unresolvable_compare_to_ref_says_so_plainly() {
+    // `--compare-to` defaults to `main`, so a repo whose trunk is `master` hits
+    // this on its first `changed`. Git's own wording for an unknown ref advises
+    // using `--` to separate paths from revisions, which points at the wrong
+    // problem entirely.
+    let f = Fixture::new();
+    f.write("a.rs", "fn target() {}\n");
+    f.git_init_commit();
+
+    let out = f.raw(&["changed", "--compare-to", "definitely-not-a-ref"]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no such git ref: 'definitely-not-a-ref'"), "{err}");
+    assert!(!err.contains("separate paths from revisions"), "git's misleading advice leaked: {err}");
+
+    // A ref that exists still works.
+    let ok = f.raw(&["changed", "--compare-to", "HEAD"]);
+    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+}
+
+#[test]
+fn concurrent_invocations_all_succeed() {
+    // Agents run codeq concurrently — parallel tool calls, or several agents on
+    // one checkout — and every invocation refreshes, so contention is the normal
+    // case. This used to fail outright: 10 of 12 returned "database is locked".
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    for i in 0..12 {
+        f.write(&format!("src/m{i}.rs"), &format!("pub fn f{i}() {{ let v = {i}; }}\n"));
+    }
+
+    // Cold: no index yet, so all twelve want to build one at the same time.
+    let spawn_all = |f: &Fixture| -> Vec<String> {
+        let kids: Vec<_> = (0..12)
+            .map(|_| {
+                PCommand::cargo_bin("codeq")
+                    .unwrap()
+                    .args(["--json", "symbols", "--limit", "0"])
+                    .current_dir(f.path())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
+        kids.into_iter()
+            .map(|k| {
+                let out = k.wait_with_output().unwrap();
+                assert!(
+                    out.status.success(),
+                    "concurrent invocation failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                String::from_utf8(out.stdout).unwrap()
+            })
+            .collect()
+    };
+
+    for body in spawn_all(&f) {
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["data"].as_array().unwrap().len(), 12, "cold: {body}");
+    }
+
+    // Warm, and then warm-after-an-edit: the other two shapes of contention.
+    for body in spawn_all(&f) {
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["data"].as_array().unwrap().len(), 12, "warm: {body}");
+    }
+    f.write("src/extra.rs", "pub fn extra() {}\n");
+    for body in spawn_all(&f) {
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["data"].as_array().unwrap().len(), 13, "after edit: {body}");
+    }
+}
+
+#[test]
+fn fields_reports_names_that_matched_no_row() {
+    // Projecting an unknown name silently yielded a narrower row, which reads as
+    // "this record has no such value" rather than "that isn't a field". `line` vs
+    // `start_line` is the easy wrong guess, since `search` rows do use `line`.
+    let f = Fixture::new();
+    f.write("a.rs", "fn target() {}\n");
+
+    let v = f.run(&["definitions", "target", "--fields", "path,line"]);
+    let notes = &v["notes"];
+    assert_eq!(notes["unmatched_fields"][0], "line", "{v}");
+    let avail: Vec<&str> = notes["available_fields"].as_array().unwrap().iter()
+        .map(|s| s.as_str().unwrap()).collect();
+    assert!(avail.contains(&"start_line"), "must name the real field: {avail:?}");
+    // The projection still happens — this is a note, not a failure.
+    assert_eq!(v["data"][0]["path"], "a.rs");
+
+    // A field that exists produces no note at all.
+    let ok = f.run(&["definitions", "target", "--fields", "path,start_line"]);
+    assert!(ok["notes"].is_null(), "clean projection must not be annotated: {ok}");
+}
+
+#[test]
+fn astgrep_rejects_a_pattern_it_could_only_partly_parse() {
+    // Error recovery discards what it can't use, and the descent past the ERROR
+    // lands on whatever fragment survived — so `if { }` silently became "an empty
+    // block". Reporting zero matches for that is indistinguishable from "no such
+    // code exists", which is the wrong answer to give an agent.
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() { let a = 1; }\nfn two() { one(); }\n");
+
+    for pat in ["if { }", "match { }", "garbage $$$", "let $X = ;"] {
+        let out = f.raw(&["astgrep", pat, "--language", "rust"]);
+        assert!(
+            !out.status.success(),
+            "malformed pattern {pat:?} reported success: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+    // Patterns that legitimately rely on error recovery still work: a bare
+    // expression is not a valid top-level item in Rust.
+    for (pat, want) in [("$X.unwrap()", 0usize), ("one($$$)", 1), ("fn $N($$$) { $$$ }", 2)] {
+        let v = f.run(&["astgrep", pat, "--language", "rust"]);
+        assert_eq!(
+            v["data"]["matches"].as_array().unwrap().len(), want,
+            "pattern {pat:?}: {v}"
+        );
+    }
+}
+
+#[test]
+fn offsets_stay_aligned_when_a_file_is_not_valid_utf8() {
+    // Fact offsets and the searchable body have to be measured in the same text.
+    // The body is decoded with invalid bytes replaced, and each replacement is
+    // three bytes where the original was one — so extracting facts from the raw
+    // bytes instead shifts every later offset and the enclosing-symbol lookup
+    // names the wrong definition (or none).
+    let f = Fixture::new();
+    let mut src: Vec<u8> = b"// ".to_vec();
+    src.extend(std::iter::repeat(0xE9u8).take(16)); // latin-1 'e-acute': invalid UTF-8
+    src.extend_from_slice(
+        b"\nfn alpha() { helper(); }\nfn bravo() { let b = 2; }\n\
+          fn charlie() { let c = 3; }\nfn helper() {}\n",
+    );
+    f.write_bytes("z.rs", &src);
+
+    // alpha is the caller; bravo merely sits after it in the file.
+    let callers = f.run(&["callers", "helper"]);
+    let rows = callers["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["symbol"], "alpha", "wrong enclosing definition: {rows:?}");
+
+    // `search` and `at` must agree about which definition line 2 belongs to.
+    let v = f.run(&["search", "helper"]);
+    let m = v["data"]["matches"].as_array().unwrap();
+    let call = m.iter().find(|r| r["line"] == 2).expect("match on line 2");
+    assert_eq!(call["symbol"], "alpha", "{call}");
+    let at = f.run(&["at", "z.rs:2"]);
+    assert_eq!(at["data"][0]["name"], "alpha", "{at}");
+}
+
+#[test]
+fn chunk_text_slices_the_same_text_the_offsets_were_measured_in() {
+    // The indexer strips a leading BOM before measuring offsets, so source
+    // assembly has to strip it too — slicing the raw bytes shifted every chunk
+    // by three and returned code starting mid-expression.
+    let f = Fixture::new();
+    f.write_bytes(
+        "b.rs",
+        "\u{feff}fn alpha() { helper(); }\nfn helper() {}\n".as_bytes(),
+    );
+    let d = f.run(&["explore", "alpha"]);
+    let src = d["data"]["source"].as_array().unwrap();
+    let focus = src.iter().find(|c| c["reason"] == "focus").expect("focus");
+    assert_eq!(
+        focus["text"].as_str().unwrap(),
+        "fn alpha() { helper(); }",
+        "BOM-shifted chunk: {focus}"
+    );
+    let callee = src.iter().find(|c| c["reason"] == "callee").expect("callee");
+    assert_eq!(callee["text"].as_str().unwrap(), "fn helper() {}", "{callee}");
+}
+
+#[test]
+fn refresh_sees_an_edit_that_preserves_size_and_mtime() {
+    // The freshness fast path skips a file whose stat looks unchanged. mtime is
+    // settable from userspace (`touch -d`, `cp -p`, `rsync -a`, tar extraction),
+    // so an edit of identical length could restore it and stay invisible —
+    // every later query would then answer from a stale index. ctime moves on any
+    // write and cannot be set, which is what makes the skip safe.
+    let f = Fixture::new();
+    f.write("x.rs", "pub fn aaaa() {}\n");
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    assert!(syms.contains(&"aaaa".to_string()), "{syms:?}");
+
+    let p = f.path().join("x.rs");
+    let before = std::fs::metadata(&p).unwrap();
+    let (atime, mtime) = (before.accessed().unwrap(), before.modified().unwrap());
+
+    // Same byte length, so only the content differs.
+    f.write("x.rs", "pub fn bbbb() {}\n");
+    assert_eq!(std::fs::metadata(&p).unwrap().len(), before.len());
+
+    // Put mtime back exactly as it was.
+    let h = std::fs::File::options().write(true).open(&p).unwrap();
+    h.set_times(
+        std::fs::FileTimes::new()
+            .set_accessed(atime)
+            .set_modified(mtime),
+    )
+    .unwrap();
+    assert_eq!(std::fs::metadata(&p).unwrap().modified().unwrap(), mtime);
+
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    assert!(
+        syms.contains(&"bbbb".to_string()),
+        "stale index: mtime-preserving edit went unnoticed, got {syms:?}"
+    );
+    assert!(!syms.contains(&"aaaa".to_string()), "old symbol lingered: {syms:?}");
+}
+
+#[test]
+fn explore_reduces_an_oversized_focus_instead_of_overrunning_the_budget() {
+    let f = Fixture::new();
+    // A focus far bigger than any budget we'll ask for. Its body is one long
+    // run of statements, so folding alone can't shrink it enough and the clip
+    // path has to engage.
+    let body = (0..400).map(|i| format!("    let v{i} = {i};\n")).collect::<String>();
+    f.write("a.rs", &format!("fn focus() {{\n{body}}}\n"));
+
+    for max in [20u64, 100, 400] {
+        let d = f.run(&["explore", "focus", "--max-tokens", &max.to_string()]);
+        let b = &d["data"]["budget"];
+        let used = b["used_tokens"].as_u64().unwrap();
+        assert!(
+            used <= max,
+            "--max-tokens {max} overrun: used {used} (budget must be a cap, not advice)"
+        );
+        // Reduced, not dropped: the focus is still there, tagged so a reader
+        // knows it is not the whole definition.
+        let src = d["data"]["source"].as_array().unwrap();
+        let focus = src.iter().find(|c| c["reason"] == "focus").expect("focus kept");
+        assert!(focus["reduced"].is_string(), "reduction must be declared: {focus}");
+        assert!(
+            focus["text"].as_str().unwrap().contains('⋮'),
+            "hidden lines must be marked: {focus}"
+        );
+    }
+
+    // A focus that fits is untouched — no marker, no `reduced` tag.
+    f.write("b.rs", "fn small() { let x = 1; }\n");
+    let d = f.run(&["explore", "small", "--max-tokens", "2000"]);
+    let src = d["data"]["source"].as_array().unwrap();
+    let focus = src.iter().find(|c| c["reason"] == "focus").unwrap();
+    assert!(focus["reduced"].is_null(), "a fitting focus must stay verbatim: {focus}");
+}
+
+#[test]
+fn explore_does_not_emit_source_already_inside_another_chunk() {
+    let f = Fixture::new();
+    // A class whose definition spans its methods: exploring it used to emit the
+    // whole class *and* each method again, paying twice for the same bytes.
+    f.write(
+        "svc.py",
+        "class Service:\n    def run(self):\n        return self.helper() + 1\n\n\
+             def helper(self):\n        return 41\n",
+    );
+    let d = f.run(&["explore", "Service", "--max-tokens", "4000"]);
+    let src = d["data"]["source"].as_array().unwrap();
+
+    for (i, b) in src.iter().enumerate() {
+        for (j, o) in src.iter().enumerate() {
+            if i == j || b["path"] != o["path"] || !o["reduced"].is_null() {
+                continue;
+            }
+            let (bs, be) = (b["start_byte"].as_u64().unwrap(), b["end_byte"].as_u64().unwrap());
+            let (os, oe) = (o["start_byte"].as_u64().unwrap(), o["end_byte"].as_u64().unwrap());
+            assert!(
+                !(os <= bs && be <= oe && (oe - os) > (be - bs)),
+                "{} is already inside {}, emitting both wastes budget",
+                b["symbol"], o["symbol"]
+            );
+        }
+    }
+}
+
+#[test]
 fn affected_reports_changed_blast_radius_and_test_files() {
     let f = Fixture::new();
     // core <- mid <- a test that only reaches core transitively (through mid).
@@ -997,6 +1687,140 @@ fn extracts_definitions_for_dart_zig_elixir_solidity() {
     f.write("I.sol", "import \"./Token.sol\";\ncontract C {}\n");
     let imports = field_set(&f.run(&["imports", "I.sol"]), "module");
     assert!(imports.contains(&"./Token.sol".to_string()), "{imports:?}");
+}
+
+#[test]
+fn extracts_svelte_components_scripts_and_snippets() {
+    let f = Fixture::new();
+    f.write(
+        "src/Button.svelte",
+        "<script lang=\"ts\">\n  import { formatLabel } from './labels';\n\n  \
+         interface Payload { at: number }\n\n  \
+         // fire upward\n  \
+         function handleClick(): Payload {\n    return { at: Date.now() };\n  }\n\n  \
+         const pretty = (s: string) => formatLabel(s);\n</script>\n\n\
+         <!-- markup comment -->\n\
+         <button class=\"primary\" on:click={handleClick}>{pretty('x')}</button>\n\n\
+         {#snippet badge(count)}\n  <span>{count}</span>\n{/snippet}\n\n\
+         <style>\n  .primary { color: red; }\n</style>\n",
+    );
+    f.write("src/labels.js", "export function formatLabel(s) {\n  return s;\n}\n");
+    // A SvelteKit route: convention-loaded, so it gets no component fact — but
+    // its script is still extracted.
+    f.write(
+        "src/routes/+page.svelte",
+        "<script>\n  import Button from '../Button.svelte';\n  function bump() {}\n</script>\n\n\
+         <Button on:click={bump} />\n",
+    );
+
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    // The file itself is the component; `lang=\"ts\"` routes the script to the
+    // TypeScript grammar (hence `interface`); snippets come from the markup.
+    for want in ["Button", "handleClick", "pretty", "Payload", "badge", "bump"] {
+        assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
+    }
+    assert!(!syms.contains(&"+page".to_string()), "route file: {syms:?}");
+
+    // Positions are the *file's*, not the script block's: line 7 of the file.
+    let def = &f.run(&["definitions", "handleClick"])["data"][0];
+    assert_eq!(def["start_line"], 7, "{def}");
+    assert_eq!(def["path"], "src/Button.svelte");
+
+    // The call graph crosses the component boundary in both directions.
+    let callees = field_set(&f.run(&["callees", "pretty"]), "path");
+    assert!(callees.contains(&"src/labels.js".to_string()), "{callees:?}");
+    let v = f.run(&["references", "Button"]);
+    let refs = v["data"]["references"].as_array().unwrap();
+    // Both the import and the `<Button …/>` markup usage.
+    assert_eq!(refs.len(), 2, "{refs:?}");
+    assert!(
+        refs.iter().all(|r| r["path"] == "src/routes/+page.svelte"),
+        "{refs:?}"
+    );
+
+    // Imports are captured, so the dependency graph resolves `.svelte` files.
+    let imports = field_set(&f.run(&["imports", "src/Button.svelte"]), "module");
+    assert!(imports.contains(&"./labels".to_string()), "{imports:?}");
+    let deps = field_set(&f.run(&["deps", "src/routes/+page.svelte"]), "path");
+    assert!(deps.contains(&"src/Button.svelte".to_string()), "{deps:?}");
+
+    // Spans: markup comments and script comments are both classified, and a
+    // literal attribute value counts as a string.
+    let count = |needle: &str, kind: &str| -> i64 {
+        f.run(&["search", needle, "--in", kind, "-c"])["data"]["counts"]
+            .as_array().unwrap().iter()
+            .map(|c| c["count"].as_i64().unwrap())
+            .sum()
+    };
+    assert_eq!(count("markup comment", "comments"), 1);
+    assert_eq!(count("fire upward", "comments"), 1); // from the nested TS pass
+    assert_eq!(count("fire upward", "code"), 0);
+    assert_eq!(count("primary", "strings"), 1);
+}
+
+#[test]
+fn extracts_vue_single_file_components() {
+    let f = Fixture::new();
+    f.write("lib/labels.ts", "export function fmt(s: string) {\n  return s\n}\n");
+    // `<script setup lang="ts">` plus a template that binds a handler.
+    f.write(
+        "Button.vue",
+        "<script setup lang=\"ts\">\nimport { fmt } from './lib/labels'\n\n\
+         interface Props { label: string }\n\n\
+         // bump it\n\
+         function handleClick() {\n  return fmt('x')\n}\n</script>\n\n\
+         <template>\n  <!-- markup note -->\n  \
+         <button class=\"primary\" @click=\"handleClick\">go</button>\n</template>\n\n\
+         <style scoped>\n.primary { color: red }\n</style>\n",
+    );
+    // Two script blocks (`<script>` + `<script setup>`) are both extracted.
+    f.write(
+        "App.vue",
+        "<script>\nexport default { name: 'App' }\n</script>\n\n\
+         <script setup>\nimport Button from './Button.vue'\n\
+         function onChange(n) { return n }\n</script>\n\n\
+         <template>\n  <Button @change=\"onChange\" />\n</template>\n",
+    );
+
+    let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    for want in ["Button", "App", "handleClick", "Props", "onChange"] {
+        assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
+    }
+
+    // Positions are the file's: handleClick sits on line 7, not line 4 of the block.
+    let def = &f.run(&["definitions", "handleClick"])["data"][0];
+    assert_eq!(def["start_line"], 7, "{def}");
+
+    // A template binding is *code*, so the call graph sees it. Vue quotes its
+    // directive values (`@click="handleClick"`), which must not be classified as
+    // strings or callers/callees go blind to every handler a template binds.
+    let v = f.run(&["callers", "handleClick"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "template binding not seen as code: {rows:?}");
+    assert_eq!(rows[0]["path"], "Button.vue");
+    // A plain attribute value stays a string, though.
+    let count = |needle: &str, kind: &str| -> i64 {
+        f.run(&["search", needle, "--in", kind, "-c"])["data"]["counts"]
+            .as_array().unwrap().iter()
+            .map(|c| c["count"].as_i64().unwrap())
+            .sum()
+    };
+    assert_eq!(count("primary", "strings"), 1, "class=\"primary\" is a string");
+    assert_eq!(count("handleClick", "strings"), 0, "directive value is not a string");
+    assert_eq!(count("markup note", "comments"), 1);
+    assert_eq!(count("bump it", "comments"), 1); // from the nested TS pass
+
+    // Component usage anchors at the `<Button …/>`, not the import above it.
+    let v = f.run(&["callers", "Button"]);
+    let rows = v["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["line"], 11, "anchor must be <Button />, not the import");
+
+    // Cross-file graph and dependency resolution both work through the SFC.
+    let callees = field_set(&f.run(&["callees", "handleClick"]), "path");
+    assert!(callees.contains(&"lib/labels.ts".to_string()), "{callees:?}");
+    let deps = field_set(&f.run(&["deps", "App.vue"]), "path");
+    assert!(deps.contains(&"Button.vue".to_string()), "{deps:?}");
 }
 
 #[test]
@@ -1273,6 +2097,188 @@ fn unused_excludes_test_files_by_default() {
     // --include-tests brings it in.
     let inc = field_set(&f.run(&["unused", "--include-tests"]), "name");
     assert!(inc.contains(&"a_test_case".to_string()), "{inc:?}");
+}
+
+#[test]
+fn tree_reports_shape_with_counts_aggregated_from_below() {
+    let f = Fixture::new();
+    f.write("src/app/main.rs", "fn a() {}\nfn b() {}\n");
+    f.write("src/app/deep/util.rs", "fn c() {}\n");
+    f.write("data/x.json", "{}\n");
+    f.write("data/y.json", "{}\n");
+
+    let rows = f.run(&["tree"])["data"].as_array().unwrap().clone();
+    let row = |p: &str| {
+        rows.iter().find(|r| r["path"] == p).unwrap_or_else(|| panic!("no {p}: {rows:?}")).clone()
+    };
+
+    // A parent counts everything beneath it, not just its own children.
+    assert_eq!(row("src")["files"].as_i64(), Some(2), "{rows:?}");
+    assert_eq!(row("src")["symbols"].as_i64(), Some(3), "{rows:?}");
+    assert_eq!(row("src")["depth"].as_i64(), Some(0));
+    assert_eq!(row("src/app")["depth"].as_i64(), Some(1));
+    assert_eq!(row("src/app")["dirs"].as_i64(), Some(1), "immediate subdirs");
+    assert_eq!(row("data")["symbols"].as_i64(), Some(0), "json holds no definitions");
+
+    // --min-symbols skips the data tree entirely.
+    let coded = field_set(&f.run(&["tree", "--min-symbols", "1"]), "path");
+    assert!(coded.contains(&"src".to_string()), "{coded:?}");
+    assert!(!coded.contains(&"data".to_string()), "data should be hidden: {coded:?}");
+
+    // Folding summarises rather than truncates: `src` still reports all 3 symbols.
+    let shallow = f.run(&["tree", "--depth", "1"])["data"].as_array().unwrap().clone();
+    let paths: Vec<&str> = shallow.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    assert!(paths.contains(&"src"), "{paths:?}");
+    assert!(!paths.contains(&"src/app"), "should be folded away: {paths:?}");
+    let src = shallow.iter().find(|r| r["path"] == "src").unwrap();
+    assert_eq!(src["symbols"].as_i64(), Some(3), "folded row must keep the total");
+}
+
+#[test]
+fn callees_examples_show_the_qualified_call_expression() {
+    // The motivating case: a module-qualified call is attributed by name, so
+    // `subprocess.run(...)` lists every definition named `run`. The row now says
+    // which expression produced it, so the over-match is visible without having
+    // to already suspect it and reach for --resolved.
+    let f = Fixture::new();
+    f.write("lib.py", "def run():\n    pass\n");
+    f.write(
+        "app.py",
+        "import subprocess\ndef go():\n    subprocess.run(['ls'])\n",
+    );
+
+    let plain = f.run(&["callees", "go"])["data"].as_array().unwrap().clone();
+    let run_row = plain.iter().find(|r| r["name"] == "run").expect("run is a callee");
+    assert!(run_row.get("call").is_none(), "call must be opt-in: {run_row:?}");
+
+    let ex = f.run(&["callees", "go", "--examples"])["data"].as_array().unwrap().clone();
+    let run_row = ex.iter().find(|r| r["name"] == "run").expect("run is a callee");
+    assert_eq!(run_row["call"].as_str(), Some("subprocess.run"), "{run_row:?}");
+    assert_eq!(run_row["call_line"].as_i64(), Some(3), "line in the caller's file");
+}
+
+#[test]
+fn codeqignore_excludes_committed_trees_gitignore_cannot() {
+    // Data committed to the repo is invisible to .gitignore by definition, so a
+    // data-heavy repo had no way to keep it out of the index.
+    let f = Fixture::new();
+    f.write("src.rs", "fn keep() {}\n");
+    f.write("data/a.json", "{\"a\":1}\n");
+    f.write("data/b.json", "{\"b\":2}\n");
+    assert_eq!(f.run(&["files"])["data"].as_array().unwrap().len(), 3);
+
+    f.write(".codeqignore", "data/\n");
+    let after = field_set(&f.run(&["files"]), "path");
+    assert!(after.contains(&"src.rs".to_string()), "code must survive: {after:?}");
+    assert!(!after.iter().any(|p| p.starts_with("data/")), "data not excluded: {after:?}");
+
+    // Negation works against a file pattern. It does NOT resurrect a file whose
+    // parent directory was excluded (`data/`) — the walker never descends, exactly
+    // as git behaves — so the pattern has to exclude files, not the directory.
+    f.write(".codeqignore", "data/*.json\n!data/b.json\n");
+    let back = field_set(&f.run(&["files"]), "path");
+    assert!(back.contains(&"data/b.json".to_string()), "negation ignored: {back:?}");
+    assert!(!back.contains(&"data/a.json".to_string()), "{back:?}");
+}
+
+#[test]
+fn hotspots_ranks_by_reference_count_and_is_one_row_per_name() {
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "pub fn hot() {}\npub fn cold() {}\npub fn unref() {}\n\
+         pub fn a() { hot(); hot(); cold(); }\n\
+         pub fn b() { hot(); }\n",
+    );
+    let rows = f.run(&["hotspots"])["data"].as_array().unwrap().clone();
+    let by: std::collections::HashMap<String, i64> = rows
+        .iter()
+        .map(|r| (r["name"].as_str().unwrap().to_string(), r["refs"].as_i64().unwrap()))
+        .collect();
+
+    assert_eq!(by.get("hot"), Some(&3), "three call sites: {by:?}");
+    assert_eq!(by.get("cold"), Some(&1), "{by:?}");
+    // The declaration is not a use of itself, so a never-used fn drops out at the
+    // default --min-refs 1.
+    assert!(!by.contains_key("unref"), "unreferenced fn should not rank: {by:?}");
+    // Most-referenced first.
+    assert_eq!(rows[0]["name"].as_str().unwrap(), "hot", "not sorted by refs: {rows:?}");
+}
+
+#[test]
+fn hotspots_collapses_same_named_definitions_into_one_row() {
+    // The count is a property of the *name*, so two definitions spelling it the
+    // same must not print the same number twice.
+    let f = Fixture::new();
+    f.write("a.rs", "fn shared() {}\nfn ca() { shared(); }\n");
+    f.write("b.rs", "fn shared() {}\nfn cb() { shared(); }\n");
+
+    let rows = f.run(&["hotspots"])["data"].as_array().unwrap().clone();
+    let shared: Vec<_> = rows.iter().filter(|r| r["name"] == "shared").collect();
+    assert_eq!(shared.len(), 1, "one row per name expected: {rows:?}");
+    assert_eq!(shared[0]["defs"].as_i64(), Some(2), "defs should report the collapse");
+    assert_eq!(shared[0]["refs"].as_i64(), Some(2), "both call sites counted");
+}
+
+#[test]
+fn hotspots_calls_mode_excludes_bare_mentions_and_declarations() {
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "fn target() {}\nfn use_it() { target(); let f = target; }\n\
+         // target in a comment\nfn s() -> &'static str { \"target in a string\" }\n",
+    );
+    // Default counts the bare mention too; comment and string never count.
+    let all = field_set(&f.run(&["hotspots"]), "name");
+    assert!(all.contains(&"target".to_string()), "{all:?}");
+
+    let refs = |args: &[&str]| -> i64 {
+        f.run(args)["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == "target")
+            .map(|r| r["refs"].as_i64().unwrap())
+            .unwrap_or(0)
+    };
+    assert_eq!(refs(&["hotspots"]), 2, "call site + bare mention, not comment/string");
+    assert_eq!(refs(&["hotspots", "--calls"]), 1, "only the call site");
+}
+
+#[test]
+fn callpath_is_the_command_name_and_path_still_works() {
+    // Renamed because "path" reads as a file path in a code CLI; the old name
+    // stays an alias so existing scripts and cached MCP tool lists keep working.
+    let f = Fixture::new();
+    f.write("a.rs", "fn top() { mid(); }\nfn mid() { bottom(); }\nfn bottom() {}\n");
+
+    let new = f.run(&["callpath", "top", "bottom"]);
+    let old = f.run(&["path", "top", "bottom"]);
+    assert_eq!(new["data"], old["data"], "alias must behave identically");
+    let steps = new["data"].as_array().unwrap();
+    let names: Vec<&str> = steps.iter().map(|s| s["symbol"].as_str().unwrap()).collect();
+    assert_eq!(names, ["top", "mid", "bottom"], "{steps:?}");
+}
+
+#[test]
+fn unused_excludes_rust_unit_tests_in_a_cfg_test_module() {
+    // Rust's dominant idiom puts unit tests in a `mod tests` inside the file
+    // under test: the path is ordinary and the fn names are prose, so neither
+    // the path nor the name heuristic sees them. They used to be reported as
+    // dead code — on codeq itself, every row `unused` produced was one of these.
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "fn dead() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn returns_one() {}\n}\n",
+    );
+
+    let def = field_set(&f.run(&["unused"]), "name");
+    assert!(def.contains(&"dead".to_string()), "real dead code missing: {def:?}");
+    assert!(!def.contains(&"returns_one".to_string()), "unit test reported as dead: {def:?}");
+
+    // Still reachable when you ask for tests explicitly.
+    let inc = field_set(&f.run(&["unused", "--include-tests"]), "name");
+    assert!(inc.contains(&"returns_one".to_string()), "{inc:?}");
 }
 
 #[test]
@@ -1933,6 +2939,68 @@ fn mcp_server_handshake_and_tool_call() {
     let data: Value = serde_json::from_str(text).unwrap();
     assert_eq!(data["data"][0]["name"], "target");
     assert_eq!(data["data"][0]["kind"], "function");
+}
+
+/// An MCP caller has no way to say "this value is a literal, not a flag" — so
+/// the server must say it, by putting `--` ahead of every caller-supplied
+/// positional. Without it, searching a codebase for `--json` (an entirely
+/// ordinary thing to look for) failed as "required argument not provided", and
+/// `symbol: "--help"` printed codeq's help page and exited 0, handing an agent
+/// the help text as a successful answer.
+#[test]
+fn mcp_treats_flag_like_arguments_as_literals() {
+    use std::io::Write;
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    f.write("a.rs", "// mentions --json in a comment\nfn target() {}\n");
+
+    let mut child = PCommand::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let reqs = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"codeq_search","arguments":{"pattern":"--json"}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"codeq_definitions","arguments":{"symbol":"--help"}}}"#,
+        // A flag's *value* must stay attached to its flag, ahead of the `--`.
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"codeq_astgrep","arguments":{"pattern":"fn $N() {}","language":"rust"}}}"#,
+    ];
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        for r in reqs {
+            writeln!(stdin, "{r}").unwrap();
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    let msgs: Vec<Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(msgs.len(), 4, "{msgs:?}");
+
+    // `--json` is searched for literally, and finds the comment.
+    let r = &msgs[1]["result"];
+    assert!(r["isError"].as_bool() != Some(true), "search treated --json as a flag: {r}");
+    let data: Value = serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(data["data"]["matches"].as_array().unwrap().len(), 1, "{data}");
+
+    // `--help` is a symbol name with no definition, not a request for help.
+    let r = &msgs[2]["result"];
+    let text = r["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains("Usage:"), "help text returned as a result: {text}");
+    let data: Value = serde_json::from_str(text).unwrap();
+    assert!(data["data"].as_array().unwrap().is_empty(), "{data}");
+
+    // astgrep still works: its `language` is a flag value, not a positional.
+    let r = &msgs[3]["result"];
+    assert!(r["isError"].as_bool() != Some(true), "astgrep language broke: {r}");
 }
 
 /// Guards CLI↔MCP flag parity: `codeq_context` must forward the `path` and
@@ -2630,6 +3698,40 @@ fn tests_linkage_finds_tests_in_test_files() {
 }
 
 #[test]
+fn tests_linkage_finds_rust_unit_tests_in_a_cfg_test_module() {
+    // The enclosing `mod tests` is the only signal: `src/lib.rs` is not a test
+    // path and `returns_one` is not a test-like name. `tests widget` used to
+    // answer "none" for a function whose test sits six lines below it — and an
+    // empty result reads as "no test covers this", so it was a confident lie.
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "pub fn widget() -> i32 { 1 }\npub fn other() {}\n\n\
+         #[cfg(test)]\n\
+         mod tests {\n\
+         \x20   use super::*;\n\n\
+         \x20   #[test]\n\
+         \x20   fn returns_one() {\n\
+         \x20       assert_eq!(widget(), 1);\n\
+         \x20   }\n\n\
+         \x20   #[test]\n\
+         \x20   fn touches_other() {\n\
+         \x20       other();\n\
+         \x20   }\n\
+         }\n",
+    );
+    let names: Vec<String> = f.run(&["tests", "widget"])["data"]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(names.contains(&"returns_one".to_string()), "unit test not linked: {names:?}");
+    assert!(!names.contains(&"touches_other".to_string()),
+            "doesn't reference widget: {names:?}");
+}
+
+#[test]
 fn tests_linkage_uses_test_name_heuristic() {
     // A test in a non-test-path file is still found via its test-like name.
     let f = Fixture::new();
@@ -2717,6 +3819,38 @@ fn astgrep_variadic_matches_any_arguments() {
         .collect();
     assert_eq!(texts.len(), 2, "foo(1) and foo(1,2,3), not the no-arg call: {texts:?}");
     assert!(!texts.iter().any(|t| t == "foo()"), "{texts:?}");
+}
+
+#[test]
+fn astgrep_variadic_works_in_parameter_and_body_positions_at_once() {
+    // `fn $N($$$) { $$$ }` — the module doc's own example, and the most natural
+    // way to ask for "any function". Both `$$$` sit inside a list node that holds
+    // nothing else, which used to read as two variadics at the declaration level
+    // and trip the single-variadic guard, returning zero matches with exit 0.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn none() { let a = 1; }\nfn two(x: i32, y: i32) { let b = x; }\n\
+         fn empty() {}\nfn typed() -> i32 { 3 }\n",
+    );
+    let m = f.run(&["astgrep", "fn $N($$$) { $$$ }", "--language", "rust"]);
+    let names: Vec<String> = m["data"]["matches"].as_array().unwrap().iter()
+        .map(|r| r["binds"][0]["value"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        m["data"]["matches"].as_array().unwrap().len(), 3,
+        "expected none/two/empty (typed() has a return type): {names:?}"
+    );
+
+    // Same shape in a language with untyped parameters.
+    f.write("p.py", "def one(a, b):\n    return a\ndef two():\n    return 1\n");
+    let py = f.run(&["astgrep", "def $N($$$): $$$", "--language", "python"]);
+    assert_eq!(py["data"]["matches"].as_array().unwrap().len(), 2, "{py}");
+
+    // The single-variadic behaviour it must not regress.
+    f.write("b.rs", "fn g() {\n    foo();\n    foo(1, 2);\n}\n");
+    let calls = f.run(&["astgrep", "foo($$$)", "--language", "rust"]);
+    assert_eq!(calls["data"]["matches"].as_array().unwrap().len(), 2, "{calls}");
 }
 
 #[test]

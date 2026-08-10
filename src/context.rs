@@ -113,6 +113,12 @@ pub(crate) struct Chunk {
     reason: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
+    /// How `text` was reduced to fit the budget, when it was: `"folded"` (inner
+    /// bodies collapsed) or `"clipped"` (tail elided). Absent when the chunk is
+    /// the definition's verbatim source, so its presence is the signal that this
+    /// is *not* the whole thing — recover the rest with `read --lines`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reduced: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -139,7 +145,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
 
     if !req.symbols.is_empty() {
         modes.push("symbols");
-        for d in defs_by_names(db, &req.symbols)? {
+        for d in defs_by_column(db, "name", &req.symbols)? {
             if seen.insert((d.path.clone(), d.start_byte)) {
                 defs.push(d);
             }
@@ -153,7 +159,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         // seed the whole file.
         let ranges = repo.changed_line_ranges(&req.compare_to)?;
         let paths: Vec<String> = ranges.keys().cloned().collect();
-        for d in defs_by_paths(db, &paths)? {
+        for d in defs_by_column(db, "path", &paths)? {
             let touched = ranges.get(&d.path).is_some_and(|hunks| {
                 let ds = d.start_line.max(0) as usize;
                 let de = d.end_line.max(0) as usize;
@@ -174,7 +180,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
     defs.sort_by(|a, b| (a.path.as_str(), a.start_line).cmp(&(b.path.as_str(), b.start_line)));
     let seed_count = defs.len();
 
-    let mut file_cache: HashMap<String, Option<Vec<u8>>> = HashMap::new();
+    let mut file_cache: HashMap<String, Option<String>> = HashMap::new();
 
     // Read seed chunk texts (needed for expansion regardless of include_text).
     let mut seed_text: HashMap<usize, String> = HashMap::new();
@@ -201,7 +207,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         let names: Vec<String> = refs.into_iter().collect();
         let mut neighbors: Vec<Def> = Vec::new();
         let mut added: HashSet<(String, usize)> = HashSet::new();
-        for d in defs_by_names(db, &names)? {
+        for d in defs_by_column(db, "name", &names)? {
             let key = (d.path.clone(), d.start_byte);
             if !seed_keys.contains(&key) && added.insert(key) {
                 neighbors.push(d);
@@ -228,15 +234,22 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
     let mut used: u64 = 0;
     for (i, reason) in candidates {
         let d = &defs[i];
-        let text = seed_text
+        let mut text = seed_text
             .remove(&i)
             .or_else(|| chunk_text(&repo.root, d, &mut file_cache));
         let bytes = d.end_byte.saturating_sub(d.start_byte) as u64;
-        let est = bytes.div_ceil(4).max(1);
+        let mut est = bytes.div_ceil(4).max(1);
 
         // Explicitly-requested seeds are always included, even if they exceed the
         // budget — you asked for them, and returning nothing (or dropping the very
         // symbol you named) is worse than overshooting. The budget caps expansion.
+        // An oversized seed is reduced rather than dropped (see `reduce_to_fit`),
+        // so "always included" doesn't turn `--max-tokens` into a suggestion.
+        let reduced = if reason == "seed" {
+            reduce_to_fit(db, d, &mut text, &mut est, used, req.max_tokens)
+        } else {
+            None
+        };
         if reason != "seed" && used + est > req.max_tokens {
             if omitted.len() < MAX_OMITTED {
                 omitted.push(Omitted {
@@ -261,6 +274,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
             est_tokens: est,
             reason,
             text: if req.include_text { text } else { None },
+            reduced,
         });
     }
 
@@ -334,14 +348,26 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
         (!fa, da.path.as_str(), da.start_line).cmp(&(!fb, db_.path.as_str(), db_.start_line))
     });
 
-    let mut file_cache: HashMap<String, Option<Vec<u8>>> = HashMap::new();
+    let mut file_cache: HashMap<String, Option<String>> = HashMap::new();
     let mut chunks = Vec::new();
     let mut omitted = Vec::new();
     let mut used: u64 = 0;
+    // Byte ranges already emitted *verbatim*, per file. A later definition whose
+    // range sits inside one of these is already on the page — a class's methods,
+    // a component's functions — so re-emitting it would spend budget on a literal
+    // duplicate. Folded chunks are deliberately not recorded here: folding hides
+    // the inner bodies, so those members still need emitting in full.
+    let mut verbatim: Vec<(&str, usize, usize)> = Vec::new();
     for i in order {
         let (d, role, forced) = &cands[i];
+        if verbatim
+            .iter()
+            .any(|(p, s, e)| *p == d.path && *s <= d.start_byte && d.end_byte <= *e)
+        {
+            continue; // its source is already inside an emitted chunk
+        }
         let bytes = d.end_byte.saturating_sub(d.start_byte) as u64;
-        let est = bytes.div_ceil(4).max(1);
+        let mut est = bytes.div_ceil(4).max(1);
         if !forced && used + est > max_tokens {
             if omitted.len() < MAX_OMITTED {
                 omitted.push(Omitted {
@@ -353,9 +379,24 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
             }
             continue;
         }
-        let text = chunk_text(&repo.root, d, &mut file_cache);
+        let mut text = chunk_text(&repo.root, d, &mut file_cache);
+        // A forced (focus) chunk is never dropped, so a definition bigger than the
+        // whole budget used to blow straight through it — and a container
+        // definition (a class, a module, a whole-file single-file component) is
+        // routinely that big. Fold its inner bodies instead: the shape, the
+        // signatures and the budget all survive, and `read --symbol` recovers any
+        // body in full.
+        let reduced = if *forced {
+            reduce_to_fit(db, d, &mut text, &mut est, used, max_tokens)
+        } else {
+            None
+        };
+        if reduced.is_none() {
+            verbatim.push((d.path.as_str(), d.start_byte, d.end_byte));
+        }
         used += est;
         chunks.push(Chunk {
+            reduced,
             path: d.path.clone(),
             symbol: d.name.clone(),
             kind: d.kind.clone(),
@@ -411,43 +452,25 @@ fn row_to_def(r: &rusqlite::Row) -> rusqlite::Result<Def> {
 const DEF_COLUMNS: &str =
     "name, kind, path, language, start_byte, end_byte, start_line, end_line";
 
-/// Load definitions whose name is in `names`, via the facts(name) index, in
-/// chunks to stay under SQLite's bound-parameter limit.
-fn defs_by_names(db: &Db, names: &[String]) -> Result<Vec<Def>> {
+/// Load definitions matching a set of values in one indexed column, in chunks to
+/// stay under SQLite's bound-parameter limit.
+///
+/// `column` is `name` or `path`; both are indexed, and the two call sites were
+/// otherwise the same function written twice.
+fn defs_by_column(db: &Db, column: &str, values: &[String]) -> Result<Vec<Def>> {
+    debug_assert!(matches!(column, "name" | "path"), "column is not interpolable from input");
     let mut out = Vec::new();
-    for chunk in names.chunks(500) {
+    for chunk in values.chunks(500) {
         if chunk.is_empty() {
             continue;
         }
         let ph = vec!["?"; chunk.len()].join(",");
         let sql = format!(
-            "SELECT {DEF_COLUMNS} FROM facts WHERE kind <> 'import' AND name IN ({ph})"
+            "SELECT {DEF_COLUMNS} FROM facts WHERE kind <> 'import' AND {column} IN ({ph})"
         );
         let mut stmt = db.conn.prepare(&sql)?;
         let params: Vec<&dyn rusqlite::ToSql> =
-            chunk.iter().map(|n| n as &dyn rusqlite::ToSql).collect();
-        let rows = stmt.query_map(params.as_slice(), row_to_def)?;
-        for r in rows {
-            out.push(r?);
-        }
-    }
-    Ok(out)
-}
-
-/// Load definitions in files whose path is in `paths`, via the facts(path) index.
-fn defs_by_paths(db: &Db, paths: &[String]) -> Result<Vec<Def>> {
-    let mut out = Vec::new();
-    for chunk in paths.chunks(500) {
-        if chunk.is_empty() {
-            continue;
-        }
-        let ph = vec!["?"; chunk.len()].join(",");
-        let sql = format!(
-            "SELECT {DEF_COLUMNS} FROM facts WHERE kind <> 'import' AND path IN ({ph})"
-        );
-        let mut stmt = db.conn.prepare(&sql)?;
-        let params: Vec<&dyn rusqlite::ToSql> =
-            chunk.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+            chunk.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
         let rows = stmt.query_map(params.as_slice(), row_to_def)?;
         for r in rows {
             out.push(r?);
@@ -457,20 +480,177 @@ fn defs_by_paths(db: &Db, paths: &[String]) -> Result<Vec<Def>> {
 }
 
 /// Slice a definition's source out of its file, caching file reads.
+/// Shrink a force-included chunk until it fits the remaining budget, updating
+/// `text`/`est` in place and returning how it was reduced (`None` = untouched).
+///
+/// A forced chunk is never dropped — dropping the very symbol you asked for is
+/// worse than overshooting — but "never dropped" used to mean `--max-tokens`
+/// wasn't a limit at all: a definition larger than the whole budget sailed
+/// through it, and a container definition (a class, a module, a whole-file
+/// single-file component) is routinely that big. So: fold nested bodies first,
+/// which keeps the shape and every signature, and only clip the tail if the
+/// definition is mostly markup or data that folding can't touch. Either way the
+/// marker says exactly which lines are missing, and `read --lines` recovers them.
+fn reduce_to_fit(
+    db: &Db,
+    d: &Def,
+    text: &mut Option<String>,
+    est: &mut u64,
+    used: u64,
+    max_tokens: u64,
+) -> Option<&'static str> {
+    if used + *est <= max_tokens {
+        return None;
+    }
+    let mut how: Option<&'static str> = None;
+    if let Some(f) = text.as_deref().and_then(|t| fold_bodies(db, d, t)) {
+        let fest = (f.len() as u64).div_ceil(4).max(1);
+        if fest < *est {
+            *est = fest;
+            *text = Some(f);
+            how = Some("folded");
+        }
+    }
+    if used + *est > max_tokens {
+        let room = max_tokens.saturating_sub(used).saturating_mul(4).max(1);
+        if let Some(c) = text
+            .as_deref()
+            .and_then(|t| clip_to_budget(t, room as usize, d.start_line))
+        {
+            *est = (c.len() as u64).div_ceil(4).max(1);
+            *text = Some(c);
+            how = Some("clipped");
+        }
+    }
+    how
+}
+
+/// `text` cut to at most `room` bytes on a line boundary, with a marker naming
+/// the line range that was dropped. `None` when it already fits or when not even
+/// one line does — a caller that gets `None` keeps the full text rather than
+/// emit a chunk with no content.
+fn clip_to_budget(text: &str, room: usize, start_line: i64) -> Option<String> {
+    if text.len() <= room {
+        return None;
+    }
+    let mut kept = 0usize; // bytes
+    let mut lines = 0usize;
+    for l in text.lines() {
+        let next = kept + l.len() + 1;
+        // Leave headroom for the marker itself so the result really fits.
+        if next + 64 > room {
+            break;
+        }
+        kept = next;
+        lines += 1;
+    }
+    if lines == 0 {
+        return None;
+    }
+    let total = text.lines().count();
+    let mut out: String = text.lines().take(lines).collect::<Vec<_>>().join("\n");
+    out.push('\n');
+    out.push_str(&format!(
+        "        ⋮  {} lines ({}–{}) clipped to fit --max-tokens\n",
+        total - lines,
+        start_line + lines as i64,
+        start_line + total as i64 - 1
+    ));
+    Some(out)
+}
+
+/// `text` with the bodies of function/method definitions *nested inside* `d`
+/// collapsed to a marker naming the exact hidden line range — the same folded
+/// view `read <file>` gives, applied to one definition's source. `None` when
+/// there is nothing worth folding, so the caller keeps the verbatim text.
+fn fold_bodies(db: &Db, d: &Def, text: &str) -> Option<String> {
+    let mut stmt = db
+        .conn
+        .prepare(
+            "SELECT start_line, end_line FROM facts
+             WHERE path = ?1 AND kind IN ('function', 'method')
+               AND start_line >= ?2 AND end_line <= ?3",
+        )
+        .ok()?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params![&d.path, d.start_line, d.end_line],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .ok()?;
+
+    let lines: Vec<&str> = text.lines().collect();
+    let mut hide = vec![false; lines.len()];
+    let mut any = false;
+    for row in rows {
+        let (sl, el) = row.ok()?;
+        if el < sl || (el - sl) < crate::commands::MIN_FOLD as i64 {
+            continue;
+        }
+        // Never fold `d` itself away — only things nested within it.
+        if sl <= d.start_line && el >= d.end_line {
+            continue;
+        }
+        for ln in (sl + 1)..=el {
+            let idx = (ln - d.start_line) as usize;
+            if ln >= d.start_line && idx < hide.len() {
+                hide[idx] = true;
+                any = true;
+            }
+        }
+    }
+    if !any {
+        return None;
+    }
+
+    let mut out = String::with_capacity(text.len() / 2);
+    let mut i = 0;
+    while i < lines.len() {
+        if hide[i] {
+            let start = i;
+            while i < lines.len() && hide[i] {
+                i += 1;
+            }
+            let (a, b) = (d.start_line + start as i64, d.start_line + i as i64 - 1);
+            out.push_str(&format!("        ⋮  {} lines ({a}–{b})\n", i - start));
+        } else {
+            out.push_str(lines[i]);
+            out.push('\n');
+            i += 1;
+        }
+    }
+    Some(out)
+}
+
+/// The source of one definition, sliced by its byte range.
+///
+/// The file is normalised exactly as the indexer normalised it before measuring
+/// those offsets — leading BOM stripped, then decoded as UTF-8 with invalid bytes
+/// replaced — because the offsets are positions in *that* text, not in the bytes
+/// on disk. Slicing the raw bytes instead shifted every chunk by three on a
+/// BOM-prefixed file, and by two per invalid byte on anything that wasn't valid
+/// UTF-8, yielding source that started mid-expression.
 fn chunk_text(
     root: &Path,
     d: &Def,
-    cache: &mut HashMap<String, Option<Vec<u8>>>,
+    cache: &mut HashMap<String, Option<String>>,
 ) -> Option<String> {
-    let bytes = cache
-        .entry(d.path.clone())
-        .or_insert_with(|| std::fs::read(root.join(&d.path)).ok());
-    let bytes = bytes.as_ref()?;
-    let end = d.end_byte.min(bytes.len());
+    let text = cache.entry(d.path.clone()).or_insert_with(|| {
+        let bytes = std::fs::read(root.join(&d.path)).ok()?;
+        let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+        Some(String::from_utf8_lossy(bytes).into_owned())
+    });
+    let text = text.as_ref()?;
+    let end = d.end_byte.min(text.len());
     if d.start_byte >= end {
         return None;
     }
-    Some(String::from_utf8_lossy(&bytes[d.start_byte..end]).into_owned())
+    // Byte ranges come from tree-sitter, so they land on char boundaries; guard
+    // anyway rather than risk a panic on a stale index.
+    if !text.is_char_boundary(d.start_byte) || !text.is_char_boundary(end) {
+        return None;
+    }
+    Some(text[d.start_byte..end].to_string())
 }
 
 /// Collect identifier-like tokens (len >= 2) from text.

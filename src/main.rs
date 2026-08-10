@@ -94,27 +94,50 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
-    /// For a diff: the definitions it touched, their transitive callers (blast
-    /// radius), and the tests exercising any of them — what to re-check and re-run
-    /// for the change. Name-based.
+    /// Definitions whose syntax shape is identical up to renaming — the same
+    /// code written twice. Exact, not fuzzy: shapes match or they don't, so
+    /// there is no similarity score to interpret. Use before writing a helper,
+    /// or to find the copy-paste that needs the same fix in several places.
+    Clones {
+        /// Restrict to paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Only this kind (e.g. function, method).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Minimum syntax nodes a shared shape must cover.
+        #[arg(long, default_value_t = 24)]
+        min_nodes: i64,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
+    /// For a diff: the definitions it touched, their transitive callers (the
+    /// impacted set), and the tests exercising any of them — what to re-check and
+    /// re-run for the change. Name-based.
     Affected {
         /// Ref to compare against, e.g. main.
         #[arg(long, default_value = "main")]
         compare_to: String,
-        /// How many hops up the call tree to include as blast radius.
+        /// How many hops up the call tree to include as impacted callers.
         #[arg(long, default_value_t = 3)]
         depth: usize,
         /// Maximum test rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
-    /// List defined symbols (functions, structs, classes, …).
+    /// BROWSE many symbols: list definitions matching a pattern/kind/path, e.g.
+    /// "every struct in src/". Use `definitions` instead when you know the exact
+    /// name and want to jump to it.
     Symbols {
         /// Substring to match against symbol names.
         pattern: Option<String>,
         /// Restrict to a symbol kind (e.g. function, struct, class).
         #[arg(long)]
         kind: Option<String>,
+        /// Restrict to members of this type (fields/variants carry their owner).
+        #[arg(long)]
+        owner: Option<String>,
         /// Restrict to a language.
         #[arg(long)]
         language: Option<String>,
@@ -155,7 +178,8 @@ enum Command {
         #[arg(long)]
         docs: bool,
     },
-    /// Locate the definition(s) of an exact symbol name.
+    /// JUMP TO one symbol: where an EXACT name is defined (several rows only when
+    /// the name is defined more than once). Use `symbols` to browse by pattern.
     Definitions {
         /// Exact symbol name to resolve.
         symbol: String,
@@ -232,9 +256,17 @@ enum Command {
         /// files) at the risk of dropping a real callee behind an unresolved import.
         #[arg(long)]
         resolved: bool,
+        /// Show the call as written, with its receiver — `subprocess.run`, not
+        /// `run` — plus the line it sits on, so a name-based over-match is
+        /// visible without having to suspect it first.
+        #[arg(long)]
+        examples: bool,
     },
     /// The shortest call chain from one symbol to another (`from` calls … calls
     /// `to`), if one exists — reachability with the route shown. Name-based.
+    /// (Was `path`, which still works: in a code CLI "path" reads as a *file*
+    /// path first, so `codeq path a b` scanned as "the path to file a".)
+    #[command(name = "callpath", alias = "path")]
     Path {
         /// The symbol the chain starts at.
         from: String,
@@ -248,7 +280,10 @@ enum Command {
         #[arg(long)]
         path: Option<String>,
     },
-    /// Dossier for a symbol: definition(s) + callers + callees, in one call.
+    /// Symbol dossier WITHOUT source: definition(s) + callers + callees, with full
+    /// metadata on each (doc comment, signature, owner, which callers are tests).
+    /// Use `explore` for the same neighbourhood WITH verbatim source but trimmed
+    /// metadata — source is the axis these two differ on.
     About {
         /// Exact symbol name.
         name: String,
@@ -257,10 +292,11 @@ enum Command {
         #[arg(long)]
         path: Option<String>,
     },
-    /// One-call answer for a symbol: its definition, callers, and callees, plus
-    /// the verbatim source of that whole neighbourhood, budgeted and grouped by
-    /// file. Structure and code in one shot, instead of definitions then callers
-    /// then several reads.
+    /// Symbol dossier WITH source: definition + callers + callees, plus the
+    /// verbatim source of that whole neighbourhood, budgeted and grouped by file.
+    /// Structure and code in one shot, instead of definitions then callers then
+    /// several reads. Start here to understand or change a symbol. Use `about` for
+    /// the same neighbourhood WITHOUT source but with fuller per-node metadata.
     Explore {
         /// Exact symbol name to explore.
         name: String,
@@ -351,6 +387,55 @@ enum Command {
         include_tests: bool,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
+    /// The repo's directory SHAPE, folded to a depth, with each directory's file
+    /// and symbol counts aggregated from everything below it. Unlike `tree`(1) it
+    /// is ignore-aware (no node_modules/.git noise) and says where the *code* is,
+    /// not just where files are; unlike `map` it keeps the nesting.
+    Tree {
+        /// Restrict to paths containing this substring.
+        path: Option<String>,
+        /// Fold below this nesting level (counts still include everything below).
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+        /// Hide directories holding fewer than this many definitions — jumps
+        /// straight to where the code lives in a data- or asset-heavy repo.
+        #[arg(long, default_value_t = 0)]
+        min_symbols: i64,
+        /// Also list individual files (within --depth).
+        #[arg(long)]
+        files: bool,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
+    /// Definitions ranked by how often their name is referenced in code — the
+    /// inverse of `unused`, for "what is load-bearing here?" in unfamiliar code.
+    /// Counts are per *name* (name-based like every graph command), so a short
+    /// common name ranks high because many unrelated symbols spell it the same
+    /// way: read a row as "this identifier carries weight", then use
+    /// `callers NAME --calls` for the precise question.
+    Hotspots {
+        /// Restrict the reported definitions to paths containing this substring
+        /// (the count stays repo-wide).
+        path: Option<String>,
+        /// Only this kind (e.g. function, struct, class).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Only this language.
+        #[arg(long)]
+        language: Option<String>,
+        /// Count only call sites — `NAME(` — instead of every mention. Cuts the
+        /// noise from names that are also common variables (a function `s` scores
+        /// high otherwise, because every `s` in the repo looks like a reference).
+        #[arg(long)]
+        calls: bool,
+        /// Drop definitions referenced fewer than this many times.
+        #[arg(long, default_value_t = 1)]
+        min_refs: i64,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 30)]
         limit: usize,
     },
     /// Exported definitions that no test refers to — `api` composed with `tests`.
@@ -534,10 +619,14 @@ enum Command {
         #[arg(long)]
         plan: bool,
     },
-    /// Summary counts for the current index.
+    /// WHOLE-REPO TOTALS in a few lines: how many files, symbols and imports, and
+    /// how fresh the index is. Use `map` for the same repo broken down.
     Stats {
     },
-    /// Factual aggregation of the index for orientation (grouped counts).
+    /// REPO BROKEN DOWN for orientation: counts grouped by language, directory,
+    /// imported module and file — what is here and where the weight sits. Start
+    /// here in an unfamiliar codebase; use `stats` for the one-line totals and
+    /// `tree` when the nesting itself is what you need.
     ///
     /// Each list is ordered by its visible count (files/importers/definitions)
     /// descending, ties broken by name/path.
@@ -619,6 +708,19 @@ fn main() -> ExitCode {
             symbols,
             limit,
         } => commands::cmd_changed(&cwd, &compare_to, symbols, limit, out),
+        Command::Clones {
+            path,
+            kind,
+            min_nodes,
+            limit,
+        } => commands::cmd_clones(
+            &cwd,
+            path.as_deref(),
+            kind.as_deref(),
+            min_nodes,
+            limit,
+            out,
+        ),
         Command::Affected {
             compare_to,
             depth,
@@ -627,6 +729,7 @@ fn main() -> ExitCode {
         Command::Symbols {
             pattern,
             kind,
+            owner,
             language,
             path,
             signatures,
@@ -635,6 +738,7 @@ fn main() -> ExitCode {
             &cwd,
             pattern.as_deref(),
             kind.as_deref(),
+            owner.as_deref(),
             language.as_deref(),
             path.as_deref(),
             signatures,
@@ -684,8 +788,8 @@ fn main() -> ExitCode {
             examples,
             out,
         ),
-        Command::Callees { name, path, depth, resolved } => {
-            commands::cmd_callees(&cwd, &name, path.as_deref(), depth, resolved, out)
+        Command::Callees { name, path, depth, resolved, examples } => {
+            commands::cmd_callees(&cwd, &name, path.as_deref(), depth, resolved, examples, out)
         }
         Command::Path {
             from,
@@ -754,6 +858,30 @@ fn main() -> ExitCode {
             path.as_deref(),
             kind.as_deref(),
             include_tests,
+            limit,
+            out,
+        ),
+        Command::Tree {
+            path,
+            depth,
+            min_symbols,
+            files,
+            limit,
+        } => commands::cmd_tree(&cwd, path.as_deref(), depth, min_symbols, files, limit, out),
+        Command::Hotspots {
+            path,
+            kind,
+            language,
+            calls,
+            min_refs,
+            limit,
+        } => commands::cmd_hotspots(
+            &cwd,
+            path.as_deref(),
+            kind.as_deref(),
+            language.as_deref(),
+            calls,
+            min_refs,
             limit,
             out,
         ),
@@ -860,7 +988,15 @@ fn main() -> ExitCode {
         }
         Command::Stats {} => commands::cmd_stats(&cwd, out),
         Command::Map { limit } => commands::cmd_map(&cwd, limit, out),
-        Command::Capabilities {} => commands::cmd_capabilities(out),
+        Command::Capabilities {} => {
+            // Ask clap what subcommands exist instead of keeping a second list in
+            // sync by hand — the hand-written one had silently gone stale.
+            let cmd = <Cli as clap::CommandFactory>::command();
+            let mut names: Vec<&str> =
+                cmd.get_subcommands().map(|c| c.get_name()).filter(|n| *n != "help").collect();
+            names.sort_unstable();
+            commands::cmd_capabilities(&names, out)
+        }
         Command::Mcp => mcp::serve(),
         Command::Install {
             dry_run,

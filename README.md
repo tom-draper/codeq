@@ -14,9 +14,9 @@ agent that can trust the output has no reason to fall back to ad-hoc shell pipel
 
 > Status: working prototype. Symbol and import extraction covers Rust, Python, JavaScript,
 > TypeScript/TSX, Go, Java, Ruby, C, C++, C#, PHP, Bash, Lua, Scala, Kotlin, Swift, Dart, Zig,
-> Elixir, and Solidity. Other languages are indexed as files and stay fully searchable. See
-> [DRAFT.md](./DRAFT.md) for the design rationale, and
-> [GEMINI.md](./GEMINI.md) / [GPT.md](./GPT.md) for the reviews that shaped it.
+> Elixir, Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, and HCL/Terraform. Other
+> languages are indexed as files and stay fully searchable. `codeq capabilities` is the
+> authoritative list. See [DRAFT.md](./DRAFT.md) for the design rationale.
 
 ## Install
 
@@ -118,19 +118,24 @@ every supported language:
 
 | Task | codeq tokens | generic tokens | saving | codeq calls | generic calls |
 | --- | --: | --: | --: | --: | --: |
-| explore a symbol (def + callers + callees, with source) | 105k | 125k | 1.2x | 20 | 200 |
-| understand a symbol before editing (`about`) | 25k | 61k | 2.4x | 20 | 79 |
-| read a function's body (`read --symbol`) | 6k | 28k | 4.5x | 20 | 40 |
-| who calls it, with context (`callers`) | 6k | 40k | 7.0x | 20 | 53 |
-| 2-hop blast radius (`callers --depth 2`) | 31k | 118k | 3.8x | 20 | 134 |
-| which tests exercise it (`tests`) | 1k | 22k | 14.8x | 20 | 61 |
-| a file's dead code (`unused`) | 12k | 1853k | 159.8x | 20 | 359 |
-| learn a file's structure (`outline`) | 51k | 526k | 10.3x | 20 | 20 |
-| a file's public API (`api`) | 55k | 18k | 0.3x | 20 | 20 |
-| a package's public API (`api <dir>`) | 352k | 992k | 2.8x | 20 | 230 |
-| all references (`references`) | 44k | 44k | 1.0x | 20 | 20 |
-| a file's imports (`imports`) | 6k | 7k | 1.2x | 20 | 34 |
-| **all 12 tasks** | **694k** | **3.83M** | **5.5x** | **240** | **1250** |
+| explore a symbol (def + callers + callees, with source) | 107k | 161k | 1.5x | 25 | 243 |
+| understand a symbol before editing (`about`) | 16k | 70k | 4.3x | 25 | 99 |
+| read a function's body (`read --symbol`) | 9k | 35k | 3.9x | 25 | 50 |
+| who calls it, with context (`callers`) | 3k | 43k | 13.9x | 25 | 66 |
+| 2-hop impacted set (`callers --depth 2`) | 53k | 194k | 3.7x | 25 | 155 |
+| which tests exercise it (`tests`) | 2k | 27k | 15.0x | 25 | 72 |
+| a file's dead code (`unused`) | 18k | 1144k | 64.2x | 25 | 436 |
+| learn a file's structure (`outline`) | 75k | 751k | 10.0x | 25 | 25 |
+| a file's public API (`api`) | 80k | 25k | 0.3x | 25 | 25 |
+| a package's public API (`api <dir>`) | 378k | 1581k | 4.2x | 25 | 284 |
+| all references (`references`) | 38k | 40k | 1.1x | 25 | 25 |
+| a file's imports (`imports`) | 9k | 8k | 0.9x | 25 | 39 |
+| **all 12 tasks** | **788k** | **4.08M** | **5.2x** | **300** | **1519** |
+
+> **These numbers predate the merge of the component/clones and markdown/relations
+> lines and have not been re-measured on the combined code.** They came from a
+> 25-repo run; a parallel 20-repo run on the other line reported different figures
+> for the same tasks. Re-run `python3 bench/completion.py` before quoting them.
 
 Completing these tasks costs a generic-tool agent **5.5x the tokens and 5x the tool calls**.
 The `explore` win is mostly in round-trips: one call instead of about ten. codeq is not
@@ -151,7 +156,10 @@ Understand a symbol in one call:
   fastest way to understand or change a function: structure and code in one call, instead of
   a `definitions` then `callers` then `read` then `read` sequence. `--max-tokens` caps the
   source (the definition is always included; callers and callees fill the rest, and anything
-  dropped is listed).
+  dropped is listed). A definition too big for the budget is *reduced*, never dropped and
+  never allowed to overrun: its nested bodies fold to signatures first, and its tail is
+  clipped only if folding isn't enough. Either way a `⋮` marker names the exact hidden line
+  range and the chunk is tagged `reduced`, so `read --lines` recovers the rest.
 
 Orient and read:
 - `codeq map` groups counts (languages, directories, imports, definitions) to get your bearings.
@@ -161,6 +169,11 @@ Orient and read:
 
 Find and understand a symbol:
 - `codeq definitions <name>` gives the definition(s), with signature, doc, and ranges.
+  Struct fields, class properties and enum variants are definitions too, each carrying the
+  type that declares it — so `definitions retries` answers *which* type's field it found
+  rather than leaving a bare name. `outline` nests them under their type. Python has no
+  declaration site for an attribute, so a member is its earliest class-body or `self.x =`
+  assignment, deduplicated across the methods that assign it.
 - `codeq about <name>` is a one-call dossier: definition plus callers plus callees.
 - `codeq at <path>:<line>` names the definition enclosing a location, e.g. from a stack trace.
 
@@ -168,11 +181,21 @@ Trace relationships (matched by name):
 - `codeq callers <name>` and `codeq callees <name>` show who calls it and what it calls.
   `--depth N` walks the tree; `callers --examples` prints the actual call line at each site.
 - `codeq references <name>` lists every use, each tagged with its enclosing definition.
-- `codeq path <from> <to>` finds the shortest call chain between two symbols.
+- `codeq callpath <from> <to>` finds the shortest call chain between two symbols.
 - `codeq implementors <type>` and `codeq supertypes <type>` show who implements or extends a
   type, and what it derives from.
 - `codeq tests <name>` finds the tests that exercise a symbol.
 - `codeq unused [path]` lists definitions with no reference anywhere (candidate dead code).
+- `codeq tree [path]` shows the directory shape, folded to `--depth`, with each
+  directory's file and symbol counts aggregated from everything below it.
+- `codeq hotspots [path]` is its inverse: definitions ranked by how often they are
+  referenced, for finding what carries an unfamiliar module. `--calls` counts only
+  call sites.
+- `codeq clones` groups definitions whose syntax shape is identical up to renaming — the
+  same code written twice. Exact, not fuzzy: shapes match or they don't, so there is no
+  similarity score to interpret. `--min-nodes` sets how much code a shared shape must
+  cover. Ask it before writing a helper, or to find the copy-paste that needs one fix in
+  four places.
 
 Imports and dependencies:
 - `codeq imports [path]` and `codeq importers <query>` list import statements, and who
@@ -187,7 +210,7 @@ Repo state:
 - `codeq changed --compare-to <ref>` lists files changed vs a git ref (`--symbols` for the
   definitions touched).
 - `codeq affected --compare-to <ref>` takes a diff and reports the definitions it touched,
-  their transitive callers (the blast radius), and the test files that exercise any of them,
+  their transitive callers (the impacted set), and the test files that exercise any of them,
   so you know what to re-check and re-run.
 - `codeq files`, `codeq symbols`, and `codeq stats` list and count.
 - `codeq capabilities` self-describes: commands, languages, fact kinds, schema.
@@ -350,6 +373,15 @@ Every command works there, and the index lives in a `.codeq` inside that directo
 - Tree-sitter extraction. Symbols and imports come from Tree-sitter queries, so a definition
   is distinguished from a mention. Import strings are kept raw; codeq does not resolve
   aliases or package roots.
+- Single-file components (Svelte, Vue) are component files, not flat source files, so they
+  are read that way: each `<script>` block is re-parsed with the JavaScript or TypeScript
+  extractor (per its `lang` attribute) and reported at the *file's* own lines and columns,
+  the markup contributes what it declares (Svelte's `{#snippet}`), and the file itself
+  becomes a `component` definition named after its stem — so `explore Button` returns the
+  component and everything it uses. Template expressions count as code, so `callers` sees a
+  handler bound by `@click="handleClick"` or `on:click={handleClick}`. SvelteKit route files
+  (`+page.svelte`) get no component fact; they are loaded by convention, never by name.
+  `<style>` contents stay unclassified, so CSS comments read as code to `search --in`.
 - Index-backed search. File contents sit in an FTS5 trigram index. A query is narrowed by
   the index, then confirmed with a precise regex, so search never re-reads the filesystem
   and never drops a match grep would find.
@@ -357,9 +389,9 @@ Every command works there, and the index lives in a `.codeq` inside that directo
 ## Development
 
 ```bash
-cargo test                     # 204 integration tests, driving the binary against fixtures
+cargo test                     # integration tests, driving the binary against fixtures
 python3 bench/textmode.py      # text output carries the same facts as --json
-python3 bench/differential.py  # ~4,200 assertions over 20 pinned real repos
+python3 bench/differential.py  # assertions over pinned real repos
 ```
 
 The tests cover the JSON contract and adversarial inputs (malformed source, symlink cycles,

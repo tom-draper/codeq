@@ -1,7 +1,7 @@
 //! Ignore-aware walk, hashing, and incremental refresh.
 //!
 //! This is the daemonless freshness path: every query calls [`refresh`], which
-//! walks the tree, reparses only files whose size/mtime changed, and reports
+//! walks the tree, reparses only files whose size/mtime/ctime changed, and reports
 //! how many files it had to touch. A no-op refresh on an unchanged tree writes
 //! nothing.
 
@@ -28,6 +28,7 @@ pub struct RefreshStats {
 struct Stored {
     size: i64,
     mtime_ns: i64,
+    ctime_ns: i64,
     hash: Option<String>,
 }
 
@@ -39,6 +40,7 @@ struct Parsed {
     rel: String,
     size: i64,
     mtime_ns: i64,
+    ctime_ns: i64,
     hash: String,
     language: Option<&'static str>,
     content_changed: bool,
@@ -59,6 +61,7 @@ fn parse_one(
     abs: &Path,
     size: i64,
     mtime_ns: i64,
+    ctime_ns: i64,
 ) -> Option<Parsed> {
     let mut bytes = std::fs::read(abs).ok()?;
     // Strip a leading UTF-8 BOM so line-1 anchors match and byte offsets align.
@@ -76,11 +79,21 @@ fn parse_one(
     let was_indexed = prev.is_some();
 
     let (body, facts, spans, relations) = if content_changed && !is_binary {
+        // Everything downstream shares one coordinate system: the file decoded as
+        // UTF-8 with invalid bytes replaced (and the BOM already stripped above).
+        // Extracting from the raw bytes instead would put fact offsets and the
+        // searchable body on different scales for any file that is not valid
+        // UTF-8 — each invalid byte becomes a three-byte U+FFFD — so every
+        // enclosing-symbol lookup past the first bad byte would name the wrong
+        // definition. For valid UTF-8, which is virtually every file, this is
+        // byte-identical and free: the string is materialised for the FTS body
+        // either way.
+        let text = String::from_utf8_lossy(&bytes).into_owned();
         let (f, s, r) = match language {
-            Some(lang) => extractor.extract(lang, &bytes),
+            Some(lang) => extractor.extract(lang, rel, text.as_bytes()),
             None => (Vec::new(), Vec::new(), Vec::new()),
         };
-        (Some(String::from_utf8_lossy(&bytes).into_owned()), f, s, r)
+        (Some(text), f, s, r)
     } else {
         (None, Vec::new(), Vec::new(), Vec::new())
     };
@@ -89,6 +102,7 @@ fn parse_one(
         rel: rel.to_string(),
         size,
         mtime_ns,
+        ctime_ns,
         hash,
         language,
         content_changed,
@@ -101,7 +115,7 @@ fn parse_one(
 }
 
 /// Bring the index in line with the working tree. Returns how many files were
-/// (re)parsed. Incremental: unchanged files (same size + mtime) are skipped
+/// (re)parsed. Incremental: unchanged files (same size + mtime + ctime) are skipped
 /// without hashing. For git repos, a matching freshness token skips the walk
 /// entirely.
 pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
@@ -113,7 +127,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     //   * every cached directory's mtime is unchanged — a file added, removed or
     //     renamed bumps its parent dir's mtime, so this catches all *structural*
     //     changes (the untracked-cache trick git uses), and
-    //   * every cached file's (size, mtime) is unchanged — catches content edits.
+    //   * every cached file's (size, mtime, ctime) is unchanged — catches content
+    //     edits, including ones that restore mtime after writing.
     // Only a real change short-circuits it into the full walk below.
     if is_fresh(db, repo_root)? {
         return Ok(RefreshStats {
@@ -128,14 +143,15 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     {
         let mut stmt = db
             .conn
-            .prepare("SELECT path, size_bytes, mtime_ns, content_hash FROM files")?;
+            .prepare("SELECT path, size_bytes, mtime_ns, ctime_ns, content_hash FROM files")?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 Stored {
                     size: r.get::<_, i64>(1)?,
                     mtime_ns: r.get::<_, i64>(2).unwrap_or(0),
-                    hash: r.get::<_, Option<String>>(3)?,
+                    ctime_ns: r.get::<_, i64>(3).unwrap_or(0),
+                    hash: r.get::<_, Option<String>>(4)?,
                 },
             ))
         })?;
@@ -151,16 +167,25 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
     // Serial walk (stat-bound): record directory mtimes for the freshness cache,
     // build the `seen` set, and collect the files that actually need
-    // (re)processing — unchanged files short-circuit on the size+mtime fast path.
+    // (re)processing — unchanged files short-circuit on the stat fast path.
     let now = now_ns();
-    let mut work: Vec<(String, PathBuf, i64, i64)> = Vec::new();
+    let mut work: Vec<(String, PathBuf, i64, i64, i64)> = Vec::new();
+    let mut wb = WalkBuilder::new(repo_root);
+    wb.standard_filters(true); // .gitignore, .ignore, hidden, parents
     // `parents(false)` when the root was pinned with --root: a dependency
     // directory is ignored *by its parent repo*, and consulting that would make
     // every file in it invisible. Ignore files inside the root still apply.
-    let walker = WalkBuilder::new(repo_root)
-        .standard_filters(true) // .gitignore, .ignore, hidden, parents
-        .parents(!repo.pinned)
-        .build();
+    wb.parents(!repo.pinned);
+    // `.codeqignore` — for trees that are *committed* but not code. Respecting
+    // .gitignore is not enough on a data-heavy repo: an external user reported
+    // ~2,100 files landing in the index as `(unknown)`, and every one of them was
+    // tracked, so nothing gitignore-based could ever have excluded them. Takes
+    // precedence over .gitignore (the `ignore` crate orders custom files highest).
+    // Gitignore semantics otherwise, including the sharp edge: `!data/keep.json`
+    // cannot resurrect a file under an excluded `data/`, because the walk never
+    // descends — exclude `data/*.json` instead if you need to re-include one.
+    wb.add_custom_ignore_filename(".codeqignore");
+    let walker = wb.build();
     for dent in walker {
         let dent = match dent {
             Ok(d) => d,
@@ -183,7 +208,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             // Ignore files change which paths get indexed, but they're hidden
             // (never walked), so an in-place `.gitignore`/`.ignore` edit bumps
             // no cached mtime — track them here or freshness would miss it.
-            for ig in [".gitignore", ".ignore"] {
+            for ig in [".gitignore", ".ignore", ".codeqignore"] {
                 if let Some(m) = std::fs::metadata(abs.join(ig)).ok().as_ref().and_then(mtime_ns_of) {
                     let key = if rel.is_empty() { ig.to_string() } else { format!("{rel}/{ig}") };
                     dirs_seen.insert(key, m);
@@ -209,16 +234,19 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
+        let ctime_ns = ctime_ns_of(&meta);
 
         seen.insert(rel.clone(), ());
 
-        // Fast path: size + mtime unchanged => trust the stored hash, no read.
+        // Fast path: size + mtime + ctime unchanged => trust the stored hash, no
+        // read. ctime is what makes this safe: mtime alone can be restored after
+        // a write, so a same-size edit would otherwise slip through unnoticed.
         if let Some(prev) = existing.get(&rel) {
-            if prev.size == size && prev.mtime_ns == mtime_ns {
+            if prev.size == size && prev.mtime_ns == mtime_ns && prev.ctime_ns == ctime_ns {
                 continue;
             }
         }
-        work.push((rel, abs.to_path_buf(), size, mtime_ns));
+        work.push((rel, abs.to_path_buf(), size, mtime_ns, ctime_ns));
     }
 
     // Parse the changed files in parallel (read + hash + tree-sitter extraction
@@ -226,7 +254,26 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     // transaction never crosses threads, so index content stays deterministic
     // regardless of which worker finished first. A bounded channel bounds the
     // parsed bodies held in flight.
-    let tx = db.conn.unchecked_transaction()?;
+    // BEGIN IMMEDIATE, not the default DEFERRED. A deferred transaction takes its
+    // write lock lazily, on the first write — and SQLite refuses to make a reader
+    // wait for that upgrade, returning SQLITE_BUSY *immediately* and bypassing the
+    // busy timeout entirely, because two readers both upgrading would deadlock.
+    // Taking the write lock up front is what lets the busy handler do its job, so
+    // concurrent refreshes queue instead of failing.
+    let tx = rusqlite::Transaction::new_unchecked(
+        &db.conn,
+        rusqlite::TransactionBehavior::Immediate,
+    )?;
+    // Whoever held the lock may have just done exactly this work: several agent
+    // invocations noticing the same edit at once all decide to refresh, then
+    // queue here. Re-check now that the lock is ours, and skip the parse and the
+    // writes rather than redo them. Dropping `tx` unwritten rolls back cleanly.
+    if is_fresh(db, repo_root)? {
+        return Ok(RefreshStats {
+            reindexed: 0,
+            partial_failures,
+        });
+    }
     // Build one extractor up front purely to validate: each worker constructs its
     // own (a Parser is not Sync), and a failure there is a malformed query, i.e. a
     // bug in codeq rather than anything about this repo. Without this check the
@@ -247,12 +294,22 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 let existing = &existing;
                 let failures = &parse_failures;
                 scope.spawn(move || {
+                    // Building the extractor compiles every language's queries, so
+                    // it fails only when one of them is malformed — a programming
+                    // error, identical for every worker and every file. Returning
+                    // quietly meant the workers sent nothing, the writer stored
+                    // nothing, and the whole index came back *empty and reporting
+                    // itself fresh*: a broken query in one language silently
+                    // zeroed all 28. Make it loud.
                     let mut ex = match Extractor::new() {
                         Ok(e) => e,
-                        Err(_) => return,
+                        Err(e) => {
+                            eprintln!("codeq: fact extraction unavailable: {e:#}");
+                            std::process::exit(1);
+                        }
                     };
-                    for (rel, abs, size, mtime) in c {
-                        match parse_one(existing, &mut ex, rel, abs, *size, *mtime) {
+                    for (rel, abs, size, mtime, ctime) in c {
+                        match parse_one(existing, &mut ex, rel, abs, *size, *mtime, *ctime) {
                             Some(p) => {
                                 if sender.send(p).is_err() {
                                     return; // writer went away (error) — stop
@@ -269,12 +326,13 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
             // Serial writer: owns the transaction and its prepared statements.
             let mut upsert = tx.prepare(
-                "INSERT INTO files(path, language, size_bytes, mtime_ns, content_hash, indexed_at)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO files(path, language, size_bytes, mtime_ns, ctime_ns, content_hash, indexed_at)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(path) DO UPDATE SET
                     language = excluded.language,
                     size_bytes = excluded.size_bytes,
                     mtime_ns = excluded.mtime_ns,
+                    ctime_ns = excluded.ctime_ns,
                     content_hash = excluded.content_hash,
                     indexed_at = excluded.indexed_at",
             )?;
@@ -283,8 +341,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 "INSERT OR REPLACE INTO facts(
                     id, kind, name, path, language,
                     start_byte, end_byte, start_line, start_col, end_line, end_col,
-                    signature, doc, source, confidence, visibility)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+                    signature, doc, source, confidence, visibility, owner, shape, shape_nodes)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
             )?;
             let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
             let mut ins_fts =
@@ -301,7 +359,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
             let mut reindexed: u64 = 0;
             for p in res_rx {
-                upsert.execute((&p.rel, p.language, p.size, p.mtime_ns, &p.hash, now))?;
+                upsert.execute((&p.rel, p.language, p.size, p.mtime_ns, p.ctime_ns, &p.hash, now))?;
                 if !p.content_changed {
                     continue;
                 }
@@ -321,7 +379,9 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 }
                 if let Some(lang) = p.language {
                     for f in &p.facts {
-                        ins_fact.execute((
+                        // `params!` rather than a tuple: rusqlite only implements
+                        // `Params` for tuples up to 16, and this is 17 columns.
+                        ins_fact.execute(rusqlite::params![
                             f.id(&p.rel),
                             &f.kind,
                             &f.name,
@@ -338,7 +398,10 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                             &f.source,
                             f.confidence,
                             &f.visibility,
-                        ))?;
+                            &f.owner,
+                            &f.shape,
+                            f.shape_nodes,
+                        ])?;
                     }
                     for (sb, eb, sp) in &p.spans {
                         ins_span.execute((&p.rel, *sb as i64, *eb as i64, sp.as_i64()))?;
@@ -431,15 +494,16 @@ fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
     }
     let mut stmt = db
         .conn
-        .prepare("SELECT path, size_bytes, mtime_ns FROM files")?;
+        .prepare("SELECT path, size_bytes, mtime_ns, ctime_ns FROM files")?;
     let mut rows = stmt.query([])?;
     while let Some(r) = rows.next()? {
         let rel = r.get_ref(0)?.as_str()?;
         let size: i64 = r.get(1)?;
         let mtime: i64 = r.get::<_, Option<i64>>(2)?.unwrap_or(0);
+        let ctime: i64 = r.get::<_, Option<i64>>(3)?.unwrap_or(0);
         buf.truncate(base);
         buf.push_str(rel);
-        if file_size_mtime(std::path::Path::new(&buf)) != Some((size, mtime)) {
+        if file_stat_key(std::path::Path::new(&buf)) != Some((size, mtime, ctime)) {
             return Ok(false);
         }
     }
@@ -460,13 +524,36 @@ fn path_mtime(path: &std::path::Path) -> Option<i64> {
     mtime_ns_of(&std::fs::metadata(path).ok()?)
 }
 
-/// File `(size, mtime_ns)` for the freshness check, or `None` if not a file.
-fn file_size_mtime(path: &std::path::Path) -> Option<(i64, i64)> {
+/// Nanosecond inode-change time, the part of a stat that userspace cannot set.
+/// `mtime` can be restored after a write (`touch -d`, `cp -p`, `rsync -a`, tar
+/// extraction), so a same-size edit could otherwise leave (size, mtime) intact
+/// and the index silently stale; `ctime` moves on every write. Unix-only —
+/// elsewhere this contributes nothing and freshness falls back to size + mtime.
+#[cfg(unix)]
+fn ctime_ns_of(md: &std::fs::Metadata) -> i64 {
+    use std::os::unix::fs::MetadataExt;
+    md.ctime()
+        .saturating_mul(1_000_000_000)
+        .saturating_add(md.ctime_nsec())
+}
+
+#[cfg(not(unix))]
+fn ctime_ns_of(_md: &std::fs::Metadata) -> i64 {
+    0
+}
+
+/// File `(size, mtime_ns, ctime_ns)` for the freshness check, or `None` if not
+/// a file.
+fn file_stat_key(path: &std::path::Path) -> Option<(i64, i64, i64)> {
     let md = std::fs::metadata(path).ok()?;
     if !md.is_file() {
         return None;
     }
-    Some((md.len() as i64, mtime_ns_of(&md).unwrap_or(0)))
+    Some((
+        md.len() as i64,
+        mtime_ns_of(&md).unwrap_or(0),
+        ctime_ns_of(&md),
+    ))
 }
 
 fn looks_binary(bytes: &[u8]) -> bool {
@@ -506,6 +593,13 @@ pub fn language_for(path: &str) -> Option<&'static str> {
         "zig" => "zig",
         "ex" | "exs" => "elixir",
         "sol" => "solidity",
+        "svelte" => "svelte",
+        "vue" => "vue",
+        "css" | "scss" => "css",
+        "tf" | "tfvars" | "hcl" | "nomad" => "hcl",
+        "ps1" | "psm1" | "psd1" => "powershell",
+        "proto" => "proto",
+        "graphql" | "gql" => "graphql",
         _ => return None,
     };
     Some(lang)

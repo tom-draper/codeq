@@ -119,8 +119,24 @@ impl InFilter {
     }
 }
 
+/// SQL selecting a file's cached comment/string spans, sorted. Statement text
+/// rather than a helper that runs it: both callers prepare once and step it per
+/// file, so sharing the query keeps one notion of a span without moving the
+/// `prepare` into a hot loop.
+pub(crate) const SPANS_SQL: &str =
+    "SELECT start_byte, end_byte, kind FROM spans WHERE path = ?1 ORDER BY start_byte";
+
+/// Map a [`SPANS_SQL`] row to `(start, end, class)`.
+pub(crate) fn span_row(r: &rusqlite::Row) -> rusqlite::Result<(usize, usize, Span)> {
+    Ok((
+        r.get::<_, i64>(0)? as usize,
+        r.get::<_, i64>(1)? as usize,
+        Span::from_i64(r.get::<_, i64>(2)?).unwrap_or(Span::Str),
+    ))
+}
+
 /// The class of byte offset `off` given sorted, non-overlapping `spans`.
-fn class_at(spans: &[(usize, usize, Span)], off: usize) -> Option<Span> {
+pub(crate) fn class_at(spans: &[(usize, usize, Span)], off: usize) -> Option<Span> {
     let idx = spans.partition_point(|(s, _, _)| *s <= off);
     if idx == 0 {
         return None;
@@ -151,9 +167,37 @@ fn is_ident_byte(b: u8) -> bool {
     b == b'_' || b.is_ascii_alphanumeric()
 }
 
-/// Whether the match ending at byte `end` is immediately followed by `(` (after
-/// optional spaces/tabs) — i.e. it's a call, not a bare mention.
-fn is_call_position(bytes: &[u8], end: usize) -> bool {
+/// Whether the match is a markup instantiation — `<Name …/>` or `</Name>`.
+///
+/// A Svelte or Vue component is *used* by writing it as an element, which no
+/// grammar reports as a call expression: tree-sitter is right that this is not a
+/// call node, and codeq is right that it is a usage. So this is checked
+/// separately from, and in addition to, the parse tree — otherwise `--calls` on a
+/// component returns nothing for a component that is plainly used, which is how
+/// this regressed when call detection moved onto the parse tree.
+pub(crate) fn is_markup_instantiation(bytes: &[u8], start: usize) -> bool {
+    let mut i = start;
+    while i > 0 && (bytes[i - 1] == b' ' || bytes[i - 1] == b'\t') {
+        i -= 1;
+    }
+    if i > 0 && bytes[i - 1] == b'/' {
+        i -= 1; // a closing tag
+    }
+    i > 0 && bytes[i - 1] == b'<'
+}
+
+/// Whether the match is an *invocation* rather than a bare mention.
+///
+/// `Name(` is the call-syntax languages. But codeq now indexes formats where
+/// invocation is spelled differently and `Name(` never appears: a Svelte or Vue
+/// component is invoked as `<Name …/>`, so `--calls` on one used to return
+/// nothing at all for a component that is plainly used. Both forms count, since
+/// the question `--calls` answers — "where is this actually used, not merely
+/// named?" — is the same one.
+pub(crate) fn is_call_position(bytes: &[u8], start: usize, end: usize) -> bool {
+    if is_markup_instantiation(bytes, start) {
+        return true;
+    }
     let mut j = end;
     while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
         j += 1;
@@ -309,9 +353,7 @@ pub(crate) fn run_search(
     )?;
     // Comment/string spans are cached in the index (extracted once), so --in is
     // a lookup, not a per-query re-parse.
-    let mut span_stmt = conn.prepare(
-        "SELECT start_byte, end_byte, kind FROM spans WHERE path = ?1 ORDER BY start_byte",
-    )?;
+    let mut span_stmt = conn.prepare(SPANS_SQL)?;
 
     let mut acc = ScanAcc::default();
 
@@ -348,13 +390,7 @@ pub(crate) fn run_search(
                 // the file, so an exclusion filter cannot lose real matches.
                 Vec::new()
             } else {
-                let srows = span_stmt.query_map([rel], |r| {
-                    Ok((
-                        r.get::<_, i64>(0)? as usize,
-                        r.get::<_, i64>(1)? as usize,
-                        Span::from_i64(r.get::<_, i64>(2)?).unwrap_or(Span::Str),
-                    ))
-                })?;
+                let srows = span_stmt.query_map([rel], span_row)?;
                 srows.collect::<std::result::Result<Vec<_>, _>>()?
             }
         } else {
@@ -495,7 +531,10 @@ pub(crate) fn scan_doc(
                 // than drop every hit.
                 match calls {
                     Some(map) => {
-                        if opts.call_only && !map.contains_key(&off) {
+                        if opts.call_only
+                            && !map.contains_key(&off)
+                            && !is_markup_instantiation(bytes, off)
+                        {
                             continue;
                         }
                         if let Some(recv) = &opts.qualifier {
@@ -505,7 +544,12 @@ pub(crate) fn scan_doc(
                         }
                     }
                     None => {
-                        if opts.call_only && !is_call_position(bytes, m.end()) {
+                        // The byte-level fallback takes the match *start* as well
+                        // as its end: a Svelte/Vue component is invoked as
+                        // `<Name …/>`, which is only detectable by looking left of
+                        // the name. Those languages have no grammar for `calls_in`
+                        // to parse, so this fallback is the only path they take.
+                        if opts.call_only && !is_call_position(bytes, m.start(), m.end()) {
                             continue;
                         }
                         if let Some(recv) = &opts.qualifier {
@@ -590,7 +634,10 @@ pub(crate) fn scan_stdin(
                 ));
             }
             let mut ex = Extractor::new()?;
-            let (facts, spans, _) = ex.extract(lang, body.as_bytes());
+            // No path: stdin has no filename. Only single-file component
+            // formats use it (to name the component after its file), and a
+            // piped Svelte buffer has no file to be named after.
+            let (facts, spans, _) = ex.extract(lang, "", body.as_bytes());
             let defs: Vec<FileDef> = facts
                 .into_iter()
                 .filter(|f| f.kind != "import")

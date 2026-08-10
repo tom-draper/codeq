@@ -213,11 +213,29 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
         .output()
         .map_err(|e| anyhow!("failed to run git: {e}"))?;
     if !out.status.success() {
-        return Err(anyhow!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // An unresolvable ref is the one git failure a caller routinely causes,
+        // and git's own wording for it points the wrong way: it advises using
+        // `--` to disambiguate paths from revisions, which is not the problem
+        // when the ref simply doesn't exist. `--compare-to` defaults to `main`,
+        // so this is what a repo whose trunk is `master` hits on the very first
+        // `changed` or `affected`. Say what actually went wrong.
+        if let Some(rev) = stderr
+            .lines()
+            .find_map(|l| l.strip_prefix("fatal: ambiguous argument '"))
+            .and_then(|l| l.split('\'').next())
+        {
+            // The trunk hint only helps when the ref came from the default; when
+            // the caller named one explicitly, it is just noise.
+            let hint = if rev == "main" {
+                " — this is the --compare-to default, so pass the ref this repo \
+                  actually uses as its trunk"
+            } else {
+                " — pass a --compare-to ref that exists in this repo"
+            };
+            return Err(anyhow!("no such git ref: '{rev}'{hint}"));
+        }
+        return Err(anyhow!("git {} failed: {}", args.join(" "), stderr.trim()));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }

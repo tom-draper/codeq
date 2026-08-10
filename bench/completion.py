@@ -22,14 +22,12 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 
 import corpus  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-CODEQ = os.path.join(ROOT, "target", "release", "codeq")
+CODEQ = corpus.CODEQ
 RESULTS = os.path.join(HERE, "results")
 WINDOW = 60  # lines an agent reads around a located symbol (a fair, modest chunk)
 VENDORED = ("/vendor/", "/dist/", "/node_modules/", "/_static/", "/third_party/",
@@ -37,9 +35,9 @@ VENDORED = ("/vendor/", "/dist/", "/node_modules/", "/_static/", "/third_party/"
 
 
 def run(cmd, path):
-    t = time.perf_counter()
-    p = subprocess.run(cmd, cwd=path, capture_output=True)
-    return (time.perf_counter() - t) * 1000, p.stdout
+    """(milliseconds, stdout) — this harness reports in ms, unlike the others."""
+    secs, out = corpus.timed_run(cmd, path)
+    return secs * 1000, out
 
 
 def measure(cmds, path):
@@ -340,11 +338,6 @@ def run_repo(path):
     return {"target": S, "file": F, "tasks": out}
 
 
-def codeq_commit():
-    p = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True)
-    return p.stdout.strip()[:12]
-
-
 def main():
     if not os.path.exists(CODEQ):
         sys.exit("build release binary first: cargo build --release")
@@ -391,7 +384,7 @@ def main():
 
     result = {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "codeq_commit": codeq_commit(),
+        "codeq_commit": corpus.codeq_commit(),
         "repos": len(repos),
         "totals": {"codeq_tokens": cqt, "baseline_tokens": blt,
                    "token_ratio": round(blt / max(cqt, 1), 2),

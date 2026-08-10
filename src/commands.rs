@@ -328,6 +328,50 @@ impl Filters {
     }
 }
 
+/// Definition sites of one exact name, as `(path, start_line)`.
+///
+/// Both `callers` and `references` need this to tell a declaration apart from a
+/// use of the same name — the one place where two commands genuinely ask the
+/// database the same question, so it is worth one function rather than two
+/// copies that could drift on the `kind <> 'import'` clause.
+fn def_sites_of(conn: &rusqlite::Connection, name: &str) -> Result<HashSet<(String, i64)>> {
+    let mut stmt =
+        conn.prepare("SELECT path, start_line FROM facts WHERE name = ?1 AND kind <> 'import'")?;
+    let rows = stmt.query_map([name], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    Ok(rows.collect::<std::result::Result<HashSet<_>, _>>()?)
+}
+
+/// Every definition site in the repo, as `(name, path, start_line)`.
+///
+/// Yields rows instead of returning a built structure because the two callers
+/// want different shapes of the same scan: `unused` groups sites by name to tell
+/// a use from a declaration, `hotspots` needs both a per-name count and a flat
+/// site set. Sharing the query keeps them agreeing on what counts as a definition.
+fn for_each_def_site(
+    conn: &rusqlite::Connection,
+    mut f: impl FnMut(String, String, i64),
+) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT name, path, start_line FROM facts
+         WHERE kind <> 'import' AND name IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+    })?;
+    for row in rows {
+        let (name, path, line) = row?;
+        f(name, path, line);
+    }
+    Ok(())
+}
+
+/// Every indexed file path, sorted — the node set for the dependency graph.
+fn all_file_paths(conn: &rusqlite::Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT path FROM files ORDER BY path")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
 /// A `LIMIT n` clause, or empty when `limit` is 0 (unlimited).
 fn limit_clause(limit: usize) -> String {
     if limit > 0 {
@@ -501,12 +545,16 @@ struct SymbolRow {
     /// Only populated when the caller passes --signatures.
     #[serde(skip_serializing_if = "Option::is_none")]
     signature: Option<String>,
+    /// The type a `field`/`variant` belongs to; absent for everything else.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
 }
 
 pub fn cmd_symbols(
     cwd: &Path,
     pattern: Option<&str>,
     kind: Option<&str>,
+    owner: Option<&str>,
     language: Option<&str>,
     path: Option<&str>,
     signatures: bool,
@@ -516,7 +564,7 @@ pub fn cmd_symbols(
     let s = Session::open(cwd, false, out)?;
 
     let mut sql = String::from(
-        "SELECT name, kind, path, language, start_line, end_line, signature
+        "SELECT name, kind, path, language, start_line, end_line, signature, owner
          FROM facts WHERE name IS NOT NULL AND kind <> 'import'",
     );
     let mut args: Vec<String> = Vec::new();
@@ -527,6 +575,13 @@ pub fn cmd_symbols(
     if let Some(k) = kind {
         sql.push_str(" AND kind = ?");
         args.push(k.to_string());
+    }
+    // Members are only addressable with their type — `id` and `name` recur
+    // everywhere — so filtering by owner is how "what does this type hold?" gets
+    // asked without dumping every field in the repository.
+    if let Some(o) = owner {
+        sql.push_str(" AND owner = ?");
+        args.push(o.to_string());
     }
     if let Some(l) = language {
         sql.push_str(" AND language = ?");
@@ -558,6 +613,7 @@ pub fn cmd_symbols(
             } else {
                 None
             },
+            owner: r.get(7)?,
             kind,
         })
     })?;
@@ -582,6 +638,10 @@ struct DefinitionRow {
     signature: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     doc: Option<String>,
+    /// For a `field`/`variant`, the type it belongs to. Absent otherwise — a
+    /// member name alone (`id`, `name`) does not identify anything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
 }
 
 fn definitions_of(
@@ -594,7 +654,7 @@ fn definitions_of(
     let sql = format!(
         "SELECT name, kind, path, language,
                 start_line, start_col, end_line, end_col, start_byte, end_byte,
-                signature, doc
+                signature, doc, owner
          FROM facts WHERE name = ? AND kind <> 'import'{} ORDER BY path, start_line{}",
         filters.sql(),
         limit_clause(limit),
@@ -614,6 +674,7 @@ fn definitions_of(
             end_byte: r.get(9)?,
             signature: declaration_header(&kind, r.get(10)?),
             doc: r.get(11)?,
+            owner: r.get(12)?,
             kind,
         })
     })?;
@@ -763,7 +824,7 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
         // The exported surface as of `compare_to`.
         let old: HashMap<String, (String, String)> = match s.repo.file_at(compare_to, &file) {
             Some(bytes) => ex
-                .extract(lang, &bytes)
+                .extract(lang, &file, &bytes)
                 .0
                 .into_iter()
                 .filter(|f| f.visibility.as_deref() == Some("public") && f.kind != "import")
@@ -938,31 +999,65 @@ fn callers_of(
     };
 
     // Declaration lines of `name` — a reference on one of these is the def, not a call.
-    let mut defsites: HashSet<(String, i64)> = HashSet::new();
+    let defsites = def_sites_of(&s.db.conn, name)?;
+
+    // Import lines in the files that matched. An import names the symbol without
+    // using it, so it is a poor anchor for a caller row — it points at the
+    // dependency, not the usage. It went unnoticed while imports sat outside
+    // every definition (they surfaced as stray symbol-less rows), but a
+    // definition spanning its whole file (a Svelte component) encloses its own
+    // imports, and the dedup below then let the import line shadow the real
+    // usage site. These are used to *rank* anchors, not to drop rows: the
+    // default `callers` stays a textual superset, with `--calls` to narrow it.
+    let hit_paths: HashSet<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+    let mut importsites: HashSet<(String, i64)> = HashSet::new();
     {
-        let mut st = s.db.conn.prepare(
-            "SELECT path, start_line FROM facts WHERE name = ?1 AND kind <> 'import'",
-        )?;
-        for row in st.query_map([name], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
-            defsites.insert(row?);
+        let mut st = s
+            .db
+            .conn
+            .prepare("SELECT path, start_line FROM facts WHERE kind = 'import'")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (p, line) = row?;
+            if hit_paths.contains(p.as_str()) {
+                importsites.insert((p, line));
+            }
         }
     }
 
-    let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
-    let mut out = Vec::new();
-    for mut h in hits {
+    // One row per (file, enclosing symbol). The representative site is the first
+    // real usage; an import site is only the anchor when the file names the
+    // symbol nowhere else, so a file that imports without using it is still
+    // reported (just anchored at its import).
+    let mut pick: HashMap<(String, Option<String>), (Hit, bool)> = HashMap::new();
+    let mut order: Vec<(String, Option<String>)> = Vec::new();
+    for h in hits {
         if defsites.contains(&(h.path.clone(), h.line as i64)) {
             continue; // the declaration itself
         }
-        if !seen.insert((h.path.clone(), h.symbol.clone())) {
-            continue; // one row per (file, enclosing symbol) — first call site wins
+        let is_import = importsites.contains(&(h.path.clone(), h.line as i64));
+        let key = (h.path.clone(), h.symbol.clone());
+        match pick.get(&key) {
+            None => {
+                pick.insert(key.clone(), (h, is_import));
+                order.push(key);
+            }
+            // Upgrade an import anchor to a real usage; otherwise the first wins.
+            Some((_, prev_import)) if *prev_import && !is_import => {
+                pick.insert(key, (h, is_import));
+            }
+            Some(_) => {}
         }
-        let test = h.path.contains("test")
-            || h.path.contains("spec")
-            || h.symbol
-                .as_deref()
-                .map(|s| s.starts_with("test") || s.starts_with("Test"))
-                .unwrap_or(false);
+    }
+
+    let scopes = TestScopes::load(&s.db.conn)?;
+    let mut out = Vec::new();
+    for key in order {
+        let (mut h, _) = match pick.remove(&key) {
+            Some(v) => v,
+            None => continue,
+        };
+        let test = is_test_site(&h.path, h.symbol.as_deref(), h.line as i64, &scopes);
         // Under --examples, surface the call site's line/column and source text so
         // the row reads as a usage example (rendered grep-style by the envelope).
         let (col, text) = if examples {
@@ -994,6 +1089,18 @@ struct Callee {
     /// graph (only set under `--resolved`): same-file / imported.
     #[serde(skip_serializing_if = "Option::is_none")]
     via: Option<String>,
+    /// The call as actually written inside the caller — `subprocess.run`, not
+    /// `run` (only under `--examples`). The single most useful thing for spotting
+    /// a name-based over-match: `about codeq_commit` listed four unrelated `run`
+    /// definitions as callees, and the body calls `subprocess.run`. You had to
+    /// already suspect the answer to reach for `--resolved`; this shows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call: Option<String>,
+    /// Line of that call site, in the *caller's* file (only under `--examples`).
+    /// `path`/`line` stay on the callee's definition — that is what `callees` is
+    /// for; this is the evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call_line: Option<i64>,
 }
 
 /// Definitions referenced by name inside `name`'s body — its (textual) callees.
@@ -1005,6 +1112,7 @@ fn callees_of(
     name: &str,
     path: Option<&str>,
     resolved: bool,
+    examples: bool,
 ) -> Result<Vec<Callee>> {
     let targets: Vec<(String, usize, usize)> = {
         let mut sql = String::from(
@@ -1030,7 +1138,14 @@ fn callees_of(
         return Ok(Vec::new());
     }
 
+    // Names called inside the target body/bodies. Under `--examples` each also
+    // gets the call as written and the line it sits on, recorded here while the
+    // body is in hand. The receiver comes from the parse tree rather than from
+    // walking bytes backwards: `calls_in` already resolved `subprocess.run` to
+    // callee `run` on receiver `subprocess`, which is both cheaper and correct
+    // for chained or whitespace-separated receivers.
     let mut idents: HashSet<String> = HashSet::new();
+    let mut sites: HashMap<String, (String, i64)> = HashMap::new();
     {
         let mut body_stmt = s.db.conn.prepare("SELECT body FROM content_fts WHERE path = ?1")?;
         let mut span_stmt = s.db.conn.prepare(
@@ -1048,10 +1163,19 @@ fn callees_of(
             // file that actually defines the symbol, which is at most a handful.
             let lang = language_for(path).unwrap_or("");
             if let Some(calls) = crate::callsite::calls_in(lang, &b) {
-                for (off, _) in calls.iter().filter(|(off, _)| **off >= *sb && **off < *eb) {
-                    if let Some(word) = ident_at(&b, *off) {
-                        idents.insert(word);
+                for (off, recv) in calls.iter().filter(|(off, _)| **off >= *sb && **off < *eb) {
+                    let Some(word) = ident_at(&b, *off) else { continue };
+                    if examples {
+                        let expr = match recv {
+                            Some(r) => format!("{r}.{word}"),
+                            None => word.clone(),
+                        };
+                        let line = b[..(*off).min(b.len())].bytes().filter(|c| *c == b'\n').count()
+                            as i64
+                            + 1;
+                        sites.entry(word.clone()).or_insert((expr, line));
                     }
+                    idents.insert(word);
                 }
                 continue;
             }
@@ -1095,12 +1219,15 @@ fn callees_of(
         for row in rows {
             let (n, k, p, l) = row?;
             if n != name && seen.insert((n.clone(), p.clone(), l)) {
+                let site = sites.get(&n);
                 out.push(Callee {
                     name: n,
                     kind: k,
                     path: p,
                     line: l,
                     via: None,
+                    call: site.map(|(e, _)| e.clone()),
+                    call_line: site.map(|(_, l)| *l),
                 });
             }
         }
@@ -1303,11 +1430,12 @@ pub fn cmd_callees(
     path: Option<&str>,
     depth: usize,
     resolved: bool,
+    examples: bool,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
-        let rows = callees_of(&s, name, path, resolved)?;
+        let rows = callees_of(&s, name, path, resolved, examples)?;
         let note = note_if_empty(&s, &rows, name, "callees", path)?;
         return s.emit_noted(rows, note);
     }
@@ -1319,7 +1447,7 @@ pub fn cmd_callees(
     'walk: for d in 1..=depth {
         let mut next: Vec<String> = Vec::new();
         for sym in &frontier {
-            for c in callees_of(&s, sym, path, false)? {
+            for c in callees_of(&s, sym, path, false, false)? {
                 if !reported.insert((c.path.clone(), c.name.clone())) {
                     continue;
                 }
@@ -1414,7 +1542,7 @@ pub fn cmd_path(
         for node in &frontier {
             // Scope only the start symbol's callees; hops after it follow anywhere.
             let scope = if node.as_str() == from { path } else { None };
-            let mut callees = callees_of(&s, node, scope, false)?;
+            let mut callees = callees_of(&s, node, scope, false, false)?;
             callees.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)).then(a.line.cmp(&b.line)));
             for c in callees {
                 if !visited.insert(c.name.clone()) {
@@ -1483,11 +1611,15 @@ struct About {
 /// name), which is the useful "who uses this".
 pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
+    // `members` is theirs, the shared walk is mine: `explore` needs the same
+    // three lists, and letting the two commands gather them separately is how
+    // they would drift about who is in the neighbourhood.
+    let (definitions, callers, callees) = symbol_graph(&s, name, path)?;
     let data = About {
-        definitions: definitions_of(&s, name, path, 0)?,
+        definitions,
         members: members_of(&s, name, path, None, 0)?,
-        callers: callers_of(&s, name, None, false, None, false)?,
-        callees: callees_of(&s, name, path, false)?,
+        callers,
+        callees,
     };
     // A typo is the dangerous case here: every section comes back empty under
     // valid headers, which reads like a real answer about a real symbol.
@@ -1497,6 +1629,30 @@ pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result
         None
     };
     s.emit_noted(data, note)
+}
+
+/// The graph around `name`: its definition(s), who calls it, what it calls.
+///
+/// Shared by `about` and `explore`, which walk the same neighbourhood and then
+/// present it two different ways — `about` keeps every field of each node (doc
+/// comments, the `test` flag on callers, byte offsets, `owner`), `explore` trims
+/// the nodes and spends the budget on verbatim source instead. Reported from
+/// outside as "the same command twice", which the names invite; keeping the walk
+/// in one place at least means the two can't answer differently about *who* is in
+/// the neighbourhood.
+///
+/// Callers stay repo-wide — a textual "who uses this" — while the focus and its
+/// callees honour `path`, so a common name doesn't merge unrelated symbols.
+fn symbol_graph(
+    s: &Session,
+    name: &str,
+    path: Option<&str>,
+) -> Result<(Vec<DefinitionRow>, Vec<Caller>, Vec<Callee>)> {
+    Ok((
+        definitions_of(s, name, path, 0)?,
+        callers_of(s, name, None, false, None, false)?,
+        callees_of(s, name, path, false, false)?,
+    ))
 }
 
 /// A node in an `explore` graph: a definition (focus) or one of its immediate
@@ -1546,12 +1702,9 @@ pub fn cmd_explore(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
-    // The graph around `name`: its definition(s), who calls it, what it calls.
-    // Callers stay repo-wide (textual "who uses this"); focus and callees honour
-    // `--path` so a common name doesn't merge unrelated symbols.
-    let defs = definitions_of(&s, name, path, 0)?;
-    let callers = callers_of(&s, name, None, false, None, false)?;
-    let callees = callees_of(&s, name, path, false)?;
+    // The same neighbourhood `about` reports; explore trims the nodes and spends
+    // the token budget on verbatim source instead.
+    let (defs, callers, callees) = symbol_graph(&s, name, path)?;
 
     let focus: Vec<ExploreNode> = defs
         .iter()
@@ -1655,7 +1808,7 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
     let mut stmt = s.db.conn.prepare(
         "SELECT name, kind, path, language,
                 start_line, start_col, end_line, end_col, start_byte, end_byte,
-                signature, doc
+                signature, doc, owner
          FROM facts
          WHERE kind <> 'import' AND path = ?1
            AND start_line <= ?2 AND end_line >= ?2
@@ -1675,6 +1828,7 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
             end_byte: r.get(9)?,
             signature: declaration_header(&kind, r.get(10)?),
             doc: r.get(11)?,
+            owner: r.get(12)?,
             kind,
         })
     })?;
@@ -1920,7 +2074,7 @@ pub fn cmd_outline(cwd: &Path, file: &str, docs: bool, out: Out) -> Result<()> {
 }
 
 /// Bodies of function/method definitions this many lines or longer are folded.
-const MIN_FOLD: usize = 4;
+pub(crate) const MIN_FOLD: usize = 4;
 
 /// `read <file>` — a folding file reader (text output, not JSON). By default it
 /// shows the file with long function/method bodies collapsed to their signature
@@ -2222,9 +2376,7 @@ struct CycleRow {
 /// an `(importing_file, raw_module)` pair, resolved to file→file edges.
 fn load_dep_graph(s: &Session) -> Result<deps::Graph> {
     let files: Vec<String> = {
-        let mut stmt = s.db.conn.prepare("SELECT path FROM files ORDER BY path")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        rows.collect::<std::result::Result<_, _>>()?
+        all_file_paths(&s.db.conn)?
     };
     let imports: Vec<(String, String)> = {
         let mut stmt = s
@@ -2428,10 +2580,7 @@ fn resolve_dep_target(graph: &deps::Graph, s: &Session, query: &str) -> Result<S
     if graph.contains(query) {
         return Ok(query.to_string());
     }
-    let mut stmt = s.db.conn.prepare("SELECT path FROM files ORDER BY path")?;
-    let paths: Vec<String> = stmt
-        .query_map([], |r| r.get::<_, String>(0))?
-        .collect::<std::result::Result<_, _>>()?;
+    let paths = all_file_paths(&s.db.conn)?;
     let q = query.trim_start_matches("./");
     let matches: Vec<String> = paths
         .into_iter()
@@ -2831,17 +2980,7 @@ pub fn cmd_references(
     };
 
     // Definition sites of this exact name: (path, start_line).
-    let mut defsites: HashSet<(String, i64)> = HashSet::new();
-    {
-        let mut stmt = s.db.conn.prepare(
-            "SELECT path, start_line FROM facts WHERE name = ?1 AND kind <> 'import'",
-        )?;
-        let rows =
-            stmt.query_map([name], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-        for row in rows {
-            defsites.insert(row?);
-        }
-    }
+    let defsites = def_sites_of(&s.db.conn, name)?;
 
     let references: Vec<ReferenceRow> = hits
         .into_iter()
@@ -2880,6 +3019,67 @@ struct ImplementorRow {
     language: Option<String>,
 }
 
+#[derive(Serialize)]
+struct SupertypeRow {
+    /// The trait / interface / base class this type extends or implements.
+    supertype: String,
+    /// How it relates: "implements" or "extends".
+    relation: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+}
+
+/// One `impls` edge, before it is presented under either command's field names.
+struct ImplEdge {
+    other: String,
+    relation: String,
+    path: String,
+    line: i64,
+    language: Option<String>,
+}
+
+/// The `impls` edges touching `name`, read in one direction.
+///
+/// `implementors` and `supertypes` are the same query with `subtype` and
+/// `supertype` swapped — which is why they were, letter for letter, the same
+/// function written twice. They still present different field names (`subtype`
+/// vs `supertype`), because that is the output contract, so only the query is
+/// shared and each command names its own result.
+fn impl_edges(
+    s: &Session,
+    select: &str,
+    matched: &str,
+    name: &str,
+    relation: Option<&str>,
+    path: Option<&str>,
+    limit: usize,
+) -> Result<Vec<ImplEdge>> {
+    debug_assert!(
+        matches!(select, "subtype" | "supertype") && matches!(matched, "subtype" | "supertype"),
+        "columns are fixed, never caller input"
+    );
+    let filters = Filters::new().eq("relation", relation).like("path", path);
+    let sql = format!(
+        "SELECT {select}, relation, path, line, language
+         FROM impls WHERE {matched} = ?{} ORDER BY path, line{}",
+        filters.sql(),
+        limit_clause(limit),
+    );
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_with(&[&name], &filters).as_slice(), |r| {
+        Ok(ImplEdge {
+            other: r.get(0)?,
+            relation: r.get(1)?,
+            path: r.get(2)?,
+            line: r.get(3)?,
+            language: r.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
 /// `implementors <type>` — the types that implement or extend a trait /
 /// interface / base class. Covers the inheritance edges the call graph doesn't:
 /// `impl T for X` (Rust), `class X extends Y` / `implements I` (Java/TS/PHP/…),
@@ -2895,38 +3095,19 @@ pub fn cmd_implementors(
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let filters = Filters::new().eq("relation", relation).like("path", path);
-    let sql = format!(
-        "SELECT subtype, relation, path, line, language
-         FROM impls WHERE supertype = ?{} ORDER BY path, line{}",
-        filters.sql(),
-        limit_clause(limit),
-    );
-    let mut stmt = s.db.conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_with(&[&name], &filters).as_slice(), |r| {
-        Ok(ImplementorRow {
-            subtype: r.get(0)?,
-            relation: r.get(1)?,
-            path: r.get(2)?,
-            line: r.get(3)?,
-            language: r.get(4)?,
-        })
-    })?;
-    let data: Vec<ImplementorRow> = rows.collect::<std::result::Result<_, _>>()?;
+    let data: Vec<ImplementorRow> =
+        impl_edges(&s, "subtype", "supertype", name, relation, path, limit)?
+            .into_iter()
+            .map(|e| ImplementorRow {
+                subtype: e.other,
+                relation: e.relation,
+                path: e.path,
+                line: e.line,
+                language: e.language,
+            })
+            .collect();
     let note = note_if_empty_feat(&s, &data, name, "implementors or subtypes", path, Some("relations"))?;
     s.emit_noted(data, note)
-}
-
-#[derive(Serialize)]
-struct SupertypeRow {
-    /// The trait / interface / base class this type extends or implements.
-    supertype: String,
-    /// How it relates: "implements" or "extends".
-    relation: String,
-    path: String,
-    line: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    language: Option<String>,
 }
 
 /// `supertypes <type>` — the traits / interfaces / base classes a type extends
@@ -2942,24 +3123,17 @@ pub fn cmd_supertypes(
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let filters = Filters::new().eq("relation", relation).like("path", path);
-    let sql = format!(
-        "SELECT supertype, relation, path, line, language
-         FROM impls WHERE subtype = ?{} ORDER BY path, line{}",
-        filters.sql(),
-        limit_clause(limit),
-    );
-    let mut stmt = s.db.conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_with(&[&name], &filters).as_slice(), |r| {
-        Ok(SupertypeRow {
-            supertype: r.get(0)?,
-            relation: r.get(1)?,
-            path: r.get(2)?,
-            line: r.get(3)?,
-            language: r.get(4)?,
-        })
-    })?;
-    let data: Vec<SupertypeRow> = rows.collect::<std::result::Result<_, _>>()?;
+    let data: Vec<SupertypeRow> =
+        impl_edges(&s, "supertype", "subtype", name, relation, path, limit)?
+            .into_iter()
+            .map(|e| SupertypeRow {
+                supertype: e.other,
+                relation: e.relation,
+                path: e.path,
+                line: e.line,
+                language: e.language,
+            })
+            .collect();
     let note = note_if_empty_feat(&s, &data, name, "supertypes (it extends nothing)", path, Some("relations"))?;
     s.emit_noted(data, note)
 }
@@ -3010,6 +3184,325 @@ fn name_is_used(
         .any(|h| !ds.contains(&(h.path.clone(), h.line as i64))))
 }
 
+/// One directory in the repo's shape, with what it contains.
+#[derive(Serialize)]
+struct TreeRow {
+    path: String,
+    /// Nesting level, so the text renderer indents it.
+    depth: usize,
+    /// Files at or below here (not just immediate children).
+    files: i64,
+    /// Definitions at or below here — where the *code* actually is.
+    symbols: i64,
+    /// Immediate subdirectories, so a folded branch still shows it has shape.
+    dirs: i64,
+    /// Languages present, most files first.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    languages: String,
+}
+
+/// `tree [<path>]` — the repo's directory shape, annotated with what each
+/// directory contains and folded to a depth.
+///
+/// The gap this fills: `map` groups by *top-level* directory only, so on a repo
+/// like `src/pkg/{lib,api,data/<200 dirs>}` it reports one row — "src, 2677 files,
+/// 58 symbols" — which hides both where the code is and where the bulk is. `stats`
+/// gives totals, `files` gives a flat list; neither shows shape.
+///
+/// Deliberately not an ASCII `tree` clone. A plain hierarchy would be worse than
+/// `ls -R` for an agent; the value is in what `tree` can't do:
+///   * it is ignore-aware by construction (`.gitignore`/`.codeqignore`), so the
+///     `node_modules`/`.git` noise that makes real `tree` unusable never appears;
+///   * every directory carries its file and *symbol* counts, so "where is the
+///     code" is answerable without opening anything;
+///   * counts aggregate from everything below, so folding at `--depth` summarises
+///     rather than truncates — the token budget is bounded by depth, not by repo
+///     size.
+pub fn cmd_tree(
+    cwd: &Path,
+    path: Option<&str>,
+    depth: usize,
+    min_symbols: i64,
+    files_too: bool,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    // Definitions per file, so a directory can report the code it holds.
+    let mut per_file: HashMap<String, i64> = HashMap::new();
+    {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT path, COUNT(*) FROM facts
+             WHERE kind <> 'import' AND name IS NOT NULL GROUP BY path",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (p, n) = row?;
+            per_file.insert(p, n);
+        }
+    }
+
+    #[derive(Default)]
+    struct Agg {
+        files: i64,
+        symbols: i64,
+        children: HashSet<String>,
+        langs: HashMap<String, i64>,
+    }
+    let mut dirs: HashMap<String, Agg> = HashMap::new();
+    let mut file_rows: Vec<TreeRow> = Vec::new();
+
+    let filters = Filters::new().like("path", path);
+    let sql = format!("SELECT path, language FROM files WHERE 1=1{} ORDER BY path", filters.sql());
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+    })?;
+    for row in rows {
+        let (fpath, lang) = row?;
+        let syms = per_file.get(&fpath).copied().unwrap_or(0);
+        // Credit every ancestor, so a folded directory summarises its whole subtree
+        // instead of under-reporting what it holds.
+        let segs: Vec<&str> = fpath.split('/').collect();
+        for i in 0..segs.len().saturating_sub(1) {
+            let dir = segs[..=i].join("/");
+            let e = dirs.entry(dir.clone()).or_default();
+            e.files += 1;
+            e.symbols += syms;
+            if let Some(l) = &lang {
+                *e.langs.entry(l.clone()).or_insert(0) += 1;
+            }
+            if i + 2 < segs.len() {
+                e.children.insert(segs[..=i + 1].join("/"));
+            }
+        }
+        if files_too && segs.len() - 1 <= depth {
+            let d = segs.len() - 1;
+            file_rows.push(TreeRow {
+                path: fpath.clone(),
+                depth: d,
+                files: 1,
+                symbols: syms,
+                dirs: 0,
+                languages: lang.unwrap_or_default(),
+            });
+        }
+    }
+
+    let mut data: Vec<TreeRow> = dirs
+        .into_iter()
+        .filter(|(d, _)| d.split('/').count() <= depth)
+        .filter(|(_, a)| a.symbols >= min_symbols)
+        .map(|(d, a)| {
+            let mut langs: Vec<(String, i64)> = a.langs.into_iter().collect();
+            langs.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+            TreeRow {
+                depth: d.split('/').count() - 1,
+                path: d,
+                files: a.files,
+                symbols: a.symbols,
+                dirs: a.children.len() as i64,
+                languages: langs.into_iter().map(|(l, _)| l).collect::<Vec<_>>().join(","),
+            }
+        })
+        .collect();
+    data.extend(file_rows);
+    // Path order, so the listing reads as a tree rather than a ranking.
+    data.sort_by(|a, b| a.path.cmp(&b.path));
+    if limit > 0 {
+        data.truncate(limit);
+    }
+    s.emit(data)
+}
+
+/// One *name* ranked by how often it is referenced in code.
+///
+/// Deliberately one row per name, not per definition: the count is a property of
+/// the name (codeq's references are textual), so emitting a row per definition
+/// printed the same number several times over — the first draft's top twelve rows
+/// for this repo were twelve definitions of `path`, all reading `refs=481`.
+/// `defs` carries what that collapsed, and `path`/`line` point at the first of
+/// them so the row is still somewhere to go.
+#[derive(Serialize)]
+struct HotspotRow {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    refs: i64,
+    defs: i64,
+}
+
+/// Call `f(offset, token)` for every identifier-like run in `body`.
+///
+/// A word byte is an ASCII alphanumeric, `_`, or *any* non-ASCII byte. Including
+/// the high bytes matters: without them `café` would split into `caf` + the
+/// accented tail, and a definition named `caf` would collect phantom references.
+/// A run therefore only ever ends on an ASCII non-word byte, so the slice bounds
+/// are always UTF-8 char boundaries.
+fn for_each_ident(body: &str, mut f: impl FnMut(usize, &str)) {
+    fn is_word(c: u8) -> bool {
+        c == b'_' || c.is_ascii_alphanumeric() || c >= 0x80
+    }
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if is_word(bytes[i]) {
+            let start = i;
+            while i < bytes.len() && is_word(bytes[i]) {
+                i += 1;
+            }
+            f(start, &body[start..i]);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// `hotspots [<path>]` — definitions ranked by how many times their name appears
+/// in code: the inverse of `unused`, and the "what is load-bearing here?" view for
+/// a file or repo you've just met. Asked for by an external user who had `unused`
+/// for dead code and `map` for file-level counts, but no way to find the symbols
+/// that actually carry a module.
+///
+/// Counted in one pass over the indexed bodies rather than one scan per name, so
+/// it costs about a single `search` instead of `unused`'s scan-per-definition.
+/// Occurrences inside comment and string spans don't count, and files in a
+/// language codeq can't parse are skipped — the same "references in code" rule
+/// `callers` uses. Each definition's own declaration is subtracted, so `refs` is
+/// uses *elsewhere*; a recursive call counts, because it is one.
+///
+/// Name-based like every graph command, and here that bites harder than usual:
+/// counts are per *name*, so two definitions sharing a name report the same total,
+/// and a short common name (`new`, `path`, `get`) ranks high because many unrelated
+/// symbols spell it the same way. Read it as "this identifier is load-bearing",
+/// not "this definition has N callers" — `callers NAME --calls` is the precise
+/// question. `--kind`/`--path`/`--language` scope what is reported; the count is
+/// always repo-wide.
+pub fn cmd_hotspots(
+    cwd: &Path,
+    path: Option<&str>,
+    kind: Option<&str>,
+    language: Option<&str>,
+    calls_only: bool,
+    min_refs: i64,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+
+    // The definitions to rank. Scoped for *reporting* only — the count below is
+    // repo-wide, because a reference from an unscoped file is still a reference.
+    let filters = Filters::new().like("path", path).eq("kind", kind).eq("language", language);
+    let sql = format!(
+        "SELECT name, kind, path, start_line FROM facts
+         WHERE kind <> 'import' AND name IS NOT NULL{} ORDER BY path, start_line",
+        filters.sql(),
+    );
+    let candidates: Vec<(String, String, String, i64)> = {
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    if candidates.is_empty() {
+        return s.emit(Vec::<HotspotRow>::new());
+    }
+    let wanted: HashSet<&str> = candidates.iter().map(|(n, _, _, _)| n.as_str()).collect();
+
+    // Every definition site of a wanted name, repo-wide. A declaration is not a
+    // use of itself, and it can't be filtered out arithmetically: `fn new(` puts
+    // the name in call position, so subtracting a per-name declaration count was
+    // wrong in one direction for functions and in the other for structs. Skipping
+    // the *site* is what `unused` already does, and it is right for both.
+    // Keyed by name as well as position: `unused` can use (path, line) because it
+    // asks about one name at a time, but here a single line often declares one
+    // symbol and calls another — `fn a() { hot(); }` — and dropping the name
+    // silently discarded every such call site.
+    let mut defsites: HashSet<(String, String, i64)> = HashSet::new();
+    let mut declarations: HashMap<String, i64> = HashMap::new();
+    for_each_def_site(&s.db.conn, |name, path, line| {
+        if wanted.contains(name.as_str()) {
+            *declarations.entry(name.clone()).or_insert(0) += 1;
+            defsites.insert((name, path, line));
+        }
+    })?;
+
+    // One pass over every indexed body, counting only the names we care about.
+    let mut counts: HashMap<&str, i64> = HashMap::new();
+    {
+        let mut stmt = s.db.conn.prepare("SELECT path, language, body FROM content_fts")?;
+        let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let rel = row.get_ref(0)?.as_str()?;
+            let lang: Option<String> = row.get(1)?;
+            // Unparseable files have no comment/string spans, so every match in
+            // them would look like code. `callers` skips them; so do we.
+            if !crate::facts::has_spans(lang.as_deref().unwrap_or("")) {
+                continue;
+            }
+            let spans: Vec<_> = span_stmt
+                .query_map([rel], crate::search::span_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let body = row.get_ref(2)?.as_str()?;
+            let bytes = body.as_bytes();
+            // Byte offset of each line start, so an occurrence can be matched
+            // against the definition sites recorded above (which are line-based).
+            let mut line_starts: Vec<usize> = vec![0];
+            line_starts.extend(bytes.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i + 1));
+            for_each_ident(body, |off, tok| {
+                if let Some(name) = wanted.get(tok) {
+                    if crate::search::class_at(&spans, off).is_some() {
+                        return; // inside a comment or string literal
+                    }
+                    if calls_only && !crate::search::is_call_position(bytes, off, off + tok.len()) {
+                        return;
+                    }
+                    let line = line_starts.partition_point(|&s| s <= off) as i64;
+                    if defsites.contains(&((*name).to_string(), rel.to_string(), line)) {
+                        return; // this name's own declaration
+                    }
+                    *counts.entry(name).or_insert(0) += 1;
+                }
+            });
+        }
+    }
+
+    // Collapse to one row per name. `candidates` is ordered by (path, start_line),
+    // so the first definition seen for a name is the representative.
+    let mut seen_names: HashSet<&str> = HashSet::new();
+    let mut data: Vec<HotspotRow> = Vec::new();
+    for (name, kind, path, line) in &candidates {
+        if !seen_names.insert(name.as_str()) {
+            continue;
+        }
+        let declared = declarations.get(name).copied().unwrap_or(0);
+        let refs = counts.get(name.as_str()).copied().unwrap_or(0);
+        if refs < min_refs {
+            continue;
+        }
+        data.push(HotspotRow {
+            name: name.clone(),
+            kind: kind.clone(),
+            path: path.clone(),
+            line: *line,
+            refs,
+            defs: declared,
+        });
+    }
+    // Most-referenced first; ties by location so the order is stable.
+    data.sort_by(|a, b| {
+        b.refs.cmp(&a.refs).then(a.path.cmp(&b.path)).then(a.line.cmp(&b.line))
+    });
+    if limit > 0 {
+        data.truncate(limit);
+    }
+    s.emit(data)
+}
+
 /// `unused [<path>]` — definitions with no reference anywhere outside their own
 /// definition site (candidate dead code). Reports `visibility` so a public
 /// symbol (possibly part of an external API, not dead) is distinguishable from a
@@ -3031,32 +3524,29 @@ pub fn cmd_unused(
     // Every definition site keyed by name (repo-wide) so a use can be told from
     // a definition, and a name defined in >1 place is handled.
     let mut defsites: HashMap<String, HashSet<(String, i64)>> = HashMap::new();
-    {
-        let mut stmt = s.db.conn.prepare(
-            "SELECT name, path, start_line FROM facts
-             WHERE kind <> 'import' AND name IS NOT NULL",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
-        })?;
-        for row in rows {
-            let (n, p, l) = row?;
-            defsites.entry(n).or_default().insert((p, l));
-        }
-    }
+    for_each_def_site(&s.db.conn, |n, p, l| {
+        defsites.entry(n).or_default().insert((p, l));
+    })?;
 
     // The definitions eligible to be reported (scoped by path/kind). A markdown
     // heading is prose, not an API: nothing ever "calls" it, so every section in
     // the repo would be reported as dead. Excluded unless asked for by --kind.
     let filters = Filters::new().like("path", path).eq("kind", kind);
-    let exclude_headings = if kind == Some("heading") {
-        ""
-    } else {
-        " AND kind <> 'heading'"
-    };
-    let sql = format!(
-        "SELECT name, kind, path, start_line, visibility FROM facts
-         WHERE kind <> 'import' AND name IS NOT NULL{exclude_headings}{} ORDER BY path, start_line",
+    // A schema language exists to be consumed from outside the repository: every
+    // GraphQL type and protobuf message is a contract for some other codebase, so
+    // "nothing here references it" is the normal state, not a finding. Reporting
+    // them buries the real hits — the whole point of `unused` is that it
+    // under-reports rather than misleads. A Terraform `output` is the same shape:
+    // it exists so something outside can read it. Everything else stays: an
+    // unreferenced CSS class or `variable` really is dead.
+    // Markdown headings are prose, not definitions: nothing references a heading
+    // by name, so every one of them would read as dead code.
+    let exclude_headings = if kind == Some("heading") { "" } else { " AND kind <> 'heading'" };
+        let sql = format!(
+            "SELECT name, kind, path, start_line, visibility FROM facts
+             WHERE kind <> 'import' AND name IS NOT NULL{exclude_headings}
+               AND (language IS NULL OR language NOT IN ('graphql', 'proto'))
+               AND NOT (language = 'hcl' AND kind = 'output'){} ORDER BY path, start_line",
         filters.sql(),
     );
     let candidates: Vec<UnusedRow> = {
@@ -3074,13 +3564,16 @@ pub fn cmd_unused(
     };
 
     // Scan each distinct name once; keep the defs whose name is never used.
+    let scopes = TestScopes::load(&s.db.conn)?;
     let mut used: HashMap<String, bool> = HashMap::new();
     let mut data: Vec<UnusedRow> = Vec::new();
     for cand in candidates {
         // Test functions are invoked by the test runner (by discovery/attribute),
         // not referenced by name, so they always look unused — exclude them by
-        // default so real dead code isn't buried under every test.
-        if !include_tests && is_test_path(&cand.path) {
+        // default so real dead code isn't buried under every test. The path alone
+        // is not enough: a Rust unit test lives in a `mod tests` inside the file
+        // it tests, so every one of them used to be reported as dead.
+        if !include_tests && is_test_site(&cand.path, Some(&cand.name), cand.line, &scopes) {
             continue;
         }
         let is_used = match used.get(&cand.name) {
@@ -3144,10 +3637,69 @@ fn is_test_name(name: &str) -> bool {
         || name.ends_with("_spec")
 }
 
+/// Test-like *containers* — a Rust `#[cfg(test)] mod tests`, a `class FooTest` —
+/// as line spans, keyed by file.
+///
+/// Rust's dominant unit-test idiom puts tests in a module inside the very file
+/// under test, where neither the path nor the function name says "test". Without
+/// this, `tests <fn>` answered "none" for a function whose tests sit twenty lines
+/// below it, and `unused` reported every one of those tests as dead code.
+/// codeq already indexes the enclosing `mod` as a fact, so containment needs no
+/// extraction change — and it generalises: a Python `class TestFoo` or a Java
+/// `class FooTest` in an ordinary path classifies its methods the same way.
+struct TestScopes {
+    by_path: HashMap<String, Vec<(i64, i64)>>,
+}
+
+impl TestScopes {
+    fn load(conn: &rusqlite::Connection) -> Result<TestScopes> {
+        let mut stmt = conn.prepare(
+            "SELECT path, name, start_line, end_line FROM facts
+             WHERE kind IN ('module', 'class') AND name IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+            ))
+        })?;
+        let mut by_path: HashMap<String, Vec<(i64, i64)>> = HashMap::new();
+        for row in rows {
+            let (path, name, start, end) = row?;
+            // A container with no recorded end can't bound anything — skip it
+            // rather than guess a span and swallow the rest of the file.
+            if let (true, Some(end)) = (is_test_name(&name), end) {
+                by_path.entry(path).or_default().push((start, end));
+            }
+        }
+        Ok(TestScopes { by_path })
+    }
+
+    /// Whether `line` of `path` falls inside a test-like container.
+    fn contains(&self, path: &str, line: i64) -> bool {
+        self.by_path
+            .get(path)
+            .is_some_and(|spans| spans.iter().any(|&(start, end)| line >= start && line <= end))
+    }
+}
+
+/// Whether a definition site is a test — its file, its own name, or the container
+/// it sits in says so. The three signals are always weighed together, so `tests`,
+/// `callers` and `unused` agree on what a test is instead of each carrying its own
+/// (differently wrong) notion.
+fn is_test_site(path: &str, symbol: Option<&str>, line: i64, scopes: &TestScopes) -> bool {
+    is_test_path(path)
+        || symbol.is_some_and(is_test_name)
+        || scopes.contains(path, line)
+}
+
 /// `tests <name>` — the test functions that reference `name`. A reference counts
-/// as a test when its file looks like a test file or its enclosing function name
-/// looks like a test. Name-based, like `references`; can't see attribute-only
-/// tests (Rust `#[cfg(test)]` unit fns in a non-test path may be missed).
+/// as a test when its file looks like a test file, its enclosing function name
+/// looks like a test, or it sits inside a test-like module/class (see
+/// [`TestScopes`]). Name-based, like `references`: codeq reads no attributes, so
+/// a `#[test]` fn outside a test path, name and module is still missed.
 #[derive(Serialize)]
 struct TestRow {
     path: String,
@@ -3179,6 +3731,7 @@ fn test_sites(
         _ => unreachable!("tests always uses Matches mode"),
     };
 
+    let scopes = TestScopes::load(&s.db.conn)?;
     let mut tests: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
     for h in &hits {
         let sym = match &h.symbol {
@@ -3186,7 +3739,7 @@ fn test_sites(
             _ => continue,
         };
         let is_fn = matches!(h.kind.as_deref(), Some("function") | Some("method"));
-        if is_fn && (is_test_path(&h.path) || is_test_name(sym)) {
+        if is_fn && is_test_site(&h.path, Some(sym), h.line as i64, &scopes) {
             tests.insert((h.path.clone(), sym.clone()));
         }
     }
@@ -3353,7 +3906,7 @@ pub fn cmd_tests(cwd: &Path, name: &str, path: Option<&str>, limit: usize, out: 
     )
 }
 
-/// A definition pulled into the blast radius: a transitive caller of a changed
+/// A definition pulled in as impacted: a transitive caller of a changed
 /// symbol, tagged with its hop distance from the change.
 #[derive(serde::Serialize)]
 struct ImpactNode {
@@ -3385,7 +3938,7 @@ struct AffectedResult {
 }
 
 /// `affected --compare-to <ref>` — for a diff: the definitions it touched, their
-/// transitive callers (the blast radius), and the tests exercising any of them —
+/// transitive callers (the impacted set), and the tests exercising any of them —
 /// "what should I re-check and re-run for this change". Composes `changed
 /// --symbols` + a caller BFS + `tests`; name-based like the rest of the graph.
 pub fn cmd_affected(
@@ -3442,7 +3995,7 @@ pub fn cmd_affected(
             .then(a.line.cmp(&b.line))
     });
 
-    // Test files exercising anything in scope (changed symbols ∪ blast radius),
+    // Test files exercising anything in scope (changed symbols ∪ impacted),
     // with a per-file count of matching test-like functions — the actionable
     // "what to run", without one row per individual test.
     let mut sites: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
@@ -3766,41 +4319,43 @@ fn is_manifest(path: &str) -> bool {
 
 /// Self-description so an agent can discover what codeq supports without
 /// guessing. Deliberately does not require (or refresh) an index.
-pub fn cmd_capabilities(out: Out) -> Result<()> {
+///
+/// `commands` is passed in from the clap parser rather than written out here.
+/// The hand-maintained list drifted: it had gone nine commands stale — including
+/// `explore`, the one an agent should reach for first — so the command whose only
+/// job is to say what codeq can do was under-selling it by a quarter.
+pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
     let data = serde_json::json!({
         "result_schema": RESULT_SCHEMA,
         "index_schema": SCHEMA_VERSION,
-        // Kept in step with the CLI's own command list: a stale entry here is
-        // worse than none, because an agent takes it as the contract.
-        "commands": [
-            "index", "files", "changed", "affected", "stats", "map",
-            "symbols", "definitions", "api", "members", "outline", "at", "read",
-            "callers", "callees", "path", "about", "explore", "references",
-            "implementors", "supertypes", "unused", "tests",
-            "imports", "importers", "deps", "astgrep", "search", "context",
-            "untested", "capabilities", "mcp", "install",
-        ],
+        "commands": commands,
         // Per-language support, so "no results" can be told from "not supported".
         "language_support": crate::facts::LANGUAGES
             .iter()
             .filter_map(|l| crate::facts::support(l))
             .collect::<Vec<_>>(),
         // Languages with symbol + import extraction.
-        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity"],
+        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte", "vue", "css", "powershell", "proto", "graphql", "hcl"],
         // Languages recognised for file classification (extraction may be absent).
         "classified_languages": [
             "rust", "javascript", "typescript", "tsx", "python", "go", "java",
             "json", "yaml", "toml", "markdown", "sql", "bash", "lua", "scala",
-            "kotlin", "swift", "dart", "zig", "elixir", "solidity", "c", "cpp",
-            "csharp", "php", "ruby",
+            "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte",
+            "vue", "css", "powershell", "proto", "graphql", "hcl",
+            "c", "cpp", "csharp", "php", "ruby",
         ],
         "fact_kinds": [
             "function", "method", "struct", "enum", "union", "trait", "module",
             "constant", "typealias", "macro", "class", "interface", "type", "import",
-            "field", "variant", "heading",
+            "component", "field", "variant", "heading",
         ],
         "notes": {
             "imports": "raw syntactic module strings; not resolved",
+            "deps": "an import naming a directory resolves through that directory's conventional entry file (index.js, __init__.py, mod.rs) or any .tf",
+            "clones": "structural equality of the syntax tree with identifiers and literals normalised away; exact, never a similarity score. min_nodes filters by how much code is involved",
+            "unused": "skips GraphQL/protobuf definitions and Terraform outputs — they exist to be consumed outside the repo, so absence of local references says nothing",
+            "members": "field/variant facts carry `owner` (the declaring type); extracted for Rust, Go, Java, TypeScript/TSX, C#, Python, C, C++, PHP, Kotlin, Swift, Protobuf, GraphQL, HCL, Zig, Solidity, Dart, Scala. Python attributes are assignments, so a member is its earliest `self.x =` or class-body assignment",
+            "hcl": "block kinds are the block keyword verbatim (resource/variable/module/…), so the vocabulary is open-ended; a block is named by its last label and owned by its type label. A module `source` is an import, but `deps` resolves file stems and a module target is a directory, so it stays unresolved",
             "context_tokenizer": "approx:4-bytes-per-token",
             "freshness": "every command refreshes changed files before answering",
         },
@@ -3827,4 +4382,66 @@ fn emit_sessionless<T: Serialize>(data: &T, out: Out) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// One member of a group of structurally identical definitions.
+#[derive(Serialize)]
+struct CloneRow {
+    /// Shared shape hash — the group key.
+    shape: String,
+    /// How many definitions share it.
+    group: i64,
+    /// Nodes in the shared shape: bigger means more code duplicated.
+    nodes: i64,
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+}
+
+/// `clones` — definitions whose syntax shape is identical up to renaming.
+///
+/// Exact, not fuzzy: shapes match or they do not, so there is no threshold and no
+/// score. `--min-nodes` raises the floor on how much code has to be involved
+/// before a group is worth reporting; it filters, it does not rank.
+pub fn cmd_clones(
+    cwd: &Path,
+    path: Option<&str>,
+    kind: Option<&str>,
+    min_nodes: i64,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let filters = Filters::new().like("path", path).eq("kind", kind);
+    // Group first, then re-join, so only shapes with more than one holder are read.
+    let sql = format!(
+        "SELECT shape, cnt, shape_nodes, name, kind, path, start_line FROM (
+             SELECT shape, COUNT(*) OVER (PARTITION BY shape) AS cnt,
+                    shape_nodes, name, kind, path, start_line
+             FROM facts
+             WHERE shape IS NOT NULL AND shape_nodes >= ?{}
+         ) WHERE cnt > 1
+         ORDER BY shape_nodes DESC, shape, path, start_line{}",
+        filters.sql(),
+        limit_clause(limit),
+    );
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&min_nodes];
+    for a in filters.args() {
+        params.push(a);
+    }
+    let rows = stmt.query_map(params.as_slice(), |r| {
+        Ok(CloneRow {
+            shape: r.get(0)?,
+            group: r.get(1)?,
+            nodes: r.get(2)?,
+            name: r.get(3)?,
+            kind: r.get(4)?,
+            path: r.get(5)?,
+            line: r.get(6)?,
+        })
+    })?;
+    let data: Vec<CloneRow> = rows.collect::<std::result::Result<_, _>>()?;
+    s.emit(data)
 }

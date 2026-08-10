@@ -62,6 +62,36 @@ fn stem(path: &str) -> &str {
         .unwrap_or(path)
 }
 
+/// The parent directory's name, when this file is what an import of that
+/// directory actually reaches: a language's conventional entry file, or any
+/// `.tf` (Terraform loads every file in a module directory, so each one answers
+/// for it). `None` for an ordinary file, which must be named directly.
+fn directory_alias(path: &str) -> Option<&str> {
+    let file = path.rsplit(['/', '\\']).next()?;
+    let is_entry = matches!(
+        file,
+        "index.js"
+            | "index.mjs"
+            | "index.cjs"
+            | "index.jsx"
+            | "index.ts"
+            | "index.tsx"
+            | "__init__.py"
+            | "mod.rs"
+            | "index.php"
+    ) || file.ends_with(".tf");
+    if !is_entry {
+        return None;
+    }
+    let dir = path.rsplit_once(['/', '\\'])?.0;
+    let name = dir.rsplit(['/', '\\']).next()?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
 /// The path components of a file, without extension on the final one, as a set
 /// for segment scoring (`src/foo/bar.rs` -> {src, foo, bar}).
 fn path_components(path: &str) -> HashSet<&str> {
@@ -86,6 +116,16 @@ impl Graph {
         let mut by_stem: HashMap<&str, Vec<&str>> = HashMap::new();
         for p in &paths {
             by_stem.entry(stem(p)).or_default().push(p.as_str());
+            // An import usually names a *directory*, not a file: `./utils` means
+            // `utils/index.js`, `from pkg import x` means `pkg/__init__.py`,
+            // `mod util` means `util/mod.rs`, and a Terraform `source` names a
+            // directory of `.tf` files. Matching stems alone never resolves any
+            // of those — the dominant idiom in the two largest ecosystems here —
+            // so a file that stands in for its directory is also filed under the
+            // directory's name.
+            if let Some(dir) = directory_alias(p) {
+                by_stem.entry(dir).or_default().push(p.as_str());
+            }
         }
         // Precompute each path's component set for scoring.
         let comps: HashMap<&str, HashSet<&str>> =

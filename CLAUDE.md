@@ -25,7 +25,18 @@ benchmarks — not as a step you run before querying.
   neighbourhood, budgeted and grouped by file (each source block tagged focus/caller/
   callee). Replaces the `about` → `read` → `read` sequence; `--max-tokens` caps it (the
   definition is always kept, the rest fill the budget, drops are listed under `omitted`).
-- **Orient:** `codeq map`
+- **A type's members:** fields, properties and enum variants are facts too, tagged with
+  the `owner` type — `codeq definitions retries` says which type declares it, and
+  `codeq outline <file>` nests members under their type. Rust, Go, Java, TS/TSX,
+  C#, Python, C, C++, PHP, Kotlin and Swift; the remaining languages return just
+  the type. Python has no declaration site, so a member is its earliest class-body
+  or `self.x =` assignment (`other.x =` is not a declaration).
+- **Orient:** `codeq map` (grouped totals) · `codeq tree` (directory *shape*, folded
+  to `--depth`, each directory carrying the file and symbol counts of everything
+  below it). `map` collapses to top-level directories, so on a nested repo it hides
+  where the code is; `tree --min-symbols 1` goes straight to the directories that
+  hold any. Ignore-aware, so no `node_modules`/`.git` noise — on a 2,700-file data
+  repo it answers in 8 lines what `find -type d` needs 44 KB for.
 - **Docs are indexed too.** A markdown heading is a definition, so `outline
   README.md` is a table of contents, `read README.md` folds to that ToC with each
   section's line range, `read README.md --symbol "Output contract"` returns just
@@ -48,19 +59,21 @@ benchmarks — not as a step you run before querying.
   function or closure is not, however deep the class above it. Rust needs a
   `self` parameter, so `S::assoc()` stays a `function` while `s.meth()` is a
   `method`. Elixir `def`s are module functions, so they stay `function`.
-- **Understand a symbol before editing:** `codeq about NAME` (definition +
-  callers + callees + members, one call). Definition rows carry the symbol's own
-  doc comment as `  // <doc>`, so `about`/`definitions`/`explore` answer "what
-  does this do" without opening the file; `outline --docs` adds them per file.
-- **What a type contains:** `codeq members NAME` — its fields, enum variants and
-  methods, in source order (`--kind field|variant|function` to narrow). Read this
-  instead of opening the file to see a struct's shape. Unlike the other graph
-  commands it is **structural, not name-based**: a member is a definition nested
-  directly inside NAME's byte range, so there are no same-name false positives.
-  `about NAME` already includes it, so a struct's dossier is one call. Limits:
-  in Rust a struct's methods live in a separate `impl` block, so only fields come
-  back; Ruby (`attr_accessor`) and Python instance attributes (`self.x = …` in
-  `__init__`) aren't declarations, so they yield nothing rather than a guess.
+- **Understand a symbol before editing, without pulling in source:** `codeq about
+  NAME` — the same neighbourhood `explore` walks, minus the code and plus fuller
+  metadata per node (doc comment, `owner`, which callers are tests). Source is the
+  only axis the two differ on: `explore` to change code, `about` for the metadata
+  or a cheap "where does this live".
+- **What's at this line?** `codeq at <file>:<line>` — the definition enclosing a
+  position. For turning a stack frame, a diff hunk or a grep hit into a symbol.
+- **Assemble a token-budgeted bundle:** `codeq context --symbols a,b` — verbatim
+  source for several named symbols under one budget, or `--changed --compare-to
+  <ref>` to seed from a diff. `explore` is this plus the graph for one symbol;
+  reach for `context` when you already know the set you want.
+- **List files / imports:** `codeq files [PATTERN]` (indexed files; `--language`)
+  · `codeq imports [PATH]` (raw, unresolved module strings, filtered to importing
+  files whose path contains PATH) · `codeq importers <QUERY>` (files importing a
+  module; a path like `src/db.rs` is reduced to its stem `db`).
 - **Learn a module's public API (how to call it):** `codeq api <path>` — only the
   *exported* definitions, with signatures, instead of reading whole files. "Public"
   is each language's own notion (Rust `pub`, JS/TS `export`, Go capitalization,
@@ -96,14 +109,20 @@ benchmarks — not as a step you run before querying.
       than one per caller, use `references NAME --calls`. Composes with the filters.
   - **`callees` is already call-position only** (a bare mention of a name isn't a
     callee, and `helper()` written inside a string or comment isn't either), so it needs no `--calls`; it does take `--resolved`, which keeps only
+    callee), so it needs no `--calls`. `--examples` adds `call` — the call as
+    *written*, receiver included (`subprocess.run`, not `run`) — plus `call_line`.
+    That is usually the fastest way to spot a name collision: a module-qualified
+    call is attributed to every definition sharing the bare name, so
+    `callees codeq_commit` lists four unrelated `run`s, and `--examples` shows all
+    four came from one `subprocess.run`. It also takes `--resolved`, which keeps only
     callees whose definition file NAME's *own* file can reach through imports (tags
     each `via` same-file / imported) — pruning the name-based over-match where a
     common callee name (`new`, `open`) matches unrelated same-named defs in
     unreachable files.
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
-    with its `depth`; text output indents by hop. For blast-radius / reachability.
-  - **Call chain between two symbols:** `codeq path FROM TO` — the shortest chain
+    with its `depth`; text output indents by hop. For impact / reachability.
+  - **Call chain between two symbols:** `codeq callpath FROM TO` — the shortest chain
     where FROM calls … calls TO, shown step by step (empty if unreachable within
     `--max-depth`, default 8). Reachability *with the route*, vs `callees --depth`
     which only says whether/at what depth.
@@ -130,11 +149,19 @@ benchmarks — not as a step you run before querying.
   exported declarations added, removed, or changed shape, grouped and with the
   previous signature. The review question a raw diff can't answer.
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
-  reference NAME (by test-file path or test-like name). For the edit→find-the-test loop.
+  reference NAME. A test is recognised by test-file path, test-like name, *or* a
+  test-like enclosing module/class — so Rust's `#[cfg(test)] mod tests` inside the
+  file under test counts, as do Python `class TestFoo` / Java `class FooTest`.
+  codeq reads no attributes, so a `#[test]` fn with none of those three still
+  slips through. For the edit→find-the-test loop.
 - **What a diff affects:** `codeq affected --compare-to <ref>` — the definitions the
-  diff touched, their transitive callers (blast radius, `--depth N`), and the test
+  diff touched, their transitive callers (impacted, `--depth N`), and the test
   *files* to re-run. Composes `changed --symbols` + a caller BFS + `tests`; name-based,
   so it over-includes rather than misses.
+- **Is this already implemented?** `codeq clones` — definitions with an identical
+  syntax shape (identifiers and literals normalised away). Exact structural
+  equality, never a similarity score; `--min-nodes N` raises the floor on how
+  much code counts. Costs ~20% on a cold index, nothing on a warm one.
 - **Find dead code:** `codeq unused [<path>]` — definitions with no reference
   anywhere outside their own definition site. A mention in a **comment** is not a
   use (a stale TODO can't mask dead code), but a mention in a **string** still is,
@@ -150,6 +177,27 @@ benchmarks — not as a step you run before querying.
     `--language rust` to also get `--in` and the enclosing `[symbol]` on each match.
     `--stdin` is required — it is never inferred, so an open pipe can't hijack a
     normal query.
+  anywhere outside their own definition site. Conservative (a comment/string
+  mention counts as a use; name-based, so a same-named symbol elsewhere masks it)
+  so it under-reports rather than mislead. Shows `visibility` (a `public` hit may
+  be external API, not dead); tests excluded unless `--include-tests` — same
+  recognition as `codeq tests`, so a Rust `mod tests` unit test is not dead code.
+- **What's load-bearing here?** `codeq hotspots [<path>]` — definitions ranked by
+  how often their name is referenced in code; the inverse of `unused`, for meeting
+  an unfamiliar file. One row per *name* (the count is a property of the name),
+  with `defs` showing how many definitions share it. Add `--calls` to count only
+  call sites — without it a function whose name is also a common variable (`s`,
+  `new`) scores on every mention. Read a row as "this identifier carries weight",
+  then `callers NAME --calls` for the precise question.
+- **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
+  - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
+    templates. codeq's own SQL lives in string literals, so `--in code` finds none.
+  - **It has grep's flags too, so you never need to shell out:** `--fixed` (literal,
+    not regex), `-i`, `-w`, `-g '*.rs' -g '!tests/'` (repeatable include/exclude
+    globs), `-l` (paths only), `-c` (counts), `-B`/`-A`/`-C`, `--path`, `--language`,
+    `--limit` (default 100 — raise it or pass 0 before concluding "no more hits").
+  - `--path` / `--language` / `--limit` are on `references` and most list commands
+    as well; narrow with them instead of post-filtering the output.
 - **Structural (AST) search:** `codeq astgrep '$X.unwrap()' --language rust` — match
   syntax, not text. `$VAR`/`$_` = one node (repeated `$VAR` binds the same);
   `$$$` = any run of siblings, so `foo($$$)` matches any arg count. For "all calls
@@ -164,6 +212,8 @@ benchmarks — not as a step you run before querying.
   x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a` — so the imported symbol
   resolves like a direct module import; relative (`from . import x`) and wildcard
   forms stay coarse. Verify via the edge's module string.
+- **What a type holds:** `codeq symbols --owner Config` — the members a type
+  declares, without dumping every field in the repo.
 - **Trim tokens on list output:** append `--fields a,b`
 
 ## When a query comes back empty
@@ -180,6 +230,15 @@ codeq tells you why, on stderr (or in the `note` field under `--json`):
 - `no unused definitions ...` — a clean result, not a failed one.
 
 So read stderr before assuming a command doesn't work or a symbol doesn't exist.
+
+## Excluding files
+
+codeq honours `.gitignore`/`.ignore`, plus a **`.codeqignore`** for trees that are
+*committed* but not code (vendored data, fixtures, generated assets) — gitignore
+cannot help there by definition. Gitignore syntax and precedence-over-`.gitignore`,
+with git's own sharp edge: `!data/keep.json` will not resurrect a file under an
+excluded `data/`, because the walk never descends into it. Exclude `data/*.json`
+instead. Editing it takes effect on the next query — no reindex step.
 
 ## Known limitations (found by dogfooding — don't be misled)
 

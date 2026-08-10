@@ -4,6 +4,318 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-08 — merging two parallel lines: three bugs that neither side could have found
+
+`main` had moved 14 commits while this line built 29, both from the same base.
+Every source file conflicted, and the schema had been bumped independently to 21
+on one side and 17 on the other. Resolving it produced the most interesting bugs
+of the week, because **each one needed both halves to exist**: every side's tests
+passed on its own branch, and three real defects lived only in the combination.
+
+**1. Ruby fields silently vanished.** The other line added Ruby `attr_accessor`
+extraction. This line added a rule that a `field`/`variant` fact with no resolvable
+owner is dropped, because an owner-less member is exactly the bare name the fact
+kind exists to avoid. Ruby's grammar names its nodes `class` and `module`, with no
+`_declaration` suffix, so they were absent from `TYPE_KINDS` — every Ruby field
+resolved to no owner and was discarded. Two correct changes cancelling out.
+
+**2. `--calls` stopped seeing component usage.** The other line moved call
+detection onto the parse tree, which is a clear improvement: a declaration, a macro
+name and prose are all handled without guessing. But a Svelte component is *used*
+by writing `<Btn/>`, which no grammar reports as a call node. Tree-sitter is right
+that it isn't a call; codeq is right that it's a usage. The byte-level check that
+knew this was now unreachable, so `--calls` returned nothing for a component that
+was plainly used. Markup instantiation is now checked *in addition to* the parse
+tree, so the tree keeps rejecting declarations and prose.
+
+**3. `callees` went empty for every component.** Worse version of the same shape.
+`calls_in` asks whether a grammar exists; for `.svelte` and `.vue` one does — but
+it is a *markup* grammar, and the `<script>` body comes back as a single opaque
+`raw_text` node. So parsing succeeded, found zero calls, and returned `Some(empty
+map)`. Callers treat `Some` as authoritative, so "I cannot see this code" was
+indistinguishable from "this code calls nothing". `calls_in` now returns `None` for
+embedded-code languages, which routes them to the byte scan that can see inside.
+
+The pattern in all three: an improvement that is correct in isolation, meeting a
+different improvement that is also correct in isolation. No amount of testing
+either branch would have surfaced them.
+
+**A trade-off adopted knowingly, not a bug:** the parse-tree path cannot see inside
+macro invocations, because tree-sitter treats a macro body as an opaque token tree.
+`callees cmd_capabilities` no longer lists `support`, which is called as
+`crate::facts::support(l)` inside a `json!{…}`. The old byte scan found it. This is
+the same limitation `astgrep` already documents, now inherited by `callees`; the
+precision gained elsewhere is worth it, but it is a real loss and belongs written
+down rather than discovered.
+
+**On the schema:** v14-v21 on one line and v14-v17 on the other described different
+migrations under the same numbers. No index can have followed both, and the version
+is a cache-invalidation token rather than a schema identity, so the two histories
+are recorded together for provenance and the version set to 22 — above everything
+either line issued, so every existing index rebuilds exactly once.
+
+**On the benchmark table:** both lines had published numbers, measured on different
+corpora (25 repos vs 20) and on different code. Neither describes the merged
+binary. Rather than pick the flattering one, the README now carries the larger run
+with an explicit note that it predates the merge and needs re-running.
+
+## 2026-08-08 — `tree`, `callees --examples`, `.codeqignore`, and a refactor I talked myself out of
+
+### `tree` — the orientation gap `map` couldn't reach
+
+`map` groups by *top-level* directory. On a nested repo that is close to useless:
+on `persona` it reports one row, `src files=2677 symbols=58`, which hides both
+where the code is and where the bulk is. `stats` gives totals, `files` gives a flat
+list. Nothing showed shape.
+
+`codeq tree` reports the directory hierarchy folded to `--depth`, with each
+directory's file and symbol counts aggregated from *everything below it*, so
+folding summarises instead of truncating. On persona, eight lines:
+
+```
+src/persona/api:     files=3    symbols=15
+src/persona/data:    files=2667 symbols=0   dirs=194
+src/persona/lib:     files=3    symbols=30
+src/persona/scripts: files=2    symbols=9
+```
+
+That is the whole story of the repo — all 54 symbols live in 8 files, and 2,667
+files hold no code at all. `--min-symbols 1` drops the data tree entirely: 386
+bytes against 44 KB for `find . -type d`, and unlike `find` it answers the question
+rather than listing paths.
+
+Deliberately not an ASCII `tree` clone. A plain hierarchy would be *worse* than
+`ls -R` for an agent. The three things that make it worth having are the three
+things `tree(1)` can't do: it is ignore-aware by construction (no `node_modules`
+noise), it counts symbols rather than files, and its output is bounded by depth
+rather than by repo size.
+
+### `callees --examples`
+
+The gap recorded last round. `callees` reports what a symbol calls, name-based, so
+`subprocess.run(...)` is attributed to every definition named `run` in the repo —
+four of them here. `--resolved` fixed it, but only if you already suspected the
+answer was wrong. Now `--examples` shows the call *as written*, receiver included:
+
+```
+bench/bench.py:23: function run call=subprocess.run call_line=106
+```
+
+Four rows, one obvious cause. The over-match no longer needs to be suspected to be
+seen — which is the difference between a limitation and a trap.
+
+### `.codeqignore`
+
+The external report asked for this and mis-diagnosed it (see below); the fix is
+real regardless. `.gitignore` cannot exclude *committed* data, and data-heavy repos
+commit their data. Custom ignore file, gitignore syntax, highest precedence,
+picked up on the next query with no reindex step — the freshness tracker already
+watched `.gitignore`/`.ignore` mtimes, so it was one entry in that array.
+
+One sharp edge worth knowing, inherited from git and confirmed by a failing test I
+had written wrong: `!data/keep.json` will *not* resurrect a file under an excluded
+`data/`, because the walk never descends. Exclude `data/*.json` instead.
+
+### The `commands.rs` refactor — measured, then declined
+
+I had claimed twice that `commands.rs` needed splitting, and that the real leverage
+was a query layer, citing "43 raw SQL statements here against 2 in `db.rs`". Before
+doing the work I measured what that number actually means:
+
+- **49 SELECT literals, but 37 distinct shapes.** Only about a dozen repeat, mostly
+  twice. The commands ask genuinely different questions. A "query layer" would have
+  been 37 pass-through functions — indirection wearing the costume of abstraction.
+- **The file's size costs 0.9s** on an incremental rebuild. The compile argument I
+  had implied does not exist.
+- Navigating 3,600 lines was never the bottleneck this session: `read --symbol` and
+  `outline` addressed it by name every time. codeq solving the problem is a reason
+  not to solve it again structurally.
+
+What *was* real: three query shapes duplicated verbatim — definition sites of one
+name (`callers`/`references`), all definition sites (`unused`/`hotspots`), and the
+file-path list (two dependency-graph helpers). Those are now `def_sites_of`,
+`for_each_def_site` and `all_file_paths`; 49 SELECT literals down to 46, and more
+importantly the pairs that could silently drift apart on a `kind <> 'import'`
+clause now can't.
+
+The 3,600-line split is left undone on purpose. It is a move-only diff that would
+degrade `git blame` on the file I have been actively debugging, in exchange for a
+benefit I could not measure. Recording it here as a decision rather than a backlog
+item: the argument I originally made for it was wrong, and finding that out cost
+one `python3` script.
+
+## 2026-08-08 — closing the `persona` report: `hotspots`, `callpath`, and two naming pairs
+
+The remaining three items from the external report. Two were naming, one was a new
+command, and the new command needed two design corrections before it was worth
+shipping — both caught by looking at its actual output rather than at the code.
+
+**`hotspots` — the inverse of `unused`.** Definitions ranked by how often their name
+is referenced in code. Counted in *one* pass over the indexed bodies (tokenize, look
+each identifier up in the candidate set) rather than `unused`'s scan-per-name, so it
+costs about a single `search` instead of ~700ms of repeated scans. Comment and string
+spans don't count and unparseable files are skipped, reusing `search`'s own span
+machinery so `hotspots` and `callers` can't disagree about what "in code" means.
+
+Two things were wrong in the first working version:
+
+- **One row per definition, when the count is per name.** The top twelve rows for
+  `src/` were twelve different definitions of `path`, each reading `refs=481`. True,
+  useless, and actively misleading — it looks like twelve findings. Now one row per
+  name, with `defs` reporting how many definitions collapsed into it.
+- **`--calls` scored *higher* than counting everything**, which is impossible for a
+  subset. Two causes, and I nearly accepted a bad explanation for the first: a
+  declaration `fn new(` puts the name in call position, so declarations were counted
+  in that mode; and the two numbers I was comparing came from either side of a
+  reindex, so part of the gap was the tree changing under me. Fixed by skipping the
+  declaration *site* — the same thing `unused` does — and re-measured against a
+  stable index, where `--calls` is now a strict subset for all 622 names.
+
+A third bug the tests caught, not the eyeballing: I keyed definition sites by
+`(path, line)`, copying `unused`. That works there because `unused` asks about one
+name at a time, but `hotspots` counts every name at once, and one line routinely
+declares one symbol while calling another — `fn a() { hot(); }`. Every such call site
+was silently dropped. On this repo the counts still looked plausible; on the
+three-line fixture the answer was empty. Small fixtures find what big ones hide.
+
+`--calls` earns its place: it takes `s` (a one-character helper in `mcp.rs`) from
+`refs=372` to `refs=48`, because without it every local variable named `s` in the
+repo reads as a reference. The command is still name-based and says so loudly — this
+is "which identifier carries weight", not "this definition has N callers".
+
+**`path` -> `callpath`.** The report's strongest rename, and right: in a *code* CLI
+"path" reads as a file path, so `codeq path a b` scans as "the path to file a". The
+old name stays as a clap alias, and the MCP server still accepts `codeq_path` so a
+host holding a cached tool list keeps working. Renaming cost nothing in
+`capabilities`, which now derives from clap — the rename and the new command both
+appeared there with no separate step. That is the drift fix paying for itself the
+same day it shipped.
+
+**`map`/`stats` and `definitions`/`symbols` — help text, not renames.** Both pairs
+have defensible names; what was missing was any statement of *which to reach for*.
+Each now leads with the distinction in caps (BROWSE many vs JUMP TO one; WHOLE-REPO
+TOTALS vs REPO BROKEN DOWN) and names its counterpart. Renaming would have broken
+scripts to fix a sentence.
+
+## 2026-08-08 — reply to the `persona` report: three fixed, one claim corrected
+
+Working through the external entry below. Two of its findings were right and are
+fixed; one was right about the symptom and wrong about the cause; one rested on a
+premise that turns out to be false, which changed what the fix should be.
+
+**`capabilities` drift — fixed, and found twice independently.** The same bug
+surfaced in a codeq-on-codeq session the same day, with the same nine missing
+commands. It now derives from clap's subcommand list, exactly as the report
+recommended, with `capabilities_lists_every_command_the_cli_accepts` asserting
+set-equality against `--help`. The report's framing was sharper than the internal
+one: `capabilities` is what an *MCP host* reads, so an agent discovering codeq
+through MCP could never learn `explore` existed.
+
+**Docs underselling the surface — confirmed and fixed.** Checked rather than
+assumed: `CLAUDE.md` contained *zero* occurrences of `at`, `context`, `files`,
+`imports`, `importers`, `--glob` and `--limit`. All are now documented in both
+`CLAUDE.md` and the skill file, including that `search --limit` defaults to 100 —
+the kind of default that silently turns "no more hits" into a wrong conclusion.
+
+**`about` vs `explore` — the premise was wrong, so the fix is different.** The
+report says "the *only* difference is whether verbatim source is included". It
+isn't. `about` returns full `DefinitionRow`/`Caller`/`Callee` rows — doc comment,
+`owner`, byte offsets, the `test` flag on callers — while `explore` trims each node
+to name/kind/path/line/signature and spends the budget on source instead. They are
+two different products, and the suggested fix (fold into one command with
+`--source`, defaulting to today's `about`) would have quietly cost every `about`
+consumer the doc comments and the test flags.
+
+That a careful user reading real output concluded they were the same command twice
+is the actual finding: the names hide a *bigger* difference than the report thought.
+So the walk is now shared (`symbol_graph`, so the two can never disagree about who
+is in the neighbourhood) while the presentations stay distinct, and every place an
+agent discovers them — CLI help, MCP tool descriptions, `CLAUDE.md`, the skill file
+— now states the axis explicitly and points at the other command.
+
+**Ignoring data trees — right symptom, wrong cause.** The report proposes
+"respecting `.gitignore` or a `.codeqignore`". codeq is *already* gitignore-aware:
+`src/index.rs` builds its walker with `standard_filters(true)` (.gitignore, .ignore,
+hidden, parents). Checked persona directly: **2,686 tracked files, 2,386 of them
+`.json`/`.png`, and only 10 ignored**. The data is committed, so gitignore support
+was never going to help. The real request is a `.codeqignore` (or an opt-out for
+files of unrecognised language). Recording this because implementing the first half
+of that suggestion would have shipped a no-op and closed the issue.
+
+**Still open from the report:** rename `path` -> `callpath`/`chain`/`route` (their
+strongest rename, and I agree — in a code CLI "path" reads as a file path first);
+a "hotspots"/most-referenced view as the inverse of `unused`; and the `map`/`stats`,
+`definitions`/`symbols` naming pairs.
+
+**Process note:** this log says "new entries at the top", and the external report
+followed that. My own recent entries went to the bottom, so the file now has two
+conventions. Top is the documented one.
+
+## 2026-08-08 — external dogfood: codeq on the `persona` repo (naming + a capabilities-drift bug)
+
+First sustained use of codeq on a *different* project (a Python demographic
+generator, ~12 code files buried in ~2,700 data/asset files) rather than on
+codeq itself. It carried a real refactor: `clones --min-nodes 20` directly
+surfaced a cross-module duplicate (`cli.format_location` ≡ `generate._fmt_label`)
+I'd otherwise have missed, and `references` found every tested call site before I
+touched anything. The exploration surface is genuinely strong — the friction was
+naming and discoverability, not missing power. Findings, worst first:
+
+- **BUG — `capabilities` under-reports the command set (discovery drift).**
+  `codeq capabilities` lists 23 commands; `codeq --help` has ~32. Missing from
+  `capabilities`: **`explore`, `path`, `api`, `affected`, `unused`,
+  `implementors`, `supertypes`, `deps`, `install`**. Repro:
+  ```
+  comm -13 <(codeq capabilities | sed -n '/^# commands/,/^#/p' | grep -vE '^#' | sort) \
+           <(codeq --help | awk '/^Commands:/{f=1;next} /^Options:/{f=0} f && $1 ~ /^[a-z]/ {print $1}' | sort)
+  ```
+  For a tool whose whole pitch is "built for AI agents," the machine-readable
+  manifest is exactly what an MCP host reads to learn what exists — so an agent
+  discovering via `capabilities` can never learn about `explore` or
+  `implementors`. Highest-value fix: generate `capabilities` from the same
+  command registry as the CLI so the two can't diverge (a test asserting
+  set-equality would have caught this).
+
+- **Rename `path` → `callpath` / `chain` / `route`.** In a *code* CLI, "path"
+  parses as a file path first; `codeq path from to` is easy to misread as
+  "the path to file `from`". Any of the alternatives is unambiguous. Strongest
+  rename.
+
+- **`about` vs `explore` are the same concept under two undifferentiated names.**
+  Both are a symbol dossier; the *only* difference is whether verbatim source is
+  included — and nothing in either name signals which. You must know the docs to
+  choose. Suggest folding into one command with `--source/--no-source` (default
+  no-source = today's `about`), or renaming so the code-vs-no-code axis is
+  visible. Compounded by the bug above: `capabilities` lists `about` but not
+  `explore`, so an agent only ever sees the sourceless one.
+
+- **`map` vs `stats`** — both described as "counts"; the names don't convey that
+  `map` is a grouped orientation breakdown and `stats` is summary totals.
+  **`definitions` vs `symbols`** (minor) — `definitions NAME` is a single exact
+  lookup, `symbols` is a listing; a name like `locate`/`def` for the singular
+  case would separate them at a glance.
+
+- **Capability wish — an inverse of `unused`: a "hotspots" / most-referenced
+  view.** `unused` finds dead code and `map` ranks files by definition count, but
+  there's no "which *symbols* are most referenced." Dropping into an unfamiliar
+  file (`generate.py`) cold, that's what I wanted: show the load-bearing symbols
+  first. Composes from data already in the index (reference counts per def).
+
+- **Docs undersell the surface (discoverability).** The `CLAUDE.md` an agent
+  actually reads omits `at`, `context`, `files`, `imports`, `importers`, and
+  never mentions the `--path` / `--language` / `--glob` / `--limit` filters on
+  `search`/`references`. Working from it I nearly proposed features that already
+  exist (`at file:line` reverse lookup, `search --glob`, `--limit`) — the gap was
+  discoverability, not capability. Once the drift bug is fixed, generating the
+  doc's command inventory from `capabilities` keeps them honest.
+
+- **Repo-specific friction — data-heavy trees inflate the index.** On persona,
+  `map`/`stats` report ~2,108 files classified `(unknown)` (280 data JSONs + PNGs
+  per country) and each query reindexes ~2,683 files. Respecting `.gitignore` or a
+  `.codeqignore` to skip data/asset trees would cut cold-index cost and the
+  `(unknown)` noise on non-code-dominated repos. (`.codeq/` self-ignores cleanly —
+  verified it never touched the host repo's git status — so no complaint there.)
+
 ## 2026-07-22 - session 36: the prune I said was safe, isn't
 
 Session 35 made method/function kinds accurate specifically so the receiver-based
@@ -1969,3 +2281,710 @@ skipped; astgrep on Zig is finicky because a bare call isn't valid top-level Zig
 metavar pattern won't parse (inherent astgrep limit, grammar is wired). Verified end to end:
 outline, callers/callees, read, search + enclosing symbol, `--in` spans, imports (Dart/
 Solidity). Schema 12 -> 13. 150 tests (+1), differential search 2250/2250, textmode ALL PASS.
+
+## Svelte: the first embedded-language case (22 total)
+
+Svelte broke the shape every previous language fitted. The other 21 are "one file, one
+grammar"; a `.svelte` file is a *component* — markup, with the real code sealed inside
+`<script>`, which the Svelte grammar hands back as a single opaque `raw_text` token. Wiring
+the grammar alone would have indexed nothing an agent wants.
+
+- **Blank, don't slice.** Each `<script>` body is re-parsed with the JS or TS extractor
+  (chosen from the block's `lang` attribute) over a *copy of the whole file* with every byte
+  outside the block replaced by a space, newlines preserved. Byte offsets, rows and columns
+  therefore come back already in file coordinates — no offset arithmetic, so no class of
+  off-by-one bugs, and multiple blocks (`<script module>` + `<script>`) just work. Verified
+  the hard case: a definition sharing a line with the `<script>` tag lands at the right
+  column. `LangSpec::extract` was split into parse + `harvest` so the one Svelte parse feeds
+  both the markup queries and the script-region walk.
+- **The file is the definition.** A component has no declaration to capture — `Button.svelte`
+  is referenced as `<Button/>` after importing it. So the file itself yields a `component`
+  fact named for its stem, which is what makes `explore Button` return the component plus
+  everything it uses. This needed `Extractor::extract` to learn the path. Guard rail:
+  SvelteKit routes (`+page.svelte`) are skipped — convention-loaded, never named, so a fact
+  there could only ever surface as false dead code in `unused`.
+- **Spans are half-covered, on purpose.** Markup comments and quoted attribute values are
+  classified, script spans come from the nested pass — but `<style>` is another opaque token,
+  so CSS comments read as *code* to `search --in`. Documented rather than papered over.
+
+**Follow-up, found by dogfooding on a real Svelte app:** `callers FormTiles` pointed at
+`CurrentForm.svelte:2` (the import) instead of `:116` (the `<FormTiles/>`) — right file,
+wrong line. The dedup keeps one row per (file, enclosing symbol) and the first hit wins;
+imports had always sat *outside* every definition, so this never bit. A component
+definition spans its whole file and therefore encloses its own imports, so the import won
+the tie and *shadowed* the usage — the line was silently lost.
+
+The instructive part was the fix I nearly shipped. Excluding import lines from `callers`
+outright fixed the symptom and read cleanly ("an import is a dependency edge, that's what
+`importers` is for") — but it quietly narrowed the default, and this repo's rule is the
+opposite: the default is a safe textual superset, with `--calls`/`--resolved`/`--on` as the
+opt-in narrowing filters. It would also have dropped every import-only file from `callers`
+across all 22 languages to fix a Svelte anchoring bug. Corrected to *rank* anchors instead
+of dropping rows: the representative site is the first real usage, falling back to the
+import when the file names the symbol nowhere else. Lesson: when a fix changes a default,
+check it against the documented contract before the tests — 152 green said nothing about
+this, because no test pinned the superset property.
+
+Honest v1 limits: `astgrep --language svelte` matches markup only (a `<script>` body is one
+token to that grammar, so JS patterns can't reach inside); relations are empty; Svelte 5
+runes (`let x = $state(0)`) aren't definitions, consistent with how plain JS treats a
+`variable_declarator` with a call value. Schema 13 -> 14. 152 tests (+2), full suite green.
+
+## Vue: the abstraction holds (23 total)
+
+Vue was the test of whether the Svelte work produced an abstraction or a one-off. It held:
+`tree-sitter-vue-next` names its nodes exactly as the Svelte grammar does (`script_element`,
+`raw_text`, `start_tag`, `comment`), so `script_regions`, `script_is_ts`, `blank_outside` and
+`component_fact` all applied unchanged. `extract_svelte` became `extract_component`, taking
+the markup `LangSpec` plus the JS and TS ones as three disjoint `&mut` field borrows — no
+`RefCell`, no cloning, and Svelte and Vue are now two arms of one path. `<script>` and
+`<script setup>` in the same file need no special case; they are simply two regions.
+`VUE_QUERY` is empty: a Vue `<template>` declares nothing nameable, so every definition comes
+from the nested script pass and the file's own component fact.
+
+**The one real divergence, and it was a bug I shipped into the working tree before catching
+it.** Vue puts JavaScript in *quoted* directive values — `@click="handleClick"`,
+`:disabled="d"`, `v-if="c"` — where Svelte uses braces (`on:click={handleClick}`), which are
+never quoted values. Copying `(quoted_attribute_value) @string` across therefore classified
+every template expression as a *string*, and `callers`/`callees` read code only: `callers
+handleClick` returned nothing at all for a handler the template plainly binds. The grammar
+does distinguish them (plain `attribute` vs `directive_attribute`, each with its own
+`quoted_attribute_value`), so scoping the span to `(attribute (quoted_attribute_value))`
+fixes it. Worth noting how it surfaced: not from a test, but from reading `callers
+handleClick` on a realistic fixture and asking why an obviously-bound handler had no callers.
+An empty result is the easiest kind of wrong answer to miss — nothing looks broken.
+
+Also confirmed the earlier anchor-ranking fix generalises for free: `callers Button` points at
+the `<Button …/>` in the template, not the `import` line above it. Honest v1 limits, same as
+Svelte: `astgrep --language vue` is markup-only; relations empty; `const x = computed(…)` and
+`ref(…)` aren't definitions, consistent with how plain JS treats a `variable_declarator`
+whose value is a call. Nuxt `pages/` files get a component fact named for the stem even
+though they are convention-routed (no `+` marker to detect, unlike SvelteKit). Schema
+14 -> 15. 153 tests (+1).
+
+## explore's budget was advice, not a limit
+
+Dogfooding the new component languages on a real Svelte app turned up a bug that
+had nothing to do with Svelte — it just made it impossible to miss.
+
+`explore App --max-tokens 200` returned **14,299 tokens**: 71x the budget asked for.
+The focus definition is never dropped (rightly — dropping the symbol you named is
+worse than overshooting), but "never dropped" had quietly come to mean "never
+measured", so any definition bigger than the whole budget sailed straight through
+it. Pre-existing and language-agnostic: codeq's own `explore refresh --max-tokens
+200` returned 2,911 tokens (14.6x). Components merely turned "occasionally
+overruns on a pathological function" into "always overruns by one whole file",
+because a component's definition *is* its file. Every component in that app cost
+~15k tokens to explore — `explore` degenerating into `cat`, which is the exact
+thing it exists to avoid.
+
+First fix was folding the focus (reuse `read`'s folded view). On a script-heavy
+component that works beautifully. On the real one it recovered **6%** — App.svelte
+is mostly template, and folding only collapses function/method bodies. Worth
+recording: the obvious fix was right in principle and nearly useless in practice,
+and only measuring it on real input showed that. So: fold first, then clip the
+tail if folding didn't get there. Both paths emit a `⋮` marker naming the exact
+hidden line range and tag the chunk `reduced: folded|clipped`, so nothing vanishes
+silently and `read --lines` recovers it. Budget is now 0.98–1.00x of whatever is
+asked, never over. `context` force-includes its seeds on identical reasoning and
+got the same treatment.
+
+A second, smaller find from the same session: `explore` emitted source it had
+already emitted. Exploring `App` produced the whole file *plus* 14 of its own
+functions again, each one a literal substring of the first chunk. Also
+language-agnostic — a Python class and a Rust trait both did it, and codeq's own
+`AstRow` wasted 13%. Now a chunk is skipped when an already-emitted *verbatim*
+chunk contains it; `App` went 17 blocks -> 3. The "verbatim" qualifier is
+load-bearing: a *folded* container has holes where its bodies were, so its members
+must still be emitted in full — you get the folded shape plus the specific
+functions you asked about, not a folded shape with gaps.
+
+Left deliberately: a small definition declared *inside* a larger one (codeq's own
+`AstData`, a struct inside `cmd_astgrep`) still appears twice, once as the focus
+and once inside the caller's body. That is the inverse direction — the focus has
+to stay identifiable and the caller carries other content — and it is bounded by
+the focus size. Also confirmed clean and left alone: `search` vs `rg` across 18
+patterns, the `--in` partition (both apparent mismatches were legitimate), and
+component byte ranges under CRLF, BOM, multibyte markup and `<script src=…>`.
+
+## astgrep's own documented example matched nothing
+
+Found by cross-checking, pre-existing, and returning a confident wrong answer with
+exit 0 — the failure mode codeq exists to eliminate. `fn $N($$$) { $$$ }` —
+the pattern written in `astgrep.rs`'s module doc — returned **0 matches against
+369 functions**, and the same in Python, JavaScript and Go. Not an error: zero
+results, exit 0, so an agent concludes the code doesn't exist.
+
+The cause took bisecting a pattern one component at a time. `def $N($$$): return
+$X` worked. `def $N(a, $$$): $$$` worked. `def $N($$$): $$$` did not. The rule
+turned out to be: *two* list nodes each holding a single `$$$`. `variadic_name`
+deliberately sees through single-child wrappers, because a `$$$` in statement
+position parses as an `expression_statement` around the sentinel — but that also
+makes a `parameters` node holding one `$$$` look like a variadic itself, when the
+absorption really belongs one level down inside it. Params and body both hit that,
+`match_children` saw two variadics, and its "more than one would need
+backtracking" guard rejected the whole pattern. So the single most natural thing
+anyone would write was the one shape that failed. Fixed by preferring a positional
+match when the arities already line up and letting the recursion absorb inside
+each child, falling back to absorbing at this level only when they don't (binds
+are trialled on a clone so a failed attempt can't pollute them). `fn $N($$$) {
+$$$ }` 0 -> 177 on codeq itself; `$X.unwrap()` unchanged at 198.
+
+## A size- and mtime-preserving edit was invisible
+
+Same shape as the astgrep bug above: a confident wrong answer, indefinitely. The
+freshness fast path
+trusted `(size, mtime)`, so an edit of identical length that restored mtime left
+every later query answering from a stale index — the file said `bbbb`, codeq said
+`aaaa`, indefinitely. mtime is settable from userspace (`touch -d`, `cp -p`,
+`rsync -a`, tar extraction, restoring an older copy), so this is reachable without
+anything exotic. Fixed by also comparing inode ctime, which moves on any write and
+cannot be forged. Cost measured, not assumed: an unchanged tree still short-
+circuits at 4-6 ms, and the one operation that moves ctime without changing
+content (chmod) costs a single re-walk with **zero** reparses, because the content
+hash still matches. Schema 15 -> 16; unix-only, falling back to size+mtime
+elsewhere.
+
+Also swept clean this round and left alone: incremental-vs-full-rebuild after
+edit/add/delete/rename/move, `at` innermost-first ordering, `path` chain edges,
+`callers --depth` monotonicity, `unused` false positives (zero), the
+`imports`/`importers` inverse, `--resolved` on components (correctly tags
+same-file/imported and prunes same-named functions in unreachable files), and
+adversarial file shapes — no trailing newline, a 4000-statement single line,
+CR-only endings.
+
+## Byte offsets measured in one text, applied to another
+
+Probing a corner nothing had touched — files that aren't valid UTF-8 — turned up a
+wrong answer, and chasing it surfaced a second, likelier one with the same cause.
+
+The indexer normalises a file before measuring anything: strip a leading BOM,
+decode as UTF-8 with invalid bytes replaced. Fact offsets are positions in *that*
+text. But two consumers were applying those offsets to the bytes on disk, which is
+a different string whenever normalisation actually changed something.
+
+- **Invalid UTF-8.** Each bad byte becomes a three-byte U+FFFD, so the searchable
+  body runs two bytes ahead per bad byte. `search`, `references` and `callers`
+  compare a match's body offset against a fact's raw range, so past the first bad
+  byte the enclosing-symbol lookup drifts — first dropping the tag, then landing
+  on the *next* definition. The output contradicted itself: `z.rs:2:13: fn alpha()
+  { helper(); }  [bravo]`, and `callers helper` named `bravo` where `alpha` is the
+  caller, while `at z.rs:2` correctly said `alpha`. Two commands disagreeing is
+  what made it findable.
+- **A leading BOM.** Same shape, three bytes, and far likelier to meet in the wild
+  — any Windows-authored tree. `explore` on a BOM file returned source starting
+  mid-expression: focus text `'﻿fn alpha() { helper()'` (truncated), callee
+  `' }\nfn helper()'`. Garbled code handed straight to an agent.
+
+Fixed by making the normalised text the single coordinate system: facts are now
+extracted from it rather than the raw bytes, and source assembly normalises before
+slicing instead of after. For valid UTF-8 without a BOM — virtually every file —
+extraction is byte-identical and costs nothing, because that string is already
+materialised for the FTS body. `read` was never affected: it is line-based, and
+line numbers were right throughout.
+
+Honest scoping note: I first claimed this was reachable in a real repo, having
+found seven invalid-UTF-8 files in api-analytics. Checking them showed all seven
+were `.git/objects` and a `.br` artifact — none indexed. The BOM half is the one
+that actually reaches users; the UTF-8 half needs genuinely latin-1 source, which
+older C/C++/PHP/Perl trees do have (no null bytes, so `looks_binary` passes them
+through as source). Worth stating plainly rather than leaving the inflated claim.
+
+## The MCP server turned caller values into flags
+
+The MCP server had never been swept. Driving it over JSON-RPC and calling all 28
+advertised tools found one failure and one real bug.
+
+Caller-supplied values are passed positionally to the CLI, and the CLI's parser
+reads a leading dash as a flag. An MCP client has no way to say "this is a
+literal" — a shell user types `--` themselves, but the protocol offers no
+equivalent. So `pattern: "--json"`, an entirely ordinary thing to search a
+codebase for, came back as "required argument not provided", and `symbol:
+"--help"` printed codeq's help page and exited 0 — `isError: false`, help text
+handed to an agent as a successful answer. Fixed by accumulating flags first,
+then `--`, then caller values. Also sharpened `codeq_deps`, whose schema said
+`required: []` while calling it with no arguments is an error.
+
+Two process notes, both about nearly-wrong conclusions:
+
+- I first cross-checked the schemas against `build_args` with a regex over the
+  match arms. It silently matched nothing and reported **103 properties never
+  forwarded** — i.e. every parameter of every tool broken, which is not a
+  plausible state for a tool in daily use. That implausibility was the tell, not
+  anything about the regex. Replaced it with an empirical sweep: call each
+  parameter, diff the output against the call without it. 20 exercised, 0 broken.
+- The fix itself was a mechanical rewrite routing positionals into a separate
+  vec, and it **broke `codeq_astgrep`** — `language` is a flag's *value*, not a
+  positional, so `--language` lost its argument. The compiler was happy; only
+  re-running the whole 28-tool sweep caught it. After a bulk edit, re-run the
+  sweep that found the bug, not just the case you were fixing.
+
+## Two follow-ups: one real bug, one thing I had mislabelled
+
+**astgrep accepted patterns it had only partly parsed.** `if { }`, `match { }`
+and `garbage $$$` each returned zero matches and exit 0 — indistinguishable from
+"no such code exists". The existing `has_error()` guard could not catch them:
+`significant()` descends *past* an ERROR node (a bare expression is not a valid
+top-level item in several grammars and only survives via recovery), and whatever
+fragment survived is itself error-free. So `if { }` quietly became "an empty
+block" and was matched as such. Fixed by requiring the chosen node to span the
+whole pattern — recovery is precisely the thing that discards input, so a partial
+span is the signal. Verified the patterns that legitimately depend on recovery
+still work, and confirmed against the HEAD binary on the same tree that match
+counts are unchanged (an apparent 198 -> 216 drift in `$X.unwrap()` was the
+repository growing from earlier commits in this session, not the guard).
+
+**`--fields` dropping unknown names was not a bug.** I had listed it as one for
+several rounds: `--fields path,nonsense` returns just `path`, exit 0. Two things
+said otherwise. `via` appears only under `--resolved` and `col`/`text` only under
+`--examples`, so `--fields path,via` is a *working* query whose field is
+legitimately absent — erroring would break it. And `fields_ignores_unknown_columns`
+is a pre-existing test asserting exactly this behaviour, so it is a deliberate
+contract, not an oversight. What was genuinely missing is observability, so the
+projection now reports which requested names matched no row and lists the ones
+that were available (`line` -> "available: …, start_line, …", which is what the
+caller almost certainly meant). A note on stderr in text mode, a `notes` block in
+JSON; the projection itself is unchanged and the old test still passes.
+
+Worth recording as a pattern: the reflex on finding surprising behaviour is to fix
+it, and twice now the right move was to first ask whether it was intended. The
+existing test was better evidence than my own reasoning.
+
+## codeq could not be run concurrently at all
+
+The header of db.rs says WAL is enabled "so that a reindex by one process does not
+block reads by concurrent agent invocations". Twelve simultaneous invocations:
+
+    cold starts              10/12 failed   "database is locked"
+    warm, unchanged tree     11/12 failed   <- even pure readers
+    warm, after one edit     11/12 failed
+
+Concurrency is not an edge case here — it is the design target. Parallel tool
+calls, or two agents on one checkout, and every invocation refreshes.
+
+Three separate causes, each hiding the next:
+
+1. No `busy_timeout`, so SQLite gave up the instant it met a lock.
+2. `PRAGMA journal_mode = WAL` ran on every open and takes an exclusive lock even
+   when the database is already in WAL. That is why *readers* failed: they
+   contended before reading anything. Now the mode is read first and only written
+   when it differs.
+3. `BEGIN DEFERRED` (rusqlite's default). This was the one that mattered. A
+   deferred transaction takes its write lock lazily, and SQLite returns
+   SQLITE_BUSY **immediately, bypassing the busy handler**, because two readers
+   both upgrading would deadlock. Adding the timeout changed nothing at all until
+   the transaction became `BEGIN IMMEDIATE` — a good reminder that a fix which
+   "should" work and doesn't means the diagnosis is incomplete, not that the fix
+   needs to be bigger.
+
+Then, because the lock is taken before the parse, twelve processes each held it
+through their own copy of the same work. Re-checking freshness once the lock is
+held lets the waiters skip it: measured properly (remove the check, rebuild,
+re-run) that is 8.5s -> 0.9s for a one-file change across twelve processes.
+Warm and unchanged is 32ms for twelve.
+
+Two of my own measurements were wrong before they were right, both worth naming.
+The first "9.3 seconds for a one-file change" was an artefact of the test writing
+its output files *into the indexed repository*, so the tree really was changing
+under every process; the true figure was ~0.9s. And I nearly kept the
+double-checked refresh on the strength of it sounding obviously good — the
+before/after comparison is the only reason I know it earns its place.
+
+## Member-level facts: fields, properties, enum variants
+
+The gap that prompted this: `definitions retries` returned **nothing** for a
+struct field, and `callers retries` conflated a Rust field with an unrelated
+Python attribute of the same name while listing the struct declaration itself as
+a "caller". For an agent editing a type — a very ordinary task — "what fields does
+this have" and "who reads this field" were answerable only by noisy text search,
+with no definition for `--resolved` to resolve against.
+
+Members are now `field` and `variant` facts, each carrying an `owner`: the type
+that declares it, found by walking to the nearest *type* declaration rather than
+the nearest named node. The separate column was the design decision worth
+arguing. Qualifying the name as `Config.retries` would have been less code — no
+schema change, no column threaded through three queries — but it breaks exactly
+the question being asked: `definitions retries` would return nothing, and you
+would have to already know the type in order to ask which type it was. So:
+`name` stays the member name, `owner` says whose it is. Cost: a 17-column insert,
+which outgrew rusqlite's tuple `Params` impl and needed `params!`.
+
+Best side effect: `outline` now shows a type's shape, members nested under it.
+
+**A bug the feature exposed.** `api` on an exported TypeScript class reported
+`private secret` as public API. The JS/TS visibility rule only consulted
+accessibility modifiers for `method_definition`, so a class field fell through to
+"does the file export this?" — and since the class was exported, every field read
+as public. Members now consult their own modifier; verified that TS `private`,
+Java `private` and non-`pub` Rust fields are all excluded from `api`.
+
+**Two things checked rather than assumed.** Thousands of new field facts could
+have buried `unused` — it still reports exactly 3 on codeq itself, because fields
+are read somewhere. And text mode needed its own change: the renderer returns
+early on any row with a `signature`, so `owner` was invisible in the *default*
+output, which is where it matters most (`pub retries: u32` does not say whose it
+is). Now bracketed like `search`'s enclosing symbol.
+
+Honest scope: 5 of 23 languages (Rust, Go, Java, TypeScript/TSX, C#). Python gets
+nothing, and Python is plausibly the most common language here — its attributes
+are assignments inside `__init__`, not declarations, so they need a different
+extraction shape plus a judgement on class-level assignments and `@property`. C/C++
+was attempted and backed out when the query anchor did not match cleanly; better
+done deliberately than by a regex that half-worked. Five languages that are exactly
+right beats twenty that are approximately right, for a tool whose whole claim is
+that its output can be trusted — but `definitions retries` still returns nothing in
+a Python codebase, which is the same failure that started this. Schema 16 -> 17.
+
+## Members for the remaining languages, and what Python forced
+
+Extending member facts from 5 languages to 11 (adding Python, C, C++, PHP, Kotlin,
+Swift) was mechanical for five of them and a design problem for Python, which has
+no declaration site at all: an attribute exists because something assigned it.
+
+Three rules came out of that, and two are general improvements rather than Python
+special-casing:
+
+- **A member with no owner is dropped.** An owner-less `field` is precisely the
+  bare, unaddressable name this fact kind exists to replace. It also disposes of
+  `self.x = 1` inside a plain function and of anonymous C structs, for free.
+- **Members are deduplicated per (name, owner), earliest wins.** Python assigns
+  `self.retries` in `__init__` and again in `reset`; that is one member, not two
+  declarations. Safe generally, because no language here permits two members of
+  one name in one type.
+- **`other.x = 1` is not a declaration** — guarded on the `self` receiver, reusing
+  the mechanism built for Ruby's `require` and Elixir's `def`.
+
+The owner rule immediately caught a mistake of my own: I had put `@field` on the
+`class_definition` node, so `owner_of` walked up from the class looking for an
+*enclosing* type, found none, and silently dropped every class-body attribute —
+`DEFAULT = 3` and `timeout: float = 1.5` simply were not there. The capture belongs
+on the assignment, so that the walk starts inside the class. Worth noting that the
+new invariant is what surfaced it: before, those would have been emitted as fields
+owned by nothing and looked approximately right.
+
+Python's rule is a judgement, not a fact, so it is stated in `capabilities`, the
+README and CLAUDE.md rather than left implicit: a member is its earliest class-body
+or `self.x =` assignment.
+
+## A malformed query silently emptied the whole index
+
+Adding four grammars, one of my span queries named a node type that does not exist
+(`verbatim_string_literal`, PowerShell). The result was not an error. It was this:
+
+    $ codeq stats
+    files: 0
+    index: {schema: 18, fresh: true}
+
+codeq's own repository, 78 files, indexed as *nothing* — and reporting itself
+fresh. Every language, not just the broken one.
+
+`Extractor::new()` compiles every language's queries, and the parse workers did
+`Err(_) => return`. So each worker exited quietly, sent no results, the writer
+stored nothing, and the refresh reported success. A programming error in one
+grammar's query took out all 27 languages and looked exactly like an empty repo.
+
+This is the worst failure shape in the tool: not slow, not partial, but confidently
+wrong at full scale. Query compilation fails identically for every worker and every
+file, so there is no partial-success story to preserve — it now prints which query
+failed and exits 1.
+
+Two process notes. I found it only because a fixture returned nothing and I checked
+codeq's *own* repo rather than assuming the fixture was odd — the fixture looked
+like the more likely culprit. And once the error was visible, I validated every node
+type in all five new grammars programmatically against their `node-types.json`
+rather than fixing errors one rebuild at a time; that found the single remaining
+problem in one pass.
+
+## Four more languages: CSS, PowerShell, Protobuf, GraphQL (27 total)
+
+Chosen for coverage rather than count. CSS earns its place twice: `<style>` inside a
+Svelte or Vue component was opaque, so CSS comments read as *code* to `search --in`
+— a limitation I had to document when adding those languages, now closed. PowerShell
+is the Bash counterpart that was conspicuously missing. Protobuf and GraphQL are the
+contracts between services, so in a polyglot repo a message name is often the one
+symbol that crosses language boundaries.
+
+Two things needed work beyond writing queries. Protobuf spells names per construct
+(`message_name`, `enum_name`, `service_name`) rather than using a `name` field, so
+`owner_of` found no name for the enclosing type and the new "members must have an
+owner" rule silently dropped every protobuf field — the rule working exactly as
+designed, on a grammar it had not met. Broadened to accept a `_name` suffix. And the
+new grammars' type nodes had to join `TYPE_KINDS` before their members resolved at
+all.
+
+**HCL/Terraform was cut after it shipped wrong.** A block's identity lives in its
+labels, and which label is the name depends on how many there are: `variable
+"region"` is named by its only label, `resource "aws_s3_bucket" "logs"` by its
+*last*. Tree-sitter queries cannot express "last", so my first attempt produced
+`kindword "aws_s3_bucket"` and `kindword "logs"` — the capture name leaking in as the
+fact kind, quotes included, two facts per block. I had flagged exactly this risk
+before starting and went ahead anyway. It needs a name-derivation rule in code, like
+Svelte's component fact, so it is deferred rather than approximated: `kindword` facts
+in a tool whose pitch is trustworthy output are worse than no Terraform support.
+
+## HCL/Terraform, done the way the language actually names things
+
+Cut from the previous batch after it shipped `kindword "aws_s3_bucket"` facts.
+The reason it could not be a query: a block is `keyword "label"… { … }`, and the
+labels are a *repeated, unnamed* child, so tree-sitter cannot select "the last
+one" — and which label is the name depends on how many there are.
+
+    terraform { }                       0 labels -> no identity, skipped
+    variable "region"                   1 label  -> region
+    resource "aws_s3_bucket" "logs"     2 labels -> logs, of type aws_s3_bucket
+
+The model that fits is the one already built for struct members. Terraform refers
+to things as `aws_s3_bucket.logs.arn`, `var.region`, `local.x` — so the name is the
+last label and the type label becomes the `owner`, exactly the field/type split.
+`definitions logs` then answers "the aws_s3_bucket one", and `references logs`
+finds `aws_s3_bucket.logs.arn` because codeq's graph is name-based. `kind` is the
+block keyword verbatim, which costs an open-ended kind vocabulary but keeps this
+honest for non-Terraform HCL (Nomad's `job`, Packer's `source`) instead of
+hardcoding one tool's nouns. `locals` contributes one constant per attribute, and a
+`module`'s `source` is captured as an import.
+
+Two honest limits, both stated in `capabilities` rather than left to be discovered:
+the kind vocabulary is open-ended, and `deps` does *not* resolve a module source —
+resolution matches import segments against file stems, and a Terraform module is a
+directory. That is a general limitation (JS `./utils` -> `utils/index.js` does not
+resolve either), not something specific to HCL, so `imports` and `importers` work
+while `deps` stays empty.
+
+Also worth recording: my first version of the test asserted a hard-coded line
+number and failed on an off-by-one in my own fixture, not in the code. Rewritten to
+assert on content — that the use site containing `aws_s3_bucket.logs.arn` is
+attributed to the enclosing `output` and is not flagged as the declaration — which
+is what the naming rule is actually for.
+
+## Five capability gaps, found by asking the tool instead of guessing
+
+Rather than brainstorm what might be missing, I probed: query the thing, look at
+what comes back. Four of five suspicions were real, and one was already working.
+
+**`deps` missed every directory-style import.** Not a Terraform quirk — general and
+severe. Resolution matched import segments against file *stems*, so `./utils` never
+reached `utils/index.js`, `from pkg import x` never reached `pkg/__init__.py`, and a
+Terraform `source` never reached its module directory. That is the dominant idiom in
+the two largest ecosystems here, silently absent from the dependency graph the whole
+time. A file that stands in for its directory — a conventional entry file, or any
+`.tf` — is now also filed under the directory's name.
+
+**Data I had added but left unqueryable.** `owner` went onto members across 13
+languages with no way to filter by it: `symbols --kind field --owner Config` was an
+argument error. So "what does this type hold?" meant fetching every field in the
+repository and filtering by hand. My own omission. It turns out to generalise nicely
+to HCL — `--owner aws_s3_bucket` lists every bucket, `--owner local` every local.
+
+**GraphQL `implements` was not a relation.** `type User implements Node` is real
+inheritance and I shipped GraphQL with an empty relation query. The fix then failed
+halfway for a reason worth recording: `implements_interfaces` nests *left-recursively*
+rather than listing siblings, so `A & B & C` parses as `II(II(II(A), B), C)` and one
+pattern binds only the outermost. One pattern per nesting level, bounded at five
+interfaces — a stated limit rather than a silent truncation.
+
+**`--calls` only knew one syntax.** It tested for `Name(`, which a component is never
+spelled with, so `callers Btn --calls` returned nothing for a component plainly used
+as `<Btn />`. Markup instantiation now counts; a bare mention, an import and
+`const x = Btn` still do not, and call-syntax languages are unchanged.
+
+**`unused` reported contracts as dead code.** Every GraphQL type, every protobuf
+message, every Terraform `output` — all things that exist to be consumed from
+*outside* the repository, so "nothing here references it" is their normal state.
+They drowned the real hits. Now skipped, with the reasoning in `capabilities`.
+
+The one that was already right: CSS. `.orphan` is reported and `.primary` is not,
+because `page.html` uses it — genuine dead-stylesheet detection that fell out of
+adding CSS spans, and worth checking rather than assuming it was noise too.
+
+## Members for Zig, Solidity, Dart and Scala (18 languages)
+
+Mechanical for three of them. Zig was not, and the reason generalises: some
+languages *bind* a type to a name rather than declaring it with one. `const Point
+= struct { x: i32 }` leaves the struct itself anonymous — `Point` lives on the
+enclosing declaration — so the owner lookup found an unnamed type and the
+"members must have an owner" rule dropped every Zig field silently. The lookup now
+follows that binding before giving up. Same shape as the mistake I made in Python,
+where the capture sat on the class instead of the assignment: the owner rule keeps
+catching cases where a member's type is not where you would first look for it.
+
+Zig reports enum members as `field` rather than `variant`, because the grammar
+models both as `container_field` and the language genuinely does not distinguish
+them. Reporting what the language says beats inventing a distinction it lacks.
+
+Also worth recording: the loud-failure fix committed an hour earlier paid for
+itself immediately. A wrong Dart pattern — `declaration` does not contain
+`initialized_variable_definition` — would previously have emptied the entire index
+while reporting `fresh: true`. Instead it printed `Impossible pattern:` with the
+exact query, and the fix took one lookup.
+
+## clones: structural duplication as a fact, not a score
+
+The original suggestion was a *similarity score* between two code sections. I
+argued against it and built the version that fits: hash a definition's syntax
+shape — the tree of node kinds, with identifiers and literals normalised away —
+and group by exact hash. Shapes match or they do not. No threshold to justify, no
+number an agent cannot act on, and `diff` still covers "what exactly differs".
+
+It found real duplication in codeq's own source on the first run, biggest first:
+
+    cmd_implementors / cmd_supertypes      202 nodes
+    defs_by_names    / defs_by_paths       148 nodes
+    opt              / optn                 58 nodes
+    print_range      / print_range_raw      49 nodes
+
+Checked by eye rather than trusting the hash: `cmd_implementors` and
+`cmd_supertypes` really are the same function with `subtype`/`supertype` swapped.
+
+Two decisions worth stating. The shape walk uses an explicit stack, because
+recursion depth here is attacker-controlled by source nesting. And a definition
+under twelve nodes gets no shape at all: every empty function in a repository
+shares a shape, truthfully and uselessly, so the floor belongs at extraction
+rather than in the query. `--min-nodes` (default 24) then filters how much code a
+group must cover — it filters, it never ranks.
+
+Honest cost, measured rather than assumed: a cold index of 78 files goes from
+~900ms to ~1100ms, about 20%, because every definition's subtree is walked once.
+Warm queries are unchanged at 5ms. That seemed worth it for a capability that
+answers "is this already implemented?" — but it is a real cost and belongs in the
+docs, not hidden.
+
+## Using clones on codeq itself — and what it means to *not* act on one
+
+`clones` reported 13 groups in this repository. Three were worth fixing:
+
+- `defs_by_names` / `defs_by_paths` (148 nodes) — the same loader written twice for
+  two indexed columns. Merged into `defs_by_column`.
+- `cmd_implementors` / `cmd_supertypes` (202 nodes) — letter for letter the same
+  function with `subtype` and `supertype` swapped. The query is now shared; 202 -> 117.
+- `codeq_commit` in two bench harnesses — moved to `corpus.py`, which both already
+  imported.
+
+The other ten are the interesting part, because the right response to a true report
+is often "yes, and that is fine":
+
+- **`pick` in bench.py and tasks.py** is structurally identical and *behaviourally
+  different* — one rebuilds the index and picks a `clean_name`, the other warms it
+  and picks a `clean_class`. Merging would have been a bug. This is the clearest
+  argument for reporting structure as a fact rather than emitting a "duplication
+  score" that implies an action.
+- **CLI enum variants** (`Implementors`/`Supertypes`, `Files`/`Api`, …) are
+  declarative clap definitions; identical shape is what a uniform CLI *is*.
+- **`ImplementorRow` / `SupertypeRow`** differ only in a field name, and that field
+  name is the output contract.
+- **`opt` / `optn`** and **`print_range` / `print_range_raw`** would each collapse
+  into one function plus a flag, which reads worse at every call site than two
+  names that say what they do.
+- The residual `cmd_implementors` / `cmd_supertypes` group is now just the mapping
+  boilerplate that exists *because* the two commands present the same rows under
+  different names. Collapsing it needs a generic over the row type — more code than
+  it removes. Stopping here rather than forcing the number down is the point: a
+  tool that makes you game its own metric is worse than one you can ignore.
+
+Also settled: `changed --since-index` is dropped rather than built. Every query
+auto-refreshes, so there is no retained baseline to diff against; making it work
+needs a stored snapshot, and codeq stays stateless.
+
+---
+
+## Round: turning codeq on codeq for refactoring work
+
+The brief was "use codeq to find refactoring work, and report anything you trip
+over while doing it". Both halves paid out, and the bugs were worth more than the
+refactoring.
+
+### The cross-check that mattered: `tests` was answering "none" for covered code
+
+`codeq unused src` reported exactly three definitions — all three of them test
+functions in `src/install.rs`. That is a 100% false-positive rate on the command
+whose entire premise is that it under-reports rather than misleads.
+
+Pulling the thread with two commands that must agree:
+
+```
+codeq tests apply --path src/install.rs      -> empty
+codeq references apply --path src/install.rs -> 7 call sites in 3 test functions
+```
+
+`tests` says nothing exercises `apply`. `references` says three test functions call
+it seven times. Both cannot be right.
+
+The cause: `is_test_path` knew test *directories and filenames*, and `is_test_name`
+knew test-like *function names*. Rust's dominant unit-test idiom — `#[cfg(test)]
+mod tests` inside the very file under test — has neither. The path is ordinary and
+the function names are prose (`installs_into_a_detected_agent_and_is_idempotent`).
+
+This one stings for two reasons. First, the limitation was *already written down*
+in the doc comment on `tests` ("can't see attribute-only tests… may be missed"), so
+it was a known gap that nobody had priced. Documenting a hole is not the same as
+knowing how big it is: the honest measurement is that on codeq's own repository the
+command was blind to every unit test in the crate. Second, an empty result from
+`tests` doesn't read as "I can't see those" — the skill documentation explicitly
+tells an agent that empty means "only exercised indirectly". So the failure mode
+was a confident wrong answer on the exact edit-then-find-the-test loop the command
+exists to serve.
+
+The fix needed no extraction change, because codeq already indexes the enclosing
+`mod tests` as a fact with a line span. A definition inside a test-like container
+is now a test. It generalises for free: a Python `class TestFoo` or a Java
+`class FooTest` in an ordinary path classifies its methods the same way.
+
+While fixing it, a fourth copy of the notion turned up: `callers_of` carried its own
+inline predicate (`path.contains("test")`, name starts with `test`/`Test`) which is
+both weaker *and* wronger than the other two — `path.contains("test")` matches
+`src/latest.rs`. Four notions of "is this a test", differently wrong, in one file.
+There is now one, `is_test_site`, and `tests`, `callers` and `unused` agree.
+
+### `capabilities` had gone nine commands stale
+
+The command whose only job is to tell an agent what codeq can do listed 23 of 32
+commands. Missing: `affected`, `api`, `deps`, `explore`, `implementors`, `install`,
+`path`, `supertypes`, `unused` — including `explore`, the tool an agent should
+reach for first.
+
+It was a hand-maintained array. It is now derived from clap's own subcommand list,
+so it cannot drift, and a test cross-checks it against the parser's help output.
+The bug was found the same way as the last one: asking two sources that must agree
+(`capabilities` vs `--help`) and diffing them.
+
+### The refactoring findings themselves
+
+Less dramatic than the bugs, and mostly one root cause:
+
+- **`commands.rs` is 108 KB / 3,117 lines / 71 functions / 30 command handlers.**
+  The obvious split is by domain, but splitting it is cosmetic without the next item.
+- **There is no query layer.** `codeq search 'SELECT ' --in strings` counts 43 raw
+  SQL statements in `commands.rs` against 2 in `db.rs`. `db.rs` is schema and
+  migration only; every handler hand-writes its own SQL. This is *why* the same
+  definition-loading shape kept recurring — the clone groups merged last round were
+  symptoms, not the disease.
+- **The command surface is specified three times** — the clap enum, `build_args` in
+  the MCP server, and the `capabilities` list. This has now cost real bugs twice:
+  `codeq_astgrep` broke in the MCP copy, and the `capabilities` copy rotted.
+  Deriving `capabilities` from clap fixes one third of it; `build_args` remains.
+- **Long functions:** `refresh` 317, `main` 278, `build_args` 238, `harvest` 224,
+  `Extractor::new` 207.
+
+### A clone group I got wrong last round
+
+`run()` in `bench.py` and `tasks.py` was reported by `clones` and I left it, having
+lumped it in with the `pick` pair. It was a genuine duplicate — identical but for a
+local variable name (`t0` vs `t`). Lifted to `corpus.timed_run`, which also absorbed
+`completion.py`'s near-copy (same body, returns milliseconds) and the `CODEQ` path
+constant that five harnesses each computed for themselves in two different spellings.
+
+Worth recording as a process point: `clones` reported this correctly and I dismissed
+it. The tool's job is to hand you exact structural equality; deciding is still the
+reader's, and the reader can be wrong in *both* directions.
+
+### Feature gap: `callees` cannot show its own evidence
+
+`codeq about codeq_commit` reports four `run` functions as callees. The body calls
+no `run` — it calls `subprocess.run(...)`, and the name-based matcher attributes the
+qualified call to every definition named `run` in the repo. `--resolved` correctly
+returns empty, but you only reach for it if you already suspect the answer.
+
+`callers` has `--examples` to surface the call expression, and `--on` to filter by
+receiver. `callees` has neither. Showing `subprocess.run` in the row would make the
+over-match self-evident without the reader needing to suspect anything, and
+module-qualified calls are the norm in Python and JS, so this is a broad noise class
+rather than a corner case. Not built yet; recorded here as the next obvious gap.

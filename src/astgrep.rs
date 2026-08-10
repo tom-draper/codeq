@@ -63,6 +63,10 @@ pub fn ts_language(name: &str) -> Option<tree_sitter::Language> {
         "zig" => tree_sitter_zig::LANGUAGE.into(),
         "elixir" => tree_sitter_elixir::LANGUAGE.into(),
         "solidity" => tree_sitter_solidity::LANGUAGE.into(),
+        // Markup only: a `<script>` body is one opaque token to these grammars,
+        // so JS/TS patterns can't reach inside a Svelte or Vue component.
+        "svelte" => tree_sitter_svelte_ng::LANGUAGE.into(),
+        "vue" => tree_sitter_vue_next::LANGUAGE.into(),
         _ => return None,
     })
 }
@@ -205,6 +209,28 @@ fn match_children(
     csrc: &[u8],
     binds: &mut HashMap<String, String>,
 ) -> bool {
+    // `variadic_name` deliberately sees through single-child wrappers, because a
+    // `$$$` in statement position parses as an `expression_statement` around the
+    // sentinel. That over-reaches for a *list* node holding one `$$$`: the
+    // `parameters` of `fn $N($$$)` looks like a variadic itself, when really the
+    // absorption belongs one level down, inside it. With two such lists in one
+    // pattern — `fn $N($$$) { $$$ }`, the single most natural thing to write —
+    // the >1-variadic guard below then rejected the whole pattern and reported
+    // no matches at all. So when the arities already line up, match positionally
+    // and let the recursion absorb inside each child; fall back to absorbing at
+    // this level only when they don't.
+    if pkids.len() == ckids.len() {
+        let mut trial = binds.clone();
+        if pkids
+            .iter()
+            .zip(ckids)
+            .all(|(p, c)| node_matches(*p, *c, psrc, csrc, &mut trial))
+        {
+            *binds = trial;
+            return true;
+        }
+    }
+
     let vpos: Vec<usize> = pkids
         .iter()
         .enumerate()
@@ -213,11 +239,7 @@ fn match_children(
         .collect();
 
     if vpos.is_empty() {
-        return pkids.len() == ckids.len()
-            && pkids
-                .iter()
-                .zip(ckids)
-                .all(|(p, c)| node_matches(*p, *c, psrc, csrc, binds));
+        return false; // arities differ and there is nothing to absorb the gap
     }
     // A single variadic per list is supported (the common case); more would need
     // backtracking, so treat it as no match rather than guess.
@@ -274,6 +296,22 @@ where
     let psrc = substituted.as_bytes();
     let pat_node = significant(pat_tree.root_node());
     if pat_node.is_error() || pat_node.has_error() {
+        return Err(anyhow!(
+            "pattern did not parse as valid {lang_name}; write it as a complete construct"
+        ));
+    }
+    // `significant` descends through ERROR nodes, because a bare expression is not
+    // a valid top-level item in some grammars and only survives via error
+    // recovery. The cost is that a genuinely malformed pattern also parses — the
+    // parser discards what it can't use, and the descent lands on whichever
+    // fragment survived, error-free. `if { }` quietly became "an empty block" and
+    // `garbage $$$` became a lone identifier: both then reported zero matches and
+    // exit 0, which reads as "no such code exists" rather than "your pattern is
+    // wrong". Requiring the chosen node to span the whole pattern separates the
+    // two, since recovery is exactly what drops part of the input.
+    let covered = std::str::from_utf8(&psrc[pat_node.start_byte()..pat_node.end_byte()])
+        .unwrap_or_default();
+    if covered.trim() != substituted.trim() {
         return Err(anyhow!(
             "pattern did not parse as valid {lang_name}; write it as a complete construct"
         ));

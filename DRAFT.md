@@ -4,15 +4,16 @@
 
 ## Implementation Status
 
-This document is the design rationale. A working prototype now exists; see
-[README.md](./README.md) for the commands that actually ship today. Built so far:
+This document is the **design rationale** — why codeq is shaped the way it is. It does
+not track what ships, and deliberately no longer tries: the inventory that used to live
+here went stale by roughly an order of magnitude (it still claimed six commands, two
+languages and 29 tests long after those numbers had passed 30, 25 and 150). For what
+exists today, ask the tool — `codeq capabilities` is generated from the CLI parser, so
+it cannot drift — or read [README.md](./README.md).
 
-- Daemonless, incremental, ignore-aware indexing into SQLite (WAL).
-- `index`, `files`, `changed`, `stats`, `map`, `capabilities`.
-- Tree-sitter symbols/imports for **Rust** and **Python**: `symbols`, `definitions`,
-  `outline` (with signatures + docstrings), `imports`, `importers`.
-- Token-budgeted `context` assembly with explicit seeds and opt-in mechanical expansion.
-- Compact-by-default JSON with a meta-only-when-noteworthy envelope; 29 integration tests.
+Parts of `src/facts.rs` and `src/context.rs` cite this file for the reasoning behind
+the fact model and the context-assembly constraints; those sections are the point of
+keeping it.
 
 The guiding principle, learned in practice: **report facts, never opinions** — deterministic,
 reproducible output with no relevance ranking or intent inference. Sections below that

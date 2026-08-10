@@ -45,8 +45,20 @@ const MEMBER_FIELDS: &[&str] = &[
     "field", "property", "attribute", "name", "selector", "suffix",
 ];
 
-/// Every call site in `src`, or `None` when the language has no grammar.
+/// Every call site in `src`, or `None` when the language has no grammar — or has
+/// one that cannot see the code.
+///
+/// A single-file component (`.svelte`, `.vue`) *does* have a grammar, but that
+/// grammar is a markup grammar: the `<script>` body comes back as one opaque
+/// `raw_text` node, so parsing finds no call expressions inside it at all. That
+/// is worse than having no grammar, because callers take `Some(map)` as
+/// authoritative and an empty map reads as "nothing is called here" — which
+/// silently emptied `callees` for every component. Returning `None` sends them to
+/// the byte-level scan, which can see into the script.
 pub fn calls_in(language: &str, src: &str) -> Option<CallMap> {
+    if matches!(language, "svelte" | "vue") {
+        return None;
+    }
     let lang = crate::astgrep::ts_language(language)?;
     let mut parser = Parser::new();
     parser.set_language(&lang).ok()?;

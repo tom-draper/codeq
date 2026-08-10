@@ -17,15 +17,37 @@ use rusqlite::Connection;
 // non-extracted "shell" label to "bash"), so existing indexes must rebuild to
 // populate facts/spans for these files.
 // v13: added Dart/Zig/Elixir/Solidity extraction — rebuild to populate them.
-// v14: added member extraction (`field`/`variant` facts) for the languages that
-// declare them, so existing indexes must rebuild to populate members.
+// v14-v21 below are a *merge* of two parallel lines that both bumped from v13,
+// so the same numbers meant different migrations on each side. They are recorded
+// together for history only — no index can have followed both sequences, and the
+// numbers are not individually meaningful any more. What matters is v22: it is
+// above every version either line issued, so every existing index rebuilds once
+// and lands on the union of both feature sets. The version is a cache-invalidation
+// token, not a schema identity, which is what makes this safe to collapse.
+//
+// From the component/clones line:
+// v14: added Svelte extraction (nested `<script>` facts, component facts).
+// v15: added Vue extraction.
+// v16: freshness also compares inode ctime, so a size- and mtime-preserving edit
+// is no longer invisible.
+// v18: added CSS/PowerShell/Protobuf/GraphQL extraction, and members for six more
+// languages.
+// v19: added HCL/Terraform extraction.
+// v20: members for Zig/Solidity/Dart/Scala, and GraphQL type relations.
+// v21: definitions carry a syntax-shape hash, for structural clone detection.
+//
+// From the markdown/relations line:
 // v15: added markdown extraction (`heading` facts, code-fence/prose spans, and
-// local link/image targets as imports) — rebuild to populate them.
+// local link/image targets as imports).
 // v16: relations for Scala/Kotlin/Swift/Dart/Solidity, imports for Zig/Elixir/
-// Lua/Bash, and Ruby attr_* fields — rebuild to populate them.
-// v17: functions declared inside a type body are now `method`, not `function`
-// (Rust needs a self parameter) — rebuild to reclassify them.
-pub const SCHEMA_VERSION: i64 = 17;
+// Lua/Bash, and Ruby attr_* fields.
+// v17: functions declared inside a type body are now `method`, not `function`.
+//
+// Both lines independently added member extraction (`field`/`variant` facts with
+// their owning type) — mine at v17, theirs at v14.
+//
+// v22: the merge of both lines — rebuild once to populate everything above.
+pub const SCHEMA_VERSION: i64 = 22;
 
 pub struct Db {
     pub conn: Connection,
@@ -50,7 +72,24 @@ impl Db {
         let conn = Connection::open(&path)
             .with_context(|| format!("opening {}", path.display()))?;
 
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        // Must come first: without it SQLite gives up the instant it meets a
+        // lock, and every pragma below can contend. Agents run codeq
+        // concurrently — several tool calls at once, or several agents on one
+        // checkout — and each invocation refreshes, so contention is the normal
+        // case, not an edge one. Waiting briefly is right where failing is not:
+        // the work being waited on is another process finishing the very refresh
+        // this one would otherwise do.
+        conn.busy_timeout(std::time::Duration::from_secs(15))?;
+        // `PRAGMA journal_mode = WAL` takes an exclusive lock even when the
+        // database is already in WAL, so setting it unconditionally made every
+        // concurrent *reader* contend on open for no reason. Read it first and
+        // only write when it differs.
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap_or_default();
+        if !mode.eq_ignore_ascii_case("wal") {
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+        }
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
@@ -81,6 +120,11 @@ impl Db {
                 language     TEXT,
                 size_bytes   INTEGER NOT NULL,
                 mtime_ns     INTEGER,
+                -- Inode change time. mtime is settable (`touch -d`, `cp -p`,
+                -- `rsync -a`, tar extraction), so size+mtime alone can miss a
+                -- real edit; ctime moves on any write and cannot be forged from
+                -- userspace, which closes that hole.
+                ctime_ns     INTEGER,
                 content_hash TEXT,
                 indexed_at   INTEGER NOT NULL
             );
@@ -107,6 +151,12 @@ impl Db {
                 source     TEXT NOT NULL,
                 confidence REAL NOT NULL,
                 visibility TEXT,
+                -- The type a `field`/`variant` belongs to; NULL otherwise.
+                owner      TEXT,
+                -- Hash of the definition's syntax shape (identifiers and
+                -- literals normalised away) and how many nodes it covers.
+                shape       TEXT,
+                shape_nodes INTEGER,
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
             );
 
@@ -172,6 +222,16 @@ impl Db {
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN visibility TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE files ADD COLUMN ctime_ns INTEGER", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE facts ADD COLUMN owner TEXT", []);
+        let _ = self.conn.execute("ALTER TABLE facts ADD COLUMN shape TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE facts ADD COLUMN shape_nodes INTEGER", []);
 
         // On a schema version change, wipe derived data so the next refresh
         // rebuilds everything (including the FTS index) from scratch.

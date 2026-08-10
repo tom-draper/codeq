@@ -37,8 +37,7 @@ from datetime import datetime, timezone
 import corpus  # noqa: E402  (same dir)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-CODEQ = os.path.join(ROOT, "target", "release", "codeq")
+CODEQ = corpus.CODEQ
 RESULTS = os.path.join(HERE, "results")
 TIMING_RUNS = 3
 FUZZ_K = 60        # identifiers superset-checked per repo
@@ -302,12 +301,6 @@ def run_repo(name, lang, path):
             "actions": actions, "invariants": invariants, "fuzz": fuzz}
 
 
-def codeq_commit():
-    p = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"],
-                       capture_output=True, text=True)
-    return p.stdout.strip()[:12]
-
-
 def _median(xs):
     return round(sorted(xs)[len(xs) // 2], 3) if xs else None
 
@@ -391,7 +384,7 @@ def main():
                              "missing": fz["missing"], "crash": fz["crash"]})
     result = {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "codeq_commit": codeq_commit(),
+        "codeq_commit": corpus.codeq_commit(),
         "per_command": pc,
         "summary": summarize(repos, pc),
         "per_repo": {n: {"lang": r["lang"], "index_ms": r["index_ms"],
