@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v1");
-    assert_eq!(v["index"]["schema"], 22);
+    assert_eq!(v["index"]["schema"], 23);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -5412,4 +5412,163 @@ fn call_sites_report_the_receiver_they_are_called_on() {
             .all(|r| r.get("receiver").is_none()),
         "no receiver without a position filter: {plain}"
     );
+}
+
+#[test]
+fn react_wrapped_components_are_definitions() {
+    // The dominant way a React component is written is a module-scope binding
+    // whose value is a *call* — `memo(…)`, `forwardRef(…)`, `styled.div`. None of
+    // those is a function-valued declarator, so every one of them was invisible
+    // to `symbols`, `outline` and `api` while the file looked fully indexed.
+    let f = Fixture::new();
+    f.write(
+        "a.tsx",
+        "import { memo, forwardRef } from 'react';\n\
+         export const Card = memo(function Card({ id }: { id: string }) {\n\
+           return <div>{id}</div>;\n\
+         });\n\
+         export const Input = forwardRef<HTMLInputElement, {}>((p, ref) => (\n\
+           <input ref={ref} />\n\
+         ));\n\
+         export const Wrapper = styled.div`color: red;`;\n\
+         export const Ctx = React.createContext(null);\n\
+         export const VERSION = '1.0';\n",
+    );
+    let names = field_set(&f.run(&["symbols", "--path", "a.tsx"]), "name");
+    for n in ["Card", "Input", "Wrapper", "Ctx", "VERSION"] {
+        assert!(names.iter().any(|x| x == n), "tsx binding {n} missing: {names:?}");
+    }
+    // All five are exported, so the public API must list them too.
+    let api = field_set(&f.run(&["api", "a.tsx"]), "name");
+    for n in ["Card", "Input", "Wrapper", "Ctx", "VERSION"] {
+        assert!(api.iter().any(|x| x == n), "exported {n} missing from api: {api:?}");
+    }
+}
+
+#[test]
+fn module_scope_bindings_do_not_duplicate_function_definitions() {
+    // `const f = () => {}` matches both the function pattern and the new
+    // module-scope binding pattern; only the function capture should survive, or
+    // every arrow component would be reported twice.
+    let f = Fixture::new();
+    f.write("a.ts", "export const go = () => 1;\nconst old = function () { return 2; };\n");
+    for name in ["go", "old"] {
+        let rows = f.run(&["definitions", name]);
+        assert_eq!(
+            rows["data"].as_array().unwrap().len(),
+            1,
+            "'{name}' must be defined exactly once, got {rows}"
+        );
+    }
+}
+
+#[test]
+fn commonjs_require_bindings_are_imports_not_definitions() {
+    // CommonJS writes every dependency as a module-scope binding, and those are
+    // already import facts. Counted as definitions too they buried each file's
+    // outline under its own import block — 424 phantom definitions in Express
+    // alone — so the binding pattern skips a value rooted in `require`.
+    let f = Fixture::new();
+    f.write(
+        "a.js",
+        "var http = require('http');\n\
+         var Buffer = require('safe-buffer').Buffer;\n\
+         var deprecate = require('depd')('express');\n\
+         var real = compute();\n\
+         function handler() {}\n",
+    );
+    let names = field_set(&f.run(&["symbols", "--path", "a.js"]), "name");
+    for n in ["http", "Buffer", "deprecate"] {
+        assert!(!names.iter().any(|x| x == n), "require binding '{n}' leaked: {names:?}");
+    }
+    // A non-require binding in the same file must survive, or the exclusion is
+    // just suppressing the whole pattern.
+    for n in ["real", "handler"] {
+        assert!(names.iter().any(|x| x == n), "'{n}' missing: {names:?}");
+    }
+    // And they must still be reachable as imports.
+    let mods = field_set(&f.run(&["imports", "a.js"]), "module");
+    for m in ["http", "safe-buffer", "depd"] {
+        assert!(mods.iter().any(|x| x == m), "import '{m}' missing: {mods:?}");
+    }
+}
+
+#[test]
+fn locals_are_not_definitions() {
+    // The binding pattern is anchored to module scope on purpose: capturing every
+    // declarator would bury the index in loop counters.
+    let f = Fixture::new();
+    f.write("a.ts", "export function run() {\n  const tmp = compute();\n  return tmp;\n}\n");
+    let names = field_set(&f.run(&["symbols", "--path", "a.ts"]), "name");
+    assert!(names.iter().any(|x| x == "run"), "run missing: {names:?}");
+    assert!(!names.iter().any(|x| x == "tmp"), "function-local binding leaked: {names:?}");
+}
+
+#[test]
+fn namespaced_base_class_yields_a_relation() {
+    // `class X extends React.Component` — the shape every React class component
+    // is written in. The supertype is a member expression, not an identifier, so
+    // the class came back with no supertypes at all.
+    let f = Fixture::new();
+    f.write(
+        "a.tsx",
+        "class Legacy extends React.Component<{}> {}\nclass Plain extends Base {}\n",
+    );
+    let supers = field_set(&f.run(&["supertypes", "Legacy"]), "supertype");
+    assert!(
+        supers.iter().any(|s| s == "React.Component"),
+        "namespaced supertype missing: {supers:?}"
+    );
+    // Stored dotted, but nobody asks for it that way: the bare last segment must
+    // find it, and so must the full path.
+    for query in ["Component", "React.Component"] {
+        let subs = field_set(&f.run(&["implementors", query]), "subtype");
+        assert!(
+            subs.iter().any(|s| s == "Legacy"),
+            "implementors {query} missed Legacy: {subs:?}"
+        );
+    }
+    // A bare supertype must not start matching everything as a side effect.
+    let subs = field_set(&f.run(&["implementors", "Base"]), "subtype");
+    assert_eq!(subs.len(), 1, "Base gained unrelated implementors: {subs:?}");
+}
+
+#[test]
+fn capabilities_lists_every_extractable_language() {
+    // `capabilities` is what codeq tells agents to consult before believing an
+    // empty result, so a language missing from it is worse than an empty answer.
+    let f = Fixture::new();
+    f.write("a.rs", "fn main() {}\n");
+    let v = f.run(&["capabilities"]);
+    let langs: Vec<String> = v["data"]["language_support"]
+        .as_array()
+        .expect("language_support")
+        .iter()
+        .map(|e| e["language"].as_str().unwrap().to_string())
+        .collect();
+    for l in ["svelte", "vue", "css", "hcl", "powershell", "proto", "graphql"] {
+        assert!(langs.iter().any(|x| x == l), "'{l}' extracts but is undocumented: {langs:?}");
+    }
+    // Data-only formats must stay out: they are indexed for search, not parsed.
+    for l in ["json", "yaml", "toml", "sql"] {
+        assert!(!langs.iter().any(|x| x == l), "'{l}' has no extraction but is advertised");
+    }
+    // The three language lists are three views of one fact and used to be three
+    // hand-kept copies. Every extraction language must be classifiable, and
+    // classified = extraction + data-only exactly.
+    let names = |k: &str| field_names(&v["data"][k]);
+    let (extraction, classified, data_only) = (
+        names("extraction_languages"),
+        names("classified_languages"),
+        names("data_only_languages"),
+    );
+    assert_eq!(extraction, langs, "extraction_languages must match language_support");
+    assert_eq!(
+        classified.len(),
+        extraction.len() + data_only.len(),
+        "classified must be exactly extraction + data-only: {classified:?}"
+    );
+    for l in extraction.iter().chain(data_only.iter()) {
+        assert!(classified.contains(l), "'{l}' is not classifiable at all");
+    }
 }

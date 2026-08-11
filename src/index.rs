@@ -561,48 +561,81 @@ fn looks_binary(bytes: &[u8]) -> bool {
     bytes[..n].contains(&0)
 }
 
+/// File extension → language, as a table rather than a `match` so it can be
+/// enumerated. `facts::LANGUAGES` (what `capabilities` reports) is pinned
+/// against this by a test: adding an extension here without deciding whether
+/// the language extracts fails the build rather than quietly shipping a
+/// language that `capabilities` calls unsupported.
+pub const EXTENSIONS: &[(&str, &str)] = &[
+    ("rs", "rust"),
+    ("js", "javascript"),
+    ("cjs", "javascript"),
+    ("mjs", "javascript"),
+    ("jsx", "javascript"),
+    ("ts", "typescript"),
+    ("cts", "typescript"),
+    ("mts", "typescript"),
+    ("tsx", "tsx"),
+    ("py", "python"),
+    ("pyi", "python"),
+    ("go", "go"),
+    ("java", "java"),
+    ("json", "json"),
+    ("yaml", "yaml"),
+    ("yml", "yaml"),
+    ("toml", "toml"),
+    ("md", "markdown"),
+    ("markdown", "markdown"),
+    ("sql", "sql"),
+    ("sh", "bash"),
+    ("bash", "bash"),
+    ("c", "c"),
+    ("h", "c"),
+    ("cc", "cpp"),
+    ("cpp", "cpp"),
+    ("cxx", "cpp"),
+    ("hpp", "cpp"),
+    ("hh", "cpp"),
+    ("cs", "csharp"),
+    ("php", "php"),
+    ("rb", "ruby"),
+    ("lua", "lua"),
+    ("scala", "scala"),
+    ("sc", "scala"),
+    ("kt", "kotlin"),
+    ("kts", "kotlin"),
+    ("swift", "swift"),
+    ("dart", "dart"),
+    ("zig", "zig"),
+    ("ex", "elixir"),
+    ("exs", "elixir"),
+    ("sol", "solidity"),
+    ("svelte", "svelte"),
+    ("vue", "vue"),
+    ("css", "css"),
+    ("scss", "css"),
+    ("tf", "hcl"),
+    ("tfvars", "hcl"),
+    ("hcl", "hcl"),
+    ("nomad", "hcl"),
+    ("ps1", "powershell"),
+    ("psm1", "powershell"),
+    ("psd1", "powershell"),
+    ("proto", "proto"),
+    ("graphql", "graphql"),
+    ("gql", "graphql"),
+];
+
+/// Languages codeq indexes as files (so they are searchable) but does not
+/// extract definitions from — no grammar is wired up for them. Kept explicit so
+/// the drift test can tell "deliberately data-only" from "someone forgot".
+pub const NO_EXTRACTION: &[&str] = &["json", "yaml", "toml", "sql"];
+
 /// Extension-based language classification. Deliberately syntactic and cheap;
 /// this is not content sniffing.
 pub fn language_for(path: &str) -> Option<&'static str> {
     let ext = path.rsplit('.').next()?;
-    let lang = match ext {
-        "rs" => "rust",
-        "js" | "cjs" | "mjs" => "javascript",
-        "jsx" => "javascript",
-        "ts" | "cts" | "mts" => "typescript",
-        "tsx" => "tsx",
-        "py" | "pyi" => "python",
-        "go" => "go",
-        "java" => "java",
-        "json" => "json",
-        "yaml" | "yml" => "yaml",
-        "toml" => "toml",
-        "md" | "markdown" => "markdown",
-        "sql" => "sql",
-        "sh" | "bash" => "bash",
-        "c" | "h" => "c",
-        "cc" | "cpp" | "cxx" | "hpp" | "hh" => "cpp",
-        "cs" => "csharp",
-        "php" => "php",
-        "rb" => "ruby",
-        "lua" => "lua",
-        "scala" | "sc" => "scala",
-        "kt" | "kts" => "kotlin",
-        "swift" => "swift",
-        "dart" => "dart",
-        "zig" => "zig",
-        "ex" | "exs" => "elixir",
-        "sol" => "solidity",
-        "svelte" => "svelte",
-        "vue" => "vue",
-        "css" | "scss" => "css",
-        "tf" | "tfvars" | "hcl" | "nomad" => "hcl",
-        "ps1" | "psm1" | "psd1" => "powershell",
-        "proto" => "proto",
-        "graphql" | "gql" => "graphql",
-        _ => return None,
-    };
-    Some(lang)
+    EXTENSIONS.iter().find(|(e, _)| *e == ext).map(|(_, l)| *l)
 }
 
 fn now_ns() -> i64 {
@@ -618,5 +651,50 @@ impl Db {
         self.conn
             .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
             .context("counting files")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every language a file can be classified as must be either extractable
+    /// (and therefore reported by `capabilities`) or explicitly data-only.
+    ///
+    /// This is the check that was missing: seven languages shipped with working
+    /// extraction while `capabilities` listed them as unsupported, and since
+    /// codeq tells agents to trust that matrix before concluding a language
+    /// isn't handled, the gap actively misled them.
+    #[test]
+    fn every_classified_language_is_documented() {
+        for (ext, lang) in EXTENSIONS {
+            if NO_EXTRACTION.contains(lang) {
+                assert!(
+                    crate::facts::support(lang).is_none(),
+                    ".{ext} is listed as data-only but `support({lang})` describes it"
+                );
+                continue;
+            }
+            assert!(
+                crate::facts::LANGUAGES.contains(lang),
+                ".{ext} maps to '{lang}', which `capabilities` does not list — add it \
+                 to facts::LANGUAGES, or to index::NO_EXTRACTION if it is data-only"
+            );
+            assert!(
+                crate::facts::support(lang).is_some(),
+                "'{lang}' is in facts::LANGUAGES but `support` cannot describe it"
+            );
+        }
+    }
+
+    /// The other direction: nothing is advertised that no file can ever be.
+    #[test]
+    fn every_documented_language_is_reachable() {
+        for lang in crate::facts::LANGUAGES {
+            assert!(
+                EXTENSIONS.iter().any(|(_, l)| l == lang),
+                "`capabilities` lists '{lang}' but no extension maps to it"
+            );
+        }
     }
 }

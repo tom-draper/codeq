@@ -14,7 +14,8 @@ agent that can trust the output has no reason to fall back to ad-hoc shell pipel
 
 > Status: working prototype. Symbol and import extraction covers Rust, Python, JavaScript,
 > TypeScript/TSX, Go, Java, Ruby, C, C++, C#, PHP, Bash, Lua, Scala, Kotlin, Swift, Dart, Zig,
-> Elixir, Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, and HCL/Terraform. Other
+> Elixir, Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, HCL/Terraform, and
+> Markdown. Other
 > languages are indexed as files and stay fully searchable. `codeq capabilities` is the
 > authoritative list. See [DRAFT.md](./DRAFT.md) for the design rationale.
 
@@ -93,7 +94,7 @@ and Python's `function_definition` are the same node whether or not they sit in 
 function called as `S::assoc()` stays a `function`. A nested function or closure is
 never a method, however deep the class above it.
 
-Support is uneven across the 21 languages, so `capabilities` reports a
+Support is uneven across the 29 languages, so `capabilities` reports a
 `language_support` matrix — which of definitions, imports, members, relations, spans
 and calls each language actually has, derived from the extraction queries rather than
 a hand-kept list. Go and C have no inheritance edges at all; Ruby declares no fields.

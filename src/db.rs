@@ -47,7 +47,11 @@ use rusqlite::Connection;
 // their owning type) — mine at v17, theirs at v14.
 //
 // v22: the merge of both lines — rebuild once to populate everything above.
-pub const SCHEMA_VERSION: i64 = 22;
+// v23: JS/TS module-scope bindings are definitions (a React component wrapped in
+// `memo`/`forwardRef`, a `styled.div`, an exported `const`), and a namespaced
+// base class (`extends React.Component`) now yields a relation edge — rebuild to
+// populate both.
+pub const SCHEMA_VERSION: i64 = 23;
 
 pub struct Db {
     pub conn: Connection,

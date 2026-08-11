@@ -31,6 +31,17 @@ benchmarks — not as a step you run before querying.
   C#, Python, C, C++, PHP, Kotlin and Swift; the remaining languages return just
   the type. Python has no declaration site, so a member is its earliest class-body
   or `self.x =` assignment (`other.x =` is not a declaration).
+- **JS/TS: a module-scope binding is a definition.** So much of JavaScript that is
+  conceptually a definition is a `const` bound to a *call* — `memo(…)`,
+  `forwardRef(…)`, `styled.div\`…\``, `createContext(…)`, `express.Router()` — and
+  a plain `export const VERSION` is public API. All of these are `constant` facts,
+  so `symbols`/`outline`/`api` see React components however they are wrapped.
+  Module scope only: locals and loop counters are not definitions, and
+  destructuring (`const { a } = …`) declares nothing at that site. A CommonJS
+  `var x = require('y')` is an **import**, not a definition — it is already an
+  import fact, so look for it with `imports`/`deps`, not `symbols`. When the value
+  spans several lines the signature stops after the wrapper — `const Card = memo`
+  — so it says what the binding *is*.
 - **Orient:** `codeq map` (grouped totals) · `codeq tree` (directory *shape*, folded
   to `--depth`, each directory carrying the file and symbol counts of everything
   below it). `map` collapses to top-level directories, so on a nested repo it hides
@@ -127,13 +138,18 @@ benchmarks — not as a step you run before querying.
     `--max-depth`, default 8). Reachability *with the route*, vs `callees --depth`
     which only says whether/at what depth.
 - **Who implements / extends a type:** `codeq implementors NAME` — the inheritance
-  edges the call graph misses, across 17 languages (`impl T for X` in Rust,
+  edges the call graph misses, across 18 languages (`impl T for X` in Rust,
   `extends`/`implements` in Java/TS/PHP/C#/C++/Dart, `class X : B` in
   Kotlin/Swift, `extends ... with` in Scala, `contract A is B` in Solidity,
-  `class X(Base)` in Python, `class X < Y` in Ruby). `--relation
+  `class X(Base)` in Python, `class X < Y` in Ruby, `implements` in GraphQL,
+  and the `<script>` body of a Svelte/Vue component). `--relation
   implements|extends` to filter. Go (structural typing), C and Zig have no
   inheritance at all — `capabilities.language_support` says which, and an empty
   result there says so rather than implying none exist. Name-based.
+  - **A namespaced base class is stored dotted, but matched either way.**
+    `class Legacy extends React.Component` records the supertype as
+    `React.Component`, and `implementors` matches the last segment too — so both
+    `implementors Component` and `implementors React.Component` find it.
   - **The reverse — what a type derives from:** `codeq supertypes NAME` — the
     traits / interfaces / base classes NAME extends or implements (as written at
     the declaration, not transitively resolved).
@@ -272,7 +288,7 @@ python3 bench/textmode.py      # seconds. Text output carries the same facts as 
 python3 bench/differential.py  # ~10 min (clones 20 repos once, then cached)
 ```
 
-`differential.py` is the important one: ~4,200 assertions over 20 pinned
+`differential.py` is the important one: ~5,200 assertions over 25 pinned
 open-source repos, checking that `search` is a superset of ripgrep and that
 per-symbol invariants hold in every supported language. It writes a result to
 `bench/results/` (committed, so the trend lives in git). Expect

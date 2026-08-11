@@ -2988,3 +2988,78 @@ receiver. `callees` has neither. Showing `subprocess.run` in the row would make 
 over-match self-evident without the reader needing to suspect anything, and
 module-qualified calls are the norm in Python and JS, so this is a broad noise class
 rather than a corner case. Not built yet; recorded here as the next obvious gap.
+
+### codeq under-reported React by a lot, and `capabilities` hid seven languages
+
+Pointed codeq at a small but realistic React/TSX tree to see how it fares on what is
+probably the most common thing anyone will point it at. Three findings, in descending
+order of how badly they mislead.
+
+**1. Wrapped components were invisible.** `outline` on a file with four components
+returned two type aliases and an enum. The definition query matches a `const` bound
+to an arrow or a function expression — but the dominant React idiom binds it to a
+*call*:
+
+```
+export const Card = memo(function Card(…) {…})
+export const Input = forwardRef((props, ref) => …)
+export const Wrapper = styled.div`…`
+export const Ctx = React.createContext(null)
+```
+
+None of those is function-valued, so none was a definition. The file looked fully
+indexed — no error, no empty-result note — while most of its surface was missing.
+This is the failure mode codeq exists to avoid: not a wrong answer, a confidently
+incomplete one. The same hole swallowed `export const VERSION = '1.0'`, so `api` was
+under-reporting exported constants in *every* JS/TS repo, not just React ones.
+
+Fixed by treating a module-scope binding as a definition. The scope anchor matters:
+capturing every `variable_declarator` would have buried the index in loop counters,
+so the pattern is anchored to `(program …)` and a test asserts a function-local
+`const` does not leak.
+
+**2. `class X extends React.Component` had no supertypes.** The TS relation query
+matched `extends_clause value: (identifier)` only; a namespaced base is a
+`member_expression`, so React class components produced no inheritance edges at all.
+Fixed, plus the same gap for `implements ns.I` and `implements I<T>`. The supertype
+is stored dotted, as written — and since nobody types `implementors React.Component`,
+the lookup now matches the last dotted segment too.
+
+**3. `capabilities` listed 22 languages; codeq extracts 29.** svelte, vue, css, hcl,
+powershell, proto and graphql had working extraction and were absent from the matrix.
+Cause: `facts::queries_for` is a second hand-maintained registry that only `support()`
+reads, and the languages whose facts are built in code rather than from a query
+(svelte, vue, hcl, markdown) fall straight through it to `None`.
+
+That one is the worst of the three in kind, because CLAUDE.md tells agents to consult
+`capabilities` before believing an empty result. A stale matrix does not merely fail
+to help — it converts "codeq found nothing here" into "codeq does not support this",
+which is precisely the wrong conclusion.
+
+The fix worth keeping is not the seven added strings. `language_for` became a table
+(`index::EXTENSIONS`) so it can be enumerated, and two unit tests now pin it against
+`facts::LANGUAGES` in both directions: every extension's language must be documented
+or explicitly listed as data-only, and nothing may be advertised that no file can be.
+Adding an extension without deciding which it is now fails the build. This is the
+third capabilities-drift bug in this repo (`codeq_astgrep` in the MCP copy, then the
+command list, now languages) and the first one closed by making the drift impossible
+rather than by correcting the copy.
+
+**A postscript worth more than the fix.** The binding change passed a hand-written
+React fixture cleanly, so I ran it against the cached corpus before believing it.
+Express went from 148 definitions to 681 — because CommonJS writes every dependency
+as a module-scope binding, and `var http = require('http')` was now being counted as
+a definition *and* an import. Ten of the first twelve rows of `outline lib/utils.js`
+were the file's own import block. 424 phantom definitions in one small repo, and they
+would have propagated into `unused` and `hotspots` as declarations.
+
+The fixture could not have caught it: I wrote the fixture from what I expected React
+to look like, so it contained exactly the shapes I had already thought of. The corpus
+contains the shapes I had not. Same lesson as the `clones` miss above, pointing the
+other way — there, the tool was right and the reader dismissed it; here, the tests
+were green and the code was wrong. Neither green tests nor a plausible diff is
+evidence about real code; only real code is.
+
+Excluding `require`-rooted values also confirmed the change pays for itself on the
+repos where it changes nothing structural: zod gained `NEVER`, `INVALID`, `BRAND` and
+`EMPTY_PATH` — documented, exported API that no symbol command could previously find.

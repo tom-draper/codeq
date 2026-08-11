@@ -3061,9 +3061,16 @@ fn impl_edges(
         "columns are fixed, never caller input"
     );
     let filters = Filters::new().eq("relation", relation).like("path", path);
+    // A supertype is stored as written, so a namespaced base (`React.Component`,
+    // Python's `abc.ABC`) is stored dotted — and nobody asks for it that way. Match
+    // the last dotted segment too, using `substr(x, -n)` rather than a LIKE so an
+    // `_` in the name stays a literal underscore instead of a wildcard. Subtypes
+    // are always bare declared names, so this is a no-op in that direction.
     let sql = format!(
         "SELECT {select}, relation, path, line, language
-         FROM impls WHERE {matched} = ?{} ORDER BY path, line{}",
+         FROM impls
+         WHERE ({matched} = ?1 OR substr({matched}, -(length(?1) + 1)) = '.' || ?1){}
+         ORDER BY path, line{}",
         filters.sql(),
         limit_clause(limit),
     );
@@ -4325,6 +4332,11 @@ fn is_manifest(path: &str) -> bool {
 /// `explore`, the one an agent should reach for first — so the command whose only
 /// job is to say what codeq can do was under-selling it by a quarter.
 pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
+    // Distinct languages a file can be classified as, derived from the extension
+    // table rather than restated (`json!` cannot host the turbofish inline).
+    let mut classified: Vec<&str> = crate::index::EXTENSIONS.iter().map(|(_, l)| *l).collect();
+    classified.sort_unstable();
+    classified.dedup();
     let data = serde_json::json!({
         "result_schema": RESULT_SCHEMA,
         "index_schema": SCHEMA_VERSION,
@@ -4334,16 +4346,16 @@ pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
             .iter()
             .filter_map(|l| crate::facts::support(l))
             .collect::<Vec<_>>(),
-        // Languages with symbol + import extraction.
-        "extraction_languages": ["rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby", "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte", "vue", "css", "powershell", "proto", "graphql", "hcl"],
+        // Languages with symbol + import extraction. Derived, not listed: this
+        // was a third hand-kept copy, and it had already drifted out of step
+        // with `language_support` above (it omitted markdown).
+        "extraction_languages": crate::facts::LANGUAGES,
         // Languages recognised for file classification (extraction may be absent).
-        "classified_languages": [
-            "rust", "javascript", "typescript", "tsx", "python", "go", "java",
-            "json", "yaml", "toml", "markdown", "sql", "bash", "lua", "scala",
-            "kotlin", "swift", "dart", "zig", "elixir", "solidity", "svelte",
-            "vue", "css", "powershell", "proto", "graphql", "hcl",
-            "c", "cpp", "csharp", "php", "ruby",
-        ],
+        "classified_languages": classified,
+        // Classified but deliberately not parsed: indexed as files and fully
+        // searchable, but they contribute no definitions. Stated so that an
+        // empty `symbols` on a .json file reads as "by design", not "broken".
+        "data_only_languages": crate::index::NO_EXTRACTION,
         "fact_kinds": [
             "function", "method", "struct", "enum", "union", "trait", "module",
             "constant", "typealias", "macro", "class", "interface", "type", "import",

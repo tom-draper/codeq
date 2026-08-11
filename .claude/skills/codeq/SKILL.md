@@ -137,6 +137,14 @@ refresh the index — every command auto-refreshes changed files first.
   name collision. It does take `--resolved`, which keeps only callees whose definition file
   the symbol's own file can reach via imports — pruning unrelated same-named defs (a
   common `new`/`open` matching every same-named definition repo-wide).
+- **JS/TS: a module-scope `const` is a definition**, whatever it's bound to. That's
+  how React components are usually written — `memo(…)`, `forwardRef(…)`,
+  `styled.div\`…\``, `createContext(…)` — so `symbols`/`outline`/`api` find them, and
+  they show up as kind `constant`, not `function`. Locals aren't definitions, and
+  a CommonJS `var x = require('y')` is an import — find it with `imports`/`deps`.
+- **A namespaced base class is stored dotted** (`extends React.Component` →
+  `React.Component`), but `implementors` matches the last segment too, so
+  `implementors Component` finds it.
 - **Trim output tokens** with `--fields name,path,line`.
 - Default output is text; use `--json` only when you need to parse it programmatically.
 

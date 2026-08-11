@@ -202,6 +202,10 @@ impl LangSpec {
                 let mut def: Option<Node> = None;
                 let mut body: Option<Node> = None;
                 let mut guard: Option<&str> = None;
+                // The value bound by a JS/TS module-scope `@constant`. Decides
+                // whether this match duplicates a function captured elsewhere,
+                // and where the signature should stop.
+                let mut val: Option<Node> = None;
                 // For `from MODULE import a, b` (Python): the module and each
                 // imported name, combined below into qualified `MODULE.a` imports.
                 let mut from_module: Option<&str> = None;
@@ -218,6 +222,7 @@ impl LangSpec {
                         // (The query engine here doesn't evaluate `#eq?`, so we
                         // filter in code.)
                         "guard" => guard = cap.node.utf8_text(src).ok(),
+                        "val" => val = Some(cap.node),
                         "from_module" => from_module = cap.node.utf8_text(src).ok(),
                         "from_name" => from_names.push(cap.node),
                         other => {
@@ -297,6 +302,36 @@ impl LangSpec {
                     }
                 }
                 if let (Some(name), Some(kind), Some(node)) = (name, kind, def) {
+                    // `const f = () => …` matches both the `@function` pattern and
+                    // the module-scope `@constant` one. The function capture is
+                    // strictly better (it knows the body, so the signature folds),
+                    // so drop the constant rather than emit the binding twice.
+                    if kind == "constant"
+                        && val.is_some_and(|v| {
+                            matches!(v.kind(), "arrow_function" | "function_expression")
+                                || is_require_binding(v, src)
+                        })
+                    {
+                        continue;
+                    }
+                    // A multi-line value — a wrapped component, a big object
+                    // literal — would collapse into an unreadable one-line
+                    // signature, so end the signature where it begins, the way a
+                    // function body does. A single-line value is kept whole:
+                    // `const VERSION = '1.0'` is more useful with its value.
+                    //
+                    // For a wrapped value, stop at the arguments rather than at
+                    // the value, so the wrapper survives: `const Card = memo(`
+                    // says what `const Card =` does not.
+                    let body = match val {
+                        Some(v)
+                            if kind == "constant"
+                                && v.end_position().row > v.start_position().row =>
+                        {
+                            Some(wrapper_head(v).unwrap_or(v))
+                        }
+                        _ => body,
+                    };
                     // Some grammars capture the whole quoted import path (Go);
                     // normalise to the bare module string like the others.
                     let name = if kind == "import" {
@@ -1237,10 +1272,16 @@ fn has_self_parameter(node: Node) -> bool {
 }
 
 /// Every language codeq extracts from.
+///
+/// This is what `capabilities` reports, so a language missing here reads as
+/// unsupported even when it extracts perfectly well — which is how svelte, vue,
+/// css, hcl, powershell, proto and graphql went seven releases undocumented. A
+/// test pins it against `index::EXTENSIONS` so the omission cannot recur.
 pub const LANGUAGES: &[&str] = &[
     "rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby",
     "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift",
-    "dart", "zig", "elixir", "solidity", "markdown",
+    "dart", "zig", "elixir", "solidity", "svelte", "vue", "css", "hcl",
+    "powershell", "proto", "graphql", "markdown",
 ];
 
 /// What codeq can extract for one language.
@@ -1294,22 +1335,45 @@ fn queries_for(language: &str) -> Option<(String, String)> {
         "zig" => pair(ZIG_QUERY, ""),
         "elixir" => pair(ELIXIR_QUERY, ""),
         "solidity" => pair(SOLIDITY_QUERY, SOLIDITY_REL),
+        "css" => pair(CSS_QUERY, ""),
+        "powershell" => pair(POWERSHELL_QUERY, ""),
+        "proto" => pair(PROTO_QUERY, ""),
+        "graphql" => pair(GRAPHQL_QUERY, GRAPHQL_REL),
+        // svelte, vue, hcl and markdown build their facts in code rather than
+        // from a query, so there is no query text to describe them; `support`
+        // states their capabilities directly.
         _ => None,
     }
 }
 
 pub fn support(language: &str) -> Option<Support> {
-    // Markdown is extracted by hand, not by a query, so it is described directly.
-    if language == "markdown" {
-        return Some(Support {
+    // Four languages build their facts in code rather than from a query, so
+    // there is no query text to derive their capabilities from. Describe them
+    // directly — the alternative (falling through to `queries_for` and getting
+    // `None`) is what made them look unsupported.
+    let hand = |definitions, imports, members, relations, calls| {
+        Some(Support {
             language: language.to_string(),
-            definitions: true, // headings
-            imports: true,     // local links and images
-            members: false,
-            relations: false,
-            spans: true, // fenced code vs prose
-            calls: false,
-        });
+            definitions,
+            imports,
+            members,
+            relations,
+            spans: has_spans(language),
+            calls,
+        })
+    };
+    match language {
+        // Headings are definitions; local links and images are imports; spans
+        // separate fenced code from prose.
+        "markdown" => return hand(true, true, false, false, false),
+        // Labelled blocks and `locals` entries are definitions; a module's
+        // `source` is an import. No members, no inheritance.
+        "hcl" => return hand(true, true, false, false, false),
+        // A component file is itself a definition, and the `<script>` body is
+        // extracted with the JS/TS queries — so imports, members and relations
+        // all come through from the embedded code.
+        "svelte" | "vue" => return hand(true, true, true, true, true),
+        _ => {}
     }
     let (query, rel) = queries_for(language)?;
     Some(Support {
@@ -1581,6 +1645,51 @@ fn visibility_of(lang: &str, name: &str, def: Node, src: &[u8]) -> Option<String
     }
 }
 
+/// Whether a bound value is really an import: `require('x')`, `require('x').y`,
+/// or `require('x')(…)`.
+///
+/// CommonJS writes every dependency as a module-scope binding, and codeq already
+/// captures those as `@import` facts. Counting them again as definitions buries
+/// each file's `outline` under its own import block — ten of the first twelve
+/// rows in Express's `lib/utils.js` — and would have them turn up in `unused`
+/// and `hotspots` as though they were declarations.
+fn is_require_binding(val: Node, src: &[u8]) -> bool {
+    // Walk down the leftmost spine: the callee of a call, the object of a member
+    // access. Each step is a strict child, so this terminates.
+    let mut n = val;
+    loop {
+        let next = match n.kind() {
+            "call_expression" => {
+                let f = n.child_by_field_name("function");
+                if f.is_some_and(|f| {
+                    f.kind() == "identifier" && f.utf8_text(src) == Ok("require")
+                }) {
+                    return true;
+                }
+                f
+            }
+            "member_expression" => n.child_by_field_name("object"),
+            _ => return false,
+        };
+        match next {
+            Some(c) => n = c,
+            None => return false,
+        }
+    }
+}
+
+/// For a value that wraps something — `memo(…)`, `styled.div\`…\`` — the node
+/// where the wrapped part starts, so a signature can be cut there and keep the
+/// wrapper. `None` when the value is not a wrapper (a bare object or array
+/// literal), in which case the caller cuts at the value itself.
+fn wrapper_head(val: Node) -> Option<Node> {
+    match val.kind() {
+        "call_expression" => val.child_by_field_name("arguments"),
+        "tagged_template_expression" => val.child_by_field_name("quasi"),
+        _ => None,
+    }
+}
+
 fn signature_of(src: &[u8], def: Node, body: Option<Node>) -> String {
     let end = match body {
         Some(b) => b.start_byte(),
@@ -1736,6 +1845,36 @@ const JS_QUERY: &str = r#"
 (method_definition name: (_) @name body: (statement_block) @body) @method
 (variable_declarator name: (_) @name value: (arrow_function body: (_) @body)) @function
 (variable_declarator name: (_) @name value: (function_expression body: (_) @body)) @function
+
+; A top-level binding is a definition in its own right. The two patterns above
+; only see a *directly* function-valued one, and a great deal of JS/TS that is
+; conceptually a definition is not written that way: a React component wrapped in
+; `memo(…)` or `forwardRef(…)`, a `styled.div\`…\``, a `createContext(…)`, a
+; router from `express.Router()`, or a plain `export const VERSION = '1.0'`. All
+; of those were invisible to every symbol command.
+;
+; Anchored to `(program …)` so only module-scope bindings count — matching every
+; `variable_declarator` would bury the index in loop counters and locals.
+; Destructuring (`const { a } = …`) is excluded by `name: (identifier)`: it binds
+; several names at one site and none of them is declared there.
+;
+; `@val` is the bound value. The extractor uses it to drop the match when the
+; value is already captured as `@function` above, and to keep the signature
+; readable when it spans several lines.
+(program
+  (lexical_declaration
+    (variable_declarator name: (identifier) @name value: (_) @val)) @constant)
+(program
+  (variable_declaration
+    (variable_declarator name: (identifier) @name value: (_) @val)) @constant)
+(program
+  (export_statement
+    (lexical_declaration
+      (variable_declarator name: (identifier) @name value: (_) @val)) @constant))
+(program
+  (export_statement
+    (variable_declaration
+      (variable_declarator name: (identifier) @name value: (_) @val)) @constant))
 
 ; ES module imports and re-exports (raw module string, quotes stripped).
 (import_statement source: (string (string_fragment) @name)) @import
@@ -2015,12 +2154,36 @@ const TS_REL: &str = r#"
 (class_declaration
   name: (type_identifier) @sub
   (class_heritage (extends_clause value: (identifier) @extends)))
+; A namespaced base class — `extends React.Component`, the shape every React
+; class component is written in. The value is a `member_expression`, not an
+; identifier, so the pattern above sees nothing and the class came back with no
+; supertypes at all. The supertype is stored dotted, as written; `implementors`
+; also matches on the last segment so `implementors Component` still finds it.
+(class_declaration
+  name: (type_identifier) @sub
+  (class_heritage (extends_clause value: (member_expression) @extends)))
 (class_declaration
   name: (type_identifier) @sub
   (class_heritage (implements_clause (type_identifier) @implements)))
+; `implements ns.Iface` and `implements Iface<T>`.
+(class_declaration
+  name: (type_identifier) @sub
+  (class_heritage (implements_clause (nested_type_identifier) @implements)))
+(class_declaration
+  name: (type_identifier) @sub
+  (class_heritage (implements_clause (generic_type (type_identifier) @implements))))
+(class_declaration
+  name: (type_identifier) @sub
+  (class_heritage (implements_clause (generic_type (nested_type_identifier) @implements))))
 (interface_declaration
   name: (type_identifier) @sub
   (extends_type_clause (type_identifier) @extends))
+(interface_declaration
+  name: (type_identifier) @sub
+  (extends_type_clause (nested_type_identifier) @extends))
+(interface_declaration
+  name: (type_identifier) @sub
+  (extends_type_clause (generic_type (type_identifier) @extends)))
 "#;
 
 const GO_REL: &str = "";
