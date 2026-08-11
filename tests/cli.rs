@@ -5719,3 +5719,66 @@ fn context_resolved_requires_expand() {
     let out = f.raw(&["context", "--symbols", "seed", "--resolved"]);
     assert!(!out.status.success(), "--resolved alone should be rejected");
 }
+
+#[test]
+fn max_per_file_caps_rows_and_never_hides_the_true_count() {
+    // The lossy half of grouping. A silent cap would recreate the --limit 100
+    // trap, where an agent reads a truncated answer as a complete one, so every
+    // capped file has to report what it withheld.
+    let f = Fixture::new();
+    f.write("a.rs", "fn a1() { t(); }\nfn a2() { t(); }\nfn a3() { t(); }\nfn a4() { t(); }\n");
+    f.write("b.rs", "fn b1() { t(); }\n");
+
+    let v = f.run(&["search", "t()", "--max-per-file", "2"]);
+    let rows = v["data"]["matches"].as_array().unwrap();
+    let a_rows = rows.iter().filter(|r| r["path"] == "a.rs").count();
+    assert_eq!(a_rows, 2, "cap not applied: {rows:?}");
+    assert!(rows.iter().any(|r| r["path"] == "b.rs"), "uncapped file dropped");
+    assert_eq!(v["notes"]["truncated_per_file"]["a.rs"], 4, "true count missing: {:?}", v["notes"]);
+    assert!(
+        v["notes"]["truncated_per_file"].get("b.rs").is_none(),
+        "an uncapped file must not be reported as truncated"
+    );
+}
+
+#[test]
+fn max_per_file_changes_json_and_text_alike() {
+    // Capping in the renderer alone would have been simpler, but then --json and
+    // the default text output would disagree about which rows the answer has.
+    let f = Fixture::new();
+    f.write("a.rs", "fn a1() { t(); }\nfn a2() { t(); }\nfn a3() { t(); }\n");
+    let v = f.run(&["search", "t()", "--max-per-file", "1"]);
+    assert_eq!(v["data"]["matches"].as_array().unwrap().len(), 1);
+
+    let text = String::from_utf8(f.raw(&["search", "t()", "--max-per-file", "1"]).stdout).unwrap();
+    let hits = text.lines().filter(|l| l.contains("t()") && !l.contains("more")).count();
+    assert_eq!(hits, 1, "text kept a different number of rows than JSON: {text}");
+}
+
+#[test]
+fn a_capped_file_is_marked_in_both_flat_and_grouped_text() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn a1() { t(); }\nfn a2() { t(); }\nfn a3() { t(); }\n");
+
+    // Flat rows have no header to carry the count, so the marker is its own
+    // line — led by the path, so it stays self-describing like every other row.
+    let flat = String::from_utf8(f.raw(&["search", "t()", "--max-per-file", "1"]).stdout).unwrap();
+    assert!(flat.contains("a.rs: +2 more (of 3)"), "missing flat marker: {flat}");
+
+    // Grouped output folds it into the header instead of spending a line.
+    let grouped =
+        String::from_utf8(f.raw(&["search", "t()", "--max-per-file", "1", "--group"]).stdout).unwrap();
+    assert!(grouped.contains("a.rs (1 of 3)"), "missing grouped count: {grouped}");
+}
+
+#[test]
+fn max_per_file_leaves_pathless_rows_alone() {
+    // The cap is a per-file idea; a row belonging to no file can't be over quota.
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() {}\nfn two() {}\nfn three() {}\n");
+    let v = f.run(&["map", "--max-per-file", "1"]);
+    assert!(
+        v["data"]["definitions_by_file"].as_array().is_some(),
+        "map lost its shape under the cap: {:?}", v["data"]
+    );
+}

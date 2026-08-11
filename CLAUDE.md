@@ -254,6 +254,19 @@ benchmarks — not as a step you run before querying.
   away. Use it when you'll read the whole result; keep the default when you'll
   slice it. Never inferred from whether stdout is a terminal, and it has no
   effect under `--json`.
+  - Measured on real repos: **22–37% fewer bytes** when hits cluster (many per
+    file). But it *costs* bytes when they don't — a one-hit-per-file result went
+    **−4%**, because a header per single-row group is worse than the prefix it
+    replaces. Group dense results, not sparse ones.
+- **`--max-per-file N`** keeps at most N rows per file. This is where the real
+  saving is: `--group --max-per-file 3` cut a broad search by **65–91%** across
+  three repos. Unlike `--group` it is **lossy**, so it changes `data` itself and
+  applies to `--json` too — text and JSON never disagree about which rows the
+  answer holds. Every capped file reports its true count (`a.rs: +237 more (of
+  240)` in text, a `path (3 of 240)` header under `--group`,
+  `notes.truncated_per_file` in JSON), so a truncated answer cannot read as a
+  complete one. Reach for it when you want the *shape* of a result ("which files
+  mention this, roughly how often") rather than every occurrence.
 
 ## When a query comes back empty
 

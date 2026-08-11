@@ -42,7 +42,12 @@ def measure(steps):
 
 
 def pick(cmd, extract):
-    _, out = run(cmd)
+    # Target probes parse JSON, so they must ask for it: codeq's default output
+    # is text and `--json` is opt-in. Without this every target resolved to None
+    # and the run died on the first baseline step -- silently, because `pick`
+    # swallows the parse error. The measured task steps below are unaffected:
+    # they consume the grep-style text on purpose, which is what an agent reads.
+    _, out = run([cmd[0], "--json"] + cmd[1:])
     try:
         return extract(json.loads(out)["data"])
     except Exception:

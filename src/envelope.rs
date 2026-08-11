@@ -10,6 +10,8 @@
 //!   partial failure) or the caller asks with `--meta`.
 //! - **Projectable.** `--fields` drops columns the agent did not ask for.
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 use serde_json::Value;
 
@@ -29,6 +31,10 @@ pub struct Render<'a> {
     /// Group text rows under a `path (count)` header rather than prefixing every
     /// row with its path. Text only — JSON is already structured.
     pub group: bool,
+    /// Keep at most this many rows per file. Unlike `group`, this is *lossy*, so
+    /// it changes `data` itself rather than only the text rendering: text and
+    /// JSON must never disagree about which rows the answer contains.
+    pub max_per_file: Option<usize>,
 }
 
 pub struct Envelope<T: Serialize> {
@@ -74,6 +80,15 @@ impl<T: Serialize> Envelope<T> {
         };
         let note_fields = !unmatched.is_empty() && !available.is_empty();
 
+        // Lossy, so it happens here on `data` — the same place `--fields`
+        // projects — and therefore applies to JSON and text alike. `truncated`
+        // maps each capped file to its true count, which is what stops this
+        // from being a silent drop: the answer always says how much it withheld.
+        let truncated = match r.max_per_file {
+            Some(n) if n > 0 => cap_per_file(&mut data, n),
+            _ => BTreeMap::new(),
+        };
+
         // JSON is opt-in (`--json`); `--meta`/`--pretty` are JSON concepts so they
         // imply it. The default is compact grep-style text — far fewer tokens.
         if r.json || r.meta || r.pretty {
@@ -88,14 +103,18 @@ impl<T: Serialize> Envelope<T> {
                 out.insert("index".into(), serde_json::to_value(&self.index)?);
             }
             out.insert("data".into(), data);
-            if note_fields {
-                out.insert(
-                    "notes".into(),
-                    serde_json::json!({
-                        "unmatched_fields": unmatched,
-                        "available_fields": available,
-                    }),
-                );
+            if note_fields || !truncated.is_empty() {
+                let mut notes = serde_json::Map::new();
+                if note_fields {
+                    notes.insert("unmatched_fields".into(), serde_json::to_value(&unmatched)?);
+                    notes.insert("available_fields".into(), serde_json::to_value(&available)?);
+                }
+                if !truncated.is_empty() {
+                    // Per file, the count *before* capping — so a consumer can
+                    // tell "3 hits" from "3 of 240 hits" and go back for the rest.
+                    notes.insert("truncated_per_file".into(), serde_json::to_value(&truncated)?);
+                }
+                out.insert("notes".into(), Value::Object(notes));
             }
             let value = Value::Object(out);
             if r.pretty {
@@ -128,8 +147,16 @@ impl<T: Serialize> Envelope<T> {
             );
         }
         let mut s = String::new();
-        render_value(&data, r.group, &mut s);
+        render_value(&data, r.group, &truncated, &mut s);
         print!("{s}");
+        if !truncated.is_empty() {
+            let dropped: usize = truncated.values().sum();
+            eprintln!(
+                "# codeq: --max-per-file kept {} of {dropped} rows across {} file(s); rerun without it for the rest",
+                r.max_per_file.unwrap_or(0) * truncated.len(),
+                truncated.len(),
+            );
+        }
         // Text mode keeps stdout pure data, so the note goes to stderr where it
         // is visible to a person and invisible to a pipe.
         if let Some(n) = &self.note {
@@ -143,7 +170,7 @@ impl<T: Serialize> Envelope<T> {
 /// don't flow through [`Envelope`] (e.g. `capabilities`, which is session-less).
 pub fn render_data_text(data: &Value) -> String {
     let mut s = String::new();
-    render_value(data, false, &mut s);
+    render_value(data, false, &BTreeMap::new(), &mut s);
     s
 }
 
@@ -153,9 +180,53 @@ pub fn render_data_text(data: &Value) -> String {
 /// - object with a single primary array (`matches`, `references`, …) → its rows;
 /// - object with several arrays (`about`, `map`) → each under a `# key` header;
 /// - object of scalars (`stats`) → `key: value` lines.
-fn render_value(data: &Value, group: bool, out: &mut String) {
+/// Keep at most `n` rows per `path`, returning `path -> count before capping`
+/// for the files that actually lost rows.
+///
+/// Rows with no `path` are never dropped: the cap is a per-file idea, and a
+/// pathless row (a bare identifier, a cycle) belongs to no file.
+fn cap_per_file(data: &mut Value, n: usize) -> BTreeMap<String, usize> {
+    let mut truncated = BTreeMap::new();
     match data {
-        Value::Array(rows) => render_rows(rows, group, out),
+        Value::Array(rows) => cap_rows(rows, n, &mut truncated),
+        Value::Object(map) => {
+            for v in map.values_mut() {
+                if let Value::Array(rows) = v {
+                    cap_rows(rows, n, &mut truncated);
+                }
+            }
+        }
+        _ => {}
+    }
+    truncated
+}
+
+fn cap_rows(rows: &mut Vec<Value>, n: usize, truncated: &mut BTreeMap<String, usize>) {
+    let mut totals: BTreeMap<String, usize> = BTreeMap::new();
+    for r in rows.iter() {
+        if let Some(p) = r.get("path").and_then(|v| v.as_str()) {
+            *totals.entry(p.to_string()).or_insert(0) += 1;
+        }
+    }
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    rows.retain(|r| match r.get("path").and_then(|v| v.as_str()) {
+        Some(p) => {
+            let c = seen.entry(p.to_string()).or_insert(0);
+            *c += 1;
+            *c <= n
+        }
+        None => true,
+    });
+    for (p, total) in totals {
+        if total > n {
+            truncated.insert(p, total);
+        }
+    }
+}
+
+fn render_value(data: &Value, group: bool, truncated: &BTreeMap<String, usize>, out: &mut String) {
+    match data {
+        Value::Array(rows) => render_rows(rows, group, truncated, out),
         Value::Object(map) => {
             let arrays = map.values().filter(|v| v.is_array()).count();
             if arrays == 0 {
@@ -166,7 +237,7 @@ fn render_value(data: &Value, group: bool, out: &mut String) {
                 // A single result list (+ maybe a scalar like `truncated`): just rows.
                 for v in map.values() {
                     if let Value::Array(rows) = v {
-                        render_rows(rows, group, out);
+                        render_rows(rows, group, truncated, out);
                     }
                 }
             } else {
@@ -174,7 +245,7 @@ fn render_value(data: &Value, group: bool, out: &mut String) {
                     match v {
                         Value::Array(rows) => {
                             out.push_str(&format!("# {k}\n"));
-                            render_rows(rows, group, out);
+                            render_rows(rows, group, truncated, out);
                         }
                         _ => out.push_str(&format!("{k}: {}\n", inline(v))),
                     }
@@ -192,13 +263,18 @@ fn render_value(data: &Value, group: bool, out: &mut String) {
 /// relative to the shallowest row. `outline` numbers top-level definitions 0
 /// while `callers`/`callees`/`deps` number direct hits 1; without this every
 /// row of a `--depth` walk would carry a leading indent that means nothing.
-fn render_rows(rows: &[Value], group: bool, out: &mut String) {
+fn render_rows(
+    rows: &[Value],
+    group: bool,
+    truncated: &BTreeMap<String, usize>,
+    out: &mut String,
+) {
     let base = rows
         .iter()
         .filter_map(|r| r.get("depth").and_then(|v| v.as_i64()))
         .min()
         .unwrap_or(0);
-    if !group {
+    if !group && truncated.is_empty() {
         for row in rows {
             render_row(row, base, false, out);
         }
@@ -223,11 +299,27 @@ fn render_rows(rows: &[Value], group: bool, out: &mut String) {
         while j < rows.len() && rows[j].get("path").and_then(|v| v.as_str()) == Some(p) {
             j += 1;
         }
-        // The count is why grouping stays lossless: the agent gets the group size
-        // without counting lines, which is the number it usually wanted anyway.
-        out.push_str(&format!("{p} ({})\n", j - i));
+        let shown = j - i;
+        let total = truncated.get(p).copied();
+        if group {
+            // The count is why grouping stays lossless: the agent gets the group
+            // size without counting lines. When the file was capped the header
+            // says `3 of 240`, so a truncated answer can never read as a
+            // complete one.
+            match total {
+                Some(t) => out.push_str(&format!("{p} ({shown} of {t})\n")),
+                None => out.push_str(&format!("{p} ({shown})\n")),
+            }
+        }
         for row in &rows[i..j] {
-            render_row(row, base, true, out);
+            render_row(row, base, group, out);
+        }
+        // Flat rows carry no header, so a capped file needs its own marker —
+        // led by the path, so the line stays self-describing like every other.
+        if !group {
+            if let Some(t) = total {
+                out.push_str(&format!("{p}: +{} more (of {t})\n", t - shown));
+            }
         }
         i = j;
     }

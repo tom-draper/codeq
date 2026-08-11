@@ -71,6 +71,16 @@ struct Cli {
     /// invoked. No effect under `--json`, which is already structured.
     #[arg(long, global = true)]
     group: bool,
+
+    /// Keep at most N rows per file.
+    ///
+    /// Lossy, unlike --group, so it changes the result itself rather than only
+    /// its formatting: JSON and text report the same rows. Every capped file is
+    /// reported with its true count (`a.rs: +237 more (of 240)` in text,
+    /// `notes.truncated_per_file` in JSON), so a truncated answer can never be
+    /// mistaken for a complete one.
+    #[arg(long, global = true, value_name = "N")]
+    max_per_file: Option<usize>,
 }
 
 #[derive(Subcommand)]
@@ -721,6 +731,7 @@ fn main() -> ExitCode {
         pretty: cli.pretty,
         fields: cli.fields,
         group: cli.group,
+        max_per_file: cli.max_per_file,
     };
 
     let result = match cli.command {

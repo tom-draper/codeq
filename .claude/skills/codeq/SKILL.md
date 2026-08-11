@@ -157,6 +157,14 @@ refresh the index — every command auto-refreshes changed files first.
   and the default is flat for a reason: a flat row names its own file, so it survives
   being piped, grepped or quoted in isolation, and a grouped row does not. Group when
   you'll read the whole result; stay flat when you'll slice it. No effect under `--json`.
+  Worth 22–37% on results that cluster in a few files; it *costs* ~4% when hits are
+  spread one-per-file, so it isn't a free default.
+- **`--max-per-file N`** keeps at most N rows per file — the big saving (`--group
+  --max-per-file 3` cut broad searches by 65–91%). **Lossy**, so it changes the data,
+  `--json` included. Capped files always state their true count (`a.rs: +237 more (of
+  240)`, or a `path (3 of 240)` header, or `notes.truncated_per_file`), so a truncated
+  answer can't be mistaken for a whole one. Use it for the *shape* of a result — which
+  files mention something and roughly how often — then rerun uncapped for detail.
 - Default output is text; use `--json` only when you need to parse it programmatically.
 
 ## Excluding files

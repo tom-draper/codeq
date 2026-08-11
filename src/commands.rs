@@ -27,6 +27,7 @@ pub struct Out {
     pub pretty: bool,
     pub fields: Option<Vec<String>>,
     pub group: bool,
+    pub max_per_file: Option<usize>,
 }
 
 /// Shared setup: discover the repo, open the index, and bring it fresh.
@@ -99,6 +100,7 @@ impl Session {
             pretty: self.out.pretty,
             fields: self.out.fields.as_deref(),
             group: self.out.group,
+            max_per_file: self.out.max_per_file,
         })
     }
 }
