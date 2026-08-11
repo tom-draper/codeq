@@ -114,31 +114,26 @@ How much does codeq actually save an agent? `bench/completion.py` runs, for each
 dozen realistic tasks, the exact tool sequence a competent agent would use to reach the
 same answer with generic tools (ripgrep to locate, then read a ~60-line window, never a
 strawman), and sums what the agent pays: tokens ingested (output bytes over 4) and tool
-calls. Across a corpus of 20 real open-source repositories, pinned by tag and spanning
+calls. Across a corpus of 25 real open-source repositories, pinned by tag and spanning
 every supported language:
 
 | Task | codeq tokens | generic tokens | saving | codeq calls | generic calls |
 | --- | --: | --: | --: | --: | --: |
-| explore a symbol (def + callers + callees, with source) | 107k | 161k | 1.5x | 25 | 243 |
-| understand a symbol before editing (`about`) | 16k | 70k | 4.3x | 25 | 99 |
-| read a function's body (`read --symbol`) | 9k | 35k | 3.9x | 25 | 50 |
-| who calls it, with context (`callers`) | 3k | 43k | 13.9x | 25 | 66 |
-| 2-hop impacted set (`callers --depth 2`) | 53k | 194k | 3.7x | 25 | 155 |
-| which tests exercise it (`tests`) | 2k | 27k | 15.0x | 25 | 72 |
-| a file's dead code (`unused`) | 18k | 1144k | 64.2x | 25 | 436 |
-| learn a file's structure (`outline`) | 75k | 751k | 10.0x | 25 | 25 |
-| a file's public API (`api`) | 80k | 25k | 0.3x | 25 | 25 |
-| a package's public API (`api <dir>`) | 378k | 1581k | 4.2x | 25 | 284 |
-| all references (`references`) | 38k | 40k | 1.1x | 25 | 25 |
+| explore a symbol (def + callers + callees, with source) | 134k | 158k | 1.2x | 25 | 238 |
+| understand a symbol before editing (`about`) | 26k | 64k | 2.4x | 25 | 99 |
+| read a function's body (`read --symbol`) | 5k | 29k | 6.5x | 25 | 50 |
+| who calls it, with context (`callers`) | 7k | 41k | 6.2x | 25 | 65 |
+| 2-hop impacted set (`callers --depth 2`) | 33k | 138k | 4.1x | 25 | 150 |
+| which tests exercise it (`tests`) | 5k | 25k | 5.2x | 25 | 72 |
+| a file's dead code (`unused`) | 18k | 2099k | 114.8x | 25 | 462 |
+| learn a file's structure (`outline`) | 79k | 776k | 9.8x | 25 | 25 |
+| a file's public API (`api`) | 91k | 28k | 0.3x | 25 | 25 |
+| a package's public API (`api <dir>`) | 462k | 1528k | 3.3x | 25 | 273 |
+| all references (`references`) | 44k | 44k | 1.0x | 25 | 25 |
 | a file's imports (`imports`) | 9k | 8k | 0.9x | 25 | 39 |
-| **all 12 tasks** | **788k** | **4.08M** | **5.2x** | **300** | **1519** |
+| **all 12 tasks** | **913k** | **4.94M** | **5.4x** | **300** | **1523** |
 
-> **These numbers predate the merge of the component/clones and markdown/relations
-> lines and have not been re-measured on the combined code.** They came from a
-> 25-repo run; a parallel 20-repo run on the other line reported different figures
-> for the same tasks. Re-run `python3 bench/completion.py` before quoting them.
-
-Completing these tasks costs a generic-tool agent **5.5x the tokens and 5x the tool calls**.
+Completing these tasks costs a generic-tool agent **5.4x the tokens and 5.1x the tool calls**.
 The `explore` win is mostly in round-trips: one call instead of about ten. codeq is not
 ahead everywhere, and the harness is built to say so: on plain reference search and
 single-line imports it is near parity with ripgrep, and `api` deliberately "loses" on

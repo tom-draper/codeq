@@ -42,10 +42,11 @@ codeq is near-parity (references, imports) are reported honestly.
 python3 bench/completion.py            # writes results/completion_<ts>.json
 ```
 
-Baseline (25 repos, compact-text default output): completing 6 common tasks costs
-an agent **~6.2x the tokens and ~1.9x the tool calls** with generic tools vs codeq.
-Wins across the board: `callsites` 16.4x, `file-structure` 10.8x, `understand`
-4.4x, `read` 4.1x, `references` 1.1x, `imports` 1.0x.
+Baseline (25 repos, compact-text default output): completing the 12 tasks costs
+an agent **~5.4x the tokens and ~5.1x the tool calls** with generic tools vs codeq.
+Spread is wide and the harness reports the losses too: `dead-code` 114.8x,
+`file-structure` 9.8x, `read-impl` 6.5x, `callsites` 6.2x, down to `usages` 1.0x,
+`file-imports` 0.9x and `public-api` 0.3x.
 
 Switching the default output from JSON to grep-style text (`--json` still opt-in)
 **doubled** the total saving — 3.1x → 6.2x — and flipped the two tasks codeq used
