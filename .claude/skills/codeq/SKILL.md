@@ -97,9 +97,11 @@ refresh the index — every command auto-refreshes changed files first.
   strings` = fenced examples, `--in comments` = prose; local links/images are
   file references for `deps`/`importers`.
 - `codeq members NAME` — a type's fields, enum variants and methods (`--kind` to
-  narrow). Structural, not name-based, so no same-name false positives. Already
-  included in `about`. Rust struct methods live in a separate `impl`, so a Rust
-  struct returns fields only.
+  narrow). Containment is structural (a member is nested inside NAME's byte range),
+  though NAME itself still resolves by name — two same-named types both answer, so
+  scope with `--path`. Already included in `about`. Rust struct methods live in a
+  separate `impl`, so a Rust struct returns fields only. Prefer this over
+  `symbols --owner NAME`, which only sees fields/variants — never methods.
 - `codeq unused [<path>]` — definitions with no references (candidate dead code; empty
   output = none found). Conservative and name-based, so it under-reports.
 - `codeq implementors <TYPE>` / `codeq supertypes <TYPE>` — who implements/extends a

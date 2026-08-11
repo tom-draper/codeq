@@ -243,8 +243,11 @@ benchmarks — not as a step you run before querying.
   x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a` — so the imported symbol
   resolves like a direct module import; relative (`from . import x`) and wildcard
   forms stay coarse. Verify via the edge's module string.
-- **What a type holds:** `codeq symbols --owner Config` — the members a type
-  declares, without dumping every field in the repo.
+- **What a type holds:** `codeq members Config` — its fields, enum variants *and*
+  methods, resolved by parse-tree containment. Not `symbols --owner Config`: that
+  filters on the stored `owner` tag, which only fields and variants carry, so it
+  silently answers the same question minus every method. `--owner` is for browsing
+  fields (`--owner X --kind field`), not for "what does this type have".
 - **Trim tokens on list output:** append `--fields a,b`
 - **`--group`** hoists the repeated path onto a `path (count)` header instead of
   prefixing every row with it, and the count saves counting lines. **Opt-in on

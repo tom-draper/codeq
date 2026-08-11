@@ -5860,3 +5860,24 @@ fn grouping_a_path_only_row_does_not_leave_a_dangling_separator() {
     // The payload itself must survive the fix.
     assert!(text.contains("rust"), "grouping dropped the row's payload: {text:?}");
 }
+
+#[test]
+fn members_and_symbols_owner_answer_different_questions() {
+    // These two look like the same command under two names, and the docs once
+    // said so. They aren't: `--owner` filters on the stored owner tag, which
+    // only fields and variants carry, so it silently drops every method. Pinning
+    // the difference here so the docs can't drift back to treating them as equal.
+    let f = Fixture::new();
+    f.write("a.py", "class Thing:\n    name = 1\n    def go(self): pass\n");
+
+    let members: Vec<String> = f.run(&["members", "Thing"])["data"]
+        .as_array().unwrap().iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
+    assert!(members.contains(&"go".to_string()), "members lost the method: {members:?}");
+    assert!(members.contains(&"name".to_string()), "members lost the field: {members:?}");
+
+    let owned: Vec<String> = f.run(&["symbols", "--owner", "Thing"])["data"]
+        .as_array().unwrap().iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
+    assert_eq!(owned, ["name"], "--owner's scope changed; the docs need to change with it");
+}
