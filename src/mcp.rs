@@ -222,7 +222,15 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         }
         "codeq_explore" => {
             args.push("explore".into());
-            pos.push(s(a, "name")?.into());
+            // Either form: a name, or a position that resolves to one. `at`
+            // wins when both are sent, matching the CLI, where they conflict.
+            match a.get("at").and_then(|v| v.as_str()) {
+                Some(at) => {
+                    args.push("--at".into());
+                    args.push(at.into());
+                }
+                None => pos.push(s(a, "name")?.into()),
+            }
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "max_tokens", "--max-tokens");
         }
@@ -436,8 +444,8 @@ fn tools() -> Value {
 
     json!([
         tool("codeq_explore",
-            "Understand a symbol in ONE call: its definition, who calls it, what it calls, and the verbatim source of that whole neighbourhood, budgeted and grouped by file. Prefer this over a definitions -> callers -> read -> read sequence when you need to understand or change a function/type. name is the exact symbol; path disambiguates a common name; max_tokens caps the source (the definition is always included, callers and callees fill the rest, and anything dropped is listed under omitted). Returns focus, callers, callees, and source (each chunk tagged focus/caller/callee). Same neighbourhood as codeq_about, which omits the source but reports fuller metadata per node — source is the axis the two differ on.",
-            json!({ "name": str_, "path": str_, "max_tokens": int_ }), &["name"]),
+            "Understand a symbol in ONE call: its definition, who calls it, what it calls, and the verbatim source of that whole neighbourhood, budgeted and grouped by file. Prefer this over a definitions -> callers -> read -> read sequence when you need to understand or change a function/type. name is the exact symbol; path disambiguates a common name; max_tokens caps the source (the definition is always included, callers and callees fill the rest, and anything dropped is listed under omitted). Returns focus, callers, callees, imports (what is in scope in the focus file, so an edit knows what it can call), and source (each chunk tagged focus/caller/callee). Give EITHER name OR at — at is a '<path>:<line>' position and explores whatever definition encloses it, which turns a stack frame, diff hunk or search hit into its neighbourhood without resolving the name first. Same neighbourhood as codeq_about, which omits the source but reports fuller metadata per node — source is the axis the two differ on.",
+            json!({ "name": str_, "at": str_, "path": str_, "max_tokens": int_ }), &[]),
         tool("codeq_map",
             "Orient in the repo: factual counts by language, directory, imported module, and file. Start here in an unfamiliar codebase.",
             json!({ "limit": int_ }), &[]),

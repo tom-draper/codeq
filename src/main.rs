@@ -59,6 +59,18 @@ struct Cli {
     /// Keep only these fields on each data row (comma-separated).
     #[arg(long, global = true, value_delimiter = ',')]
     fields: Option<Vec<String>>,
+
+    /// Group text rows under a `path (count)` header instead of repeating the
+    /// path on every line.
+    ///
+    /// Off by default on purpose: the flat `path:line:col:` form is
+    /// self-describing, so any single line stays meaningful after being piped,
+    /// grepped, or quoted on its own. Grouping trades that away for fewer
+    /// repeated bytes, so ask for it explicitly. Never inferred from whether
+    /// stdout is a terminal — the output shape must not depend on how codeq was
+    /// invoked. No effect under `--json`, which is already structured.
+    #[arg(long, global = true)]
+    group: bool,
 }
 
 #[derive(Subcommand)]
@@ -298,8 +310,18 @@ enum Command {
     /// several reads. Start here to understand or change a symbol. Use `about` for
     /// the same neighbourhood WITHOUT source but with fuller per-node metadata.
     Explore {
-        /// Exact symbol name to explore.
-        name: String,
+        /// Exact symbol name to explore. Omit it when using --at.
+        #[arg(required_unless_present = "at", conflicts_with = "at")]
+        name: Option<String>,
+        /// Explore whatever definition encloses this position, given as
+        /// `<path>:<line>`.
+        ///
+        /// For turning a stack frame, a diff hunk or a search hit straight into
+        /// its neighbourhood without first resolving the name by hand. The
+        /// position also scopes the lookup, so a common name cannot pull in
+        /// same-named definitions from other files.
+        #[arg(long, value_name = "FILE:LINE")]
+        at: Option<String>,
         /// Scope the definition and callees to matching paths (disambiguates a
         /// common name); callers stay repo-wide.
         #[arg(long)]
@@ -612,6 +634,16 @@ enum Command {
         /// the seeds requested.
         #[arg(long)]
         expand: bool,
+        /// With --expand, keep only referenced definitions the seed files can
+        /// reach through imports.
+        ///
+        /// Expansion matches by name, so a seed mentioning a common name (`new`,
+        /// `open`, `build`) otherwise pulls in every same-named definition in the
+        /// repo and spends the budget on code the seed cannot call. Same
+        /// best-effort import heuristic as `--resolved` elsewhere: it narrows a
+        /// superset, it does not resolve types.
+        #[arg(long, requires = "expand")]
+        resolved: bool,
         /// Omit chunk source text (return provenance only).
         #[arg(long)]
         no_text: bool,
@@ -688,6 +720,7 @@ fn main() -> ExitCode {
         meta: cli.meta,
         pretty: cli.pretty,
         fields: cli.fields,
+        group: cli.group,
     };
 
     let result = match cli.command {
@@ -800,9 +833,14 @@ fn main() -> ExitCode {
         Command::About { name, path } => {
             commands::cmd_about(&cwd, &name, path.as_deref(), out)
         }
-        Command::Explore { name, path, max_tokens } => {
-            commands::cmd_explore(&cwd, &name, path.as_deref(), max_tokens, out)
-        }
+        Command::Explore { name, at, path, max_tokens } => commands::cmd_explore(
+            &cwd,
+            name.as_deref(),
+            at.as_deref(),
+            path.as_deref(),
+            max_tokens,
+            out,
+        ),
         Command::References {
             name,
             path,
@@ -961,6 +999,7 @@ fn main() -> ExitCode {
             path,
             max_tokens,
             expand,
+            resolved,
             no_text,
             plan,
         } => commands::cmd_context(
@@ -972,6 +1011,7 @@ fn main() -> ExitCode {
                 path,
                 max_tokens,
                 expand,
+                resolved,
                 include_text: !no_text,
                 plan,
             },

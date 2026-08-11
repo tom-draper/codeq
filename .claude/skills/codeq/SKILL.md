@@ -38,7 +38,11 @@ refresh the index — every command auto-refreshes changed files first.
   verbatim source of that whole neighbourhood, budgeted and grouped by file (each source
   block tagged focus/caller/callee). Use it instead of a `definitions` → `callers` → `read`
   → `read` sequence when you need to understand or edit a function/type. `--max-tokens`
-  caps the source; the definition is always kept, and anything dropped is listed.
+  caps the source; the definition is always kept, and anything dropped is listed. It
+  also returns the focus file's imports — what is in scope where you're about to edit.
+- `codeq explore --at <file>:<line>` — the same, addressed by position instead of name:
+  explores whatever definition encloses that line (innermost wins). Use it on a stack
+  frame, a diff hunk or a search hit rather than running `at` and then `explore`.
 - `codeq about <NAME>` — the same neighbourhood with **no source**, but fuller metadata
   per node (doc comment, `owner`, which callers are tests). Source is the only axis the
   two differ on: `explore` to change code, `about` for metadata or a cheap "which file
@@ -77,7 +81,10 @@ refresh the index — every command auto-refreshes changed files first.
 - `codeq at <file>:<line>` — the definition enclosing a position. Turns a stack frame,
   diff hunk or grep hit into a symbol.
 - `codeq context --symbols a,b` — verbatim source for several symbols under one token
-  budget (`--changed --compare-to <ref>` seeds from a diff instead).
+  budget (`--changed --compare-to <ref>` seeds from a diff instead). `--expand` adds one
+  hop of referenced definitions, matched *by name* — add `--resolved` to keep only those
+  the seed files reach through imports, or a common name spends the budget on unrelated
+  same-named code.
 - `codeq files [PATTERN]` — indexed files, with `--language`.
 
 **API surface / cleanup**
@@ -146,6 +153,10 @@ refresh the index — every command auto-refreshes changed files first.
   `React.Component`), but `implementors` matches the last segment too, so
   `implementors Component` finds it.
 - **Trim output tokens** with `--fields name,path,line`.
+- **`--group`** replaces the repeated path prefix with a `path (count)` header. Opt-in,
+  and the default is flat for a reason: a flat row names its own file, so it survives
+  being piped, grepped or quoted in isolation, and a grouped row does not. Group when
+  you'll read the whole result; stay flat when you'll slice it. No effect under `--json`.
 - Default output is text; use `--json` only when you need to parse it programmatically.
 
 ## Excluding files

@@ -26,6 +26,7 @@ pub struct Out {
     pub meta: bool,
     pub pretty: bool,
     pub fields: Option<Vec<String>>,
+    pub group: bool,
 }
 
 /// Shared setup: discover the repo, open the index, and bring it fresh.
@@ -97,6 +98,7 @@ impl Session {
             meta: self.out.meta,
             pretty: self.out.pretty,
             fields: self.out.fields.as_deref(),
+            group: self.out.group,
         })
     }
 }
@@ -1242,7 +1244,7 @@ fn callees_of(
     // files, so it narrows a superset rather than pinpointing.
     if resolved {
         let target_files: HashSet<String> = targets.iter().map(|(p, _, _)| p.clone()).collect();
-        let graph = load_dep_graph(s)?;
+        let graph = load_dep_graph(&s.db)?;
         let mut reach: HashSet<String> = target_files.clone();
         for tf in &target_files {
             for r in graph.reachable_from(tf) {
@@ -1682,6 +1684,9 @@ struct ExploreResult {
     callers: Vec<ExploreNode>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     callees: Vec<ExploreNode>,
+    /// What is in scope in the focus file — the imports an edit can rely on.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    imports: Vec<ImportRow>,
     source: Vec<crate::context::Chunk>,
     budget: crate::context::Budget,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1695,12 +1700,51 @@ struct ExploreResult {
 /// instead of a `definitions` → `callers` → `read` → `read` sequence.
 pub fn cmd_explore(
     cwd: &Path,
-    name: &str,
+    name: Option<&str>,
+    at: Option<&str>,
     path: Option<&str>,
     max_tokens: u64,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
+
+    // `--at` asks the same question from the other end. A stack frame, a diff
+    // hunk and a search hit all name a *position*, not a symbol, so answering
+    // "what is this and who uses it" meant `at` to get the name, then `explore`
+    // with it. Resolving here collapses that to one call. The position also
+    // scopes the lookup: it identifies one definition exactly, so a common name
+    // can't drag in same-named definitions from elsewhere.
+    let (target, scope): (String, Option<String>) = match at {
+        Some(loc) => match definition_at(&s, loc)? {
+            Some(found) => found,
+            None => {
+                // A position between definitions is a real empty answer, not a
+                // bad argument, so it gets a note rather than an error. The
+                // budget comes from a real (empty) assembly so the shape of the
+                // result is identical to any other explore.
+                let (budget, source, omitted) =
+                    crate::context::source_for(&s.db, &s.repo, &[], max_tokens)?.into_source();
+                return s.emit_noted(
+                    ExploreResult {
+                        focus: Vec::new(),
+                        callers: Vec::new(),
+                        callees: Vec::new(),
+                        imports: Vec::new(),
+                        source,
+                        budget,
+                        omitted,
+                    },
+                    Some(format!("no definition encloses {loc}")),
+                );
+            }
+        },
+        // clap guarantees one of the two is present.
+        None => (
+            name.unwrap_or_default().to_string(),
+            path.map(str::to_string),
+        ),
+    };
+    let (name, path) = (target.as_str(), scope.as_deref());
 
     // The same neighbourhood `about` reports; explore trims the nodes and spends
     // the token budget on verbatim source instead.
@@ -1777,18 +1821,82 @@ pub fn cmd_explore(
     let (budget, source, omitted) =
         crate::context::source_for(&s.db, &s.repo, &seeds, max_tokens)?.into_source();
 
+    // The focus file's imports: what is already in scope at the edit site. An
+    // agent about to change a definition needs to know whether the helper it
+    // wants is imported, aliased, or absent — otherwise the first attempt at the
+    // edit produces an unresolved name. Only the focus files, so a wide caller
+    // set can't turn this into the repo's whole import table.
+    let imports = focus_imports(&s, &defs)?;
+
     let note = note_if_empty(&s, &focus, name, "definition", path)?;
     s.emit_noted(
         ExploreResult {
             focus,
             callers: caller_nodes,
             callees: callee_nodes,
+            imports,
             source,
             budget,
             omitted,
         },
         note,
     )
+}
+
+/// The innermost definition enclosing a `<path>:<line>` position.
+///
+/// Shared by `at` and `explore --at`: "which symbol is this line in" is one
+/// question, and it should not have two implementations that can disagree.
+/// Innermost wins (smallest byte range), so a line inside a method resolves to
+/// the method rather than the type that contains it.
+fn definition_at(s: &Session, location: &str) -> Result<Option<(String, Option<String>)>> {
+    let (path, line_str) = location
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow!("expected <path>:<line>, got '{location}'"))?;
+    let line: i64 = line_str
+        .parse()
+        .map_err(|_| anyhow!("invalid line number in '{location}'"))?;
+    let rel = resolve_file(s, path)?;
+    let mut stmt = s.db.conn.prepare(
+        "SELECT name, path
+         FROM facts
+         WHERE kind <> 'import' AND path = ?1
+           AND start_line <= ?2 AND end_line >= ?2
+         ORDER BY (end_byte - start_byte) ASC, path
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query_map((&rel, line), |r| {
+        Ok((r.get::<_, String>(0)?, Some(r.get::<_, String>(1)?)))
+    })?;
+    rows.next().transpose().map_err(Into::into)
+}
+
+/// The imports declared by the files the focus definitions live in.
+fn focus_imports(s: &Session, defs: &[DefinitionRow]) -> Result<Vec<ImportRow>> {
+    let mut files: Vec<&str> = defs.iter().map(|d| d.path.as_str()).collect();
+    files.sort_unstable();
+    files.dedup();
+    let mut rows = Vec::new();
+    for f in files {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT path, name, start_line, language
+             FROM facts
+             WHERE kind = 'import' AND path = ?1
+             ORDER BY start_line",
+        )?;
+        let got = stmt.query_map((f,), |r| {
+            Ok(ImportRow {
+                path: r.get(0)?,
+                module: r.get(1)?,
+                start_line: r.get(2)?,
+                language: r.get(3)?,
+            })
+        })?;
+        for row in got {
+            rows.push(row?);
+        }
+    }
+    Ok(rows)
 }
 
 /// `at <path>:<line>` — the definition(s) enclosing a location, innermost first.
@@ -2374,13 +2482,12 @@ struct CycleRow {
 
 /// Load the internal import graph: every indexed file, and every import fact as
 /// an `(importing_file, raw_module)` pair, resolved to file→file edges.
-fn load_dep_graph(s: &Session) -> Result<deps::Graph> {
+pub(crate) fn load_dep_graph(db: &Db) -> Result<deps::Graph> {
     let files: Vec<String> = {
-        all_file_paths(&s.db.conn)?
+        all_file_paths(&db.conn)?
     };
     let imports: Vec<(String, String)> = {
-        let mut stmt = s
-            .db
+        let mut stmt = db
             .conn
             .prepare("SELECT path, name FROM facts WHERE kind = 'import'")?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
@@ -2416,7 +2523,7 @@ impl Resolver {
             }
         }
         Ok(Resolver {
-            graph: load_dep_graph(s)?,
+            graph: load_dep_graph(&s.db)?,
             defs,
             cache: HashMap::new(),
         })
@@ -2507,7 +2614,7 @@ pub fn cmd_deps(
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let graph = load_dep_graph(&s)?;
+    let graph = load_dep_graph(&s.db)?;
 
     // Imports that resolve to nothing inside the repo. For code that is the
     // third-party dependency list; for a markdown link, whose target is always a

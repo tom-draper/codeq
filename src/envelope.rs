@@ -26,6 +26,9 @@ pub struct Render<'a> {
     pub pretty: bool,
     /// If set, keep only these keys on each object in `data`.
     pub fields: Option<&'a [String]>,
+    /// Group text rows under a `path (count)` header rather than prefixing every
+    /// row with its path. Text only — JSON is already structured.
+    pub group: bool,
 }
 
 pub struct Envelope<T: Serialize> {
@@ -125,7 +128,7 @@ impl<T: Serialize> Envelope<T> {
             );
         }
         let mut s = String::new();
-        render_value(&data, &mut s);
+        render_value(&data, r.group, &mut s);
         print!("{s}");
         // Text mode keeps stdout pure data, so the note goes to stderr where it
         // is visible to a person and invisible to a pipe.
@@ -140,7 +143,7 @@ impl<T: Serialize> Envelope<T> {
 /// don't flow through [`Envelope`] (e.g. `capabilities`, which is session-less).
 pub fn render_data_text(data: &Value) -> String {
     let mut s = String::new();
-    render_value(data, &mut s);
+    render_value(data, false, &mut s);
     s
 }
 
@@ -150,9 +153,9 @@ pub fn render_data_text(data: &Value) -> String {
 /// - object with a single primary array (`matches`, `references`, …) → its rows;
 /// - object with several arrays (`about`, `map`) → each under a `# key` header;
 /// - object of scalars (`stats`) → `key: value` lines.
-fn render_value(data: &Value, out: &mut String) {
+fn render_value(data: &Value, group: bool, out: &mut String) {
     match data {
-        Value::Array(rows) => render_rows(rows, out),
+        Value::Array(rows) => render_rows(rows, group, out),
         Value::Object(map) => {
             let arrays = map.values().filter(|v| v.is_array()).count();
             if arrays == 0 {
@@ -163,7 +166,7 @@ fn render_value(data: &Value, out: &mut String) {
                 // A single result list (+ maybe a scalar like `truncated`): just rows.
                 for v in map.values() {
                     if let Value::Array(rows) = v {
-                        render_rows(rows, out);
+                        render_rows(rows, group, out);
                     }
                 }
             } else {
@@ -171,7 +174,7 @@ fn render_value(data: &Value, out: &mut String) {
                     match v {
                         Value::Array(rows) => {
                             out.push_str(&format!("# {k}\n"));
-                            render_rows(rows, out);
+                            render_rows(rows, group, out);
                         }
                         _ => out.push_str(&format!("{k}: {}\n", inline(v))),
                     }
@@ -189,19 +192,49 @@ fn render_value(data: &Value, out: &mut String) {
 /// relative to the shallowest row. `outline` numbers top-level definitions 0
 /// while `callers`/`callees`/`deps` number direct hits 1; without this every
 /// row of a `--depth` walk would carry a leading indent that means nothing.
-fn render_rows(rows: &[Value], out: &mut String) {
+fn render_rows(rows: &[Value], group: bool, out: &mut String) {
     let base = rows
         .iter()
         .filter_map(|r| r.get("depth").and_then(|v| v.as_i64()))
         .min()
         .unwrap_or(0);
-    for row in rows {
-        render_row(row, base, out);
+    if !group {
+        for row in rows {
+            render_row(row, base, false, out);
+        }
+        return;
+    }
+    // Group *consecutive* runs of the same path rather than sorting into buckets:
+    // row order is part of the answer (a caller walk is ordered by depth, search
+    // by position), so reordering to make groups tidier would corrupt it. Rows
+    // already arrive path-ordered from SQL, so runs are the natural grouping; if
+    // they aren't, a path simply heads more than one block, which is honest.
+    let mut i = 0;
+    while i < rows.len() {
+        let path = rows[i].get("path").and_then(|v| v.as_str());
+        let Some(p) = path else {
+            // No path to hoist (a bare identifier row, a cycle, `--fields` having
+            // dropped the column): nothing to group by, so render it flat.
+            render_row(&rows[i], base, false, out);
+            i += 1;
+            continue;
+        };
+        let mut j = i;
+        while j < rows.len() && rows[j].get("path").and_then(|v| v.as_str()) == Some(p) {
+            j += 1;
+        }
+        // The count is why grouping stays lossless: the agent gets the group size
+        // without counting lines, which is the number it usually wanted anyway.
+        out.push_str(&format!("{p} ({})\n", j - i));
+        for row in &rows[i..j] {
+            render_row(row, base, true, out);
+        }
+        i = j;
     }
 }
 
 /// One result row → `path:line:col: payload`, indented by `depth` for outlines.
-fn render_row(row: &Value, base_depth: i64, out: &mut String) {
+fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     let o = match row {
         Value::Object(m) => m,
         other => {
@@ -213,11 +246,21 @@ fn render_row(row: &Value, base_depth: i64, out: &mut String) {
     let str_of = |k: &str| o.get(k).and_then(|v| v.as_str());
     let int_of = |k: &str| o.get(k).and_then(|v| v.as_i64());
 
+    // Under a group header the path is already stated, so the row carries only
+    // `line:col` — but it keeps the column, which the pathless fallback below
+    // drops. Losing `col` here would make grouped output strictly less precise
+    // than flat, and the two must carry the same facts.
     let mut loc = String::new();
     if let Some(p) = str_of("path") {
-        loc.push_str(p);
+        if !in_group {
+            loc.push_str(p);
+        }
         if let Some(l) = int_of("line").or_else(|| int_of("start_line")) {
-            loc.push_str(&format!(":{l}"));
+            if in_group {
+                loc.push_str(&format!("{l}"));
+            } else {
+                loc.push_str(&format!(":{l}"));
+            }
             if let Some(c) = int_of("col") {
                 loc.push_str(&format!(":{c}"));
             }
@@ -259,16 +302,21 @@ fn render_row(row: &Value, base_depth: i64, out: &mut String) {
         let after = o.get("after").and_then(|v| v.as_array());
         if let (Some(p), Some(ln)) = (str_of("path"), int_of("line")) {
             if before.is_some() || after.is_some() {
+                // Grouped context lines drop the path for the same reason the
+                // match line does — the header already carries it — and with it
+                // the separating `-`, so the row reads `196- code` rather than
+                // leading with a stray dash.
+                let lead = if in_group { String::new() } else { format!("{p}-") };
                 if let Some(b) = before {
                     let start = ln - b.len() as i64;
                     for (i, cl) in b.iter().filter_map(|v| v.as_str()).enumerate() {
-                        out.push_str(&format!("{pad}{p}-{}- {}\n", start + i as i64, cl.trim_end()));
+                        out.push_str(&format!("{pad}{lead}{}- {}\n", start + i as i64, cl.trim_end()));
                     }
                 }
                 out.push_str(&match_line);
                 if let Some(a) = after {
                     for (i, cl) in a.iter().filter_map(|v| v.as_str()).enumerate() {
-                        out.push_str(&format!("{pad}{p}-{}- {}\n", ln + 1 + i as i64, cl.trim_end()));
+                        out.push_str(&format!("{pad}{lead}{}- {}\n", ln + 1 + i as i64, cl.trim_end()));
                     }
                 }
                 return;

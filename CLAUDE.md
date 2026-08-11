@@ -25,6 +25,14 @@ benchmarks — not as a step you run before querying.
   neighbourhood, budgeted and grouped by file (each source block tagged focus/caller/
   callee). Replaces the `about` → `read` → `read` sequence; `--max-tokens` caps it (the
   definition is always kept, the rest fill the budget, drops are listed under `omitted`).
+  It also reports the focus file's `imports` — what is already in scope at the edit
+  site, so a proposed call isn't to something the file can't see.
+  - **From a position, not a name:** `codeq explore --at <file>:<line>` explores
+    whatever definition encloses that line (innermost wins). For turning a stack
+    frame, a diff hunk or a search hit straight into its neighbourhood, instead of
+    `at` to get the name and then `explore`. The position scopes the lookup too, so
+    a common name can't drag in same-named definitions from other files. A line
+    between definitions is an empty result with a note, not an error.
 - **A type's members:** fields, properties and enum variants are facts too, tagged with
   the `owner` type — `codeq definitions retries` says which type declares it, and
   `codeq outline <file>` nests members under their type. Rust, Go, Java, TS/TSX,
@@ -81,6 +89,13 @@ benchmarks — not as a step you run before querying.
   source for several named symbols under one budget, or `--changed --compare-to
   <ref>` to seed from a diff. `explore` is this plus the graph for one symbol;
   reach for `context` when you already know the set you want.
+  - `--expand` adds one hop of definitions referenced by name in the seeds — and
+    because that hop is *by name*, a seed mentioning `new`/`open`/`build` drags in
+    every same-named definition in the repo. `--expand --resolved` keeps only the
+    ones living in a file the seeds reach through imports (the same heuristic as
+    `--resolved` elsewhere). On a seed referencing common names this cut the
+    bundle from 34 chunks to 6. When candidates exceed the neighbour cap it
+    changes *which* survive rather than how many, so don't read the count alone.
 - **List files / imports:** `codeq files [PATTERN]` (indexed files; `--language`)
   · `codeq imports [PATH]` (raw, unresolved module strings, filtered to importing
   files whose path contains PATH) · `codeq importers <QUERY>` (files importing a
@@ -231,6 +246,14 @@ benchmarks — not as a step you run before querying.
 - **What a type holds:** `codeq symbols --owner Config` — the members a type
   declares, without dumping every field in the repo.
 - **Trim tokens on list output:** append `--fields a,b`
+- **`--group`** hoists the repeated path onto a `path (count)` header instead of
+  prefixing every row with it, and the count saves counting lines. **Opt-in on
+  purpose, and worth understanding before reaching for it:** the default flat
+  `path:line:col:` form is *self-describing*, so any single row still names its
+  file after being piped, grepped, or quoted on its own — grouping trades that
+  away. Use it when you'll read the whole result; keep the default when you'll
+  slice it. Never inferred from whether stdout is a terminal, and it has no
+  effect under `--json`.
 
 ## When a query comes back empty
 

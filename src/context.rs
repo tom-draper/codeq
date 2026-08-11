@@ -37,6 +37,9 @@ pub struct Request {
     pub path: Option<String>,
     pub max_tokens: u64,
     pub expand: bool,
+    /// Narrow `--expand` to definitions the seed files can actually reach through
+    /// imports. Same heuristic as `--resolved` on callers/callees/references.
+    pub resolved: bool,
     pub include_text: bool,
     /// Include the explanatory `plan` (seeds, modes, ordering). Off by default
     /// to keep the payload lean; the chunks and omissions are what an agent acts on.
@@ -207,7 +210,32 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         let names: Vec<String> = refs.into_iter().collect();
         let mut neighbors: Vec<Def> = Vec::new();
         let mut added: HashSet<(String, usize)> = HashSet::new();
+        // Expansion is by name, so a seed mentioning `new` or `open` pulls in
+        // every same-named definition in the repo and spends the budget on code
+        // the seed cannot even call. `--resolved` keeps only definitions living
+        // in a file the seeds reach through imports — the same import-graph
+        // heuristic `--resolved` already applies to callers/callees, reused
+        // rather than reinvented. Still a heuristic: it narrows a superset.
+        let reach: Option<HashSet<String>> = if req.resolved {
+            let seed_files: HashSet<String> =
+                defs[..seed_count].iter().map(|d| d.path.clone()).collect();
+            let graph = crate::commands::load_dep_graph(db)?;
+            let mut r = seed_files.clone();
+            for f in &seed_files {
+                for reached in graph.reachable_from(f) {
+                    r.insert(reached.to_string());
+                }
+            }
+            Some(r)
+        } else {
+            None
+        };
         for d in defs_by_column(db, "name", &names)? {
+            if let Some(r) = &reach {
+                if !r.contains(&d.path) {
+                    continue;
+                }
+            }
             let key = (d.path.clone(), d.start_byte);
             if !seed_keys.contains(&key) && added.insert(key) {
                 neighbors.push(d);

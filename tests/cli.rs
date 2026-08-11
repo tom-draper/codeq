@@ -5572,3 +5572,150 @@ fn capabilities_lists_every_extractable_language() {
         assert!(classified.contains(l), "'{l}' is not classifiable at all");
     }
 }
+
+#[test]
+fn group_hoists_the_path_and_keeps_line_and_col() {
+    // Flat output stays the default because every line is self-describing: an
+    // agent that greps one line out of a result must still know its file.
+    // --group trades that away deliberately, so it has to be asked for.
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() { target(); }\nfn two() { target(); }\n");
+    f.write("b.rs", "fn three() { target(); }\n");
+
+    let flat = String::from_utf8(f.raw(&["search", "target"]).stdout).unwrap();
+    for line in flat.lines() {
+        assert!(line.starts_with("a.rs:") || line.starts_with("b.rs:"), "flat row lost its path: {line}");
+    }
+
+    let grouped = String::from_utf8(f.raw(&["search", "target", "--group"]).stdout).unwrap();
+    // Header carries the path and the group size; rows keep line:col so grouped
+    // output is never less precise than flat, only less repetitive.
+    assert!(grouped.contains("a.rs (2)\n"), "missing counted header: {grouped}");
+    assert!(grouped.contains("b.rs (1)\n"), "missing counted header: {grouped}");
+    assert!(!grouped.contains("a.rs:1:"), "grouped row still repeats the path: {grouped}");
+    for line in grouped.lines().filter(|l| !l.contains(".rs (")) {
+        assert!(
+            line.split(':').next().unwrap().trim().parse::<u32>().is_ok(),
+            "grouped row should start with a line number: {line}"
+        );
+        assert_eq!(line.matches(':').count() >= 2, true, "grouped row dropped col: {line}");
+    }
+}
+
+#[test]
+fn group_does_not_change_json() {
+    // --group is a text renderer concern. If it leaked into JSON, every
+    // programmatic consumer would have to care about a display flag.
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() { target(); }\nfn two() { target(); }\n");
+    let plain = f.run(&["search", "target"]);
+    let grouped = f.run(&["search", "target", "--group"]);
+    assert_eq!(plain["data"], grouped["data"]);
+}
+
+#[test]
+fn explore_at_a_position_resolves_the_enclosing_definition() {
+    // A stack frame or diff hunk names a line, not a symbol. --at closes that
+    // gap so it takes one call rather than `at` followed by `explore`.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn helper() -> u32 { 1 }\n\nfn outer() -> u32 {\n    let v = helper();\n    v\n}\n",
+    );
+    let by_pos = f.run(&["explore", "--at", "a.rs:4"]);
+    let focus = by_pos["data"]["focus"].as_array().unwrap();
+    assert_eq!(focus.len(), 1, "expected one enclosing definition: {focus:?}");
+    assert_eq!(focus[0]["name"], "outer");
+
+    // The position form must agree with the name form, or they are two answers
+    // to one question.
+    let by_name = f.run(&["explore", "outer"]);
+    assert_eq!(by_pos["data"]["focus"], by_name["data"]["focus"]);
+}
+
+#[test]
+fn explore_at_picks_the_innermost_definition() {
+    // A line inside a method sits inside its type too; the useful answer is the
+    // method, so smallest enclosing range wins.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct S;\n\nimpl S {\n    fn inner(&self) -> u32 {\n        7\n    }\n}\n",
+    );
+    let v = f.run(&["explore", "--at", "a.rs:5"]);
+    assert_eq!(v["data"]["focus"][0]["name"], "inner");
+}
+
+#[test]
+fn explore_at_a_position_with_no_definition_says_so() {
+    // A blank line between definitions is a real empty answer, not a bad
+    // argument, so it gets a note rather than an error.
+    let f = Fixture::new();
+    f.write("a.rs", "\n\nfn only() {}\n");
+    let v = f.run(&["explore", "--at", "a.rs:1"]);
+    assert!(v["data"]["focus"].as_array().unwrap().is_empty());
+    let note = v["note"].as_str().unwrap_or_default();
+    assert!(note.contains("no definition encloses"), "unhelpful note: {note}");
+}
+
+#[test]
+fn explore_reports_the_focus_files_imports() {
+    // What is in scope at the edit site: without it an agent proposes a call to
+    // something the file cannot see.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "use std::collections::HashMap;\nuse std::fmt::Debug;\n\nfn target() -> u32 { 1 }\n",
+    );
+    let v = f.run(&["explore", "target"]);
+    let mods: Vec<String> = v["data"]["imports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["module"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        mods.iter().any(|m| m.contains("HashMap")),
+        "focus file imports missing: {mods:?}"
+    );
+}
+
+#[test]
+fn context_expand_resolved_drops_unreachable_same_named_definitions() {
+    // Expansion is by name, so a common name pulls in same-named definitions the
+    // seed cannot reach. --resolved prunes those via the import graph.
+    let f = Fixture::new();
+    f.write("seed.rs", "mod helper;\nuse helper::build;\n\nfn seed() -> u32 {\n    build()\n}\n");
+    f.write("helper.rs", "pub fn build() -> u32 { 1 }\n");
+    f.write("unrelated.rs", "pub fn build() -> u32 { 999 }\n");
+
+    let files = |v: &Value| -> Vec<String> {
+        v["data"]["chunks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["path"].as_str().map(str::to_string))
+            .collect()
+    };
+    let wide = f.run(&["context", "--symbols", "seed", "--expand", "--no-text"]);
+    assert!(
+        files(&wide).iter().any(|p| p == "unrelated.rs"),
+        "expected the name-based superset to include unrelated.rs: {:?}",
+        files(&wide)
+    );
+    let narrow = f.run(&["context", "--symbols", "seed", "--expand", "--resolved", "--no-text"]);
+    assert!(
+        !files(&narrow).iter().any(|p| p == "unrelated.rs"),
+        "--resolved kept an unreachable definition: {:?}",
+        files(&narrow)
+    );
+}
+
+#[test]
+fn context_resolved_requires_expand() {
+    // On its own it would silently do nothing, which reads as a broken flag.
+    let f = Fixture::new();
+    f.write("a.rs", "fn seed() {}\n");
+    let out = f.raw(&["context", "--symbols", "seed", "--resolved"]);
+    assert!(!out.status.success(), "--resolved alone should be rejected");
+}
