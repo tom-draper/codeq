@@ -72,6 +72,21 @@ impl<T: Serialize> Envelope<T> {
 
     pub fn print(&self, r: Render) -> anyhow::Result<()> {
         let mut data = serde_json::to_value(&self.data)?;
+
+        // Lossy, so it happens here on `data` — the same place `--fields`
+        // projects — and therefore applies to JSON and text alike. `truncated`
+        // maps each capped file to its true count, which is what stops this
+        // from being a silent drop: the answer always says how much it withheld.
+        //
+        // It must run *before* `project`, which can drop the `path` column the
+        // cap groups by: `--fields symbol,line --max-per-file 2` would otherwise
+        // find no paths and silently keep every row — two token-reducing flags
+        // where asking for both gives you less reduction than asking for one.
+        let truncated = match r.max_per_file {
+            Some(n) if n > 0 => cap_per_file(&mut data, n),
+            _ => BTreeMap::new(),
+        };
+
         // `(requested-but-absent, actually-available)`; empty when no rows came
         // back, since there is then nothing to judge a field name against.
         let (unmatched, available) = match r.fields {
@@ -79,15 +94,6 @@ impl<T: Serialize> Envelope<T> {
             None => (Vec::new(), Vec::new()),
         };
         let note_fields = !unmatched.is_empty() && !available.is_empty();
-
-        // Lossy, so it happens here on `data` — the same place `--fields`
-        // projects — and therefore applies to JSON and text alike. `truncated`
-        // maps each capped file to its true count, which is what stops this
-        // from being a silent drop: the answer always says how much it withheld.
-        let truncated = match r.max_per_file {
-            Some(n) if n > 0 => cap_per_file(&mut data, n),
-            _ => BTreeMap::new(),
-        };
 
         // JSON is opt-in (`--json`); `--meta`/`--pretty` are JSON concepts so they
         // imply it. The default is compact grep-style text — far fewer tokens.
@@ -157,6 +163,15 @@ impl<T: Serialize> Envelope<T> {
                 truncated.len(),
             );
         }
+        // `data.truncated` says the result stopped at `--limit`. JSON has carried
+        // it all along; text rendered only the rows, so a capped-at-100 answer
+        // read exactly like a complete one — the one thing every other truncation
+        // in codeq is careful to never do.
+        if hit_limit(&data) {
+            eprintln!(
+                "# codeq: result stopped at --limit; rerun with a higher --limit (or 0) for the rest"
+            );
+        }
         // Text mode keeps stdout pure data, so the note goes to stderr where it
         // is visible to a person and invisible to a pipe.
         if let Some(n) = &self.note {
@@ -180,6 +195,13 @@ pub fn render_data_text(data: &Value) -> String {
 /// - object with a single primary array (`matches`, `references`, …) → its rows;
 /// - object with several arrays (`about`, `map`) → each under a `# key` header;
 /// - object of scalars (`stats`) → `key: value` lines.
+/// Did this result stop at `--limit`? Commands that truncate say so with a
+/// `truncated: true` sibling of their row array; the text renderer drops scalars
+/// next to a single row list, so it is read here instead and reported on stderr.
+fn hit_limit(data: &Value) -> bool {
+    data.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
 /// Keep at most `n` rows per `path`, returning `path -> count before capping`
 /// for the files that actually lost rows.
 ///
@@ -344,10 +366,11 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     // than flat, and the two must carry the same facts.
     let mut loc = String::new();
     if let Some(p) = str_of("path") {
+        let line = int_of("line").or_else(|| int_of("start_line"));
         if !in_group {
             loc.push_str(p);
         }
-        if let Some(l) = int_of("line").or_else(|| int_of("start_line")) {
+        if let Some(l) = line {
             if in_group {
                 loc.push_str(&format!("{l}"));
             } else {
@@ -357,7 +380,12 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
                 loc.push_str(&format!(":{c}"));
             }
         }
-        loc.push_str(": ");
+        // A path-only row (`files`, `tree`) has nothing left once the group
+        // header takes the path, so the separator would lead the line: `: rust
+        // size_bytes=…`. Emit the payload bare instead.
+        if !in_group || line.is_some() {
+            loc.push_str(": ");
+        }
     } else if let Some(l) = int_of("line").or_else(|| int_of("start_line")) {
         loc.push_str(&format!("{l}: "));
     }

@@ -112,8 +112,9 @@ refresh the index — every command auto-refreshes changed files first.
 - `codeq search <REGEX>` — content search; each match annotated with its enclosing
   symbol. `--in code|comments|strings` to scope. A superset of grep — it also has
   `--fixed`, `-i`, `-w`, `-g '*.rs' -g '!tests/'` (repeatable globs), `-l`, `-c`,
-  `-B`/`-A`/`-C`, `--path`, `--language`, `--limit`. **`--limit` defaults to 100**:
-  raise it (or pass 0) before concluding there are no further hits.
+  `-B`/`-A`/`-C`, `--path`, `--language`, `--limit`. **`--limit` defaults to 100**,
+  and a result that hit it now says `stopped at --limit` on stderr — raise it (or
+  pass 0) for the rest.
   `CMD | codeq search PAT --stdin [--language L]` scans piped text instead of the
   index, for grep-in-a-pipeline over output that isn't in the repo.
 - `codeq astgrep '<PATTERN>' --language <lang>` — structural (AST) search, e.g.
@@ -164,7 +165,8 @@ refresh the index — every command auto-refreshes changed files first.
   `--json` included. Capped files always state their true count (`a.rs: +237 more (of
   240)`, or a `path (3 of 240)` header, or `notes.truncated_per_file`), so a truncated
   answer can't be mistaken for a whole one. Use it for the *shape* of a result — which
-  files mention something and roughly how often — then rerun uncapped for detail.
+  files mention something and roughly how often — then rerun uncapped for detail. It
+  surveys every file, not just the first `--limit` rows' worth.
 - Default output is text; use `--json` only when you need to parse it programmatically.
 
 ## Excluding files

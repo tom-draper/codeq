@@ -161,6 +161,13 @@ pub(crate) struct ScanOpts {
     /// Keep only matches qualified by this receiver: `RECV.name`, `RECV::name`,
     /// or `RECV->name`. For disambiguating a method/associated name by its type.
     pub(crate) qualifier: Option<String>,
+    /// Mirror of `--max-per-file`: matches past the Nth in a file still get
+    /// collected (the envelope needs them to report each file's true count) but
+    /// they do not spend `limit`. Without this the two budgets fight — the scan
+    /// stops after `limit` *raw* matches, so a cap of 3 that should have surveyed
+    /// the whole repo instead surveys the first `limit/3` files and reports their
+    /// partial counts as totals.
+    pub(crate) per_file: Option<usize>,
 }
 
 fn is_ident_byte(b: u8) -> bool {
@@ -433,6 +440,10 @@ pub(crate) struct ScanAcc {
     counts: Vec<FileCount>,
     hits: Vec<Hit>,
     truncated: bool,
+    /// Hits that count against `limit`. Equal to `hits.len()` unless
+    /// `ScanOpts::per_file` is set, when the overflow a file keeps only so its
+    /// true count can be reported is excluded.
+    kept: usize,
 }
 
 impl ScanAcc {
@@ -442,6 +453,7 @@ impl ScanAcc {
             counts,
             hits,
             truncated,
+            ..
         } = self;
         match out {
             OutMode::Files => SearchData::Files { files, truncated },
@@ -520,6 +532,8 @@ pub(crate) fn scan_doc(
             let bytes = body.as_bytes();
             let mut defs: Option<Vec<FileDef>> = None;
             let mut last_line = usize::MAX;
+            let mut kept_here = 0usize;
+            let mut stop = false;
             for m in re.find_iter(body) {
                 let off = m.start();
                 if !accept(off) {
@@ -579,10 +593,26 @@ pub(crate) fn scan_doc(
                     before: context_lines(body, s, line_idx.saturating_sub(opts.before)..line_idx),
                     after: context_lines(body, s, (line_idx + 1)..(line_idx + 1 + opts.after)),
                 });
-                if acc.hits.len() >= cap {
-                    acc.truncated = true;
-                    return true;
+                // Past this file's cap the hit is carried for its count only, so
+                // it must not consume `limit` — otherwise the survey stops early
+                // on rows nobody will ever see.
+                if opts.per_file.is_none_or(|n| kept_here < n) {
+                    kept_here += 1;
+                    acc.kept += 1;
+                    if acc.kept >= cap {
+                        acc.truncated = true;
+                        // Under a per-file cap, stopping mid-file would report
+                        // this file's partial count as its total — the one file
+                        // in the survey that lies. Finish counting it, then stop.
+                        if opts.per_file.is_none() {
+                            return true;
+                        }
+                        stop = true;
+                    }
                 }
+            }
+            if stop {
+                return true;
             }
         }
     }

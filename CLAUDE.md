@@ -267,6 +267,9 @@ benchmarks — not as a step you run before querying.
   `notes.truncated_per_file` in JSON), so a truncated answer cannot read as a
   complete one. Reach for it when you want the *shape* of a result ("which files
   mention this, roughly how often") rather than every occurrence.
+  - It surveys the **whole** result, not the first `--limit` rows: matches past a
+    file's cap are still counted, they just don't spend the limit. So `--limit`
+    bounds the rows you get back while the `of N` totals stay true.
 
 ## When a query comes back empty
 
@@ -282,6 +285,9 @@ codeq tells you why, on stderr (or in the `note` field under `--json`):
 - `no unused definitions ...` — a clean result, not a failed one.
 
 So read stderr before assuming a command doesn't work or a symbol doesn't exist.
+
+It also says when an answer is **incomplete**: `result stopped at --limit` means
+you are looking at the first `--limit` (default 100) rows of a longer result.
 
 ## Excluding files
 

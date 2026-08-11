@@ -5782,3 +5782,81 @@ fn max_per_file_leaves_pathless_rows_alone() {
         "map lost its shape under the cap: {:?}", v["data"]
     );
 }
+
+#[test]
+fn a_result_stopped_by_limit_says_so_in_text() {
+    // The bug this guards: `truncated: true` was in --json all along, but the
+    // text renderer drops scalars sitting next to a single row array -- so the
+    // default output of the most-used command showed 100 of 4000 hits and read
+    // exactly like a complete answer. Every other truncation in codeq announces
+    // itself; this one did not.
+    let f = Fixture::new();
+    let body: String = (0..40).map(|i| format!("fn f{i}() {{ t(); }}\n")).collect();
+    f.write("a.rs", &body);
+
+    let out = f.raw(&["search", "t()", "--limit", "5"]);
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("--limit"), "text mode hid the truncation: {err:?}");
+
+    // ... and stays quiet when the answer is whole, or the note is just noise.
+    let err = String::from_utf8(f.raw(&["search", "t()", "--limit", "0"]).stderr).unwrap();
+    assert!(!err.contains("stopped at --limit"), "cried truncation on a complete result: {err:?}");
+}
+
+#[test]
+fn max_per_file_surveys_every_file_not_just_the_first_limit_rows() {
+    // --limit used to be spent on raw matches, including the ones the cap was
+    // about to discard: `--max-per-file 1 --limit 3` surveyed three *files*
+    // worth of hits and reported their partial counts as file totals. Both
+    // numbers below were wrong -- the file list was short, and `of N` under-read.
+    let f = Fixture::new();
+    for name in ["a.rs", "b.rs", "c.rs"] {
+        let body: String = (0..10).map(|i| format!("fn {}{i}() {{ t(); }}\n", &name[..1])).collect();
+        f.write(name, &body);
+    }
+    let v = f.run(&["search", "t()", "--max-per-file", "1", "--limit", "3"]);
+    let rows = v["data"]["matches"].as_array().unwrap();
+    assert_eq!(rows.len(), 3, "the limit must still bound the rows returned: {rows:?}");
+
+    let paths: Vec<_> = rows.iter().filter_map(|r| r["path"].as_str()).collect();
+    assert_eq!(paths, ["a.rs", "b.rs", "c.rs"], "the cap surveyed only the first file(s)");
+    for p in ["a.rs", "b.rs", "c.rs"] {
+        assert_eq!(
+            v["notes"]["truncated_per_file"][p], 10,
+            "{p}'s true count was cut short by --limit: {:?}", v["notes"]
+        );
+    }
+}
+
+#[test]
+fn fields_projection_does_not_disable_max_per_file() {
+    // Both flags exist to cut tokens, so asking for both is natural -- and used
+    // to give *less* reduction than either alone: --fields ran first and removed
+    // the `path` column the cap groups by, so the cap silently kept every row.
+    let f = Fixture::new();
+    let body: String = (0..6).map(|i| format!("fn f{i}() {{ t(); }}\n")).collect();
+    f.write("a.rs", &body);
+
+    let v = f.run(&["search", "t()", "--max-per-file", "2", "--fields", "line,text"]);
+    let rows = v["data"]["matches"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "the cap was lost to --fields: {rows:?}");
+    assert!(rows[0].get("path").is_none(), "--fields no longer projects");
+    assert_eq!(v["notes"]["truncated_per_file"]["a.rs"], 6, "the true count went missing");
+}
+
+#[test]
+fn grouping_a_path_only_row_does_not_leave_a_dangling_separator() {
+    // `files`/`tree` rows are one per path, so hoisting the path leaves nothing
+    // before the `: ` -- every line came out as `: markdown size_bytes=12`.
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() {}\n");
+
+    let text = String::from_utf8(f.raw(&["files", "--group"]).stdout).unwrap();
+    assert!(text.contains("a.rs (1)"), "missing group header: {text:?}");
+    assert!(
+        !text.lines().any(|l| l.trim_start().starts_with(':')),
+        "row led by a bare separator: {text:?}"
+    );
+    // The payload itself must survive the fix.
+    assert!(text.contains("rust"), "grouping dropped the row's payload: {text:?}");
+}

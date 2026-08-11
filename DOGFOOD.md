@@ -4,6 +4,89 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-11 — a bug hunt on the output layer: four found, all in what we'd just shipped
+
+Went looking for bugs rather than features. All four live in the two output flags
+added last session plus the code they sit next to, and three of them share one
+shape: **the answer was incomplete and didn't say so** — the exact failure
+`--max-per-file` was designed to prevent.
+
+### `search` never said it stopped at `--limit`
+
+The worst one, and the oldest. `codeq search the` on this repo returns 100 rows
+out of 4,006 and says nothing. No stderr note, no `note` field. The agent-facing
+docs compensate by telling the agent to *remember* that `--limit` defaults to 100
+— which is a documentation patch over a tool that won't tell you.
+
+What makes it a real bug rather than a design choice: **`--json` had the fact all
+along.** `SearchData` carries `truncated: bool`, and it lands in the JSON. The
+text renderer drops it, in `render_value`:
+
+```rust
+} else if arrays == 1 && map.len() <= 2 {
+    // A single result list (+ maybe a scalar like `truncated`): just rows.
+```
+
+The comment names the thing it's discarding. So the default output surface —
+the one an agent actually reads — was strictly less informative than `--json`,
+which is precisely the invariant `bench/textmode.py` exists to protect. textmode
+missed it because it checks that locators/counts/context *appear*, not that
+nothing was dropped. Fixed by reading `truncated` in `print()` and reporting it
+on stderr, next to the `--max-per-file` note that was already doing this right.
+
+### `--max-per-file` surveyed the first `--limit` rows, not the repo
+
+`--max-per-file` is sold as "the *shape* of a result — which files mention this,
+roughly how often". It wasn't answering that. `--limit` is applied during the
+scan, the cap in the envelope afterwards, so the limit was spent on raw matches
+including the ones the cap was about to throw away:
+
+```
+$ codeq search "the" --max-per-file 1 --group     # before
+.claude/skills/codeq/SKILL.md (1 of 55)
+CLAUDE.md (1 of 45)
+```
+
+Two files. The repo has 30, and CLAUDE.md's true count is 139, not 45 — the
+100-row budget ran out inside it. Both numbers on screen were wrong, and the `of
+N` form makes them look authoritative.
+
+Fixed by making the two budgets stop fighting: `ScanOpts::per_file` mirrors the
+flag, matches past a file's cap are still collected (the envelope needs them to
+count) but don't consume `limit`. One residual case a test caught — when the
+limit fires *mid-file*, that file's count is partial, so the scan now finishes
+the current file before stopping. Now all 30 files appear with counts that match
+`search -c` exactly.
+
+### `--fields` silently cancelled `--max-per-file`
+
+Both flags exist to cut tokens, so combining them is the natural move — and it
+gave *less* reduction than either alone. `project()` ran first and removed the
+`path` column `cap_per_file` groups by, so the cap found no paths and kept
+everything: `--max-per-file 2 --fields symbol,line` returned 100 rows instead of
+4, without a word. Fixed by capping before projecting.
+
+### `--group` mangled every one-row-per-path command
+
+```
+$ codeq files --group        # before
+CLAUDE.md (1)
+: markdown size_bytes=23823
+```
+
+`render_row` suppresses the path under a group header but still emitted the `: `
+separator, so a row with a path and no line — `files`, `tree` — came out led by a
+bare colon, at double the line count. Cosmetic next to the other three, but it's
+the kind of thing that makes output look untrustworthy.
+
+### The pattern worth remembering
+
+Every one of these was found by **making two commands that must agree disagree**:
+`--max-per-file`'s counts against `search -c`, and text output against `--json`.
+Neither the unit suite (fixtures too small to reach `--limit 100`) nor
+differential (never passes these flags) can see any of it. A flag that reduces
+output needs a test that reduces *a lot* of output.
+
 ## 2026-08-08 — merging two parallel lines: three bugs that neither side could have found
 
 `main` had moved 14 commits while this line built 29, both from the same base.

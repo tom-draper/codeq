@@ -995,6 +995,7 @@ fn callers_of(
         limit: 0,
         call_only,
         qualifier: qualifier.map(str::to_string),
+        per_file: None,
     };
     let hits = match run_search(&s.db.conn, &re, like_of(name).as_deref(), path, None, None, &opts)?
     {
@@ -3002,6 +3003,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         limit: args.limit,
         call_only: false,
         qualifier: None,
+        per_file: out.max_per_file,
     };
 
     // Piped input never touches the index: no repo discovery, no refresh, no
@@ -3059,6 +3061,7 @@ pub fn cmd_references(
     qualifier: Option<&str>,
     out: Out,
 ) -> Result<()> {
+    let per_file = out.max_per_file;
     let s = Session::open(cwd, false, out)?;
 
     let expr = format!(r"\b{}\b", regex::escape(name));
@@ -3081,6 +3084,7 @@ pub fn cmd_references(
         limit,
         call_only,
         qualifier: qualifier.map(str::to_string),
+        per_file,
     };
     let (hits, truncated) =
         match run_search(&s.db.conn, &re, match_query.as_deref(), path, language, None, &opts)? {
@@ -3288,6 +3292,7 @@ fn name_is_used(
         limit: 0,
         call_only: false,
         qualifier: None,
+        per_file: None,
     };
     let hits = match run_search(&s.db.conn, &re, like.as_deref(), None, None, None, &opts)? {
         SearchData::Matches { matches, .. } => matches,
@@ -3841,6 +3846,7 @@ fn test_sites(
         limit: 0,
         call_only: false,
         qualifier: None,
+        per_file: None,
     };
     let hits = match run_search(&s.db.conn, &re, like_of(name).as_deref(), path, None, None, &opts)? {
         SearchData::Matches { matches, .. } => matches,
