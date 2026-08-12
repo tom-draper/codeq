@@ -3339,7 +3339,7 @@ struct ImplementorRow {
     // spelling it `subtype` here only cost consumers a per-command special case.
     #[serde(rename = "name")]
     subtype: String,
-    /// How it relates: "implements" or "extends".
+    /// How it relates: "implements", "extends", or "references" (a SQL foreign key).
     relation: String,
     path: String,
     line: i64,
@@ -3355,7 +3355,7 @@ struct SupertypeRow {
     // spelling it `supertype` here only cost consumers a per-command special case.
     #[serde(rename = "name")]
     supertype: String,
-    /// How it relates: "implements" or "extends".
+    /// How it relates: "implements", "extends", or "references" (a SQL foreign key).
     relation: String,
     path: String,
     line: i64,

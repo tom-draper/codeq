@@ -104,8 +104,10 @@ refresh the index — every command auto-refreshes changed files first.
   also finds the table named inside the SQL *string* in the app code that queries
   it — the schema is usually the one artefact every language in the repo shares.
   A schema-qualified name is stored bare (`analytics.events` → `events`); enum
-  variants lose their quotes; `--in strings` is quoted literals only. No imports
-  and no inheritance edges: a foreign key is real but it is not `implements`.
+  variants lose their quotes; `--in strings` is quoted literals only. No imports.
+  A **foreign key is a `references` relation** (its own kind — an edge, not an
+  is-a), so `supertypes orders` is what it points at and `implementors orgs` is
+  what points at it; inline, table-level and `ALTER TABLE` forms all count.
 - `codeq members NAME` — a type's fields, enum variants and methods (`--kind` to
   narrow). Containment is structural (a member is nested inside NAME's byte range),
   though NAME itself still resolves by name — two same-named types both answer, so

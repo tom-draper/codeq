@@ -392,7 +392,8 @@ enum Command {
     Implementors {
         /// The trait / interface / base class name.
         name: String,
-        /// Restrict to one relation: `implements` or `extends`.
+        /// Restrict to one relation: `implements`, `extends`, or `references`
+        /// (a SQL foreign key, which is an edge but not inheritance).
         #[arg(long)]
         relation: Option<String>,
         /// Restrict to paths containing this substring.
@@ -408,7 +409,8 @@ enum Command {
     Supertypes {
         /// The deriving type (class / struct / impl target).
         name: String,
-        /// Restrict to one relation: `implements` or `extends`.
+        /// Restrict to one relation: `implements`, `extends`, or `references`
+        /// (a SQL foreign key, which is an edge but not inheritance).
         #[arg(long)]
         relation: Option<String>,
         /// Restrict to paths containing this substring.

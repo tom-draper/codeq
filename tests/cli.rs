@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v2");
-    assert_eq!(v["index"]["schema"], 25);
+    assert_eq!(v["index"]["schema"], 26);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -6441,4 +6441,45 @@ fn callers_and_callees_can_be_bounded_like_every_other_list() {
 
     let callees = f.run(&["callees", "c0", "--limit", "1"]);
     assert!(callees["data"].as_array().unwrap().len() <= 1, "{callees}");
+}
+
+#[test]
+fn a_sql_foreign_key_is_an_edge_but_not_an_is_a() {
+    // The one genuinely structural fact a schema has. It gets its own relation
+    // kind rather than being folded into implements/extends, which would have
+    // `supertypes` assert an inheritance that does not exist.
+    let f = Fixture::new();
+    f.write(
+        "db/001.sql",
+        "CREATE TABLE orders (\n  id INT,\n  user_id BIGINT REFERENCES users(id),\n\
+         \x20 CONSTRAINT fk_p FOREIGN KEY (p_id) REFERENCES products(id)\n);\n",
+    );
+    // The form a migrations directory actually uses for a key added later.
+    f.write(
+        "db/002.sql",
+        "ALTER TABLE orders ADD CONSTRAINT fk_s FOREIGN KEY (s_id) REFERENCES shipments(id);\n",
+    );
+
+    let out = field_set(&f.run(&["supertypes", "orders"]), "name");
+    assert_eq!(
+        {
+            let mut v = out.clone();
+            v.sort();
+            v
+        },
+        ["products", "shipments", "users"],
+        "all three syntactic forms, inline / table-level / ALTER: {out:?}"
+    );
+    let rels = field_set(&f.run(&["supertypes", "orders"]), "relation");
+    assert!(rels.iter().all(|r| r == "references"), "{rels:?}");
+
+    // And the reverse direction: what points at a table.
+    let into = field_set(&f.run(&["implementors", "users"]), "name");
+    assert_eq!(into, ["orders"], "{into:?}");
+
+    // Asking for inheritance gets nothing, which is the point of the separate kind.
+    let inherit = f.run(&["supertypes", "orders", "--relation", "extends"]);
+    assert!(inherit["data"].as_array().unwrap().is_empty(), "{inherit}");
+    let fk = field_set(&f.run(&["supertypes", "orders", "--relation", "references"]), "name");
+    assert_eq!(fk.len(), 3, "{fk:?}");
 }

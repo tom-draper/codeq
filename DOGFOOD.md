@@ -4,6 +4,40 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — SQL foreign keys, and a doc that had been broken for a while
+
+### The edge, finally
+
+Foreign keys were deferred twice on the grounds that a FK is not inheritance and
+`--relation implements|extends` had no honest slot for it. The resolution was
+simply to add the slot: `references` is its own relation kind, so `supertypes
+orders` reads as "what orders points at" and `implementors orgs` as "what points
+at orgs", with `--relation references` to ask for only those. No command claims
+an is-a that does not exist, and no other language emits the kind.
+
+Three syntactic homes, all of which real migrations use: an inline column
+`REFERENCES`, a table-level `CONSTRAINT … FOREIGN KEY` inside the `CREATE`, and
+an `ALTER TABLE … ADD CONSTRAINT` afterwards. The third is the one worth naming
+— missing it would lose exactly the keys a migrations directory adds later,
+which is the same trap `ALTER TABLE … ADD COLUMN` set for members a few hours
+earlier. Having been caught by it once, I looked for it this time.
+
+### The doc rot
+
+`CLAUDE.md` had a bad merge in it: the `search` bullet appeared twice, and
+stranded between the two copies was an orphaned tail of the `unused` bullet —
+five lines of prose attached to nothing. I noticed it while editing the file for
+the SQL work and left it, which was the wrong call; it had been there long enough
+to be quietly re-read by every session.
+
+Repairing it needed care rather than deletion. The duplicate `search` block was
+not identical to the survivor: `--stdin` was documented *only* in the copy that
+had to go, and the orphaned `unused` fragment carried one fact the real bullet
+lacked (that test recognition matches `codeq tests`, so a Rust `mod tests` unit
+test is not dead code). Both were folded into the surviving bullets before the
+duplicates went. A merge conflict resolved by picking a side would have silently
+dropped two documented behaviours.
+
 ## 2026-08-12 — A cross-check sweep over 26 repos, and the three things it found
 
 Method, per the technique that keeps working: don't look for bugs, look for two

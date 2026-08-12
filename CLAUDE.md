@@ -84,8 +84,13 @@ benchmarks — not as a step you run before querying.
     in the signature.
   - Enum variants lose their quotes: `members mood` says `sad`, not `'sad'`.
   - `--in strings` is quoted literals only; `42` and `NULL` stay `--in code`.
-  - No imports (SQL has none) and no relations: a foreign key is a real edge but
-    it is not inheritance, so it is not forced into `implementors`/`supertypes`.
+  - No imports (SQL has none). A **foreign key is a `references` relation** — its
+    own kind, not `implements`/`extends`, because it is an edge but not an is-a.
+    So `codeq supertypes orders` is what `orders` points at and `codeq
+    implementors orgs` is what points at `orgs`; add `--relation references` to
+    ask for only those. All three syntactic forms count: an inline column
+    `REFERENCES`, a table-level `CONSTRAINT … FOREIGN KEY`, and a later
+    `ALTER TABLE … ADD CONSTRAINT`.
   - `unused` skips SQL indexes, triggers and enum variants — each is named exactly
     once by construction, so reporting them is noise, not a finding. Tables,
     views, columns and functions are reported normally.
@@ -235,20 +240,9 @@ benchmarks — not as a step you run before querying.
   because reflection, serde renames, config keys and SQL identifiers are real uses
   that live in string literals. Still name-based, so a same-named symbol elsewhere
   masks it; it under-reports rather than mislead. Shows `visibility` (a `public` hit may
-  be external API, not dead); test-file defs excluded unless `--include-tests`.
-- **Search (a superset of grep):** `codeq search PATTERN [-C N] [--in code|comments|strings]`
-  - `--in strings` (not `--in code`) to find string-embedded content — SQL, config,
-    templates. codeq's own SQL lives in string literals, so `--in code` finds none.
-  - **Piped input:** `CMD | codeq search PAT --stdin` scans the pipe instead of the
-    index, so codeq replaces grep in a pipeline too (no repo or index needed). Add
-    `--language rust` to also get `--in` and the enclosing `[symbol]` on each match.
-    `--stdin` is required — it is never inferred, so an open pipe can't hijack a
-    normal query.
-  anywhere outside their own definition site. Conservative (a comment/string
-  mention counts as a use; name-based, so a same-named symbol elsewhere masks it)
-  so it under-reports rather than mislead. Shows `visibility` (a `public` hit may
-  be external API, not dead); tests excluded unless `--include-tests` — same
-  recognition as `codeq tests`, so a Rust `mod tests` unit test is not dead code.
+  be external API, not dead); tests excluded unless `--include-tests` — recognised
+  the same way `codeq tests` does, so a Rust `#[cfg(test)] mod tests` unit test is
+  not reported as dead code.
 - **What's load-bearing here?** `codeq hotspots [<path>]` — definitions ranked by
   how often their name is referenced in code; the inverse of `unused`, for meeting
   an unfamiliar file. One row per *name* (the count is a property of the name),
@@ -268,6 +262,11 @@ benchmarks — not as a step you run before querying.
     `--path`), so a directory scopes everything under it and a bare filename finds
     that file wherever it lives; several are OR'd, which is what a shell glob
     expands to. Composes with `--path`/`-g` by AND.
+  - **Piped input:** `CMD | codeq search PAT --stdin` scans the pipe instead of the
+    index, so codeq replaces grep in a pipeline too (no repo or index needed). Add
+    `--language rust` to also get `--in` and the enclosing `[symbol]` on each match.
+    `--stdin` is required — it is never inferred, so an open pipe can't hijack a
+    normal query.
   - `--path` / `--language` / `--limit` are on `references` and most list commands
     as well; narrow with them instead of post-filtering the output.
 - **Structural (AST) search:** `codeq astgrep '$X.unwrap()' --language rust` — match

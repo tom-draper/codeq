@@ -60,7 +60,9 @@ use rusqlite::Connection;
 // `Thing.prototype.render = …`, `exports.helper = …`) are definitions. Same
 // reason as v24: the files have not changed on disk, so only a version bump
 // reparses them — an extraction change without one ships to nobody.
-pub const SCHEMA_VERSION: i64 = 25;
+// v26: SQL foreign keys are relation edges (`references`) — again, existing
+// `.sql` files are unchanged on disk, so only a bump reparses them.
+pub const SCHEMA_VERSION: i64 = 26;
 
 pub struct Db {
     pub conn: Connection,
