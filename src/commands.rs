@@ -2601,7 +2601,24 @@ fn resolve_file(s: &Session, arg: &str) -> Result<String> {
         .collect::<std::result::Result<_, _>>()?;
     match matches.len() {
         1 => Ok(matches.into_iter().next().unwrap()),
-        0 => Err(anyhow!("file not found: {arg}")),
+        // "file not found" describes the lookup that failed; the useful message
+        // describes the state that caused it. An absolute path into a *different*
+        // checkout exists on disk and is simply not in this index, and being told
+        // it does not exist sends you checking the path instead of the repo. Same
+        // class as the empty-result notes: the branch is known, so name it.
+        0 => {
+            let elsewhere = std::path::Path::new(arg).is_absolute()
+                && std::path::Path::new(arg).exists();
+            if elsewhere {
+                Err(anyhow!(
+                    "'{arg}' exists but is not in this index (rooted at {}); run codeq from \
+                     that file's repository, or point at it with --root",
+                    s.repo.root.display(),
+                ))
+            } else {
+                Err(anyhow!("file not found in this index: {arg}"))
+            }
+        }
         _ => Err(anyhow!("'{arg}' is ambiguous: {}", matches.join(", "))),
     }
 }
@@ -2972,23 +2989,31 @@ pub fn cmd_astgrep(
 
     // Gather the indexed source of every file in the requested language (the
     // stored FTS body is the whole file). Structural search re-parses each.
-    let mut sql = String::from("SELECT path, body FROM content_fts WHERE language = ?1");
-    let like = path.map(|p| format!("%{p}%"));
-    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&language];
-    if let Some(l) = &like {
-        sql.push_str(" AND path LIKE ?2");
-        params.push(l);
-    }
-    sql.push_str(" ORDER BY path");
+    //
+    // The path filter is applied in Rust, NOT as `AND path LIKE ?` in this query.
+    // `content_fts` is an FTS5 table with `tokenize = 'trigram'`, and the trigram
+    // tokenizer *takes over* `LIKE` on the table — so a `LIKE` against `path`,
+    // which is `UNINDEXED` and therefore has no trigram data, matches nothing at
+    // all. Every `--path` form returned an empty result with exit 0: not a
+    // narrowed answer, an emptied one. It looked like "astgrep can't express
+    // that", which is what the reporter concluded before giving up on the
+    // command. `search` was never affected because it LIKEs `body` (which *is*
+    // the indexed column) and filters paths in Rust, as here.
+    let mut stmt = s
+        .db
+        .conn
+        .prepare("SELECT path, body FROM content_fts WHERE language = ?1 ORDER BY path")?;
+    let mut scanned = 0usize;
     // Stream the bodies into the matcher one at a time (it re-parses each and
     // keeps only matches), so a big single-language repo isn't all held in memory
     // at once — the astgrep matcher takes an iterator, so no Vec is needed.
-    let mut stmt = s.db.conn.prepare(&sql)?;
     let files = stmt
-        .query_map(params.as_slice(), |r| {
+        .query_map([&language], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })?
-        .filter_map(|r| r.ok());
+        .filter_map(|r| r.ok())
+        .filter(|(p, _): &(String, String)| path.as_deref().is_none_or(|q| p.contains(q)))
+        .inspect(|_| scanned += 1);
 
     let mut matches = crate::astgrep::search(language, pattern, files)?;
     let truncated = limit > 0 && matches.len() > limit;
@@ -3046,10 +3071,26 @@ pub fn cmd_astgrep(
             binds,
         });
     }
-    s.emit(AstData {
-        matches: rows,
-        truncated,
-    })
+    // An empty result has two very different causes, and they used to look
+    // identical: the pattern matched nothing, or `--path` selected no files at
+    // all. The second is the one that wastes an afternoon, so name it.
+    let note = if rows.is_empty() {
+        match path.as_deref() {
+            Some(p) if scanned == 0 => Some(format!(
+                "no indexed {language} file matches --path {p}; the pattern was never run"
+            )),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    s.emit_noted(
+        AstData {
+            matches: rows,
+            truncated,
+        },
+        note,
+    )
 }
 
 /// `astgrep --explain <file>:<line>` — the parse tree covering one line: the node

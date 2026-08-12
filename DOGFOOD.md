@@ -4592,3 +4592,220 @@ handles ("named exactly once by construction, so reporting it is noise"). A
 constructor is dead only if the class is, which `unused` reports separately.
 Excluding constructor-kind methods (the way `unused` already excludes test
 scaffolding) would clear the top of the report of guaranteed false positives.
+
+---
+
+## 2026-08-12 — `astgrep --path` matched nothing, and FTS5 was why
+
+The tinyad entry below files a P1 I could reproduce in one command: `astgrep
+--path` returns empty for *every* scope form — exact file, directory, bare
+substring — with exit 0. On this repo, 608 hits unscoped and 0 with `--path src`.
+
+The cause is a SQLite property worth knowing about. `content_fts` is an FTS5
+table with `tokenize = 'trigram'`, and the trigram tokenizer **takes over `LIKE`
+on that table**. `path` is declared `UNINDEXED`, so it has no trigram data, so
+`WHERE path LIKE '%src%'` matches nothing — not "fewer rows", *no* rows. Verified
+against the DB directly: `SELECT count(*) FROM content_fts WHERE path LIKE
+'%facts%'` is 0 while the same table holds 15 rust rows.
+
+`search` was never affected, and the contrast is the lesson: it `LIKE`s `body`,
+which *is* the indexed column, and filters paths in Rust. `astgrep` was the only
+place applying `LIKE` to `path` on the FTS table — every other `path LIKE` in the
+codebase is against `facts` or `files`, ordinary tables where it behaves. The fix
+is to filter in Rust, as `search` already did.
+
+The reporter's severity argument is right and worth preserving: it fails
+*silently*, which is the exact failure mode the skill doc warns about for
+astgrep, and the documented defence does not help — `--explain` showed a perfect
+parse tree while the scoped query stayed empty. Worse, the docs steer you into
+it ("scope to files with `--path`"). They followed that advice, concluded astgrep
+could not express their query, and stopped using the command. A broken filter
+that returns *fewer* results gets noticed; one that returns none reads as an
+answer.
+
+So `--path` matching no indexed file of that language now says so, rather than
+returning an empty success.
+
+### The other three, and what I did with them
+
+**`clones` missed the duplication astgrep found.** Consistent with the documented
+"exact equality" limit, and the reporter says so — but they are right that this
+is the case a user most wants `clones` for. I did not add `--fuzzy`: normalising
+identifiers is the similarity heuristic declined twice already this week, and it
+would find their two blocks by also inventing pairs everywhere. Took the other
+half of their suggestion instead — `clones`'s docs now point at `astgrep` for
+exactly this shape, with their example.
+
+**Cross-repo paths said "file not found"** for a file that plainly exists. It
+described the lookup that failed rather than the state that caused it; an
+absolute path into another checkout now says it is not in *this* index and names
+the root. A path that really does not exist keeps the plain message.
+
+**`members` interleaves kinds without a visible break.** Real, and documented
+rather than changed: the output *is* grouped by kind, so line numbers restart
+partway down, and projecting with `--fields name,line` hides the column that
+explains it. Reordering would cost the grouping, which is useful; saying so costs
+nothing.
+
+### And the one latent thing round three surfaced without filing
+
+That entry reports no defects — two wins and a caveat its author labels
+not-a-flaw. Worth recording plainly: a dogfooding log that only ever grows defect
+lists stops being evidence about the tool. But it did show something. The author
+ran `definitions getIPAddress` *and* `definitions GetIPAddress` as two calls,
+because the concept is spelled per language. `definitions` is exact and
+case-sensitive by design; `symbols` is substring *and* case-insensitive —
+verified, `symbols CMD_SEA` finds `cmd_search` — so one call would have done.
+Nothing was broken; the cheaper route simply was not written down. Now it is.
+
+Not adding `-i` to `definitions`: it is documented as "jump to one symbol: where
+an EXACT name is defined", `symbols` owns the fuzzy question, and the near-miss
+hint already catches a wrong case. Two commands with two jobs beats one command
+with a flag that blurs both.
+
+## 2026-08-12 — round three: cross-language consistency, where a single `search` beats a whole grep tour
+
+Turned codeq on the analytics client family — the same middleware written once per
+framework across Go, JS/TS, PHP, Ruby, C#, Rust (thirty-plus packages). This is the
+shape codeq is *most* differentiated on: a fact-level question that spans many
+languages at once.
+
+### The win: one `search` mapped an inconsistency across seven language trees
+
+The question was "which clients honor the `CF-Connecting-IP` / forwarded-header
+chain when resolving the client IP?" `search "cf-connecting-ip" -i --group` answered
+it for the entire repo in one call — and because every hit carries its enclosing
+`[symbol]`, I could see at a glance that the match was in `GetIPAddress` for chi but
+in a *test* or a *doc comment* for others, without opening a file. Cross-checked
+with `definitions getIPAddress` + `definitions GetIPAddress`, which enumerated all
+twelve IP-mapper definitions across Go/JS/TS/C# in two calls. The finding: chi
+parses the full `CF → X-Forwarded-For → X-Real-IP` chain, echo/gin defer to
+`RealIP()`/`ClientIP()`, and **fiber calls `c.IP()`** — the raw socket IP, no
+forwarded-header handling at all, so every fiber user behind a proxy logs the
+proxy's address. Doing this with grep means knowing where seven client families
+live and reading each mapper by hand; codeq made it one query plus two lookups.
+
+### The second win: `search Shutdown analytics/go` proved a negative
+
+`Shutdown()` exists on the Go core `Client` and drains the buffer on graceful exit —
+but do the framework adapters ever expose it? `search "Shutdown" analytics/go` showed
+it defined once and called *only* in the core's own tests, never in any of the four
+adapters. That single query established a real gap — the adapters create the client
+inside a closure and never return it, so no user of fiber/gin/echo/chi analytics can
+flush on shutdown (up to 60s of buffered requests lost), and it's why those adapters'
+tests have been red since the channel refactor (`ea25b021`): the test can't force a
+flush it has no handle for. This is the query grep answers with noise — the string
+`Shutdown` appears in comments and docs — whereas codeq tagged every hit with its
+enclosing symbol, so "all callers are `Test*` in core" was readable directly.
+
+### Honest caveat: codeq scoped the question, but not the judgement
+
+codeq told me *four* adapters diverge on IP handling. It could not tell me that
+fixing echo/gin would be wrong — that `RealIP()`/`ClientIP()` carry trusted-proxy
+semantics whose manual-parse replacement would reintroduce X-Forwarded-For spoofing.
+That is framework knowledge, not a fact in any index. So the tool correctly bounded
+the divergence (a name/reference question it owns) and correctly handed back the
+"which of these should actually change" decision (a semantics question it doesn't).
+I fixed only fiber, to match chi. Same seam as the app-vs-package note two rounds
+back, pointing the other way: there the public-but-unused helpers were all dead;
+here the divergence was all real, but only a quarter of it should be "fixed". The
+recurring lesson is that codeq's name-based reports are a precise *map*, and reading
+a map still needs someone who knows the territory.
+
+## 2026-08-12 — tinyad (Python): `astgrep --path` silently matches nothing, and it cost me the tool's best answer
+
+Used codeq while committing two changes to tinyad (a Python sensor-anomaly library,
+~150 files). One P1 bug, one win that the bug had hidden from me, and two nits.
+
+### P1: `astgrep --path` returns empty for every scope form
+
+Reproducible on tinyad at `codeq 0.0.1`. The same pattern, with and without `--path`:
+
+```
+$ codeq astgrep 'len($X)' --language python --limit 0 | grep -c 'src/tinyad/stream.py'
+4
+$ codeq astgrep 'len($X)' --language python --path src/tinyad/stream.py
+                                                          # (empty)
+$ codeq astgrep 'len($X)' --language python --path examples
+                                                          # (empty)
+$ codeq astgrep 'len($X)' --language python --path stream
+                                                          # (empty)
+```
+
+The unscoped run finds exactly 4 hits in `stream.py` — matching `codeq search 'len\('
+src/tinyad/stream.py -c` → `count=4` — and its top hits are all under `examples/`.
+Every `--path` form (exact file, directory, bare substring) suppresses all of them.
+So the filter isn't narrowing the result, it's emptying it.
+
+Severity is higher than "a flag is broken", for two reasons. First it fails **silently**
+with exit 0 — which is precisely the failure mode DOGFOOD and the skill doc already warn
+about ("a wrong kind and no matches look identical"), so the documented defence
+(`astgrep --explain` on a line you know matches) doesn't help: `--explain` showed me a
+perfect parse tree while the scoped query kept returning nothing. Second, the docs
+actively steer you into it — the skill text says "Scope to files with `--path <substr>`",
+and the gotchas section tells you to reach for `--path` whenever a name might be
+ambiguous. I followed that advice on every astgrep call and concluded, wrongly, that
+astgrep couldn't express my query. I stopped using it and went back to reading files.
+
+Worth checking whether `--path` on `astgrep` shares an implementation with `search`'s
+positional paths, which work fine — `codeq search 'len\(' src/tinyad/stream.py` scopes
+correctly. Suggestion regardless: when `--path` matches zero indexed files, say so on
+stderr (`nothing matches --path Z` already exists for other commands) rather than
+returning an empty success.
+
+### The win the bug hid: one structural query found duplicated logic that no text search could
+
+The actual task was a debounce change, and the question was "how many places implement
+consecutive-window confirmation?" Text search can't answer this in one shot, because the
+two copies spell their receiver differently — a local in one, an attribute in the other:
+
+```
+$ codeq search '_confirm_windows > 1' src/
+src/tinyad/stream.py:1028:35: if result.emitted and self._confirm_windows > 1:  [update]
+$ codeq search 'confirm > 1' src/
+src/tinyad/stream.py:269:30: if result.emitted and confirm > 1:  [update]
+```
+
+Two queries, each finding one, and no way to know you needed the second. The structural
+query gets both at once — but *only* without `--path`:
+
+```
+$ codeq astgrep '$A.emitted and $B > 1' --language python
+src/tinyad/stream.py:269:11:  result.emitted and confirm > 1                [update]
+src/tinyad/stream.py:1028:11: result.emitted and self._confirm_windows > 1  [update]
+```
+
+That is the single most valuable thing codeq did for me all session: it proved tinyad has
+**two parallel confirm-window implementations** — `TinyADStream.update` and
+`TinyADSensor.update` — which had silently diverged, since a new margin gate was added to
+one and not the other. This is exactly astgrep's differentiated case (shape is stable,
+naming is not), and `--path` is the flag most likely to be reached for on a known file.
+
+### `clones` did not catch that duplication
+
+`codeq clones src/tinyad/stream.py` → empty, though the two blocks above are ~14 lines
+each with identical control-flow shape (same if/else, same `min(counter + 1, N)`, same
+latch assignments), differing only in whether the bound is a local or `self._attr`. This
+is consistent with the documented "exact equality, not two implementations that differ in
+their accessor expressions" caveat, so it's not a bug — but this is the case a user most
+wants `clones` for, and astgrep found it. Worth considering a `clones --fuzzy` that
+normalises identifiers, or a doc pointer from `clones`'s empty result toward astgrep.
+
+### Nit: `members` interleaves kinds without a visible break
+
+`codeq members TinyADSensor --fields name,line` emits methods line-ordered (759→1677),
+then fields line-ordered (787→811). Grouping by kind is sensible, but with the default
+field set there's no `kind` column and no separator, so the output reads as one list
+whose line numbers inexplicably jump backwards at row 41. A blank line, or including
+`kind` whenever output is grouped by it, would remove the double-take. (The grouping is
+genuinely useful otherwise — `about TinyADSensor` surfaced `self._alert_margin` and
+`self._confirm_windows` without my opening `__init__` at all.)
+
+### Nit: cross-repo paths report "file not found"
+
+Running `codeq outline /home/tomdraper/dev/codeq/DOGFOOD.md` from inside the tinyad
+checkout gives `codeq: file not found: ...` and exit 1, for a file that plainly exists.
+The real cause is that it's outside the current index. "file not found" sends you
+checking the path; "not in the current index (run from /home/tomdraper/dev/codeq)" sends
+you to the fix. Same class as the malformed-query note further up — the message describes
+the lookup that failed rather than the state that caused it.

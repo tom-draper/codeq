@@ -6959,3 +6959,60 @@ fn clone_rows_carry_the_directories_their_group_spans() {
     assert!(by_name["one"].contains("core") && by_name["one"].contains("vendor"), "{rows}");
     assert!(by_name["one"].contains("<->"), "a cross-directory group: {rows}");
 }
+
+#[test]
+fn astgrep_path_scopes_instead_of_emptying_the_result() {
+    // `--path` returned nothing for every scope form, with exit 0. `content_fts`
+    // is an FTS5 table tokenized with `trigram`, and the trigram tokenizer takes
+    // over `LIKE` on the table — so `path LIKE ?` against an UNINDEXED column
+    // matched nothing at all. It read as "astgrep can't express that", and the
+    // documented defence (`--explain` on a line you know matches) does not help:
+    // the tree was perfect while the scoped query stayed empty.
+    let f = Fixture::new();
+    f.write("src/a.rs", "fn a() { let x: Option<u32> = None; x.unwrap(); }\n");
+    f.write("src/b.rs", "fn b() { let y: Option<u32> = None; y.unwrap(); }\n");
+    f.write("tests/t.rs", "fn t() { let z: Option<u32> = None; z.unwrap(); }\n");
+
+    let n = |args: &[&str]| {
+        let mut v = vec!["astgrep", "$X.unwrap()", "--language", "rust", "--limit", "0"];
+        v.extend_from_slice(args);
+        f.run(&v)["data"]["matches"].as_array().unwrap().len()
+    };
+    assert_eq!(n(&[]), 3, "unscoped");
+    assert_eq!(n(&["--path", "src"]), 2, "a directory");
+    assert_eq!(n(&["--path", "src/a.rs"]), 1, "an exact file");
+    assert_eq!(n(&["--path", "a.rs"]), 1, "a bare substring");
+    assert_eq!(n(&["--path", "tests"]), 1);
+
+    // A `--path` matching no file says so, instead of looking like "no matches".
+    let out = f.raw(&["astgrep", "$X.unwrap()", "--language", "rust", "--path", "nosuchdir"]);
+    assert!(out.status.success());
+    let note = String::from_utf8_lossy(&out.stderr);
+    assert!(note.contains("no indexed rust file matches --path nosuchdir"), "{note}");
+    // A real path where the pattern genuinely misses stays quiet — the note is
+    // for the case that misleads, not a banner on every empty result.
+    let quiet = f.raw(&["astgrep", "$X.never_called()", "--language", "rust", "--path", "src"]);
+    assert!(!String::from_utf8_lossy(&quiet.stderr).contains("matches --path"));
+}
+
+#[test]
+fn a_file_outside_the_index_says_so_rather_than_not_found() {
+    // An absolute path into another checkout exists on disk and is simply not
+    // indexed here. "file not found" sends you checking the path; naming the
+    // state sends you to the fix.
+    let f = Fixture::new();
+    f.write("a.rs", "fn a() {}\n");
+    let outside = f.path().parent().unwrap().join("definitely-not-here.rs");
+    std::fs::write(&outside, "fn b() {}\n").unwrap();
+
+    let out = f.raw(&["outline", outside.to_str().unwrap()]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("not in this index"), "{err}");
+    assert!(err.contains("--root"), "it should say how to reach it: {err}");
+
+    // A path that really doesn't exist keeps the plain message.
+    let gone = f.raw(&["outline", "nosuchfile.rs"]);
+    assert!(String::from_utf8_lossy(&gone.stderr).contains("file not found in this index"));
+    let _ = std::fs::remove_file(&outside);
+}

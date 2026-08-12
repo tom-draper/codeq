@@ -284,6 +284,12 @@ benchmarks — not as a step you run before querying.
   - **`pair`** on each row names the directories its group spans, the same value
     across the group — so a monorepo's deliberate vendoring (`core <-> laravel`)
     is one thing to dismiss with `--fields pair,name`, not one per row.
+  - **When `clones` is empty, try `astgrep`.** Two implementations of one
+    algorithm that differ only in their accessor expressions have different
+    trees, so `clones` cannot see them — but a structural pattern can:
+    `astgrep '$A.emitted and $B > 1'` found a duplicated confirm-window
+    implementation that `clones` returned nothing for, because the shape is
+    stable where the naming is not.
   - **Know what it cannot see.** It finds copy-paste that was never edited
     afterwards. Two implementations of one algorithm over different data
     representations — same names, same argument order, same call structure,
@@ -339,6 +345,9 @@ benchmarks — not as a step you run before querying.
   to X", "all `Ok($X)` returns", etc. Each match is annotated with its enclosing
   `[symbol]`. Limits: it's structurally exact (include optional syntax the code
   has) and can't see inside macro invocations.
+  - `--path` scopes it (exact file, directory, or bare substring); a `--path`
+    matching no indexed file of that language says so on stderr rather than
+    returning an empty success.
   - **Don't guess the node kinds — ask.** `codeq astgrep --explain <file>:<line>`
     prints the parse tree covering that line: every node's `kind`, the `field` it
     fills in its parent, and its source. Write the pattern from that. Without it a
@@ -355,7 +364,10 @@ benchmarks — not as a step you run before querying.
   resolves like a direct module import; relative (`from . import x`) and wildcard
   forms stay coarse. Verify via the edge's module string.
 - **What a type holds:** `codeq members Config` — its fields, enum variants *and*
-  methods, resolved by parse-tree containment. Not `symbols --owner Config`: that
+  methods, **grouped by kind** (methods, then fields), each group in line order.
+  So the line numbers restart partway down; that is the grouping, not a sort bug.
+  Keep `kind` in `--fields` if you project the output, or the break is invisible.
+  Resolved by parse-tree containment. Not `symbols --owner Config`: that
   filters on the stored `owner` tag, which only fields and variants carry, so it
   silently answers the same question minus every method. `--owner` is for browsing
   fields (`--owner X --kind field`), not for "what does this type have".
@@ -438,6 +450,14 @@ instead. Editing it takes effect on the next query — no reindex step.
   `codeq about build --path context` targets the `build` in that file. Without a
   scope, `definitions`/`callees`/`about` cover every same-named symbol. (`about`
   keeps callers repo-wide even when scoped.)
+  - **`definitions` is exact and case-sensitive; `symbols` is substring and
+    case-insensitive.** That difference decides which to reach for in a
+    polyglot repo, where one concept is spelled per language: Go `GetIPAddress`,
+    JS `getIPAddress`, Python `get_ip_address`. `symbols ipaddress` finds all of
+    them in one call; `definitions` needs the exact spelling each time (it does
+    suggest `closest:` on a near miss, so a wrong case is a hint, not a dead
+    end). Use `definitions` when you know the name and want to jump to it,
+    `symbols` when you are looking for a *concept* across languages.
 - **References/callers are textual (name-based), not type-resolved.** `--resolved`
   narrows them using the import graph (see above), but it's a heuristic filter,
   not real type resolution.

@@ -150,7 +150,11 @@ refresh the index — every command auto-refreshes changed files first.
   `CMD | codeq search PAT --stdin [--language L]` scans piped text instead of the
   index, for grep-in-a-pipeline over output that isn't in the repo.
 - `codeq astgrep '<PATTERN>' --language <lang>` — structural (AST) search, e.g.
-  `codeq astgrep '$X.unwrap()' --language rust`. Scope to files with `--path <substr>`.
+  `codeq astgrep '$X.unwrap()' --language rust`. Scope to files with `--path <substr>`
+  (a `--path` matching no indexed file of that language says so, rather than looking
+  like "no matches"). **Reach for this when `clones` comes back empty**: two
+  implementations that differ only in their accessor expressions have different trees,
+  so `clones` cannot see them and a pattern can.
   Each match is annotated with the `[symbol]` it sits inside.
 - `codeq astgrep --explain <file>:<line>` — the parse tree covering that line:
   each node's `kind`, the `field` it fills in its parent, and its source. **Write
@@ -164,6 +168,11 @@ refresh the index — every command auto-refreshes changed files first.
   supported on `about`, `callers`, `callees`, `definitions`, `references`,
   `implementors`, `unused`, `astgrep`, `callpath`, and more. Don't know a symbol's file? Run
   `codeq about <NAME>` — it shows the definition file(s).
+- **`definitions` is exact + case-sensitive; `symbols` is substring + case-insensitive.**
+  In a polyglot repo one concept is spelled per language (Go `GetIPAddress`, JS
+  `getIPAddress`, Python `get_ip_address`) — `symbols ipaddress` finds them all in one
+  call, where `definitions` needs each exact spelling. `definitions` to jump to a name
+  you know; `symbols` to find a concept across languages.
 - **callers/references are textual (name-based), not type-resolved.** A row with a
   blank symbol is a module-level mention (e.g. an `import`/`use`), not a real call —
   ignore it. Three flags cut false positives:
