@@ -62,10 +62,12 @@ refresh the index — every command auto-refreshes changed files first.
   Add `--examples` to show the actual call expression at each site (how NAME is really
   invoked, one per caller); `references <NAME> --calls` for every call site.
 - `codeq references <NAME>` — every occurrence, with the enclosing symbol.
-- `codeq tests <NAME>` — which tests exercise NAME *by name*. A test is recognised by
-  its file path, its own name, or a test-like enclosing module/class (so Rust's
-  `#[cfg(test)] mod tests` in the file under test counts). Empty means only exercised
-  indirectly, e.g. an internal fn tested through a CLI/public entry point.
+- `codeq tests <NAME>` — which tests exercise NAME *by name*. A test is recognised
+  structurally where a framework marks one — `#[test]`/`#[tokio::test]`,
+  `@pytest.mark.…`, `@Test`, `[Fact]` — and otherwise by file path, its own name, or a
+  test-like enclosing module/class (so Rust's `#[cfg(test)] mod tests` counts). JS/TS
+  `it(…)` and Go `TestX` have no attribute, so those still lean on path and name.
+  Empty means only exercised indirectly, e.g. an internal fn tested through a CLI.
 - `codeq affected --compare-to <ref>` — for a diff: the definitions it touched, their
   transitive callers (impacted), and the test *files* to re-run. Use after making
   changes to know what to re-check. Name-based, so it over-includes rather than misses.

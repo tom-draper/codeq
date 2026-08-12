@@ -232,11 +232,18 @@ benchmarks — not as a step you run before querying.
   exported declarations added, removed, or changed shape, grouped and with the
   previous signature. The review question a raw diff can't answer.
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
-  reference NAME. A test is recognised by test-file path, test-like name, *or* a
-  test-like enclosing module/class — so Rust's `#[cfg(test)] mod tests` inside the
-  file under test counts, as do Python `class TestFoo` / Java `class FooTest`.
-  codeq reads no attributes, so a `#[test]` fn with none of those three still
-  slips through. For the edit→find-the-test loop.
+  reference NAME. A test is recognised **structurally first**: a test *attribute*
+  the grammar already parses — `#[test]`, `#[tokio::test]` (any `::test` path),
+  `#[bench]`, `rstest`/`proptest`/`quickcheck`, `@pytest.mark.…`/`@pytest.fixture`,
+  `@Test`/`@BeforeEach` (Java/Kotlin/Scala), `[Fact]`/`[Theory]`/`[Test]`
+  (C#), `#[Test]` (PHP). Failing that, the label signals still apply: test-file
+  path, test-like name, or a test-like enclosing module/class (so Rust's
+  `#[cfg(test)] mod tests` and Python `class TestFoo` count). The marker list is
+  fixed, not a "contains test" pattern — `#[inline]` and `#[derive(Debug)]` mark
+  nothing, and neither does `@TestOnly`. Languages whose frameworks use bare
+  calls rather than attributes (JS/TS `it(…)`, Go `func TestX`) still rely on the
+  name and path. `unused` and `untested` share the same predicate, so all three
+  agree on what scaffolding is. For the edit→find-the-test loop.
 - **What a diff affects:** `codeq affected --compare-to <ref>` — the definitions the
   diff touched, their transitive callers (impacted, `--depth N`), and the test
   *files* to re-run. Composes `changed --symbols` + a caller BFS + `tests`; name-based,

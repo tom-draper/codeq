@@ -4,6 +4,54 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — Reading the `#[test]` attribute instead of guessing from the name
+
+The question that prompted this: what are we doing by *label* that could be done
+by *structure*? Most of codeq's name-based commands have to be — cross-file name
+resolution is a different project — but test recognition was a clear exception,
+and the docs already confessed it: "codeq reads no attributes, so a `#[test]` fn
+with none of those three still slips through."
+
+The reproduction is embarrassing in its simplicity:
+
+```rust
+pub fn parse(s: &str) -> usize { s.len() }
+
+#[test]
+fn parses_an_empty_string() { assert_eq!(parse(""), 0); }
+```
+
+`codeq tests parse` → "has no tests referencing it". The test is two lines below
+the function, and codeq was looking at the file path, the function's name, and
+the name of the enclosing module — three spellings — while the answer sat in the
+parse tree one node away. Same for `@pytest.mark.parametrize`, `@Test`, `[Fact]`.
+Any framework that does not make you *name* your tests `test_*` was unsupported
+by accident rather than by decision.
+
+### What made it more work than it looks
+
+Grammars disagree about where an annotation lives, and all three shapes are real:
+Rust puts `attribute_item` *before* the item as a sibling, Python wraps the
+definition in a `decorated_definition` *above* it, and Java/Kotlin/C#/PHP hang
+`modifiers`/`attribute_list` *inside* the declaration. The detector checks all
+three; a language with none yields nothing and the old label signals still run.
+
+The marker list is fixed rather than a "contains the word test" pattern, which
+would have swept up `#[cfg(test)]` on a module (that marks a *container*, already
+handled) and `@TestOnly` on production code. There is a test for the negative
+case, because widening what counts as scaffolding silently *hides* dead code —
+`unused` and `untested` share this predicate.
+
+`#[tokio::test]` is matched by any attribute path ending in `::test`, so every
+async runtime's wrapper works without enumerating them.
+
+### What stays name-based, and why
+
+JS/TS `it(…)`/`describe(…)` and Go `func TestXxx` are not attributes — one is a
+bare call, the other a naming convention the compiler itself relies on. Those
+still lean on path and name, which is now a documented limit rather than a
+silent one.
+
 ## 2026-08-12 — `stats` folded into `map --totals`, and a `graph` command
 
 ### `stats` was a strict subset — but not a free one

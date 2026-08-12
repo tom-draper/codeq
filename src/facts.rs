@@ -52,6 +52,16 @@ pub struct Fact {
     /// shares a shape, and truthfully so.
     pub shape: Option<String>,
     pub shape_nodes: i64,
+    /// The definition is marked as a test by an attribute the grammar already
+    /// parses — `#[test]`, `@pytest.mark.…`, `@Test`, `[Fact]`.
+    ///
+    /// Test recognition was a *label* check: the file path, the definition's own
+    /// name, or the name of the module around it. So a `#[test] fn
+    /// parses_an_empty_string` two lines below the function it tests was invisible
+    /// to `codeq tests`, and every framework that does not make you name your
+    /// tests `test_*` was unsupported by accident. The attribute is a fact sitting
+    /// in the parse tree; this reads it instead of guessing from spelling.
+    pub is_test: bool,
 }
 
 /// A type relation: `subtype` implements/extends `supertype`. Captures
@@ -259,6 +269,7 @@ impl LangSpec {
                                 owner: None,
                                 shape: None,
                                 shape_nodes: 0,
+                                is_test: false,
                             });
                         }
                     }
@@ -388,6 +399,7 @@ impl LangSpec {
                         owner,
                         shape,
                         shape_nodes,
+                        is_test: test_attributed(self.lang, node, src),
                     });
                 }
             }
@@ -1058,6 +1070,7 @@ fn markdown_facts(src: &[u8]) -> Extraction {
             owner: None,
             shape: None,
             shape_nodes: 0,
+            is_test: false,
         });
     }
 
@@ -1119,6 +1132,7 @@ fn collect_md_links(raw: &str, line_start: usize, line_no: usize, facts: &mut Ve
             owner: None,
             shape: None,
             shape_nodes: 0,
+            is_test: false,
         });
     };
 
@@ -1273,6 +1287,7 @@ fn component_fact(path: &str, src: &[u8]) -> Option<Fact> {
         owner: None,
         shape: None,
         shape_nodes: 0,
+        is_test: false,
     })
 }
 
@@ -1557,6 +1572,93 @@ const TYPE_KINDS: &[&str] = &[
     "create_materialized_view",
     "create_type",
 ];
+
+/// Whether a definition carries a test attribute — the structural answer to a
+/// question codeq had only ever answered from spelling.
+///
+/// Three shapes, because grammars disagree about where an annotation lives:
+/// Rust puts `attribute_item` *before* the item as a sibling, Python wraps the
+/// definition in a `decorated_definition` *above* it, and Java/Kotlin/C#/PHP hang
+/// `modifiers`/`attribute_list` *inside* the declaration. All three are checked;
+/// a language with none of them simply yields nothing, which leaves the existing
+/// path- and name-based signals to do the work as before.
+fn test_attributed(lang: &str, node: Node, src: &[u8]) -> bool {
+    let mut attrs = String::new();
+    let mut push = |n: Node| {
+        if let Ok(t) = n.utf8_text(src) {
+            attrs.push_str(t);
+            attrs.push('\n');
+        }
+    };
+
+    // Rust: `#[test]` is a preceding sibling, and a definition may carry several.
+    let mut prev = node.prev_named_sibling();
+    while let Some(p) = prev {
+        if !p.kind().contains("attribute") {
+            break;
+        }
+        push(p);
+        prev = p.prev_named_sibling();
+    }
+    // Python: the decorators sit on a wrapper node above the definition.
+    if let Some(parent) = node.parent() {
+        if parent.kind().contains("decorated") {
+            let mut c = parent.walk();
+            for ch in parent.named_children(&mut c) {
+                if ch.kind() == "decorator" {
+                    push(ch);
+                }
+            }
+        }
+    }
+    // Java / Kotlin / C# / PHP: inside the declaration.
+    let mut c = node.walk();
+    for ch in node.named_children(&mut c) {
+        let k = ch.kind();
+        if k.contains("attribute") || k.contains("annotation") || k == "modifiers" {
+            push(ch);
+        }
+    }
+
+    !attrs.is_empty() && is_test_marker(lang, &attrs)
+}
+
+/// Does this attribute text name a test? A fixed per-language list rather than a
+/// pattern, because "contains the word test" would catch `#[cfg(test)]` on a
+/// module (which marks a *container*, already handled) and `@TestOnly` (which
+/// marks production code). Deliberately covers the setup/teardown annotations
+/// too: those are test scaffolding, which is what `unused` and `untested` need to
+/// know, and they share this predicate with `tests`.
+fn is_test_marker(lang: &str, attrs: &str) -> bool {
+    match lang {
+        // `#[test]`, `#[bench]`, and the framework forms — including any path
+        // ending in `::test`, which covers `#[tokio::test]`, `#[async_std::test]`
+        // and every other runtime's wrapper without listing them.
+        "rust" => {
+            attrs.contains("[test]")
+                || attrs.contains("::test]")
+                || attrs.contains("[bench]")
+                || ["rstest", "proptest", "quickcheck", "test_case", "googletest"]
+                    .iter()
+                    .any(|m| attrs.contains(m))
+        }
+        // `@pytest.mark.…`, `@pytest.fixture`, `@unittest.…`, bare `@parametrize`.
+        "python" => {
+            ["pytest.", "unittest", "parametrize", "@fixture", "hypothesis"]
+                .iter()
+                .any(|m| attrs.contains(m))
+        }
+        "java" | "kotlin" | "scala" | "csharp" | "php" => [
+            "@Test", "@ParameterizedTest", "@RepeatedTest", "@TestFactory",
+            "@BeforeEach", "@AfterEach", "@BeforeAll", "@AfterAll", "@Before", "@After",
+            "[Test]", "[TestMethod]", "[Fact]", "[Theory]", "[SetUp]", "[TearDown]",
+            "[TestCase]", "#[Test]",
+        ]
+        .iter()
+        .any(|m| attrs.contains(m)),
+        _ => false,
+    }
+}
 
 /// The name of the type enclosing a member, for `field` and `variant` facts.
 /// Walks up to the nearest type declaration and reads its name — the identifier
@@ -2834,6 +2936,7 @@ fn sql_extras(root: Node, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>) 
                         owner: Some(owner.clone()),
                         shape: None,
                         shape_nodes: 0,
+                        is_test: false,
                     });
                 }
             }
@@ -2942,6 +3045,7 @@ fn hcl_fact(kind: &str, name: String, owner: Option<String>, node: Node, src: &[
         owner,
         shape: None,
         shape_nodes: 0,
+        is_test: false,
     }
 }
 

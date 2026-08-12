@@ -4054,24 +4054,34 @@ struct TestScopes {
 
 impl TestScopes {
     fn load(conn: &rusqlite::Connection) -> Result<TestScopes> {
+        // Two sources, unioned. The name-based one covers test *containers* whose
+        // only marking is what they are called (`mod tests`, `class FooTest`); the
+        // attribute-based one covers everything a framework marks structurally,
+        // whatever it is named. `is_test` alone is not enough — a `#[cfg(test)]
+        // mod tests` carries no test attribute of its own, and its helper
+        // functions carry none either — and names alone were never enough, which
+        // is the gap this closes: a `#[test] fn parses_an_empty_string` sitting in
+        // the file it tests matched neither the path, the name, nor the module.
         let mut stmt = conn.prepare(
-            "SELECT path, name, start_line, end_line FROM facts
-             WHERE kind IN ('module', 'class') AND name IS NOT NULL",
+            "SELECT path, name, start_line, end_line, is_test FROM facts
+             WHERE (kind IN ('module', 'class') AND name IS NOT NULL) OR is_test = 1",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(1)?,
                 r.get::<_, i64>(2)?,
                 r.get::<_, Option<i64>>(3)?,
+                r.get::<_, i64>(4)? == 1,
             ))
         })?;
         let mut by_path: HashMap<String, Vec<(i64, i64)>> = HashMap::new();
         for row in rows {
-            let (path, name, start, end) = row?;
-            // A container with no recorded end can't bound anything — skip it
-            // rather than guess a span and swallow the rest of the file.
-            if let (true, Some(end)) = (is_test_name(&name), end) {
+            let (path, name, start, end, is_test) = row?;
+            let marked = is_test || name.as_deref().is_some_and(is_test_name);
+            // A span with no recorded end can't bound anything — skip it rather
+            // than guess and swallow the rest of the file.
+            if let (true, Some(end)) = (marked, end) {
                 by_path.entry(path).or_default().push((start, end));
             }
         }

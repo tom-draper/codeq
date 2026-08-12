@@ -62,7 +62,9 @@ use rusqlite::Connection;
 // reparses them — an extraction change without one ships to nobody.
 // v26: SQL foreign keys are relation edges (`references`) — again, existing
 // `.sql` files are unchanged on disk, so only a bump reparses them.
-pub const SCHEMA_VERSION: i64 = 26;
+// v27: definitions record whether a test *attribute* marks them, so `tests`,
+// `unused` and `untested` stop relying on the name and the path alone.
+pub const SCHEMA_VERSION: i64 = 27;
 
 pub struct Db {
     pub conn: Connection,
@@ -172,6 +174,10 @@ impl Db {
                 -- literals normalised away) and how many nodes it covers.
                 shape       TEXT,
                 shape_nodes INTEGER,
+                -- The definition carries a test attribute (`#[test]`,
+                -- `@pytest.mark.…`, `@Test`, `[Fact]`) — a structural fact, as
+                -- against the path/name guesses test recognition used before.
+                is_test     INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
             );
 
@@ -247,6 +253,10 @@ impl Db {
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN shape_nodes INTEGER", []);
+        let _ = self.conn.execute(
+            "ALTER TABLE facts ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
 
         // On a schema version change, wipe derived data so the next refresh
         // rebuilds everything (including the FTS index) from scratch.

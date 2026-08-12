@@ -168,7 +168,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "rows", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v2");
-    assert_eq!(v["index"]["schema"], 26);
+    assert_eq!(v["index"]["schema"], 27);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -6569,4 +6569,88 @@ fn graph_emits_the_whole_relation_graph_not_one_node() {
         "{:?}",
         String::from_utf8_lossy(&none.stderr)
     );
+}
+
+#[test]
+fn a_test_attribute_is_read_instead_of_guessed_from_the_name() {
+    // Test recognition was three label checks — the file path, the definition's
+    // own name, the name of the module around it. So a `#[test] fn` two lines
+    // below the function it tests was invisible, and any framework that does not
+    // make you name your tests `test_*` was unsupported by accident. The
+    // attribute is a fact in the parse tree; this reads it.
+    let f = Fixture::new();
+    f.write(
+        "lib.rs",
+        "pub fn parse(s: &str) -> usize { s.len() }\n\n\
+         #[test]\nfn parses_an_empty_string() { assert_eq!(parse(\"\"), 0); }\n\n\
+         #[tokio::test]\nasync fn parses_async() { parse(\"a\"); }\n",
+    );
+    f.write(
+        "lib.py",
+        "import pytest\n\ndef parse(s):\n    return len(s)\n\n\
+         @pytest.mark.parametrize(\"s\", [\"\"])\ndef handles_anything(s):\n    assert parse(s) >= 0\n",
+    );
+    f.write(
+        "App.java",
+        "class Calc { public int add(int a, int b) { return a + b; } }\n\
+         class Verify {\n  @Test\n  public void addsTwoNumbers() { new Calc().add(1, 2); }\n}\n",
+    );
+    f.write(
+        "App.cs",
+        "class Calc { public int Mul(int a) { return a; } }\n\
+         class Verify {\n  [Fact]\n  public void MultipliesOne() { new Calc().Mul(1); }\n}\n",
+    );
+
+    // `tests` nests its rows under `data.tests` (the envelope's `rows` pointer
+    // says so); collect through that rather than assuming a bare array.
+    let names = |args: &[&str]| -> Vec<String> {
+        let mut v = vec!["tests"];
+        v.extend_from_slice(args);
+        f.run(&v)["data"]["tests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["name"].as_str().map(str::to_string))
+            .collect()
+    };
+
+    // None of these names, paths or containers say "test".
+    let rust = names(&["parse", "--path", "lib.rs"]);
+    assert!(rust.contains(&"parses_an_empty_string".to_string()), "{rust:?}");
+    assert!(rust.contains(&"parses_async".to_string()), "`#[tokio::test]`: {rust:?}");
+    assert!(names(&["parse", "--path", "lib.py"]).contains(&"handles_anything".to_string()));
+    assert!(names(&["add"]).contains(&"addsTwoNumbers".to_string()));
+    assert!(names(&["Mul"]).contains(&"MultipliesOne".to_string()));
+
+    // The three commands that share the predicate agree: an attributed test is
+    // scaffolding, so it is neither dead code nor untested public API.
+    let dead = field_set(&f.run(&["unused"]), "name");
+    for t in ["parses_an_empty_string", "handles_anything", "addsTwoNumbers"] {
+        assert!(!dead.contains(&t.to_string()), "{t} is a test, not dead code: {dead:?}");
+    }
+    let untested = field_set(&f.run(&["untested"]), "name");
+    assert!(!untested.contains(&"parse".to_string()), "it has a test now: {untested:?}");
+}
+
+#[test]
+fn an_ordinary_attribute_does_not_make_something_a_test() {
+    // "Contains the word test" would have caught `#[cfg(test)]` on a module and
+    // `@TestOnly` on production code, so the marker list is fixed rather than a
+    // pattern. This is the check that keeps it honest.
+    let f = Fixture::new();
+    f.write(
+        "lib.rs",
+        "pub fn helper() -> u32 { 1 }\n\n\
+         #[inline]\nfn calls_helper() -> u32 { helper() }\n\n\
+         #[derive(Debug)]\nstruct Config { field: u32 }\n",
+    );
+
+    assert!(
+        f.run(&["tests", "helper"])["data"]["tests"].as_array().unwrap().is_empty(),
+        "#[inline] is not a test attribute"
+    );
+    // And an unreferenced definition next to those attributes is still dead code,
+    // i.e. the change did not quietly widen what counts as test scaffolding.
+    let dead = field_set(&f.run(&["unused"]), "name");
+    assert!(dead.contains(&"calls_helper".to_string()), "{dead:?}");
 }
