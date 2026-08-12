@@ -234,9 +234,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "path", "--path");
             optn(&mut args, a, "max_tokens", "--max-tokens");
         }
-        // `codeq_path` was the old name; still accepted so a host holding a cached
-        // tool list keeps working after the rename.
-        "codeq_callpath" | "codeq_path" => {
+        "codeq_callpath" => {
             args.push("callpath".into());
             pos.push(s(a, "from")?.into());
             pos.push(s(a, "to")?.into());

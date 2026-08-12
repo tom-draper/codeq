@@ -145,6 +145,37 @@ abstraction and catches the same class of bug.
   all in `map`) and appears in neither CLAUDE.md nor SKILL.md — but it is an MCP
   tool, so removing it is a breaking change to that surface.
 
+### The `path` alias is gone — and my defence of it was bad
+
+Two turns after arguing the alias was "earning its keep", it was removed. Worth
+recording *why the argument was wrong*, because it was a plausible-sounding one.
+
+The evidence I cited: the agent session doing the review was holding an MCP tool
+list that still named `codeq_path`, which looked like exactly the cached-list
+case the compat arm existed for. But that session was **my own dev environment**,
+not a user. With no downstream consumers, there was nothing to be compatible
+with. I mistook an artifact of running the tool for a constituency.
+
+The alias also wasn't neutral. `--path` scopes fifteen commands and `path` is a
+key on every row, so in codeq the word means "file path" everywhere except here.
+Keeping the alias made the natural mistake *harder* to diagnose:
+
+```
+$ codeq path src/db.rs          # before
+error: the following required arguments were not provided:  <TO>
+
+$ codeq path src/db.rs          # after
+error: unrecognized subcommand 'path'
+```
+
+The first reads as "you called this command wrong"; only the second says "that
+isn't the command". A compat shim that degrades the error message for a typo,
+in exchange for compatibility nobody needs, is worse than no shim.
+
+(clap's near-miss suggestion for `path` is `at`, not `callpath` — edit distance
+doesn't favour a substring. Left as-is; a wrong suggestion under a correct error
+beats a correct-looking error about the wrong thing.)
+
 ### `callpath` vs `path` — the rename was complete outside, unfinished inside
 
 Checked the one pair that is a literal alias. Every *surface* is correct: the CLI

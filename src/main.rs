@@ -286,9 +286,12 @@ enum Command {
     },
     /// The shortest call chain from one symbol to another (`from` calls … calls
     /// `to`), if one exists — reachability with the route shown. Name-based.
-    /// (Was `path`, which still works: in a code CLI "path" reads as a *file*
-    /// path first, so `codeq path a b` scanned as "the path to file a".)
-    #[command(name = "callpath", alias = "path")]
+    /// (Renamed from `path`: in a code CLI "path" reads as a *file* path first,
+    /// and `--path` scopes fifteen other commands, so `codeq path a b` scanned as
+    /// "the path to file a". The alias is gone — keeping it meant `codeq path
+    /// src/db.rs` failed with "required argument <TO>" instead of "no such
+    /// command", making the likely mistake harder to diagnose, not easier.)
+    #[command(name = "callpath")]
     Callpath {
         /// The symbol the chain starts at.
         from: String,

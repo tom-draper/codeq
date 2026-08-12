@@ -66,8 +66,8 @@ refresh the index — every command auto-refreshes changed files first.
   `codeq callees <NAME> --depth 3` (down).
 
 **Trace control flow**
-- `codeq callpath <FROM> <TO>` — the shortest call chain from FROM to TO (nothing to do
-  with file paths; `path` remains as an alias). Names resolve
+- `codeq callpath <FROM> <TO>` — the shortest call chain from FROM to TO. Both
+  arguments are *symbols*, not files: this has nothing to do with `--path`. Names resolve
   across ALL languages, so a common name like `main` may land in a Python/JS file —
   scope the start with `--path`: `codeq callpath main write --path src/main.rs`.
 

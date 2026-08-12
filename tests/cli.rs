@@ -2250,18 +2250,24 @@ fn hotspots_calls_mode_excludes_bare_mentions_and_declarations() {
 }
 
 #[test]
-fn callpath_is_the_command_name_and_path_still_works() {
-    // Renamed because "path" reads as a file path in a code CLI; the old name
-    // stays an alias so existing scripts and cached MCP tool lists keep working.
+fn callpath_is_the_only_name_for_it() {
+    // `path` was the original name and briefly survived as an alias. It is gone:
+    // `--path` scopes fifteen commands and `path` is a key on every row, so the
+    // word means "file path" everywhere else in codeq. Keeping the alias meant
+    // `codeq path src/db.rs` -- the natural thing to type -- failed with
+    // "required argument <TO>", diagnosing a typo as a missing symbol.
     let f = Fixture::new();
     f.write("a.rs", "fn top() { mid(); }\nfn mid() { bottom(); }\nfn bottom() {}\n");
 
-    let new = f.run(&["callpath", "top", "bottom"]);
-    let old = f.run(&["path", "top", "bottom"]);
-    assert_eq!(new["data"], old["data"], "alias must behave identically");
-    let steps = new["data"].as_array().unwrap();
+    let steps = f.run(&["callpath", "top", "bottom"]);
+    let steps = steps["data"].as_array().unwrap();
     let names: Vec<&str> = steps.iter().map(|s| s["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["top", "mid", "bottom"], "{steps:?}");
+
+    let out = f.raw(&["path", "top", "bottom"]);
+    assert!(!out.status.success(), "`path` must not resolve to a command");
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("unrecognized subcommand"), "should read as a typo, not a bad call: {err}");
 }
 
 #[test]
@@ -2295,7 +2301,7 @@ fn path_finds_shortest_call_chain() {
          fn top() { mid(); }\n\
          fn other() {}\n",
     );
-    let v = f.run(&["path", "top", "leaf"]);
+    let v = f.run(&["callpath", "top", "leaf"]);
     let steps: Vec<&str> = v["data"].as_array().unwrap().iter()
         .map(|r| r["name"].as_str().unwrap()).collect();
     assert_eq!(steps, ["top", "mid", "leaf"], "chain wrong: {steps:?}");
@@ -2313,11 +2319,11 @@ fn path_scopes_the_start_symbol_by_path() {
     f.write("b.rs", "fn entry() { unrelated(); }\nfn unrelated() {}\n");
 
     // Scoped to b.rs, `entry` can't reach leaf.
-    let none = f.run(&["path", "entry", "leaf", "--path", "b.rs"]);
+    let none = f.run(&["callpath", "entry", "leaf", "--path", "b.rs"]);
     assert_eq!(none["data"].as_array().unwrap().len(), 0, "b.rs entry shouldn't reach leaf");
 
     // Scoped to a.rs, it does — and starts from the a.rs definition.
-    let hit = f.run(&["path", "entry", "leaf", "--path", "a.rs"]);
+    let hit = f.run(&["callpath", "entry", "leaf", "--path", "a.rs"]);
     let rows = hit["data"].as_array().unwrap();
     assert_eq!(rows[0]["name"], "entry");
     assert_eq!(rows[0]["path"], "a.rs", "start location should be the scoped def");
@@ -2331,11 +2337,11 @@ fn path_empty_when_unreachable_and_single_when_self() {
     f.write("a.rs", "fn leaf() {}\nfn top() { leaf(); }\n");
 
     // leaf does not reach top.
-    let none = f.run(&["path", "leaf", "top"]);
+    let none = f.run(&["callpath", "leaf", "top"]);
     assert_eq!(none["data"].as_array().unwrap().len(), 0, "should be unreachable");
 
     // a symbol reaches itself in zero hops.
-    let self_path = f.run(&["path", "top", "top"]);
+    let self_path = f.run(&["callpath", "top", "top"]);
     let rows = self_path["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["name"], "top");
@@ -2350,9 +2356,9 @@ fn path_respects_max_depth() {
         "fn d4() {}\nfn c3() { d4(); }\nfn b2() { c3(); }\nfn a1() { b2(); }\n",
     );
     // a1 -> b2 -> c3 -> d4 is 3 hops; a max-depth of 2 can't reach d4.
-    let shallow = f.run(&["path", "a1", "d4", "--max-depth", "2"]);
+    let shallow = f.run(&["callpath", "a1", "d4", "--max-depth", "2"]);
     assert_eq!(shallow["data"].as_array().unwrap().len(), 0, "3-hop chain found at depth 2");
-    let deep = f.run(&["path", "a1", "d4", "--max-depth", "3"]);
+    let deep = f.run(&["callpath", "a1", "d4", "--max-depth", "3"]);
     let steps: Vec<&str> = deep["data"].as_array().unwrap().iter()
         .map(|r| r["name"].as_str().unwrap()).collect();
     assert_eq!(steps, ["a1", "b2", "c3", "d4"]);
