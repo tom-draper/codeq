@@ -122,7 +122,9 @@ enum Command {
     /// or to find the copy-paste that needs the same fix in several places.
     Clones {
         /// Restrict to paths containing this substring.
-        #[arg(long)]
+        ///
+        /// Positional, like `unused`, `untested`, `hotspots` and `tree`. It was
+        /// the one command in that family that insisted on `--path`.
         path: Option<String>,
         /// Only this kind (e.g. function, method).
         #[arg(long)]
@@ -130,6 +132,13 @@ enum Command {
         /// Minimum syntax nodes a shared shape must cover.
         #[arg(long, default_value_t = 24)]
         min_nodes: i64,
+        /// Include definitions in tests.
+        ///
+        /// Off by default: two assertions in sequence share a shape however
+        /// different the assertions are, so a test suite is a field of true
+        /// positives nobody wants, and it drowns the duplication worth finding.
+        #[arg(long)]
+        include_tests: bool,
         /// Maximum rows to return (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
@@ -450,6 +459,13 @@ enum Command {
         /// Fold below this nesting level (counts still include everything below).
         #[arg(long, default_value_t = 3)]
         depth: usize,
+        /// Restrict to one language.
+        ///
+        /// Often what you actually want in an asset-heavy repo: `--min-symbols`
+        /// counts markdown headings as definitions (they are), so a tree of
+        /// per-country READMEs can outrank the source directory.
+        #[arg(long)]
+        language: Option<String>,
         /// Hide directories holding fewer than this many definitions — jumps
         /// straight to where the code lives in a data- or asset-heavy repo.
         #[arg(long, default_value_t = 0)]
@@ -827,12 +843,14 @@ fn main() -> ExitCode {
             path,
             kind,
             min_nodes,
+            include_tests,
             limit,
         } => commands::cmd_clones(
             &cwd,
             path.as_deref(),
             kind.as_deref(),
             min_nodes,
+            include_tests,
             limit,
             out,
         ),
@@ -985,11 +1003,21 @@ fn main() -> ExitCode {
         ),
         Command::Tree {
             path,
+            language,
             depth,
             min_symbols,
             files,
             limit,
-        } => commands::cmd_tree(&cwd, path.as_deref(), depth, min_symbols, files, limit, out),
+        } => commands::cmd_tree(
+            &cwd,
+            path.as_deref(),
+            language.as_deref(),
+            depth,
+            min_symbols,
+            files,
+            limit,
+            out,
+        ),
         Command::Hotspots {
             path,
             kind,

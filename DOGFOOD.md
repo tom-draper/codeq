@@ -4,6 +4,403 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — Second pass on `persona`: five bugs, one of them structural
+
+Continuing the entry below. Same repo, deeper into the commands I hadn't
+touched — `explore`, `affected`, `api --compare-to`, `astgrep`, `untested`,
+`definitions`. Two more refactors landed (2,874 tests green). Findings ranked by
+what I'd fix first.
+
+(The `target/release` binary was rebuilt part-way through the session, so all
+five repros below were re-run against the later build — 47,000,176 bytes, built
+15:49 — and all five still reproduce. `src/commands.rs` has edits newer than
+that binary, so anything already fixed there is not reflected here.)
+
+### 1. A Python module-level constant is not a definition
+
+This is the structural one. codeq indexes `DATA_DIR = Path(__file__).parent /
+"data"` as *nothing*:
+
+```
+$ codeq definitions DATA_DIR
+# codeq: no symbol named 'DATA_DIR'
+
+$ codeq references DATA_DIR --group
+src/persona/lib/generate.py (7)
+10:0: DATA_DIR = Path(__file__).parent.parent / "data"     ← the definition
+…
+src/persona/scripts/gen_readme.py (2)
+8:0: DATA_DIR = Path(__file__).parent.parent / "data"      ← and again
+```
+
+`references` can see the assignment. `definitions` denies the name exists — and
+says so with the *typo* message, the one documented to mean "you misspelled it".
+
+The concrete cost: this repo had **three** copies of that same `DATA_DIR`
+expression across three files, and deduplicating them was the task I was on.
+`definitions NAME` is precisely the query for "where is this defined, and is it
+defined more than once" — and it returned "no such symbol". I found the third
+copy by opening `gen_readme.py` for an unrelated reason.
+
+It degrades the commands above it rather than failing loudly:
+
+```
+$ codeq about NAME_REFERENCE_YEAR
+# definitions          ← blank
+# callers
+src/persona/lib/generate.py:280: function _name_cohort
+
+$ codeq explore ADULT_ONLY_FEATURES
+# focus                ← blank
+# callers
+src/persona/lib/generate.py:361: function gen_sample
+# source               ← blank
+```
+
+`explore`'s documented contract is "the definition is always kept, the rest fill
+the budget". Here the focus is empty and *no source is returned at all*, even
+though there was a caller it could have shown.
+
+And `outline src/persona/lib/format.py` returns three functions — omitting
+`alias`, a 52-entry dict that is the entire point of the file and the thing
+anyone opening it is looking for. `symbols --kind constant --language python` is
+empty repo-wide.
+
+What makes this feel like an oversight rather than a decision is that both
+neighbouring cases are already handled. The docs argue *at length* that a JS
+module-scope binding is a definition — "a plain `export const VERSION` is public
+API" — and Python class-body assignments are already extracted as fields (my new
+`_WeightDraw.age = staticmethod(gen_age)` was indexed as `field age`). Python
+assignment extraction exists; it just doesn't run at module scope, which is
+where `DATA_DIR`, `alias`, `ADULT_ONLY_FEATURES`, `CONDITIONAL_FEATURES` and
+every settings constant in every Python project lives.
+
+### 2. `references` gives the typo message when `--path` empties an external name
+
+Minimal repro, three commands:
+
+```
+$ codeq references HTTPException
+src/persona/api/app.py:4:29: from fastapi import FastAPI, HTTPException, …
+src/persona/api/app.py:47:39: def _location_not_found(data: dict) -> HTTPException:
+src/persona/api/app.py:48:11: return HTTPException(
+
+$ codeq references HTTPException --path lib
+# codeq: no symbol named 'HTTPException'          ← wrong branch
+
+$ codeq references gen_sample --path scripts
+# codeq: 'gen_sample' is defined at src/persona/lib/generate.py:345 but nothing
+  matches --path scripts                          ← correct branch
+```
+
+The "your filter, not the code" branch requires an in-repo *definition*. A name
+imported from a third-party package has none, so it falls through to "this name
+does not exist" — for a name codeq had listed three references to one command
+earlier.
+
+I did not spot this abstractly; I acted on it. Having just deleted `from pathlib
+import Path` from a file, I ran `codeq references Path --path scripts`, read
+"no symbol named 'Path'" as confirmation the name was gone, and moved on. Ruff
+later agreed, so the edit was fine — but I had believed a message that was
+answering a different question. The empty-result notes are sold as the reason to
+read stderr, which makes a wrong one costlier than no message at all.
+
+### 3. `affected` uses `line` for two different things in one result
+
+```
+# changed
+src/persona/api/handler.py:38: function resolve_path_key
+src/persona/api/handler.py:72: function _ancestor_leaf_features
+# impacted
+src/persona/api/handler.py:46: function resolve_path_key
+src/persona/api/handler.py:77: function _ancestor_leaf_features
+```
+
+Same function, same command, two line numbers. `resolve_path_key` is defined at
+38 and spans to 54; line 46 is `key = resolve_key(segments[0], data)` inside it.
+Line 77 is the `leaf_ancestor_keys(...)` call inside `_ancestor_leaf_features`.
+So **`changed` rows carry the definition's line and `impacted` rows carry the
+call site's**. Verified on four symbols (`gen_sample` 345 vs 349, `gen_samples`
+543 vs 583).
+
+CLAUDE.md states the row contract as "`name` is the definition a row *is* …
+position is `line`/`col`". An impacted row breaks it silently: click the line
+and you land mid-body. The entry point of the impact *is* worth reporting — but
+as its own field, the way `callees --examples` already carries `call_line`.
+
+### 4. `api --compare-to` reports a re-export as a removed export
+
+I moved `resolve_key` from `api/handler.py` down into `lib/generate.py` and
+imported it back at module scope in `handler.py`. Every existing
+`from persona.api.handler import resolve_key` still resolves — nine call sites
+in the test suite prove it, and the suite is green. codeq:
+
+```
+$ codeq api src/persona/api/handler.py --compare-to HEAD
+# removed
+src/persona/api/handler.py:0: function resolve_key was=def resolve_key(name: str, data: dict) -> str | None:
+```
+
+For the command pitched as "the review question a raw diff can't answer", a
+non-breaking move reported as a removed public export is the wrong answer to the
+only question it exists to answer — and it is the answer that would block a PR.
+A module-scope `from x import y` binds a public name in Python, and codeq
+already stores it as an import fact; JS `export { x } from './y'` is the same
+shape. Counting non-underscore module-scope imports as surface would fix both.
+
+### 5. Member visibility ignores the owner's visibility
+
+`_WeightDraw` and `_ArrayDraw` are private by the exact rule codeq uses for
+Python (leading underscore). Their members are reported as public API:
+
+```
+$ codeq untested src/persona            # documented: "Public only"
+src/persona/lib/generate.py:320: value = staticmethod(gen_feature)
+src/persona/lib/generate.py:332: def value(proc: dict, rng: np.random.Generator) -> str:
+```
+
+and `api --compare-to HEAD` announced `age`, `value` and `name` as newly *added*
+public API. A member of a private type is not public API in any language codeq
+supports. The visibility rule is being applied per-definition without consulting
+the `owner` codeq already stores.
+
+(Amusing corroboration of a documented limit, in the same output: `age` and
+`name` were *not* listed as untested while `value` was — because `tests` found
+test functions mentioning the words "age" and "name" somewhere. Over-matching on
+common names, exactly as advertised.)
+
+### What was genuinely good
+
+`explore get_features --max-tokens 1200` returned, in one call and inside
+budget: the definition, both production callers, all three callees, five test
+functions, every source block verbatim, and the focus file's import list. That
+is the entire review packet for a change to that function, and it is why I
+trusted the refactor. Nothing else I have replaces it.
+
+`astgrep 'rng.choice($$$)' --language python` was the right tool for *verifying*
+a refactor rather than exploring one — "is the drawing primitive now confined to
+the two adapters?" came back as eight sites, all in one file, three of them the
+new adapter methods, each tagged with its enclosing symbol. Structural search
+earning its keep on a question text search answers badly.
+
+`--group` on `references DATA_DIR` (21 rows over 5 files) read distinctly better
+than the flat form — the per-file counts were the answer, not the rows.
+
+One want: five of the eight source blocks `explore` spent its budget on were
+tests. Before an edit that is useful; when the budget is tight I would like
+`--no-tests` to spend it on production callers instead.
+
+## 2026-08-12 — Acting on the `persona` findings (three of four, and half of the fourth)
+
+The four points below were filed by an agent using codeq on a repo that is not
+this one — the first outside-in dogfooding this log has. That is worth more than
+codeq-on-codeq: every finding was about a *default* being wrong for a codebase
+that doesn't look like this one.
+
+### Fixed as filed
+
+**Decorator-registered entry points (#2).** A FastAPI route's only reference is
+the `@app.get(...)` line above it, so `unused` reported every entry point in
+every decorator-driven codebase — 100% of its output on that repo. Definitions
+now carry a `decorator` and the row is **tagged, not suppressed**: suppressing
+anything decorated would hide real dead code, which is the one thing `unused`
+must not do. The filer proposed exactly this and was right. Inert decorators
+(`@property`, `#[derive]`, `#[inline]`) are not tagged, so the tag means
+something when it appears — that exclusion list is the whole judgement in the
+change, and there is a test pinning it.
+
+Cost: nothing. `attributes_of` already existed from the `#[test]` work earlier
+the same day; this is a second reader over the same three grammar shapes.
+
+**`tree --language` (#3).** `--min-symbols` is *documented* as the way into an
+asset-heavy repo and cannot work in one, because a markdown heading is a
+definition and 281 per-country READMEs outrank the source 68 to 1. Indexing docs
+is a good decision and discounting headings inside `--min-symbols` would erode
+it, so the fix is the axis that was missing: `tree --language python` now scopes
+files and counts, the way `files --language` always has.
+
+**The `(unknown)` headline (#4).** Accurate, and still reads like a coverage gap
+rather than "this repo is mostly images". `map` now says it in words on stderr
+when unindexable files are the majority — a note, because this is guidance for
+reading a number, which is what the note channel is for. Nothing when the repo is
+mostly code: a banner on every call would be its own noise.
+
+`map --language` was asked for alongside `tree --language` and **not** added.
+`map`'s whole output is a per-language breakdown; filtering it to one language
+makes that section a single row while making the rest useful, which is an
+incoherent command. `tree --language` and `files --language` cover the question.
+
+### Half-fixed, and the half I refused
+
+**`clones` (#1)**, filed as "the finding I'd act on first". Two real defects,
+fixed: it was the only command in its family insisting on `--path` instead of a
+positional path, and it did not exclude tests. That second one is most of the
+complaint — every row it returned on that repo was test boilerplate, because two
+assertions in sequence share a shape however different the assertions are. Tests
+are now excluded by default, same predicate as `unused`/`untested`.
+
+The proposed cure for the 0-of-5 miss — matching on naming adjacency, `X` next to
+`_X_processed` — I declined. That is a similarity heuristic wearing a structural
+costume, and it is the trade this project keeps refusing: it would find those
+five pairs and confidently invent pairs in every repo with an `_impl`/`_async`
+suffix convention. The filer's own write-up concedes the design argument is
+sound.
+
+The honest response to "exact shape equality missed five real clones" is to
+**document what it cannot see**, which the help text now does: `clones` finds
+copy-paste that was never edited afterwards; two implementations of one algorithm
+over different data representations have different trees; read an empty result as
+"no exact copies", not "no duplication". A limitation stated is worth more than a
+threshold nobody can calibrate.
+
+## 2026-08-12 — Using codeq on someone else's repo: a refactor of `persona`
+
+Not codeq-on-codeq this time. I drove a real refactor of `persona` (a Python
+demographic-persona generator: 12 source files, ~570 lines in the one module
+that matters, sitting inside a 2,683-file tree that is otherwise flag PNGs and
+JSON datasets) using codeq as the only navigation tool. The refactor landed —
+one import cycle removed, four pairs of parallel implementations collapsed to
+one, 2,874 tests still green. What follows is what codeq got right and the four
+places it got in the way.
+
+### `deps --cycles` was the best command of the session
+
+The module had two *function-local* imports (`from persona.api.handler import
+resolve_key` inside two functions in `lib/generate.py`) — the kind of thing you
+read past. One call:
+
+```
+$ codeq deps --cycles
+src/persona/api/handler.py -> src/persona/lib/generate.py -> src/persona/api/handler.py
+```
+
+That is the whole diagnosis: `lib` reaches up into `api`, so the import has to
+be deferred, so the layering is inverted. It was also the *cause* of the
+duplication I was there to fix — with `lib` unable to import from `api` at
+module scope, the API path had grown its own copies of half the generator. One
+command turned "why is this import indented?" into a root cause. Nothing else in
+the toolbox would have shown me that in one step.
+
+`references NAME` after each edit was the other repeat winner — a
+did-I-miss-a-call-site check where the *empty* answer is the useful one:
+
+```
+$ codeq references _segments
+# codeq: no symbol named '_segments'
+```
+
+grep prints nothing and means the same thing far less clearly. And `read <file>`
+folded turned a 579-line module into ~70 lines of shape, which is how the
+`X` / `X_api` / `_X_processed` naming pattern — five duplicated pairs — became
+visible at all. That is the pitch, working exactly as written.
+
+### 1. `clones` found nothing, on a file with five clone pairs
+
+This is the finding I'd act on first. The module contained five deliberate
+parallel implementations of one algorithm over two data representations: raw
+`{option: weight}` JSON (CLI) and precomputed numpy arrays (API).
+`_merge_leaves`/`_merge_processed`, `gen_name`/`_gen_name_processed`,
+`resolve_location`/`resolve_api_location`,
+`resolve_location_path`/`resolve_api_path`, plus a copy-pasted expression.
+Collapsing them *was* the refactor (I merged four of the five; the
+`resolve_*` pair genuinely differs — filesystem paths vs preloaded keys — and
+was left alone deliberately).
+
+```
+$ codeq clones --path src --min-nodes 10
+(empty)
+$ codeq clones --min-nodes 20
+tests/test_generate.py:515: function test_get_features_regular_location …
+… 13 more rows, every one of them test boilerplate
+```
+
+Zero of five. Repo-wide, every row it did return was two-assert test functions —
+true positives that no one wants. The docs are honest that this is exact
+structural equality, and I'm not asking for a similarity score; the design
+argument in the help text is sound. But the measured result on a real refactor
+is that `clones` had a 0% hit rate on the duplication a human would name
+immediately, and a 100% noise rate on what it did return. Exact shape equality
+finds copy-paste that was never edited afterwards, and copy-paste that was never
+edited afterwards is the *cheapest* kind to find by other means.
+
+The pairs above share names, argument order, docstring ("Preprocessed-array
+equivalent of X"), and call structure — they differ only in the accessor
+expressions. If there's a cheap signal here it is probably naming adjacency
+(`X` and `_X_processed` in one file) rather than tree shape.
+
+Also: `codeq clones src/persona` → `error: unexpected argument 'src/persona'`.
+`unused`, `untested`, `hotspots`, `tree` and `search` all take a positional
+path; `clones` is the only one that insists on `--path`. Small, but I hit it on
+my first try.
+
+### 2. `unused` reports every decorator-registered entry point
+
+```
+$ codeq unused src/persona
+src/persona/api/app.py:97: function gen_personas visibility=public
+```
+
+`gen_personas` is a FastAPI route. Its only "reference" is the `@app.get(...)`
+line directly above it. This is not an exotic pattern — it is how every Python
+web framework, every JS decorator-based framework, every plugin registry and
+every CLI built on `click` names its entry points. On this repo it was 100% of
+the `unused` output, so the signal-to-noise on the command was zero.
+
+The fix looks cheap and it is the same mechanism the `#[test]` work already
+landed: the decorator is *in the parse tree, attached to the definition*. Either
+suppress a definition that carries any unrecognised decorator, or (better, since
+suppression can hide real dead code) keep the row and tag it
+`decorated=@app.get`, letting the reader discount it in one glance. Python's
+`decorated_definition` node is already being read for pytest markers.
+
+### 3. In a data-heavy repo, `tree --min-symbols` points at the data
+
+The help for `--min-symbols` says it "jumps straight to where the code lives in
+a data- or asset-heavy repo". This is a data-heavy repo — 2,106 PNGs, 280 JSON
+datasets, 12 Python files — so I used exactly that, and:
+
+```
+$ codeq tree --min-symbols 5
+    src/persona/api: files=3 symbols=14
+    src/persona/data: files=2667 symbols=2667   ← zero lines of code
+    src/persona/lib: files=3 symbols=39
+```
+
+The data directory outranks the source by 68x, because each of its 281 country
+folders has a `README.md` and **a markdown heading is a definition**. Indexing
+docs is a good decision and I don't want it reverted; the interaction is that
+prose headings and functions land in one undifferentiated `symbols` count, so
+the one knob offered for asset-heavy repos cannot separate them here. Same for
+`map --totals`: `markdown symbols=2685, python symbols=161`.
+
+What actually oriented me was `codeq files --language python` (12 rows, done).
+`files` has `--language`; `map` and `tree` don't. Putting `--language` on both —
+or having `--min-symbols` discount markdown — would make the documented
+orientation path work on the repos its own help text names.
+
+### 4. `map --totals` spends its headline number on binaries
+
+```
+totals: files=2683 bytes=60048758 symbols=2846
+(unknown) files=2108 bytes=56855576 symbols=0
+```
+
+95% of those bytes are flag PNGs that codeq cannot index and shouldn't. The
+`(unknown)` row is accurate but reads like a gap in coverage rather than "this
+repo is mostly images". Saying so directly — *2,108 files (56 MB) are not
+indexable source* — would turn a number I had to interpret into one I could use.
+
+### The refactor itself, for the record
+
+Four changes, all found through codeq: hoisted the duplicated location-string
+split into `lib/format.py`; collapsed the two persona-drawing loops into one
+`gen_sample` taking a draw strategy; replaced `_merge_processed` and
+`_ancestor_leaf_features` with delegations to their twins; and moved
+`resolve_key` down into `lib/` to break the cycle. The `resolve_*` pair stays
+duplicated on purpose. Both code paths now produce
+byte-identical personas for the same seed — which they always should have, and
+which nothing was checking.
+
 ## 2026-08-12 — Reading the `#[test]` attribute instead of guessing from the name
 
 The question that prompted this: what are we doing by *label* that could be done
@@ -3721,3 +4118,83 @@ evidence about real code; only real code is.
 Excluding `require`-rooted values also confirmed the change pays for itself on the
 repos where it changes nothing structural: zod gained `NEVER`, `INVALID`, `BRAND` and
 `EMPTY_PATH` — documented, exported API that no symbol command could previously find.
+
+---
+
+## 2026-08-12 — dogfooding on an outside repo (api-analytics): a real bug, and where `clones` over-reports
+
+First run against a repo codeq did not grow up on: a Go/Svelte/Rust/PHP/Python
+monorepo (579 files, 3,222 symbols). The brief was "explore it with codeq instead
+of grep/rg/find, fix something real, and log the friction." One bug fixed, two
+notes worth keeping — one a friction, one a doc-precision nit — and a couple of
+plain wins.
+
+### The win chain: `unused` → a dead sibling → a live bug
+
+`unused dashboard/src` returned eight exported-but-unreferenced helpers.
+`references`/`search -w` confirmed each appears exactly once in the whole repo
+(distinctive names, indexed Svelte templates included), so they are genuinely
+dead — not a name-collision artefact. Low-value on their own. But reading the
+*neighbourhood* of one of them is what paid out: `dateInPrevPeriod` (dead) sits
+beside `dateInPeriod` (live) and both call `periodToDays`, whose `'6 months'`
+case returned `30 * 7` — 210 days, i.e. seven months. `'month'` returns `30`, so
+the intended value was plainly `30 * 6`.
+
+`callers periodToDays --examples` then gave the entire blast radius in one call —
+`aggregate.ts` (bucket sizing), `plotly.ts` (axis), `utils.ts` (a `count / (24 *
+days)` per-hour rate), `periodFilter.ts`, and `dateInPeriod` (the filter window) —
+each row carrying the actual call line. That single command is what turned "typo
+in a helper" into "every 6-month view is inflated ~17%," and it replaced the
+rg-plus-open-five-files dance I'd otherwise have done. Fixed to `30 * 6`;
+`svelte-check` clean, 0/0. The dead-helper report was the map; the bug was the
+treasure next to the X.
+
+### Friction: `clones` on a multi-package monorepo is dominated by *intentional* mirrors
+
+`clones --min-nodes 40` put its biggest groups on copies that are supposed to be
+copies: the PHP `core` package mirrored verbatim into the `laravel` and `php`
+publishable packages (`Client`/`Config`/`RequestData`/`Mappers`, 3 copies each),
+and the Python `python/python` monolith re-shipping each framework adapter it also
+distributes standalone (`tornado`, `fastapi`, `starlette` …). Thirty-plus of the
+top rows were expected vendoring. codeq is *correct* — they are exact structural
+clones — and the existing philosophy ("report structure as a fact, and the right
+response is often 'yes, and that is fine'") holds. But on a repo whose release
+model is "ship N copies of one package on purpose," the deliberate copies bury the
+accidental ones, and there's no path-aware way to say so. The `pick`-in-two-bench-
+files case from the codeq round was one judgement call; here it's the *shape* of
+the whole result. Worth considering: group clone rows by directory-pair (so a
+reviewer dismisses `php/core ↔ php/laravel` once, not twelve times), or a
+`--exclude-pair a:b` / `.codeqignore`-style pairing so the residual is the
+*unexpected* duplication. This is the first repo I've dogfooded where the answer
+was right and still hard to read.
+
+### Doc-precision nit: the reindex notice, and content-hash freshness
+
+CLAUDE.md says the refresh count "is only shown under `--json`/`--meta`." In
+plain-text mode a `# codeq: reindexed N file(s)` notice does print on a real
+reparse — I chased where it went and it is on **stderr** (present with stdout
+discarded, absent with stderr discarded), so stdout stays pure `path:line:col:`
+rows. Good behaviour; the wording just implies text mode is silent, and for a
+beat I thought a banner was contaminating stdout. One line in the doc that a
+stderr notice appears would close it.
+
+Verified in passing, and worth stating because it's the *right* behaviour: a bare
+`touch` triggered **no** reparse (no notice, unchanged output) — freshness is keyed
+on content hash, not mtime, so re-saving a file with no edits costs nothing. Only a
+genuine content change reindexed (`1 file(s)`). That's exactly what you want from
+an every-query-auto-refreshes design.
+
+### Smaller note: `unused` can't know app-vs-package
+
+The eight dead helpers are all `visibility=public`. In an *application* that means
+dead; in a *publishable package* it would mean API. codeq surfaces the right signal
+(`visibility=public`) and can't be expected to know which subtree ships to a
+registry — but on a monorepo that mixes both (this one does: `dashboard/` app vs
+`analytics/*` packages), that's a judgement the reader has to add. Not a flaw,
+just the seam where the name-based report hands back to a human.
+
+Net: codeq carried the whole session — `map`/`tree` to orient, `unused` to find the
+lead, `read --lines`/`outline` to compare siblings without ingesting files, and
+`callers --examples` to size the bug — with no shell-out to grep/find. The one bug
+it surfaced was worth more than the eight dead functions it was actually asked
+about, which is becoming the recurring shape of these rounds.

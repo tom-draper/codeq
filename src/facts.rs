@@ -62,6 +62,9 @@ pub struct Fact {
     /// tests `test_*` was unsupported by accident. The attribute is a fact sitting
     /// in the parse tree; this reads it instead of guessing from spelling.
     pub is_test: bool,
+    /// A decorator that may register this definition with something codeq cannot
+    /// see (`@app.get("/x")`, `@click.command()`). See [`registering_decorator`].
+    pub decorator: Option<String>,
 }
 
 /// A type relation: `subtype` implements/extends `supertype`. Captures
@@ -270,6 +273,7 @@ impl LangSpec {
                                 shape: None,
                                 shape_nodes: 0,
                                 is_test: false,
+            decorator: None,
                             });
                         }
                     }
@@ -400,6 +404,7 @@ impl LangSpec {
                         shape,
                         shape_nodes,
                         is_test: test_attributed(self.lang, node, src),
+                        decorator: registering_decorator(node, src),
                     });
                 }
             }
@@ -1071,6 +1076,7 @@ fn markdown_facts(src: &[u8]) -> Extraction {
             shape: None,
             shape_nodes: 0,
             is_test: false,
+            decorator: None,
         });
     }
 
@@ -1133,6 +1139,7 @@ fn collect_md_links(raw: &str, line_start: usize, line_no: usize, facts: &mut Ve
             shape: None,
             shape_nodes: 0,
             is_test: false,
+            decorator: None,
         });
     };
 
@@ -1288,6 +1295,7 @@ fn component_fact(path: &str, src: &[u8]) -> Option<Fact> {
         shape: None,
         shape_nodes: 0,
         is_test: false,
+            decorator: None,
     })
 }
 
@@ -1583,24 +1591,40 @@ const TYPE_KINDS: &[&str] = &[
 /// a language with none of them simply yields nothing, which leaves the existing
 /// path- and name-based signals to do the work as before.
 fn test_attributed(lang: &str, node: Node, src: &[u8]) -> bool {
-    let mut attrs = String::new();
+    let attrs = attributes_of(node, src);
+    !attrs.is_empty() && is_test_marker(lang, &attrs.join("\n"))
+}
+
+/// Every attribute / decorator / annotation attached to a definition, as written.
+///
+/// Three shapes, because grammars disagree about where one lives: Rust puts
+/// `attribute_item` *before* the item as a sibling, Python wraps the definition
+/// in a `decorated_definition` *above* it, and Java/Kotlin/C#/PHP hang
+/// `modifiers`/`attribute_list` *inside* the declaration. A language with none of
+/// them yields nothing, which is a true answer rather than a failure.
+fn attributes_of(node: Node, src: &[u8]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
     let mut push = |n: Node| {
         if let Ok(t) = n.utf8_text(src) {
-            attrs.push_str(t);
-            attrs.push('\n');
+            out.push(collapse_ws(t));
         }
     };
 
-    // Rust: `#[test]` is a preceding sibling, and a definition may carry several.
+    // Rust: preceding siblings, innermost first — collected in reverse so the
+    // list reads in source order.
+    let mut before: Vec<Node> = Vec::new();
     let mut prev = node.prev_named_sibling();
     while let Some(p) = prev {
         if !p.kind().contains("attribute") {
             break;
         }
-        push(p);
+        before.push(p);
         prev = p.prev_named_sibling();
     }
-    // Python: the decorators sit on a wrapper node above the definition.
+    for n in before.into_iter().rev() {
+        push(n);
+    }
+    // Python: on a wrapper node above the definition.
     if let Some(parent) = node.parent() {
         if parent.kind().contains("decorated") {
             let mut c = parent.walk();
@@ -1619,9 +1643,47 @@ fn test_attributed(lang: &str, node: Node, src: &[u8]) -> bool {
             push(ch);
         }
     }
-
-    !attrs.is_empty() && is_test_marker(lang, &attrs)
+    out
 }
+
+/// The decorator that might be *registering* this definition somewhere codeq
+/// cannot see — a FastAPI `@app.get(...)`, a `@click.command()`, a plugin
+/// `@register`. `None` when the definition carries none, or carries only inert
+/// ones.
+///
+/// This exists because `unused` was 100% noise on a decorator-driven codebase: a
+/// route's only "reference" is the line directly above it, so every entry point
+/// in every Python web app, JS decorator framework, plugin registry and `click`
+/// CLI was reported as dead. The row is *tagged*, not suppressed — suppressing
+/// anything decorated would hide real dead code, which is the failure `unused`
+/// exists to avoid, whereas `decorator=@app.get` lets a reader discount it in one
+/// glance. Same call codeq makes for `on=` receivers: show it, don't filter on it.
+///
+/// The inert list is the small half of the judgement. `@property`,
+/// `@staticmethod`, `#[derive(Debug)]` and friends change how a definition
+/// behaves; they do not hand it to anything. Tagging those would put a
+/// meaningless annotation on most rows and cost the signal this adds.
+fn registering_decorator(node: Node, src: &[u8]) -> Option<String> {
+    const INERT: &[&str] = &[
+        "property", "staticmethod", "classmethod", "abstractmethod", "cached_property",
+        "dataclass", "overload", "override", "functools", "wraps", "final",
+        "derive", "inline", "repr", "allow", "deny", "warn", "cfg", "must_use",
+        "non_exhaustive", "serde", "doc", "Serializable", "Override", "Deprecated",
+        "NotNull", "Nullable", "SuppressWarnings", "Obsolete",
+    ];
+    attributes_of(node, src).into_iter().find(|a| {
+        // The bare name, minus the syntax each language wraps it in, so
+        // `@app.get("/x")`, `#[derive(Debug)]` and `[Fact]` are all comparable.
+        let head = a
+            .trim_start_matches(['@', '#', '[', ']', ' '])
+            .split(['(', '[', ' ', '=', ':'])
+            .next()
+            .unwrap_or("");
+        let last = head.rsplit('.').next().unwrap_or(head);
+        !head.is_empty() && !INERT.contains(&head) && !INERT.contains(&last)
+    })
+}
+
 
 /// Does this attribute text name a test? A fixed per-language list rather than a
 /// pattern, because "contains the word test" would catch `#[cfg(test)]` on a
@@ -2937,6 +2999,7 @@ fn sql_extras(root: Node, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>) 
                         shape: None,
                         shape_nodes: 0,
                         is_test: false,
+            decorator: None,
                     });
                 }
             }
@@ -3046,6 +3109,7 @@ fn hcl_fact(kind: &str, name: String, owner: Option<String>, node: Node, src: &[
         shape: None,
         shape_nodes: 0,
         is_test: false,
+            decorator: None,
     }
 }
 

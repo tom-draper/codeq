@@ -68,12 +68,18 @@ benchmarks — not as a step you run before querying.
   Use `callers`/`callees --depth N` there, rooted at a symbol you can check.
 - **Orient:** `codeq map` (grouped totals; `--totals` for just the headline
   numbers and the per-language table, which skips the row scans and stays flat as
-  the repo grows) · `codeq tree` (directory *shape*, folded
+  the repo grows — and it says so on stderr when most of the repo is assets codeq
+  cannot index, so the byte total isn't misread as coverage) · `codeq tree` (directory *shape*, folded
   to `--depth`, each directory carrying the file and symbol counts of everything
   below it). `map` collapses to top-level directories, so on a nested repo it hides
   where the code is; `tree --min-symbols 1` goes straight to the directories that
   hold any. Ignore-aware, so no `node_modules`/`.git` noise — on a 2,700-file data
   repo it answers in 8 lines what `find -type d` needs 44 KB for.
+  - **`--min-symbols` alone is not enough in an asset-heavy repo**, because a
+    markdown heading is a definition: 281 per-country READMEs outranked the source
+    68 to 1 on a real one. Use **`tree --language python`** (or `files
+    --language`) when you want where the *code* is; `--min-symbols` is for when
+    prose and code are both wanted.
 - **Docs are indexed too.** A markdown heading is a definition, so `outline
   README.md` is a table of contents, `read README.md` folds to that ToC with each
   section's line range, `read README.md --symbol "Output contract"` returns just
@@ -248,10 +254,22 @@ benchmarks — not as a step you run before querying.
   diff touched, their transitive callers (impacted, `--depth N`), and the test
   *files* to re-run. Composes `changed --symbols` + a caller BFS + `tests`; name-based,
   so it over-includes rather than misses.
-- **Is this already implemented?** `codeq clones` — definitions with an identical
-  syntax shape (identifiers and literals normalised away). Exact structural
-  equality, never a similarity score; `--min-nodes N` raises the floor on how
-  much code counts. Costs ~20% on a cold index, nothing on a warm one.
+- **Is this already implemented?** `codeq clones [<path>]` — definitions with an
+  identical syntax shape (identifiers and literals normalised away). Exact
+  structural equality, never a similarity score; `--min-nodes N` raises the floor
+  on how much code counts. Costs ~20% on a cold index, nothing on a warm one.
+  - **Tests are excluded by default** (`--include-tests` to keep them). Two
+    assertions in sequence share a shape however different the assertions are, so
+    a suite is a field of true positives that drowns the duplication worth
+    finding — measured on a real repo, *every* row it returned was test
+    boilerplate.
+  - **Know what it cannot see.** It finds copy-paste that was never edited
+    afterwards. Two implementations of one algorithm over different data
+    representations — same names, same argument order, same call structure,
+    differing only in the accessor expressions — have *different* trees and will
+    not be reported. On a real refactor it found none of five such pairs. That is
+    the price of having no similarity threshold to tune or distrust; read an empty
+    result as "no exact copies", not "no duplication".
 - **Find dead code:** `codeq unused [<path>]` — definitions with no reference
   anywhere outside their own definition site. A mention in a **comment** is not a
   use (a stale TODO can't mask dead code), but a mention in a **string** still is,
@@ -261,6 +279,13 @@ benchmarks — not as a step you run before querying.
   be external API, not dead); tests excluded unless `--include-tests` — recognised
   the same way `codeq tests` does, so a Rust `#[cfg(test)] mod tests` unit test is
   not reported as dead code.
+  - **A row with `decorator=…` is probably not dead.** A framework entry point —
+    `@app.get("/x")`, `@click.command()`, a plugin `@register` — is referenced by
+    the decorator above it and by nothing else, so it always looked dead. It is
+    now tagged rather than suppressed: suppressing anything decorated would hide
+    real dead code, which is the one thing `unused` must not do. Inert decorators
+    (`@property`, `@staticmethod`, `#[derive]`, `#[inline]`) are not tagged, so
+    the tag means something when it appears.
 - **What's load-bearing here?** `codeq hotspots [<path>]` — definitions ranked by
   how often their name is referenced in code; the inverse of `unused`, for meeting
   an unfamiliar file. One row per *name* (the count is a property of the name),

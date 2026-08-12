@@ -3537,6 +3537,13 @@ struct UnusedRow {
     line: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     visibility: Option<String>,
+    /// A decorator that may be registering this definition with a framework —
+    /// `@app.get("/x")`, `@click.command()`. Shown, not filtered on: a route's
+    /// only reference is the line above it, so without this every entry point in
+    /// a decorator-driven codebase read as dead code, and suppressing them
+    /// instead would hide the real thing `unused` is for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    decorator: Option<String>,
 }
 
 /// Whether `name` occurs anywhere in the repo outside its own definition
@@ -3613,6 +3620,7 @@ struct TreeRow {
 pub fn cmd_tree(
     cwd: &Path,
     path: Option<&str>,
+    language: Option<&str>,
     depth: usize,
     min_symbols: i64,
     files_too: bool,
@@ -3624,11 +3632,16 @@ pub fn cmd_tree(
     // Definitions per file, so a directory can report the code it holds.
     let mut per_file: HashMap<String, i64> = HashMap::new();
     {
-        let mut stmt = s.db.conn.prepare(
+        let lang_filter = Filters::new().eq("language", language);
+        let sql = format!(
             "SELECT path, COUNT(*) FROM facts
-             WHERE kind <> 'import' AND name IS NOT NULL GROUP BY path",
-        )?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+             WHERE kind <> 'import' AND name IS NOT NULL{} GROUP BY path",
+            lang_filter.sql(),
+        );
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_with(&[], &lang_filter).as_slice(), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
         for row in rows {
             let (p, n) = row?;
             per_file.insert(p, n);
@@ -3645,7 +3658,11 @@ pub fn cmd_tree(
     let mut dirs: HashMap<String, Agg> = HashMap::new();
     let mut file_rows: Vec<TreeRow> = Vec::new();
 
-    let filters = Filters::new().like("path", path);
+    // `--language` scopes the *files* as well as the counts, so an asset-heavy
+    // repo can be asked "where is the Python" — which is what `--min-symbols`
+    // claims to answer and cannot, because a markdown heading is a definition and
+    // 281 country READMEs outrank the source 68 to 1.
+    let filters = Filters::new().like("path", path).eq("language", language);
     let sql = format!("SELECT path, language FROM files WHERE 1=1{} ORDER BY path", filters.sql());
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
@@ -3934,7 +3951,7 @@ pub fn cmd_unused(
     // external contract is added.
     let exclude_headings = if kind == Some("heading") { "" } else { " AND kind <> 'heading'" };
     let sql = format!(
-        "SELECT name, kind, path, start_line, visibility, language FROM facts
+        "SELECT name, kind, path, start_line, visibility, language, decorator FROM facts
          WHERE kind <> 'import' AND name IS NOT NULL{exclude_headings}{}
          ORDER BY path, start_line",
         filters.sql(),
@@ -3950,6 +3967,7 @@ pub fn cmd_unused(
                     path: r.get(2)?,
                     line: r.get(3)?,
                     visibility: r.get(4)?,
+                    decorator: r.get(6)?,
                     kind,
                 },
                 language,
@@ -4634,10 +4652,34 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
     languages.sort_by(|a, b| b.files.cmp(&a.files).then(a.language.cmp(&b.language)));
     languages.truncate(cap);
 
+    // A repo can be mostly things codeq cannot index — 2,108 flag PNGs against 12
+    // Python files, in the case that prompted this. The `(unknown)` language row
+    // states that accurately and still reads like a gap in coverage rather than
+    // "this repo is mostly images", so say it in words when it dominates. A note,
+    // not a new field: it is guidance for reading the number, which is exactly
+    // what the note channel is for.
+    let unindexed = languages
+        .iter()
+        .find(|l| l.language == "(unknown)")
+        .map(|l| (l.files, l.bytes));
+    let note = unindexed.and_then(|(files, bytes)| {
+        let majority = files * 2 > totals.files || bytes * 2 > totals.bytes;
+        majority.then(|| {
+            format!(
+                "{files} of {} files ({:.0} MB of {:.0} MB) are not source codeq indexes \
+                 — assets, data or binaries, counted here but carrying no symbols; \
+                 `--language` on `tree`/`files` scopes to code",
+                totals.files,
+                bytes as f64 / 1_048_576.0,
+                totals.bytes as f64 / 1_048_576.0,
+            )
+        })
+    });
+
     // Everything above is aggregate queries; everything below scans rows. Stop
     // here when only the totals were asked for.
     if totals_only {
-        return s.emit(MapSummary { totals, languages });
+        return s.emit_noted(MapSummary { totals, languages }, note);
     }
 
     // Imports grouped by module (raw string), counted by distinct importing file.
@@ -4718,7 +4760,7 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
         imports_by_module,
         definitions_by_file,
     };
-    s.emit(data)
+    s.emit_noted(data, note)
 }
 
 /// The first path component, or "(root)" for top-level files.
@@ -4854,6 +4896,7 @@ pub fn cmd_clones(
     path: Option<&str>,
     kind: Option<&str>,
     min_nodes: i64,
+    include_tests: bool,
     limit: usize,
     out: Out,
 ) -> Result<()> {
@@ -4887,6 +4930,27 @@ pub fn cmd_clones(
             line: r.get(6)?,
         })
     })?;
-    let data: Vec<CloneRow> = rows.collect::<std::result::Result<_, _>>()?;
+    let mut data: Vec<CloneRow> = rows.collect::<std::result::Result<_, _>>()?;
+
+    // Tests dominate this result and always will: two assertions in sequence is
+    // the same shape however different the assertions are, so a suite of small
+    // tests is a field of true positives nobody wants. On a real repo every row
+    // `clones` returned was test boilerplate while it found none of the five
+    // duplicated implementations the refactor was actually about. Excluded by
+    // default, the same rule and the same predicate `unused` and `untested` use.
+    if !include_tests {
+        let scopes = TestScopes::load(&s.db.conn)?;
+        data.retain(|r| !is_test_site(&r.path, Some(&r.name), r.line, &scopes));
+        // Dropping one half of a pair leaves a "clone" with nothing to be a clone
+        // of, so re-group and keep only shapes that still have more than one.
+        let mut per_shape: HashMap<String, i64> = HashMap::new();
+        for r in &data {
+            *per_shape.entry(r.shape.clone()).or_default() += 1;
+        }
+        data.retain(|r| per_shape.get(&r.shape).copied().unwrap_or(0) > 1);
+        for r in &mut data {
+            r.group = per_shape.get(&r.shape).copied().unwrap_or(0);
+        }
+    }
     s.emit(data)
 }

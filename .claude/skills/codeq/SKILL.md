@@ -33,8 +33,9 @@ refresh the index — every command auto-refreshes changed files first.
   there instead.
 - `codeq tree [<path>]` — the directory shape with nesting kept, folded at `--depth`
   (default 3); each directory reports the files and symbols of everything below it.
-  `--min-symbols 1` jumps straight to where the code is — the fastest orientation in a
-  repo full of data/assets. Ignore-aware, so no node_modules/.git noise.
+  `--min-symbols 1` jumps straight to where the code is. In a repo full of data,
+  prefer `--language python` (markdown headings are definitions, so per-directory
+  READMEs can outrank the source). Ignore-aware, so no node_modules/.git noise.
 
 **Understand a file without reading all of it**
 - `codeq read <file>` — the file with long function bodies folded to signatures.
@@ -124,7 +125,13 @@ refresh the index — every command auto-refreshes changed files first.
   separate `impl`, so a Rust struct returns fields only. Prefer this over
   `symbols --owner NAME`, which only sees fields/variants — never methods.
 - `codeq unused [<path>]` — definitions with no references (candidate dead code; empty
-  output = none found). Conservative and name-based, so it under-reports.
+  output = none found). Conservative and name-based, so it under-reports. A row tagged
+  `decorator=@app.get(...)` is a framework entry point, referenced by its decorator and
+  nothing else — shown rather than hidden, so discount it yourself.
+- `codeq clones [<path>]` — definitions with an identical syntax shape. Tests excluded
+  by default. Exact equality, so it finds unedited copy-paste and **not** two
+  implementations of one algorithm that differ in their accessor expressions; an empty
+  result means "no exact copies", not "no duplication".
 - `codeq implementors <TYPE>` / `codeq supertypes <TYPE>` — who implements/extends a
   trait/interface/class, and what a type derives from.
 - `codeq hotspots [<path>]` — the inverse of `unused`: definitions ranked by how often

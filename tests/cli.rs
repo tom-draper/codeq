@@ -168,7 +168,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "rows", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v2");
-    assert_eq!(v["index"]["schema"], 27);
+    assert_eq!(v["index"]["schema"], 28);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -6653,4 +6653,111 @@ fn an_ordinary_attribute_does_not_make_something_a_test() {
     // i.e. the change did not quietly widen what counts as test scaffolding.
     let dead = field_set(&f.run(&["unused"]), "name");
     assert!(dead.contains(&"calls_helper".to_string()), "{dead:?}");
+}
+
+#[test]
+fn unused_tags_a_framework_entry_point_instead_of_calling_it_dead() {
+    // On a decorator-driven codebase this was 100% of `unused`'s output: a route's
+    // only reference is the line directly above it. Tagged, not suppressed —
+    // suppressing anything decorated would hide the real dead code the command
+    // exists to find.
+    let f = Fixture::new();
+    f.write(
+        "app.py",
+        "from fastapi import FastAPI\napp = FastAPI()\n\n\
+         @app.get(\"/personas\")\ndef gen_personas():\n    return []\n\n\
+         def truly_dead():\n    return 1\n\n\
+         class C:\n    @property\n    def size(self):\n        return 0\n",
+    );
+
+    let rows = f.run(&["unused"]);
+    let by_name: std::collections::HashMap<&str, &Value> = rows["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["name"].as_str().unwrap(), r))
+        .collect();
+
+    // Still reported — nothing is hidden — but now readable as a route.
+    let route = by_name.get("gen_personas").expect("route still reported");
+    assert!(
+        route["decorator"].as_str().unwrap().starts_with("@app.get"),
+        "{route}"
+    );
+    // Genuinely dead code carries no tag, so the two are distinguishable.
+    assert!(by_name["truly_dead"]["decorator"].is_null(), "{rows}");
+    // `@property` changes how a definition behaves; it does not register it
+    // anywhere, so tagging it would put noise on most rows.
+    assert!(by_name["size"]["decorator"].is_null(), "{rows}");
+}
+
+#[test]
+fn clones_excludes_tests_and_takes_a_positional_path() {
+    // Two assertions in sequence share a shape however different the assertions
+    // are, so a test suite is a field of true positives nobody wants — measured
+    // on a real repo, every row `clones` returned was test boilerplate.
+    let f = Fixture::new();
+    let dup = |n: &str| {
+        format!("fn {n}(a: u32, b: u32) -> u32 {{\n    let x = a + b;\n    let y = x * 2;\n    y - a\n}}\n")
+    };
+    f.write("src/a.rs", &format!("{}{}", dup("one"), dup("two")));
+    f.write("tests/t.rs", &format!("#[test]\n{}#[test]\n{}", dup("case_a"), dup("case_b")));
+
+    let names = field_set(&f.run(&["clones", "--min-nodes", "8"]), "name");
+    assert!(names.contains(&"one".to_string()) && names.contains(&"two".to_string()), "{names:?}");
+    assert!(!names.iter().any(|n| n.starts_with("case_")), "tests excluded: {names:?}");
+
+    // Opt back in for the old behaviour.
+    let all = field_set(&f.run(&["clones", "--min-nodes", "8", "--include-tests"]), "name");
+    assert!(all.iter().any(|n| n.starts_with("case_")), "{all:?}");
+
+    // Positional path, like `unused`/`untested`/`hotspots`/`tree`. `clones` was
+    // the one command in that family that insisted on `--path`.
+    let scoped = field_set(&f.run(&["clones", "src", "--min-nodes", "8"]), "name");
+    assert_eq!(scoped.len(), 2, "{scoped:?}");
+    assert!(!f.raw(&["clones", "--path", "src"]).status.success(), "--path is gone");
+}
+
+#[test]
+fn tree_and_map_can_separate_code_from_the_data_around_it() {
+    // `--min-symbols` is documented as the way into an asset-heavy repo, and a
+    // markdown heading is a definition — so a tree of per-directory READMEs
+    // outranks the source and the one knob offered cannot separate them.
+    let f = Fixture::new();
+    f.write("src/lib.py", "def compute():\n    return 1\n");
+    for i in 0..6 {
+        f.write(&format!("data/set{i}/README.md"), "# A\n## B\n## C\n### D\n");
+    }
+
+    let all = field_set(&f.run(&["tree", "--min-symbols", "1"]), "path");
+    assert!(all.iter().any(|d| d.starts_with("data")), "prose outranks code: {all:?}");
+
+    let code = field_set(&f.run(&["tree", "--language", "python", "--min-symbols", "1"]), "path");
+    assert!(code.iter().any(|d| d == "src"), "{code:?}");
+    assert!(!code.iter().any(|d| d.starts_with("data")), "{code:?}");
+}
+
+#[test]
+fn map_says_when_a_repo_is_mostly_things_it_cannot_index() {
+    // The `(unknown)` row is accurate and still reads like a gap in coverage
+    // rather than "this repo is mostly images".
+    let f = Fixture::new();
+    f.write("src/lib.py", "def compute():\n    return 1\n");
+    for i in 0..8 {
+        f.write_bytes(&format!("assets/flag{i}.png"), &[0x89, b'P', b'N', b'G', 0, 1, 2, 3]);
+    }
+
+    let out = f.raw(&["map", "--totals"]);
+    let note = String::from_utf8_lossy(&out.stderr);
+    assert!(note.contains("not source codeq indexes"), "{note}");
+    assert!(note.contains("of 9 files"), "{note}");
+
+    // A repo that is mostly code says nothing — the note is for the case that
+    // misleads, not a banner on every call.
+    let g = Fixture::new();
+    g.write("a.py", "def x():\n    pass\n");
+    assert!(
+        !String::from_utf8_lossy(&g.raw(&["map", "--totals"]).stderr)
+            .contains("not source codeq indexes")
+    );
 }

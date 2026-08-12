@@ -342,8 +342,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                     id, kind, name, path, language,
                     start_byte, end_byte, start_line, start_col, end_line, end_col,
                     signature, doc, source, confidence, visibility, owner, shape, shape_nodes,
-                    is_test)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+                    is_test, decorator)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
             )?;
             let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
             let mut ins_fts =
@@ -403,6 +403,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                             &f.shape,
                             f.shape_nodes,
                             f.is_test,
+                            &f.decorator,
                         ])?;
                     }
                     for (sb, eb, sp) in &p.spans {
