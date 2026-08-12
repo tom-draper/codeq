@@ -2915,6 +2915,76 @@ pub fn cmd_astgrep(
     })
 }
 
+/// `astgrep --explain <file>:<line>` — the parse tree covering one line: the node
+/// kinds and field names a pattern has to be written against.
+///
+/// The gap this closes: `astgrep` demands exact node kinds and codeq offered no
+/// way to learn them, so writing a pattern meant leaving codeq for a tree-sitter
+/// playground — and a wrong guess comes back as an empty result that reads
+/// exactly like "no matches".
+pub fn cmd_astgrep_explain(cwd: &Path, location: &str, out: Out) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let (path, line_str) = location
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow!("expected <path>:<line>, got '{location}'"))?;
+    let line: usize = line_str
+        .parse()
+        .map_err(|_| anyhow!("invalid line number in '{location}'"))?;
+    if line == 0 {
+        return Err(anyhow!("line numbers start at 1"));
+    }
+    let rel = resolve_file(&s, path)?;
+
+    // Language and body both come from the index, so `--explain` needs no
+    // `--language`: the file already knows what it is.
+    let (language, body): (Option<String>, String) = s.db.conn.query_row(
+        "SELECT language, body FROM content_fts WHERE path = ?1",
+        [&rel],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let language = language
+        .ok_or_else(|| anyhow!("'{rel}' has no language codeq classifies, so it has no parse tree"))?;
+    if crate::astgrep::ts_language(&language).is_none() {
+        return Err(anyhow!(
+            "no grammar for '{language}', so `astgrep` cannot match in '{rel}' either \
+             — see `codeq capabilities`"
+        ));
+    }
+
+    #[derive(Serialize)]
+    struct ExplainRow {
+        path: String,
+        line: usize,
+        col: usize,
+        depth: usize,
+        kind: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        field: Option<String>,
+        /// The source this node covers. Deliberately not `text`: that key means
+        /// "this row *is* the matched source" to the renderer, and here the
+        /// payload is the node kind — the preview is context for it.
+        src: String,
+    }
+
+    let nodes = crate::astgrep::explain(&language, &body, line)?;
+    let data: Vec<ExplainRow> = nodes
+        .into_iter()
+        .map(|n| ExplainRow {
+            path: rel.clone(),
+            line: n.line,
+            col: n.col,
+            depth: n.depth,
+            kind: n.kind,
+            field: n.field,
+            src: n.text,
+        })
+        .collect();
+    let note = data.is_empty().then(|| {
+        format!("'{rel}' has no parse tree covering line {line} (past the end of the file?)")
+    });
+    s.emit_noted(data, note)
+}
+
 pub fn cmd_context(cwd: &Path, req: Request, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let result = context::build(&s.db, &s.repo, &req)?;
@@ -3024,6 +3094,9 @@ impl GlobFilter {
 /// grow without a huge argument list.
 pub struct SearchArgs<'a> {
     pub pattern: &'a str,
+    /// Positional paths, as grep takes them: `codeq search TODO src`. Matched as
+    /// path substrings (the same rule as `path`), OR'd together.
+    pub paths: &'a [String],
     pub fixed: bool,
     pub ignore_case: bool,
     pub word: bool,
@@ -3073,16 +3146,21 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     } else {
         regex_prefilter(args.pattern)
     };
-    // A `--glob` set becomes a per-row path predicate for the streaming scan.
+    // `--glob` and grep-style positional paths both become per-row path
+    // predicates for the streaming scan, AND'd together: `-g` says which files
+    // are eligible by shape, a positional says which by location.
     let glob = if args.globs.is_empty() {
         None
     } else {
         Some(GlobFilter::build(args.globs)?)
     };
-    let glob_accept = glob.as_ref().map(|gf| move |p: &str| gf.accepts(p));
-    let path_accept = glob_accept
-        .as_ref()
-        .map(|f| f as &dyn Fn(&str) -> bool);
+    let accept = (glob.is_some() || !args.paths.is_empty()).then(|| {
+        move |p: &str| {
+            glob.as_ref().is_none_or(|gf| gf.accepts(p))
+                && (args.paths.is_empty() || args.paths.iter().any(|q| p.contains(q.as_str())))
+        }
+    });
+    let path_accept = accept.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
 
     let out_mode = if args.files_with_matches {
         OutMode::Files
@@ -3762,45 +3840,44 @@ pub fn cmd_unused(
     // heading is prose, not an API: nothing ever "calls" it, so every section in
     // the repo would be reported as dead. Excluded unless asked for by --kind.
     let filters = Filters::new().like("path", path).eq("kind", kind);
-    // A schema language exists to be consumed from outside the repository: every
-    // GraphQL type and protobuf message is a contract for some other codebase, so
-    // "nothing here references it" is the normal state, not a finding. Reporting
-    // them buries the real hits — the whole point of `unused` is that it
-    // under-reports rather than misleads. A Terraform `output` is the same shape:
-    // it exists so something outside can read it. Everything else stays: an
-    // unreferenced CSS class or `variable` really is dead.
     // Markdown headings are prose, not definitions: nothing references a heading
     // by name, so every one of them would read as dead code.
     //
-    // SQL is excluded by *kind*, not wholesale, because the two halves differ. A
-    // table, view, column or function is named by whatever queries it — codeq
-    // finds those names inside the SQL strings in application code — so an
-    // unreferenced one is a real finding. An index or a trigger is named exactly
-    // once in the world, at its own `CREATE`, and an enum variant is referenced by
-    // data rather than by code: those would be reported in every repository,
-    // always, which is the noise the exclusions above exist to prevent.
+    // The other exclusion — declarations that exist to be consumed from outside
+    // the repository — lives in `facts::UNREFERENCED_BY_DESIGN`, applied below.
+    // It used to be three hand-written clauses in this query, which is the wrong
+    // home for a policy that gains an entry every time a language with an
+    // external contract is added.
     let exclude_headings = if kind == Some("heading") { "" } else { " AND kind <> 'heading'" };
-        let sql = format!(
-            "SELECT name, kind, path, start_line, visibility FROM facts
-             WHERE kind <> 'import' AND name IS NOT NULL{exclude_headings}
-               AND (language IS NULL OR language NOT IN ('graphql', 'proto'))
-               AND NOT (language = 'hcl' AND kind = 'output')
-               AND NOT (language = 'sql' AND kind IN ('index', 'trigger', 'variant')){}
-             ORDER BY path, start_line",
+    let sql = format!(
+        "SELECT name, kind, path, start_line, visibility, language FROM facts
+         WHERE kind <> 'import' AND name IS NOT NULL{exclude_headings}{}
+         ORDER BY path, start_line",
         filters.sql(),
     );
     let candidates: Vec<UnusedRow> = {
         let mut stmt = s.db.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
-            Ok(UnusedRow {
-                name: r.get(0)?,
-                kind: r.get(1)?,
-                path: r.get(2)?,
-                line: r.get(3)?,
-                visibility: r.get(4)?,
-            })
+            let kind: String = r.get(1)?;
+            let language: Option<String> = r.get(5)?;
+            Ok((
+                UnusedRow {
+                    name: r.get(0)?,
+                    path: r.get(2)?,
+                    line: r.get(3)?,
+                    visibility: r.get(4)?,
+                    kind,
+                },
+                language,
+            ))
         })?;
-        rows.collect::<std::result::Result<_, _>>()?
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|(row, lang)| {
+                !crate::facts::unreferenced_by_design(lang.as_deref(), &row.kind)
+            })
+            .map(|(row, _)| row)
+            .collect()
     };
 
     // Scan each distinct name once; keep the defs whose name is never used.

@@ -1308,6 +1308,40 @@ pub const LANGUAGES: &[&str] = &[
     "powershell", "proto", "graphql", "markdown", "sql",
 ];
 
+/// Declarations that exist to be consumed from *outside* the repository, so
+/// "nothing here references it" is their normal state rather than a finding.
+/// `None` covers a whole language; `Some(kind)` narrows to one kind within it.
+///
+/// A table here rather than a hand-written clause in `cmd_unused`'s SQL, which
+/// is where this policy used to live. It has grown once per language with an
+/// external contract — GraphQL, protobuf, Terraform outputs, now SQL — and that
+/// is a category that keeps appearing, so it belongs next to everything else
+/// that describes a language instead of inside a query string in another file.
+pub const UNREFERENCED_BY_DESIGN: &[(&str, Option<&str>)] = &[
+    // A GraphQL type or a protobuf message is a contract for another codebase.
+    ("graphql", None),
+    ("proto", None),
+    // A Terraform `output` exists precisely so something outside can read it.
+    ("hcl", Some("output")),
+    // A SQL index or trigger is named exactly once in the world, at its own
+    // `CREATE`, and an enum variant is referenced by data rather than by code.
+    // The rest of SQL is not here: a table, view, column or function *is* named
+    // by whatever queries it, and codeq finds those names inside the SQL strings
+    // in application code, so an unreferenced one is a real finding.
+    ("sql", Some("index")),
+    ("sql", Some("trigger")),
+    ("sql", Some("variant")),
+];
+
+/// Whether `unused` should stay silent about a definition because nothing in
+/// this repository was ever going to reference it. See [`UNREFERENCED_BY_DESIGN`].
+pub fn unreferenced_by_design(language: Option<&str>, kind: &str) -> bool {
+    let Some(lang) = language else { return false };
+    UNREFERENCED_BY_DESIGN
+        .iter()
+        .any(|(l, k)| *l == lang && k.is_none_or(|k| k == kind))
+}
+
 /// What codeq can extract for one language.
 ///
 /// Support is uneven and always has been — Go has no inheritance edges, Ruby

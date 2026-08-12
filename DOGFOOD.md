@@ -4,6 +4,56 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — Fixing the four things the SQL session complained about
+
+The friction log below was written the same day; this is what came of it. Worth
+recording that all four were found by *using* codeq to build codeq, not by
+reading its code — none of them is visible from the inside.
+
+### `astgrep --explain <file>:<line>`
+
+The complaint was that writing an astgrep pattern required knowing node kinds
+codeq would not tell you. It now prints the tree covering a line: each node's
+`kind`, the `field` it fills in its parent, and its source.
+
+Fields turned out to matter as much as kinds. `callsite.rs` is written against
+field names precisely because they are the stable part of a grammar, and a walk
+that showed only kinds would have hidden the more useful half.
+
+The sharp edge, and the reason there is a test for it: a line past the end of the
+file. The obvious implementation clamps the byte range to `src.len()`, and the
+root node contains that, so you get the whole file's tree back — a confident
+answer to a question with none. That is the exact failure mode `--explain` exists
+to fix, reproduced inside it. It returns empty with a note now.
+
+Rendering needed one small honesty: the row's source preview is `src`, not
+`text`, because `text` means "this row *is* the matched source" to the renderer
+and would have swallowed the `kind` that is the actual payload.
+
+### `search PATTERN [PATH]...`
+
+Positional paths, matched as substrings like `--path`, OR'd, composing with `-g`
+by AND. `codeq search TODO src` now works, which the docs' "superset of grep"
+claim had been quietly overstating.
+
+### `rows` in the envelope
+
+Row *keys* were unified in `codeq.result.v2`; containers were not, and can't be —
+`search -l` returns `files` where plain `search` returns `matches`, and those are
+different facts, not different spellings for one. So rather than force a shape,
+the envelope now states which one it used: `"rows": "data.matches"`. Derived from
+the value, so a new command is described without being registered, and absent
+when a result holds several lists (`about`, `map`) — where guessing would be
+worse than silence. Additive, so the schema stays `v2`.
+
+### `unused`'s exclusions
+
+Moved out of a `format!` in `cmd_unused` into `facts::UNREFERENCED_BY_DESIGN`, a
+table of (language, optional kind). It had grown an entry per language with an
+external contract — GraphQL, protobuf, Terraform outputs, SQL — which is a
+category that keeps arriving, and it belonged next to the other things that
+describe a language rather than inside a query string in a different file.
+
 ## 2026-08-12 — Friction from a session spent adding a language
 
 Three things slowed the SQL work down. Recorded before they are forgotten,

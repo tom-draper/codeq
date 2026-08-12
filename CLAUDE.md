@@ -252,6 +252,11 @@ benchmarks — not as a step you run before querying.
     not regex), `-i`, `-w`, `-g '*.rs' -g '!tests/'` (repeatable include/exclude
     globs), `-l` (paths only), `-c` (counts), `-B`/`-A`/`-C`, `--path`, `--language`,
     `--limit` (default 100 — raise it or pass 0 before concluding "no more hits").
+  - **And grep's calling convention:** `codeq search TODO src/a.rs docs` — paths
+    positionally, after the pattern. Each is a path *substring* (same rule as
+    `--path`), so a directory scopes everything under it and a bare filename finds
+    that file wherever it lives; several are OR'd, which is what a shell glob
+    expands to. Composes with `--path`/`-g` by AND.
   - `--path` / `--language` / `--limit` are on `references` and most list commands
     as well; narrow with them instead of post-filtering the output.
 - **Structural (AST) search:** `codeq astgrep '$X.unwrap()' --language rust` — match
@@ -260,6 +265,13 @@ benchmarks — not as a step you run before querying.
   to X", "all `Ok($X)` returns", etc. Each match is annotated with its enclosing
   `[symbol]`. Limits: it's structurally exact (include optional syntax the code
   has) and can't see inside macro invocations.
+  - **Don't guess the node kinds — ask.** `codeq astgrep --explain <file>:<line>`
+    prints the parse tree covering that line: every node's `kind`, the `field` it
+    fills in its parent, and its source. Write the pattern from that. Without it a
+    wrong kind returns an empty result that reads exactly like "no matches", so
+    run `--explain` on a line you *know* should match before concluding a pattern
+    found nothing. Takes no `--language` (the file already knows) and no pattern.
+    Named nodes only — punctuation is omitted, since `$$$` covers it.
 - **Module-dependency graph:** `codeq deps <file> [--depth N]` — the internal
   files a file depends on, resolved from its imports (each edge shows the raw
   import string); `--depth N` walks transitively. `codeq deps --cycles` lists
@@ -279,6 +291,12 @@ benchmarks — not as a step you run before querying.
     `owner` tag — but *only* when the type name has a single definition in the
     repo, because the tag is a name and two same-named types would otherwise
     trade members. Two `CREATE TABLE jobs` and the later column is left out.
+- **Where are the rows?** Under `--json` the envelope carries **`rows`** — the
+  dotted path to the row array (`"data"`, `"data.matches"`, `"data.files"`). Row
+  *keys* are uniform (below), but the container is not and cannot be: `search -l`
+  returns `files` where plain `search` returns `matches`, and those are different
+  facts. Read `rows` instead of memorising which commands nest. Absent when a
+  result holds several lists (`about`, `map`) — there is no single answer there.
 - **Trim tokens on list output:** append `--fields a,b`. Row keys are the same on
   every command: **`name`** is the definition a row *is*, **`symbol`** is the
   definition it sits *inside* (`search`/`references`/`astgrep` matches only), and

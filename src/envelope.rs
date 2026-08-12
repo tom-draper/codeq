@@ -22,6 +22,12 @@
 //! - **`line`, `col`, `byte`** — the row's primary position.
 //! - **`end_line`, `end_col`, `end_byte`** — its extent, where one is known.
 //!
+//! The rule covers keys *within* a row. Which container holds the rows still
+//! varies by command, and legitimately so — `search -l` returns `files` where
+//! plain `search` returns `matches`. Under `--json` the envelope therefore
+//! carries **`rows`**, the dotted path to them (`"data"`, `"data.matches"`), so a
+//! consumer never has to know the shape in advance. See `rows_pointer`.
+//!
 //! Rust fields may keep the `start_` prefix that mirrors the facts table; the
 //! emitted key is what this rule governs, so those carry `#[serde(rename)]`.
 //! v1 leaked the internal spelling: `definitions`/`symbols`/`imports`/`outline`
@@ -127,6 +133,9 @@ impl<T: Serialize> Envelope<T> {
                 out.insert("repo".into(), serde_json::to_value(&self.repo)?);
                 out.insert("index".into(), serde_json::to_value(&self.index)?);
             }
+            if let Some(p) = rows_pointer(&data) {
+                out.insert("rows".into(), Value::from(p));
+            }
             out.insert("data".into(), data);
             if note_fields || !truncated.is_empty() {
                 let mut notes = serde_json::Map::new();
@@ -226,6 +235,31 @@ fn hit_limit(data: &Value) -> bool {
 ///
 /// Rows with no `path` are never dropped: the cap is a per-file idea, and a
 /// pathless row (a bare identifier, a cycle) belongs to no file.
+/// Where this result's rows live, as a dotted path from the envelope root:
+/// `"data"` when `data` is itself the array, `"data.matches"` when it wraps one.
+/// `None` when there is no single answer — `about` and `map` carry several
+/// arrays that are genuinely different lists, and `capabilities` carries none.
+///
+/// `ROW_KEY_RULE` made every row *key* mean the same thing on every command, but
+/// the *container* still varies, and it has to: `search -l` returns `files` where
+/// plain `search` returns `matches`, and those are different facts, not different
+/// spellings. So rather than force a shape, the envelope says which one it used —
+/// a consumer reads `rows` instead of knowing thirty commands in advance. Derived
+/// from the value, so a new command is described without being registered.
+fn rows_pointer(data: &Value) -> Option<String> {
+    match data {
+        Value::Array(_) => Some("data".to_string()),
+        Value::Object(map) => {
+            let mut arrays = map.iter().filter(|(_, v)| v.is_array());
+            let (key, _) = arrays.next()?;
+            // More than one list: no single thing to point at, and guessing
+            // would be worse than saying nothing.
+            arrays.next().is_none().then(|| format!("data.{key}"))
+        }
+        _ => None,
+    }
+}
+
 fn cap_per_file(data: &mut Value, n: usize) -> BTreeMap<String, usize> {
     let mut truncated = BTreeMap::new();
     match data {

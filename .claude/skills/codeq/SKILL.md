@@ -124,7 +124,9 @@ refresh the index — every command auto-refreshes changed files first.
 - `codeq search <REGEX>` — content search; each match annotated with its enclosing
   symbol. `--in code|comments|strings` to scope. A superset of grep — it also has
   `--fixed`, `-i`, `-w`, `-g '*.rs' -g '!tests/'` (repeatable globs), `-l`, `-c`,
-  `-B`/`-A`/`-C`, `--path`, `--language`, `--limit`. **`--limit` defaults to 100**,
+  `-B`/`-A`/`-C`, `--path`, `--language`, `--limit` — and grep's calling
+  convention, `codeq search TODO src/a.rs docs`, where each positional path is a
+  substring (a directory scopes under it) and several are OR'd. **`--limit` defaults to 100**,
   and a result that hit it now says `stopped at --limit` on stderr — raise it (or
   pass 0) for the rest.
   `CMD | codeq search PAT --stdin [--language L]` scans piped text instead of the
@@ -132,6 +134,11 @@ refresh the index — every command auto-refreshes changed files first.
 - `codeq astgrep '<PATTERN>' --language <lang>` — structural (AST) search, e.g.
   `codeq astgrep '$X.unwrap()' --language rust`. Scope to files with `--path <substr>`.
   Each match is annotated with the `[symbol]` it sits inside.
+- `codeq astgrep --explain <file>:<line>` — the parse tree covering that line:
+  each node's `kind`, the `field` it fills in its parent, and its source. **Write
+  patterns from this rather than guessing kinds**, and run it on a line you know
+  should match before believing an empty `astgrep` result — a wrong kind and no
+  matches look identical. No `--language` needed.
 
 ## Gotchas
 - **Symbol lookups match by NAME across the whole repo, in every language.** For a
@@ -167,6 +174,10 @@ refresh the index — every command auto-refreshes changed files first.
 - **A namespaced base class is stored dotted** (`extends React.Component` →
   `React.Component`), but `implementors` matches the last segment too, so
   `implementors Component` finds it.
+- **Where the rows are:** under `--json` the envelope carries `rows`, the dotted
+  path to the row array (`"data"`, `"data.matches"`, `"data.files"`). Containers
+  differ by command on purpose (`search -l` returns files, not matches); read
+  `rows` rather than memorising them. Absent when a result holds several lists.
 - **Trim output tokens** with `--fields name,path,line`. The keys are identical on
   every command: `name` = the definition this row *is*; `symbol` = the definition it
   sits *inside* (only on `search`/`references`/`astgrep` matches); `line`/`col`/`byte`

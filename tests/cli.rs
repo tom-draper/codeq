@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v2");
-    assert_eq!(v["index"]["schema"], 23);
+    assert_eq!(v["index"]["schema"], 24);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -6203,4 +6203,153 @@ fn unused_reports_the_sql_objects_that_can_be_referenced_and_no_others() {
         );
     }
     assert!(!dead.contains(&"users".to_string()), "queried from app.py: {dead:?}");
+}
+
+// ---------------------------------------------------------------------------
+// The four dogfooding fixes: explain, positional paths, rows pointer, one policy
+// ---------------------------------------------------------------------------
+
+#[test]
+fn astgrep_explain_names_the_kinds_a_pattern_is_written_from() {
+    // `astgrep` demands exact node kinds and offered no way to discover them, so
+    // writing a pattern meant leaving codeq — and a wrong guess comes back as an
+    // empty result indistinguishable from "no matches".
+    let f = Fixture::new();
+    f.write("a.rs", "fn main() {\n    let x = compute(&arg);\n}\n");
+
+    let v = f.run(&["astgrep", "--explain", "a.rs:2"]);
+    let kinds = field_set(&v, "kind");
+    for want in ["let_declaration", "call_expression", "identifier"] {
+        assert!(kinds.contains(&want.to_string()), "{want} missing: {kinds:?}");
+    }
+    // Field names matter more than kinds — they are the part of a grammar that
+    // is stable across languages, and `callsite.rs` is written against them.
+    let fields = field_set(&v, "field");
+    assert!(fields.contains(&"function".to_string()), "{fields:?}");
+
+    // Nesting is real, and the walk starts at the line's own node rather than at
+    // the file, so the tree is about the line you asked about.
+    let depths: Vec<i64> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["depth"].as_i64().unwrap())
+        .collect();
+    assert_eq!(depths.first(), Some(&0), "{v}");
+    assert!(depths.iter().any(|d| *d > 1), "the tree has depth: {depths:?}");
+
+    // The whole point: the kinds it reports are the ones that then match.
+    let hits = f.run(&["astgrep", "$F(&$A)", "--language", "rust"]);
+    assert_eq!(hits["data"]["matches"].as_array().unwrap().len(), 1, "{hits}");
+}
+
+#[test]
+fn astgrep_explain_refuses_to_invent_a_tree_it_does_not_have() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn main() {}\n");
+    f.write("doc.md", "# Title\n\nProse.\n");
+
+    // A line past the end of the file has no tree. Clamping to the file's last
+    // byte would silently return the root — a plausible answer to a question
+    // with none, which is the exact failure this command exists to prevent.
+    let v = f.run(&["astgrep", "--explain", "a.rs:9999"]);
+    assert!(v["data"].as_array().unwrap().is_empty(), "{v}");
+    assert!(
+        v["note"].as_str().unwrap_or_default().contains("no parse tree"),
+        "an empty result must say why: {v}"
+    );
+
+    // A language codeq indexes but has no grammar for says so, rather than
+    // returning nothing and letting that read as "no nodes here".
+    let out = f.raw(&["astgrep", "--explain", "doc.md:1"]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no grammar for 'markdown'"),
+        "{:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn search_takes_paths_positionally_the_way_grep_does() {
+    // `codeq search PAT FILE` is the first thing anyone types, and it used to be
+    // `error: unexpected argument` — from a command whose docs claim to be a
+    // superset of grep, and while `imports`, `outline`, `api` and `read` all
+    // take a positional path.
+    let f = Fixture::new();
+    f.write("src/a.rs", "// TODO: one\n");
+    f.write("src/b.rs", "// TODO: two\n");
+    f.write("docs/c.md", "TODO: three\n");
+
+    let hits = |args: &[&str]| {
+        let mut v = vec!["search", "TODO"];
+        v.extend_from_slice(args);
+        f.run(&v)["data"]["matches"].as_array().unwrap().len()
+    };
+    assert_eq!(hits(&[]), 3, "no path: everything");
+    assert_eq!(hits(&["src/a.rs"]), 1, "one file");
+    assert_eq!(hits(&["src"]), 2, "a directory scopes everything under it");
+    assert_eq!(hits(&["src/a.rs", "docs"]), 2, "several are OR'd, as a shell glob expands to");
+    // Composes with the flags rather than replacing them.
+    assert_eq!(hits(&["src", "-g", "*.rs"]), 2);
+    assert_eq!(hits(&["src", "-g", "!*.rs"]), 0, "glob and path compose by AND");
+}
+
+#[test]
+fn the_envelope_says_where_its_rows_are() {
+    // `codeq.result.v2` made every row *key* mean one thing; the container still
+    // varies, and legitimately — `search -l` returns files where plain `search`
+    // returns matches. So the envelope states which one it used, and a consumer
+    // stops having to know thirty commands in advance.
+    let f = Fixture::new();
+    f.write("a.rs", "fn alpha() {}\nfn beta() { alpha(); }\n");
+
+    let at = |v: &Value| -> Value {
+        let p = v["rows"].as_str().expect("rows pointer");
+        p.split('.').fold(v.clone(), |acc, k| acc[k].clone())
+    };
+    for (args, want) in [
+        (vec!["symbols", "--limit", "0"], "data"),
+        (vec!["search", "alpha"], "data.matches"),
+        (vec!["search", "alpha", "-l"], "data.files"),
+        (vec!["search", "alpha", "-c"], "data.counts"),
+        (vec!["references", "alpha"], "data.references"),
+    ] {
+        let v = f.run(&args);
+        assert_eq!(v["rows"], want, "{args:?}: {v}");
+        // The pointer must actually resolve to the rows, not just look right.
+        assert!(at(&v).is_array(), "{args:?} pointer does not resolve: {v}");
+    }
+
+    // A result with several lists has no single answer, and saying nothing beats
+    // guessing which list was meant.
+    let about = f.run(&["about", "alpha"]);
+    assert!(about["rows"].is_null(), "about carries several lists: {about}");
+}
+
+#[test]
+fn unused_exclusions_are_one_policy_not_a_growing_query() {
+    // The rule lives in `facts::UNREFERENCED_BY_DESIGN` now; this pins the
+    // behaviour it governs so moving it cannot quietly change it.
+    let f = Fixture::new();
+    f.write("s.graphql", "type User { id: ID! }\n");
+    f.write("u.proto", "syntax = \"proto3\";\nmessage Order { string id = 1; }\n");
+    f.write("main.tf", "output \"url\" { value = 1 }\nvariable \"dead_var\" {}\n");
+    // `ghost` is named nowhere else, so it is dead. `kept` is named by the index
+    // below it, which is a real reference — the index itself is named nowhere,
+    // by construction, which is exactly why it is excluded.
+    f.write(
+        "db.sql",
+        "CREATE TABLE ghost (id INT);\nCREATE TABLE kept (id INT);\n\
+         CREATE INDEX idx_kept ON kept (id);\n",
+    );
+    f.write("a.css", ".orphan { color: blue }\n");
+
+    let dead = field_set(&f.run(&["unused"]), "name");
+    for reported in ["dead_var", "orphan", "ghost"] {
+        assert!(dead.contains(&reported.to_string()), "{reported} is dead: {dead:?}");
+    }
+    for quiet in ["User", "Order", "url", "idx_kept", "kept"] {
+        assert!(!dead.contains(&quiet.to_string()), "{quiet} is consumed elsewhere: {dead:?}");
+    }
 }

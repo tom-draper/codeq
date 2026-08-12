@@ -366,3 +366,120 @@ where
     });
     Ok(out)
 }
+
+/// One node in an `--explain` tree walk: what a pattern would have to name.
+pub struct TreeNode {
+    /// Nesting relative to the node the walk started at.
+    pub depth: usize,
+    /// The grammar's node kind — the thing a pattern is written against.
+    pub kind: String,
+    /// The field this node fills in its parent (`function`, `name`, `body`, …),
+    /// where the grammar names one. Fields are the stable part of a grammar, so
+    /// this is worth more than the kind when the kinds differ across languages.
+    pub field: Option<String>,
+    pub line: usize,
+    pub col: usize,
+    /// The source this node covers, collapsed to one line and capped.
+    pub text: String,
+}
+
+/// The parse tree covering one line of a file: the innermost node that contains
+/// the whole line, and everything under it that touches the line.
+///
+/// This exists because `astgrep` requires exact node kinds and offered no way to
+/// learn them — the failure mode of a wrong guess is an empty result that reads
+/// exactly like "no matches", which is the worst kind of wrong answer for a tool
+/// whose whole claim is determinism.
+///
+/// Anonymous nodes (punctuation, operators) are omitted: a query matches named
+/// nodes, and `$$$` covers the rest, so listing every `(` and `,` would bury the
+/// kinds a pattern is actually written from.
+pub fn explain(language: &str, src: &str, line: usize) -> Result<Vec<TreeNode>> {
+    let lang = ts_language(language)
+        .ok_or_else(|| anyhow!("no grammar for language '{language}'"))?;
+    let mut parser = Parser::new();
+    parser.set_language(&lang)?;
+    let tree = parser
+        .parse(src, None)
+        .ok_or_else(|| anyhow!("failed to parse as {language}"))?;
+
+    // The line's byte range, so "contains the line" is a byte comparison.
+    let mut start = 0usize;
+    let mut found = None;
+    for (i, l) in src.split_inclusive('\n').enumerate() {
+        if i + 1 == line {
+            found = Some((start, start + l.trim_end_matches(['\n', '\r']).len()));
+            break;
+        }
+        start += l.len();
+    }
+    // A line past the end of the file has no tree. Returning the root instead —
+    // which is what a byte range clamped to `src.len()` would have selected — is
+    // the failure this whole command exists to prevent: a plausible-looking
+    // answer to a question that has none.
+    let Some((lo, hi)) = found else {
+        return Ok(Vec::new());
+    };
+    let hi = hi.max(lo);
+
+    // Descend to the innermost node that still contains the whole line, so the
+    // walk starts at the statement rather than at the file.
+    let mut root = tree.root_node();
+    loop {
+        let mut cursor = root.walk();
+        let next = root
+            .children(&mut cursor)
+            .find(|c| c.start_byte() <= lo && c.end_byte() >= hi);
+        match next {
+            Some(c) => root = c,
+            None => break,
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut stack = vec![(root, 0usize, None::<String>)];
+    while let Some((node, depth, field)) = stack.pop() {
+        // Only what the line actually covers: a `create_table` spanning fifty
+        // lines should not dump all fifty.
+        if node.end_byte() < lo || node.start_byte() > hi {
+            continue;
+        }
+        if node.is_named() {
+            let text = node.utf8_text(src.as_bytes()).unwrap_or("");
+            let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let text = if collapsed.chars().count() > 60 {
+                let cut: String = collapsed.chars().take(60).collect();
+                format!("{cut}…")
+            } else {
+                collapsed
+            };
+            out.push(TreeNode {
+                depth,
+                kind: node.kind().to_string(),
+                field,
+                line: node.start_position().row + 1,
+                col: node.start_position().column,
+                text,
+            });
+        }
+        // Collect children with the field name the grammar gives each, in one
+        // cursor pass — `field_name()` is a property of the cursor's position,
+        // so it cannot be recovered from a `Node` afterwards.
+        let mut cursor = node.walk();
+        let mut children: Vec<(Node, Option<String>)> = Vec::new();
+        if cursor.goto_first_child() {
+            loop {
+                children.push((cursor.node(), cursor.field_name().map(|s| s.to_string())));
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        let d = if node.is_named() { depth + 1 } else { depth };
+        // Pushed in reverse so the stack yields them left to right.
+        for (child, field) in children.into_iter().rev() {
+            stack.push((child, d, field));
+        }
+    }
+    Ok(out)
+}

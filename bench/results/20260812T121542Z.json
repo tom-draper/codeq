@@ -1,36 +1,12 @@
 {
-  "timestamp": "2026-08-12T11:00:57+00:00",
-  "codeq_commit": "8ea14dead7e1",
+  "timestamp": "2026-08-12T12:15:42+00:00",
+  "codeq_commit": "0192778fc95e",
   "per_command": {
-    "search": {
-      "pass": 2250,
-      "total": 2250,
-      "time_x": 2.393,
-      "bytes_x": 1.744
-    },
-    "references": {
-      "pass": 1000,
-      "total": 1000,
-      "time_x": 1.673,
-      "bytes_x": 2.366
-    },
     "outline": {
       "pass": 0,
       "total": 0,
-      "time_x": 2.559,
-      "bytes_x": 3.581
-    },
-    "callers": {
-      "pass": 0,
-      "total": 0,
-      "time_x": 1.977,
-      "bytes_x": 1.133
-    },
-    "read": {
-      "pass": 500,
-      "total": 500,
-      "time_x": 6.428,
-      "bytes_x": 0.011
+      "time_x": 2.571,
+      "bytes_x": 3.583
     },
     "at": {
       "pass": 977,
@@ -38,17 +14,41 @@
       "time_x": null,
       "bytes_x": null
     },
-    "definitions": {
-      "pass": 500,
-      "total": 500,
-      "time_x": 1.198,
-      "bytes_x": 4.673
+    "search": {
+      "pass": 2250,
+      "total": 2250,
+      "time_x": 2.424,
+      "bytes_x": 1.755
+    },
+    "callers": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 1.988,
+      "bytes_x": 1.185
     },
     "imports": {
       "pass": 0,
       "total": 0,
       "time_x": 2.84,
-      "bytes_x": 4.143
+      "bytes_x": 4.232
+    },
+    "references": {
+      "pass": 1000,
+      "total": 1000,
+      "time_x": 1.698,
+      "bytes_x": 2.44
+    },
+    "read": {
+      "pass": 500,
+      "total": 500,
+      "time_x": 6.5,
+      "bytes_x": 0.011
+    },
+    "definitions": {
+      "pass": 500,
+      "total": 500,
+      "time_x": 1.202,
+      "bytes_x": 4.871
     }
   },
   "summary": {
@@ -64,13 +64,13 @@
     "fuzz_total": 1500,
     "fuzz_fail": 0,
     "actions_total": 750,
-    "median_codeq_over_rg_time": 2.393,
-    "median_codeq_over_rg_bytes": 1.744
+    "median_codeq_over_rg_time": 2.424,
+    "median_codeq_over_rg_bytes": 1.755
   },
   "per_repo": {
     "flask": {
       "lang": "python",
-      "index_ms": 2048.22,
+      "index_ms": 2058.54,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -79,7 +79,7 @@
     },
     "requests": {
       "lang": "python",
-      "index_ms": 2106.42,
+      "index_ms": 2122.69,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -88,7 +88,7 @@
     },
     "rich": {
       "lang": "python",
-      "index_ms": 2939.14,
+      "index_ms": 3012.02,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -97,7 +97,7 @@
     },
     "httpie": {
       "lang": "python",
-      "index_ms": 2001.73,
+      "index_ms": 2020.17,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -106,7 +106,7 @@
     },
     "gin": {
       "lang": "go",
-      "index_ms": 2077.07,
+      "index_ms": 2069.02,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -115,7 +115,7 @@
     },
     "cobra": {
       "lang": "go",
-      "index_ms": 1945.49,
+      "index_ms": 1914.06,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -124,7 +124,7 @@
     },
     "mux": {
       "lang": "go",
-      "index_ms": 1881.56,
+      "index_ms": 1868.67,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -133,7 +133,7 @@
     },
     "express": {
       "lang": "javascript",
-      "index_ms": 1966.07,
+      "index_ms": 2019.48,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -142,7 +142,7 @@
     },
     "lodash": {
       "lang": "javascript",
-      "index_ms": 2651.01,
+      "index_ms": 2730.5,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -151,7 +151,7 @@
     },
     "zod": {
       "lang": "typescript",
-      "index_ms": 2355.3,
+      "index_ms": 2267.13,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -160,7 +160,7 @@
     },
     "dayjs": {
       "lang": "typescript",
-      "index_ms": 2266.92,
+      "index_ms": 2279.22,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -169,7 +169,7 @@
     },
     "ripgrep": {
       "lang": "rust",
-      "index_ms": 2314.36,
+      "index_ms": 2385.89,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -178,7 +178,7 @@
     },
     "serde": {
       "lang": "rust",
-      "index_ms": 2115.66,
+      "index_ms": 2116.02,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -187,7 +187,7 @@
     },
     "clap": {
       "lang": "rust",
-      "index_ms": 2629.1,
+      "index_ms": 2651.06,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -196,7 +196,7 @@
     },
     "sinatra": {
       "lang": "ruby",
-      "index_ms": 2008.24,
+      "index_ms": 2040.22,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -205,7 +205,7 @@
     },
     "rack": {
       "lang": "ruby",
-      "index_ms": 2027.13,
+      "index_ms": 2005.14,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -214,7 +214,7 @@
     },
     "gson": {
       "lang": "java",
-      "index_ms": 2349.31,
+      "index_ms": 2383.91,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -223,7 +223,7 @@
     },
     "jq": {
       "lang": "c",
-      "index_ms": 2696.93,
+      "index_ms": 2624.47,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -232,7 +232,7 @@
     },
     "redis": {
       "lang": "c",
-      "index_ms": 4831.11,
+      "index_ms": 4911.59,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -241,7 +241,7 @@
     },
     "json": {
       "lang": "cpp",
-      "index_ms": 4916.62,
+      "index_ms": 4929.01,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -250,7 +250,7 @@
     },
     "fmt": {
       "lang": "cpp",
-      "index_ms": 3144.18,
+      "index_ms": 3047.48,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -259,7 +259,7 @@
     },
     "spdlog": {
       "lang": "cpp",
-      "index_ms": 2542.69,
+      "index_ms": 2500.96,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -268,7 +268,7 @@
     },
     "newtonsoft": {
       "lang": "csharp",
-      "index_ms": 5453.88,
+      "index_ms": 5498.45,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -277,7 +277,7 @@
     },
     "guzzle": {
       "lang": "php",
-      "index_ms": 1988.27,
+      "index_ms": 1986.35,
       "fuzz": {
         "total": 60,
         "pass": 60,
@@ -286,7 +286,7 @@
     },
     "monolog": {
       "lang": "php",
-      "index_ms": 2025.66,
+      "index_ms": 2028.05,
       "fuzz": {
         "total": 60,
         "pass": 60,

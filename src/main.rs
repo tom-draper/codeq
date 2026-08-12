@@ -563,10 +563,21 @@ enum Command {
     Astgrep {
         /// The code pattern, e.g. `$X.unwrap()` or `if $C { $$ }`. `$NAME`/`$_`
         /// stand for any node; a repeated `$NAME` must match identically.
-        pattern: String,
-        /// Language the pattern is written in (required).
-        #[arg(long)]
-        language: String,
+        #[arg(required_unless_present = "explain")]
+        pattern: Option<String>,
+        /// Language the pattern is written in (required unless --explain, which
+        /// takes it from the file).
+        #[arg(long, required_unless_present = "explain")]
+        language: Option<String>,
+        /// Show the parse tree at <file>:<line> instead of matching a pattern.
+        ///
+        /// A pattern must name the grammar's node kinds exactly, and there was no
+        /// way to discover them from inside codeq — a wrong guess returns an empty
+        /// result indistinguishable from "no matches". This prints the kinds and
+        /// field names actually covering that line, which is what a pattern is
+        /// written against.
+        #[arg(long, value_name = "FILE:LINE", conflicts_with_all = ["pattern", "language"])]
+        explain: Option<String>,
         /// Restrict to paths containing this substring.
         #[arg(long)]
         path: Option<String>,
@@ -578,6 +589,13 @@ enum Command {
     Search {
         /// Pattern to search for (regex by default).
         pattern: String,
+        /// Files or directories to search, like grep: `codeq search TODO src`.
+        ///
+        /// Each is matched the way `--path` is — as a path *substring* — so a
+        /// directory scopes everything under it and a bare filename finds that
+        /// file wherever it lives. Several are OR'd, which is what a shell glob
+        /// (`src/*.rs`) expands to. Composes with `--path` and `-g` by AND.
+        paths: Vec<String>,
         /// Treat the pattern as a literal string, not a regex.
         #[arg(long)]
         fixed: bool,
@@ -969,9 +987,22 @@ fn main() -> ExitCode {
             language,
             path,
             limit,
-        } => commands::cmd_astgrep(&cwd, &pattern, &language, path, limit, out),
+            explain,
+        } => match explain {
+            Some(loc) => commands::cmd_astgrep_explain(&cwd, &loc, out),
+            // clap's `required_unless_present` guarantees both are set here.
+            None => commands::cmd_astgrep(
+                &cwd,
+                &pattern.unwrap_or_default(),
+                &language.unwrap_or_default(),
+                path,
+                limit,
+                out,
+            ),
+        },
         Command::Search {
             pattern,
+            paths,
             fixed,
             ignore_case,
             word,
@@ -990,6 +1021,7 @@ fn main() -> ExitCode {
             &cwd,
             commands::SearchArgs {
                 pattern: &pattern,
+                paths: &paths,
                 fixed,
                 ignore_case,
                 word,
