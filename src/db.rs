@@ -51,7 +51,12 @@ use rusqlite::Connection;
 // `memo`/`forwardRef`, a `styled.div`, an exported `const`), and a namespaced
 // base class (`extends React.Component`) now yields a relation edge — rebuild to
 // populate both.
-pub const SCHEMA_VERSION: i64 = 23;
+// v24: SQL is extracted rather than treated as a data format — tables, views,
+// indexes, triggers, functions, types, schemas and columns. Existing indexes
+// hold `.sql` files parsed under the old rule (searchable, no facts), and
+// nothing about those files has changed on disk for the freshness check to
+// notice, so only a version bump reparses them.
+pub const SCHEMA_VERSION: i64 = 24;
 
 pub struct Db {
     pub conn: Connection,

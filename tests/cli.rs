@@ -5556,11 +5556,13 @@ fn capabilities_lists_every_extractable_language() {
         .iter()
         .map(|e| e["language"].as_str().unwrap().to_string())
         .collect();
-    for l in ["svelte", "vue", "css", "hcl", "powershell", "proto", "graphql"] {
+    for l in ["svelte", "vue", "css", "hcl", "powershell", "proto", "graphql", "sql"] {
         assert!(langs.iter().any(|x| x == l), "'{l}' extracts but is undocumented: {langs:?}");
     }
     // Data-only formats must stay out: they are indexed for search, not parsed.
-    for l in ["json", "yaml", "toml", "sql"] {
+    // SQL used to be here — it is a language with declarations and uses, not a
+    // data format, and parking it here left `.sql` with no definitions at all.
+    for l in ["json", "yaml", "toml"] {
         assert!(!langs.iter().any(|x| x == l), "'{l}' has no extraction but is advertised");
     }
     // The three language lists are three views of one fact and used to be three
@@ -5974,4 +5976,231 @@ fn the_call_graph_walks_agree_on_depth_semantics() {
             "{cmd} reported its own seed"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// SQL: a schema is the one thing every language in a repo talks to
+// ---------------------------------------------------------------------------
+
+/// A schema in the shape real repositories have it: an initial migration, then a
+/// later one that alters what the first created.
+const SCHEMA: &str = "\
+-- people who can log in
+CREATE TABLE users (
+  id BIGSERIAL PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  org_id BIGINT REFERENCES orgs(id)
+);
+
+CREATE INDEX idx_users_email ON users (email);
+
+CREATE VIEW active_users AS
+  SELECT u.id, u.email FROM users u WHERE u.deleted_at IS NULL;
+
+CREATE FUNCTION touch_updated_at() RETURNS trigger AS $$
+BEGIN
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER users_touch BEFORE UPDATE ON users
+  FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+";
+
+#[test]
+fn sql_declarations_are_definitions_named_once_each() {
+    // `.sql` was indexed as searchable text with no definitions at all. The risk
+    // in fixing that is over-naming, not under-naming: `create_trigger` has three
+    // `object_reference` children (itself, the table it fires on, the function it
+    // executes) and a `REFERENCES` column has two identifiers, so an unanchored
+    // query names each declaration several times over.
+    let f = Fixture::new();
+    f.write("db/001_init.sql", SCHEMA);
+
+    let rows = f.run(&["symbols", "--path", "001_init", "--limit", "0"]);
+    let mut got: Vec<(String, String)> = rows["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["kind"].as_str().unwrap().to_string(),
+                r["name"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            ("field".to_string(), "email".to_string()),
+            ("field".to_string(), "id".to_string()),
+            ("field".to_string(), "org_id".to_string()),
+            ("function".to_string(), "touch_updated_at".to_string()),
+            ("index".to_string(), "idx_users_email".to_string()),
+            ("table".to_string(), "users".to_string()),
+            ("trigger".to_string(), "users_touch".to_string()),
+            ("view".to_string(), "active_users".to_string()),
+        ],
+        "each declaration exactly once, and `orgs`/`id` from the REFERENCES clause \
+         are a *use* of another table, not a declaration"
+    );
+
+    // The trigger names the function it fires, so the call graph joins them up
+    // without SQL having anything a call-graph extractor would recognise.
+    let callers = field_set(&f.run(&["callers", "touch_updated_at"]), "name");
+    assert_eq!(callers, ["users_touch"], "{callers:?}");
+}
+
+#[test]
+fn a_column_added_by_a_later_migration_still_belongs_to_its_table() {
+    // Members are dropped when they have no owning type, and owners are resolved
+    // by walking up the parse tree — which finds `CREATE TABLE` but would miss
+    // `ALTER TABLE`. In a migrations directory that is where most columns live,
+    // so the newest half of a schema would have been the invisible half.
+    let f = Fixture::new();
+    f.write("db/001_init.sql", SCHEMA);
+    f.write("db/002_name.sql", "ALTER TABLE users ADD COLUMN display_name TEXT;\n");
+
+    let members = field_set(&f.run(&["members", "users"]), "name");
+    assert!(
+        members.contains(&"display_name".to_string()),
+        "a column added by ALTER TABLE is still a column of that table: {members:?}"
+    );
+    let owner = f.run(&["definitions", "display_name"])["data"][0]["owner"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(owner, "users");
+}
+
+#[test]
+fn an_out_of_body_member_is_only_trusted_when_its_owner_is_unambiguous() {
+    // Reaching for the `owner` tag is what lets an `ALTER TABLE` column find its
+    // table across files — but the tag is a *name*, so with two same-named tables
+    // it would hand each one the other's columns. That is exactly the name-based
+    // false positive `members` exists not to have, so the tag is only trusted
+    // when the name has one definition in the repository.
+    let f = Fixture::new();
+    f.write("a/schema.sql", "CREATE TABLE jobs (id INT);\n");
+    f.write("b/schema.sql", "CREATE TABLE jobs (id INT);\n");
+    f.write("a/later.sql", "ALTER TABLE jobs ADD COLUMN retries INT;\n");
+
+    let names = field_set(&f.run(&["members", "jobs"]), "name");
+    assert!(
+        !names.contains(&"retries".to_string()),
+        "two tables share the name, so the tag cannot say which one gained the column: {names:?}"
+    );
+    // Scoping picks an owner; it does not make the name unambiguous.
+    let scoped = field_set(&f.run(&["members", "jobs", "--path", "a/"]), "name");
+    assert!(!scoped.contains(&"retries".to_string()), "{scoped:?}");
+    // The column is still a definition that knows its owner — `members` is being
+    // careful, not blind.
+    let defs = f.run(&["definitions", "retries"]);
+    assert_eq!(defs["data"][0]["owner"], "jobs");
+}
+
+#[test]
+fn a_schema_qualified_table_is_addressable_by_its_bare_name() {
+    // `CREATE TABLE analytics.events` is written both ways depending on
+    // `search_path`, and reference matching is textual — so storing the qualified
+    // form would leave `definitions events` empty while `references events`
+    // happily found every use.
+    let f = Fixture::new();
+    f.write("db/a.sql", "CREATE TABLE analytics.events (id INT);\n");
+
+    let v = f.run(&["definitions", "events"]);
+    assert_eq!(v["data"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["data"][0]["name"], "events");
+    // The qualifier is not lost — it is what the signature shows.
+    assert!(
+        v["data"][0]["signature"]
+            .as_str()
+            .unwrap()
+            .contains("analytics.events"),
+        "{v}"
+    );
+}
+
+#[test]
+fn sql_enum_variants_are_stored_without_their_quotes() {
+    // A Postgres enum declares its members as quoted literals, so capturing them
+    // verbatim would answer `members mood` with `'sad'` — a name no query for
+    // `sad` can ever match.
+    let f = Fixture::new();
+    f.write("db/a.sql", "CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');\n");
+
+    let members = field_set(&f.run(&["members", "mood"]), "name");
+    assert_eq!(members, ["sad", "ok", "happy"], "{members:?}");
+}
+
+#[test]
+fn sql_literals_are_strings_only_when_they_are_quoted() {
+    // This grammar gives every scalar the same `literal` node, so a span query
+    // cannot tell `'admin'` from `42`. Marking them all as strings would push
+    // numeric and boolean literals out of `--in code`.
+    let f = Fixture::new();
+    f.write(
+        "db/a.sql",
+        "-- seed the admin\nINSERT INTO users (role, level) VALUES ('admin', 42);\n",
+    );
+
+    let hits = |pat: &str, scope: &str| {
+        f.run(&["search", pat, "--in", scope])["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(hits("admin", "strings"), 1, "the quoted value is a string");
+    assert_eq!(hits("admin", "code"), 0, "the quoted value is not code");
+    assert_eq!(hits("admin", "comments"), 1, "`-- seed the admin` is prose");
+    // The number stayed code, which is the whole reason the quote decides.
+    assert_eq!(hits("42", "code"), 1, "a numeric literal is not a string");
+    assert_eq!(hits("42", "strings"), 0, "and it is not a string either");
+}
+
+#[test]
+fn a_table_is_reachable_from_the_query_that_names_it_in_another_language() {
+    // The payoff for indexing SQL at all: the schema is the one artefact every
+    // language in a polyglot repo talks to, and the query that reads it lives in
+    // a string in some other file.
+    let f = Fixture::new();
+    f.write("db/001_init.sql", SCHEMA);
+    f.write(
+        "app.py",
+        "def load(conn):\n    return conn.execute(\"SELECT id FROM users\")\n",
+    );
+
+    let v = f.run(&["references", "users", "--path", "app.py"]);
+    let refs = v["data"]["references"].as_array().unwrap();
+    assert_eq!(refs.len(), 1, "{v}");
+    assert_eq!(refs[0]["symbol"], "load", "attributed to the function around it");
+
+    // And the definition it resolves to is the table, from `about`.
+    let defs = field_set(&f.run(&["definitions", "users"]), "kind");
+    assert_eq!(defs, ["table"], "{defs:?}");
+}
+
+#[test]
+fn unused_reports_the_sql_objects_that_can_be_referenced_and_no_others() {
+    // An index is named exactly once in the world — at its own `CREATE` — and a
+    // trigger and an enum variant are no different, so reporting them would put
+    // noise in every repository that has a schema, always. A table nothing
+    // queries is a real finding, because codeq does find table names inside the
+    // SQL strings in application code.
+    let f = Fixture::new();
+    f.write("db/001_init.sql", SCHEMA);
+    f.write("db/002_dead.sql", "CREATE TABLE forgotten (id INT);\n");
+    f.write("db/003_enum.sql", "CREATE TYPE mood AS ENUM ('sad');\n");
+    f.write("app.py", "def load(conn):\n    return conn.execute(\"SELECT id FROM users\")\n");
+
+    let dead = field_set(&f.run(&["unused"]), "name");
+    assert!(dead.contains(&"forgotten".to_string()), "a table nothing queries: {dead:?}");
+    for quiet in ["idx_users_email", "users_touch", "sad"] {
+        assert!(
+            !dead.contains(&quiet.to_string()),
+            "{quiet} is named once by construction, so it is not evidence of anything: {dead:?}"
+        );
+    }
+    assert!(!dead.contains(&"users".to_string()), "queried from app.py: {dead:?}");
 }

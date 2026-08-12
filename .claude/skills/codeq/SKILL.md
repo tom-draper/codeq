@@ -96,6 +96,16 @@ refresh the index — every command auto-refreshes changed files first.
   `read doc.md --symbol "Section"` = one section (not the whole file); `--in
   strings` = fenced examples, `--in comments` = prose; local links/images are
   file references for `deps`/`importers`.
+- **SQL**: `.sql` yields `table`, `view`, `index`, `trigger`, `function`, `type`
+  and `module` (schema) definitions, with columns as `field`s of their table — so
+  `definitions users` finds the table, `members users` lists its columns
+  (including ones a later `ALTER TABLE` added), and `api schema.sql` is the
+  schema's surface. Because reference matching is textual, `references users`
+  also finds the table named inside the SQL *string* in the app code that queries
+  it — the schema is usually the one artefact every language in the repo shares.
+  A schema-qualified name is stored bare (`analytics.events` → `events`); enum
+  variants lose their quotes; `--in strings` is quoted literals only. No imports
+  and no inheritance edges: a foreign key is real but it is not `implements`.
 - `codeq members NAME` — a type's fields, enum variants and methods (`--kind` to
   narrow). Containment is structural (a member is nested inside NAME's byte range),
   though NAME itself still resolves by name — two same-named types both answer, so

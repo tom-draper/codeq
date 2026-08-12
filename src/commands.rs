@@ -2074,11 +2074,13 @@ fn members_of(
          WHERE name = ?1 AND kind <> 'import'
          ORDER BY path, start_byte",
     )?;
-    let owners: Vec<(String, i64, i64)> = owner_stmt
+    let all_owners: Vec<(String, i64, i64)> = owner_stmt
         .query_map([name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-        .collect::<std::result::Result<Vec<_>, _>>()?
-        .into_iter()
-        .filter(|(p, _, _): &(String, i64, i64)| path.is_none_or(|f| p.contains(f)))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let owners: Vec<(String, i64, i64)> = all_owners
+        .iter()
+        .filter(|(p, _, _)| path.is_none_or(|f| p.contains(f)))
+        .cloned()
         .collect();
     let multiple_owners = owners.len() > 1;
 
@@ -2149,6 +2151,60 @@ fn members_of(
         }
         if limit > 0 && data.len() >= limit {
             break;
+        }
+    }
+
+    // A member belongs to its owner wherever it is *written*. Containment is how
+    // an owner gets discovered; once a fact carries an `owner` tag, that tag is
+    // the answer. The two come apart in SQL, where a migrations directory adds
+    // columns with `ALTER TABLE` in a file the `CREATE TABLE` does not span — so
+    // containment alone reported a schema's first columns and none of its later
+    // ones. Every other language writes members inside their type, so those rows
+    // are already present and the dedup drops them.
+    //
+    // Only when NAME has exactly one definition in the whole repository, which is
+    // what keeps `members` structural. The `owner` tag is a *name*, so it cannot
+    // tell two same-named types apart: with two `class C`s, trusting it would give
+    // each one the other's members — the name-based false positive this command
+    // exists to not have. One definition means there is nothing to confuse it
+    // with. The count is deliberately taken before `--path` narrows it: a filter
+    // selects which owner is asked about, it does not make an ambiguous name
+    // unambiguous.
+    if all_owners.len() == 1 && !owners.is_empty() && (limit == 0 || data.len() < limit) {
+        let mut seen: HashSet<(String, i64, String)> = data
+            .iter()
+            .map(|r| (r.path.clone(), r.line, r.name.clone()))
+            .collect();
+        let mut tagged = s.db.conn.prepare(
+            "SELECT name, kind, path, start_line, signature, doc FROM facts
+             WHERE owner = ?1 AND kind <> 'import'
+             ORDER BY path, start_line",
+        )?;
+        let rows = tagged.query_map([name], |r| {
+            let kind: String = r.get(1)?;
+            let signature: Option<String> = r.get(4)?;
+            Ok(MemberRow {
+                name: r.get(0)?,
+                path: r.get(2)?,
+                line: r.get(3)?,
+                signature: declaration_header(&kind, signature),
+                doc: r.get(5)?,
+                kind,
+                owner: None,
+            })
+        })?;
+        for row in rows {
+            let row = row?;
+            if kind.is_some_and(|k| row.kind != k) {
+                continue;
+            }
+            if !seen.insert((row.path.clone(), row.line, row.name.clone())) {
+                continue;
+            }
+            data.push(row);
+            if limit > 0 && data.len() >= limit {
+                break;
+            }
         }
     }
 
@@ -3715,12 +3771,22 @@ pub fn cmd_unused(
     // unreferenced CSS class or `variable` really is dead.
     // Markdown headings are prose, not definitions: nothing references a heading
     // by name, so every one of them would read as dead code.
+    //
+    // SQL is excluded by *kind*, not wholesale, because the two halves differ. A
+    // table, view, column or function is named by whatever queries it — codeq
+    // finds those names inside the SQL strings in application code — so an
+    // unreferenced one is a real finding. An index or a trigger is named exactly
+    // once in the world, at its own `CREATE`, and an enum variant is referenced by
+    // data rather than by code: those would be reported in every repository,
+    // always, which is the noise the exclusions above exist to prevent.
     let exclude_headings = if kind == Some("heading") { "" } else { " AND kind <> 'heading'" };
         let sql = format!(
             "SELECT name, kind, path, start_line, visibility FROM facts
              WHERE kind <> 'import' AND name IS NOT NULL{exclude_headings}
                AND (language IS NULL OR language NOT IN ('graphql', 'proto'))
-               AND NOT (language = 'hcl' AND kind = 'output'){} ORDER BY path, start_line",
+               AND NOT (language = 'hcl' AND kind = 'output')
+               AND NOT (language = 'sql' AND kind IN ('index', 'trigger', 'variant')){}
+             ORDER BY path, start_line",
         filters.sql(),
     );
     let candidates: Vec<UnusedRow> = {

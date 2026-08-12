@@ -64,6 +64,25 @@ benchmarks — not as a step you run before querying.
   searches fenced examples, `--in comments` searches prose (`--in code` is
   correctly empty: markdown has no code). Local links and images are file
   references, so `deps`/`importers` work across docs and assets.
+- **The schema is indexed too.** A `.sql` file yields `table`, `view`, `index`,
+  `trigger`, `function`, `type` and `module` (schema) definitions, with columns as
+  `field`s owned by their table — so `definitions users` finds the table and
+  `members users` lists its columns. The payoff is cross-language: reference
+  matching is textual, so `references users` finds the table named inside the SQL
+  *string* in the Python or Go that queries it, and `callers touch_updated_at`
+  finds the `CREATE TRIGGER` that fires it. Details worth knowing:
+  - A column added by a later `ALTER TABLE` still belongs to its table — but only
+    when the table name has one definition repo-wide, since that link is by name.
+  - `CREATE TABLE analytics.events` is stored as `events`; the qualified form is
+    in the signature.
+  - Enum variants lose their quotes: `members mood` says `sad`, not `'sad'`.
+  - `--in strings` is quoted literals only; `42` and `NULL` stay `--in code`.
+  - No imports (SQL has none) and no relations: a foreign key is a real edge but
+    it is not inheritance, so it is not forced into `implementors`/`supertypes`.
+  - `unused` skips SQL indexes, triggers and enum variants — each is named exactly
+    once by construction, so reporting them is noise, not a finding. Tables,
+    views, columns and functions are reported normally.
+  - `CREATE PROCEDURE` is not in the grammar and yields nothing.
 - **Understand a file cheaply:** `codeq read <file>` — folds long function bodies
   to signatures; read this instead of ingesting a whole large file.
 - **Read one definition / range (verbatim, line-numbered):**
@@ -254,6 +273,12 @@ benchmarks — not as a step you run before querying.
   filters on the stored `owner` tag, which only fields and variants carry, so it
   silently answers the same question minus every method. `--owner` is for browsing
   fields (`--owner X --kind field`), not for "what does this type have".
+  - **One exception to containment, for members declared outside their type:** a
+    SQL `ALTER TABLE … ADD COLUMN` in a later migration is a column of that table
+    even though the `CREATE TABLE` doesn't span it. Those are found via the
+    `owner` tag — but *only* when the type name has a single definition in the
+    repo, because the tag is a name and two same-named types would otherwise
+    trade members. Two `CREATE TABLE jobs` and the later column is left out.
 - **Trim tokens on list output:** append `--fields a,b`. Row keys are the same on
   every command: **`name`** is the definition a row *is*, **`symbol`** is the
   definition it sits *inside* (`search`/`references`/`astgrep` matches only), and

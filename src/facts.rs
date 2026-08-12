@@ -121,6 +121,7 @@ pub struct Extractor {
     powershell: LangSpec,
     proto: LangSpec,
     graphql: LangSpec,
+    sql: LangSpec,
 }
 
 struct LangSpec {
@@ -689,6 +690,10 @@ impl Extractor {
                 tree_sitter_graphql::LANGUAGE.into(),
                 GRAPHQL_QUERY, GRAPHQL_SPANS, GRAPHQL_REL, "treesitter/graphql", "graphql",
             )?,
+            sql: LangSpec::new(
+                tree_sitter_sequel::LANGUAGE.into(),
+                SQL_QUERY, SQL_SPANS, "", "treesitter/sql", "sql",
+            )?,
         })
     }
 
@@ -739,6 +744,25 @@ impl Extractor {
             "powershell" => self.powershell.extract(src),
             "proto" => self.proto.extract(src),
             "graphql" => self.graphql.extract(src),
+            // Query plus a code pass — see `sql_extras` and `unqualify` for the
+            // three things a query cannot do here.
+            "sql" => {
+                let tree = match self.sql.parser.parse(src, None) {
+                    Some(t) => t,
+                    None => return (Vec::new(), Vec::new(), Vec::new()),
+                };
+                let root = tree.root_node();
+                let (mut facts, mut spans, rels) = self.sql.harvest(root, src);
+                let (extra_facts, extra_spans) = sql_extras(root, src);
+                facts.extend(extra_facts);
+                spans.extend(extra_spans);
+                spans.sort_by_key(|(s, _, _)| *s);
+                for f in &mut facts {
+                    f.name = unqualify(&f.name);
+                    f.owner = f.owner.as_deref().map(unqualify);
+                }
+                (facts, spans, rels)
+            }
             // Single-file component formats: markup wrapping the real code. Both
             // grammars name the nodes the same way, so one path serves both —
             // disjoint field borrows let the markup and nested extractors be
@@ -1281,7 +1305,7 @@ pub const LANGUAGES: &[&str] = &[
     "rust", "python", "javascript", "typescript", "tsx", "go", "java", "ruby",
     "c", "cpp", "csharp", "php", "bash", "lua", "scala", "kotlin", "swift",
     "dart", "zig", "elixir", "solidity", "svelte", "vue", "css", "hcl",
-    "powershell", "proto", "graphql", "markdown",
+    "powershell", "proto", "graphql", "markdown", "sql",
 ];
 
 /// What codeq can extract for one language.
@@ -1339,6 +1363,7 @@ fn queries_for(language: &str) -> Option<(String, String)> {
         "powershell" => pair(POWERSHELL_QUERY, ""),
         "proto" => pair(PROTO_QUERY, ""),
         "graphql" => pair(GRAPHQL_QUERY, GRAPHQL_REL),
+        "sql" => pair(SQL_QUERY, ""),
         // svelte, vue, hcl and markdown build their facts in code rather than
         // from a query, so there is no query text to describe them; `support`
         // states their capabilities directly.
@@ -1422,6 +1447,7 @@ pub fn has_spans(language: &str) -> bool {
             | "proto"
             | "graphql"
             | "markdown"
+            | "sql"
     )
 }
 
@@ -1483,6 +1509,16 @@ const TYPE_KINDS: &[&str] = &[
     "class",
     "module",
     "singleton_class",
+    // SQL. `alter_table` is here alongside `create_table` because in a migrations
+    // directory — the shape most repos actually have — the column is added by a
+    // later `ALTER TABLE`, not by the original `CREATE`. Without it every such
+    // column resolves to no owner and is dropped, so the newest half of a schema
+    // would be the invisible half.
+    "create_table",
+    "alter_table",
+    "create_view",
+    "create_materialized_view",
+    "create_type",
 ];
 
 /// The name of the type enclosing a member, for `field` and `variant` facts.
@@ -1512,7 +1548,12 @@ fn owner_of(kind: &str, node: Node, src: &[u8]) -> Option<String> {
                 .children(&mut c)
                 .find(|ch| {
                     let k = ch.kind();
-                    k.ends_with("identifier") || k == "name" || k.ends_with("_name")
+                    // `object_reference` is how SQL spells "the thing being
+                    // declared"; it wraps the identifier rather than being one.
+                    k.ends_with("identifier")
+                        || k == "name"
+                        || k.ends_with("_name")
+                        || k == "object_reference"
                 })
                 .and_then(|ch| ch.utf8_text(src).ok())
                 .map(|t| t.to_string());
@@ -1641,6 +1682,11 @@ fn visibility_of(lang: &str, name: &str, def: Node, src: &[u8]) -> Option<String
             }
         }
         "ruby" => s("public"), // section-based private/protected not tracked
+        // A schema has no private half: anything a connection can name, it can
+        // use. Calling it public is what makes `api schema.sql` answer "what does
+        // this schema expose" — and what puts a never-referenced table into
+        // `unused` flagged as possibly-external rather than as certain dead code.
+        "sql" => s("public"),
         _ => None,
     }
 }
@@ -2581,6 +2627,124 @@ const GRAPHQL_SPANS: &str = r#"
 (comment) @comment
 (string_value) @string
 "#;
+
+// SQL. A schema is the one part of a polyglot repo that every language talks to,
+// and `.sql` was indexed as searchable text with no definitions at all — so
+// `definitions users` missed the table that half the codebase reads.
+//
+// The anchors are load-bearing. `create_trigger` has *three* `object_reference`
+// children (the trigger, the table it fires on, the function it executes) and
+// `column_definition` has two identifiers when the column carries a `REFERENCES`
+// clause, so an unanchored pattern names each definition several times over. `.`
+// after the introducing keyword (or at the start of the child list) pins the
+// capture to the one that is the declaration's own name.
+const SQL_QUERY: &str = r#"
+(create_table (keyword_table) . (object_reference) @name) @table
+(create_view (keyword_view) . (object_reference) @name) @view
+(create_materialized_view (keyword_view) . (object_reference) @name) @view
+(create_index (identifier) @name) @index
+(create_trigger (keyword_trigger) . (object_reference) @name) @trigger
+(create_function (keyword_function) . (object_reference) @name (function_body)? @body) @function
+(create_type (keyword_type) . (object_reference) @name) @type
+(create_schema (identifier) @name) @module
+(column_definition . (identifier) @name) @field
+"#;
+
+// `marginalia` is this grammar's name for a `/* … */` block comment; `comment` is
+// the `--` line form. String spans are *not* here: the grammar gives every scalar
+// the same `literal` node, so a query cannot tell `'admin'` from `42` — see
+// `sql_extras`.
+const SQL_SPANS: &str = r#"
+(comment) @comment
+(marginalia) @comment
+"#;
+
+/// The two SQL facts a tree-sitter query cannot express, in one walk.
+///
+/// **Enum variants.** `CREATE TYPE mood AS ENUM ('sad', 'ok')` declares its
+/// members as quoted literals, and a query captures the quotes with them —
+/// `members mood` would answer `'sad'`, which no query for `sad` ever finds.
+///
+/// **String spans.** This grammar gives every scalar the same `literal` node, so
+/// `'admin'`, `42` and `NULL` are indistinguishable by kind. Marking them all as
+/// strings would push numeric and boolean literals out of `--in code`, so the
+/// quote character decides: `'…'` and `$$…$$` are strings, everything else is
+/// code. That keeps `search --in code email` off `'email@example.com'` without
+/// hiding a threshold or a flag value.
+fn sql_extras(root: Node, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>) {
+    let mut facts = Vec::new();
+    let mut spans = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let mut c = node.walk();
+        for child in node.children(&mut c) {
+            stack.push(child);
+        }
+        match node.kind() {
+            "literal" => {
+                let text = node.utf8_text(src).unwrap_or("");
+                if text.starts_with('\'') || text.starts_with('$') {
+                    spans.push((node.start_byte(), node.end_byte(), Span::Str));
+                }
+            }
+            "enum_elements" => {
+                let Some(owner) = node
+                    .parent()
+                    .and_then(|p| first_child_kind(p, "object_reference", src))
+                    .map(unqualify)
+                else {
+                    continue;
+                };
+                let mut ec = node.walk();
+                for el in node.children(&mut ec) {
+                    if el.kind() != "literal" {
+                        continue;
+                    }
+                    let Ok(raw) = el.utf8_text(src) else { continue };
+                    let name = raw.trim_matches('\'').to_string();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let start = el.start_position();
+                    let end = el.end_position();
+                    facts.push(Fact {
+                        kind: "variant".to_string(),
+                        name,
+                        start_byte: el.start_byte(),
+                        end_byte: el.end_byte(),
+                        start_line: start.row + 1,
+                        start_col: start.column,
+                        end_line: end.row + 1,
+                        end_col: end.column,
+                        signature: collapse_ws(raw),
+                        doc: None,
+                        source: "treesitter/sql".to_string(),
+                        confidence: 1.0,
+                        visibility: Some("public".to_string()),
+                        owner: Some(owner.clone()),
+                        shape: None,
+                        shape_nodes: 0,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    facts.sort_by_key(|f| f.start_byte);
+    (facts, spans)
+}
+
+/// The last segment of a schema-qualified SQL name: `analytics.events` → `events`.
+///
+/// A definition is stored under the name it is *looked up* by. Queries write the
+/// table both ways depending on `search_path`, and codeq's own reference matching
+/// is textual and word-bounded — so `references events` already finds
+/// `analytics.events`, while a fact stored as `analytics.events` would not answer
+/// `definitions events`. The qualified form is not lost: it is what the
+/// signature shows.
+fn unqualify(name: &str) -> String {
+    name.rsplit('.').next().unwrap_or(name).to_string()
+}
 
 // HCL / Terraform. Blocks are `keyword "label"… { … }` and their identity lives
 // in the labels, not in any name node — so a query cannot pick it out: the labels

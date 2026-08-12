@@ -152,6 +152,16 @@ fn callee_of<'a>(call: Node<'a>, src: &str) -> Option<(Node<'a>, Receiver)> {
     // `expression`), so step through single-child wrappers to the real one.
     let callee = unwrap_wrapper(callee);
 
+    // Unwrapping can land on the identifier itself, when the grammar wraps a bare
+    // callee in a reference node — SQL's `count(*)` is
+    // `invocation(object_reference(identifier))`. The member-access path below
+    // looks *inside* the node it is given, so a leaf there finds nothing and the
+    // call is silently not a call.
+    if is_identifier(callee) {
+        let recv = first_field(call, RECEIVER_FIELDS).map(|n| text_of(n, src));
+        return Some((callee, recv));
+    }
+
     // A member access: the last identifier is the method, the object is the
     // receiver as written (`a.b` in `a.b.query()`).
     let name = first_field(callee, MEMBER_FIELDS)

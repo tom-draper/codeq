@@ -4,6 +4,143 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — Friction from a session spent adding a language
+
+Three things slowed the SQL work down. Recorded before they are forgotten,
+because each is a gap in codeq rather than a gap in my knowledge of it.
+
+### 1. `astgrep` has no way to learn the node kinds it requires
+
+The dominant activity of this session was "what does this grammar call its
+nodes?", and codeq answered none of it. I wrote a throwaway `examples/sqldump.rs`
+to walk the tree and print kinds, then deleted it.
+
+This is not a grammar-development complaint — it is the missing half of a shipped
+feature. `astgrep '$X.unwrap()' --language rust` asks an agent to write syntax
+against a grammar it has never seen, with no way to discover kind names, and the
+failure mode is a *silent empty result* that reads exactly like "no matches". The
+docs already concede the pattern must be "structurally exact"; discovering what
+exact means currently requires leaving codeq.
+
+Something like `codeq astgrep --explain <file>:<line>` (the parse tree at a
+position, kinds and fields) would close it, and would be honest dogfooding: I
+needed it, worked around it, and the workaround was a Rust file.
+
+### 2. `search PATTERN FILE` is not accepted, despite "a superset of grep"
+
+I typed `codeq search 'markdown' CLAUDE.md` — grep's most basic calling
+convention — and got `unexpected argument 'CLAUDE.md'`. Twice, in one command,
+because I did it again for README.md in the same breath. The fix is `--path`.
+
+That claim of superset is load-bearing in the docs, and grep's positional file
+argument is the first thing anyone tries. It is also internally inconsistent:
+`imports [PATH]`, `outline <file>`, `api <path>`, `read <file>` and `tree [path]`
+all take a positional path. `search` is the one that doesn't, and it is the one
+most likely to be reached for out of muscle memory.
+
+### 3. Row *keys* are unified; row *containers* are not
+
+`codeq.result.v2` made `line` mean `line` everywhere. But `symbols`,
+`definitions` and `members` put rows in `data` directly, while `search` nests
+them under `data.matches` and `references` under `data.references`. I wrote a
+test helper against the wrong shape and got `Option::unwrap()` on a `None` —
+the same class of "learn it per command" tax v2 was meant to end, one level up
+from where it was fixed.
+
+Not obviously a bug: `search` carries `matches` alongside other keys, so the
+container is doing work. But an agent cannot tell which commands nest without
+trying, and nothing documents it.
+
+### Also worth noting: `unused`'s exclusion policy is now a growing SQL string
+
+`graphql`/`proto` wholesale, `hcl` + `output`, and now `sql` + three kinds — all
+hand-written into one `format!` in `cmd_unused`. It has grown once per language
+that has externally-consumed declarations, which is a category that will keep
+appearing. It belongs next to the language's other properties (`facts::support`),
+not in a query string three thousand lines away.
+
+## 2026-08-12 — SQL is a language, and codeq was treating it as a data file
+
+`.sql` was in `index::NO_EXTRACTION` next to JSON, YAML and TOML: indexed for
+search, zero definitions. That was a category error. JSON has keys; SQL has
+*declarations and uses*, which is the entire thing codeq indexes. `definitions
+users` came back empty on repositories whose `users` table half the code reads.
+
+### Why this one first
+
+The audit that produced it asked which non-code formats deserve extraction, and
+the honest test is: does the format have named things, and references to those
+names? Generic JSON fails — nobody looks up `$.compilerOptions.paths` by name,
+and turning every key into a definition would flood `symbols`, `unused` and
+`hotspots`. SQL passes outright, and it pays off *across* languages, because
+reference matching is textual: the schema is the one artefact every language in a
+polyglot repo talks to, and `references users` finds the table named inside the
+SQL string in the Python that queries it. `callers touch_updated_at` finds the
+`CREATE TRIGGER` that fires it — a call-graph edge in a language with no calls.
+
+Grammar: `tree-sitter-sequel` 0.3.11. `CREATE PROCEDURE` doesn't parse in it;
+that is now a documented limitation rather than a silent empty answer.
+
+### Four things a query could not do
+
+**Anchors, or every declaration gets named several times.** `create_trigger` has
+three `object_reference` children — the trigger, the table it fires on, the
+function it executes — and a column with a `REFERENCES` clause has two
+identifiers. The first draft of the query produced three facts named after one
+trigger. `.` after the introducing keyword pins each capture to the declaration's
+own name. Worth stating because the failure is *over*-reporting: the output looks
+populated, and is wrong.
+
+**Quotes.** A Postgres enum declares its members as quoted literals, so a
+verbatim capture answers `members mood` with `'sad'` — a name no query for `sad`
+ever matches.
+
+**Strings vs numbers.** This grammar gives every scalar the same `literal` node,
+so `'admin'`, `42` and `NULL` are one kind. Marking them all as strings would
+push numeric literals out of `--in code`; the quote character decides instead.
+
+**Schema qualification.** `CREATE TABLE analytics.events` is stored as `events`,
+because the fact is stored under the name it is *looked up* by. The qualified
+form survives in the signature.
+
+### The bug that was actually interesting
+
+Columns are members, and members with no owner are dropped. Owners resolve by
+walking up the parse tree — which finds `CREATE TABLE` and misses `ALTER TABLE`.
+In a migrations directory that is where most columns live, so the newest half of
+a schema was the invisible half.
+
+The fix — fall back to the stored `owner` tag when containment finds nothing —
+broke `members_are_structural_not_name_based` immediately, and correctly. That
+test exists because `members` is the one graph command that is *not* name-based,
+and the `owner` tag is a name: with two `class C`s it hands each one the other's
+members. So the fallback is gated on the type name having exactly one definition
+in the repository — counted *before* `--path` narrows it, since a filter chooses
+which owner you're asking about, it doesn't make an ambiguous name unambiguous.
+
+I would have shipped the unguarded version. The existing test caught it in one
+run, which is the second time this month a test written for an unrelated reason
+has been the thing that stopped a regression — see the cross-walk invariant note
+below.
+
+### `unused` needed a kind-level exclusion, not a language-level one
+
+The instinct was to exclude SQL wholesale, the way GraphQL and protobuf are
+excluded as contracts consumed from outside. Wrong: a table, view, column or
+function *is* named by whatever queries it, and codeq finds those names, so an
+unreferenced one is a genuine finding. An index is named exactly once in the
+world — at its own `CREATE` — and so is a trigger; an enum variant is referenced
+by data, not code. Those three would appear in every repository with a schema,
+always. Excluded by kind; the rest report normally.
+
+### Not done, deliberately
+
+Foreign keys. `REFERENCES orgs(id)` is the most structurally interesting fact in
+a schema, and `implementors`/`supertypes` are right there — but a foreign key is
+not inheritance, and `--relation implements|extends` has no honest slot for it.
+Forcing it in would make `supertypes` lie to save writing a third relation kind.
+Left out until it can be its own edge.
+
 ## 2026-08-12 — `codeq.result.v2`: one key per fact, across every command
 
 With no downstream users yet, the row schema got the breaking change it needed.
