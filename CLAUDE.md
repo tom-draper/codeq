@@ -13,8 +13,12 @@ Build with `cargo build` → run `./target/debug/codeq` from the repo root
 Each command opens the index and reruns the git-free freshness check (changed/
 added/removed files get reparsed, schema-version bumps trigger a rebuild) *before*
 answering, so a query always reflects the current tree — even right after an edit.
-The refresh count is only shown under `--json`/`--meta` (the `index` block's
-`reindexed_files`), which is why it *looks* like nothing happened. `index` exists
+The refresh count appears as `reindexed_files` in the `index` block under
+`--json`/`--meta`. In text mode a real reparse prints `# codeq: reindexed N
+file(s)` on **stderr** — so stdout stays pure `path:line:col:` rows and a pipe
+never sees it, but the terminal is not silent. Freshness is keyed on the content
+hash, so a bare `touch` reparses nothing and prints nothing; only a real edit
+does. `index` exists
 only to force a full `--rebuild` or to pre-warm the cache for timing-sensitive
 benchmarks — not as a step you run before querying.
 
@@ -39,6 +43,16 @@ benchmarks — not as a step you run before querying.
   C#, Python, C, C++, PHP, Kotlin and Swift; the remaining languages return just
   the type. Python has no declaration site, so a member is its earliest class-body
   or `self.x =` assignment (`other.x =` is not a declaration).
+- **Python: a module-scope binding is a definition too**, on the same rule as
+  JS/TS below. `DATA_DIR = Path(...)`, a 52-entry `alias` dict, every settings
+  constant — all `constant` facts, so `definitions`/`outline`/`api` see them.
+  Module scope only: locals are not definitions, and destructuring (`a, b = …`)
+  declares nothing at that site. A bare annotation (`X: int`, no value) declares
+  a type, not a binding, and is not indexed.
+- **A member of a private type is private**, whatever its own modifier says: the
+  methods and fields of a Python `class _Draw` are not public API, so they stay
+  out of `api` and `untested`. Checked up the whole chain of enclosing types, so
+  a public inner class inside a private outer one is private too.
 - **JS/TS: a module-scope binding is a definition.** So much of JavaScript that is
   conceptually a definition is a `const` bound to a *call* — `memo(…)`,
   `forwardRef(…)`, `styled.div\`…\``, `createContext(…)`, `express.Router()` — and
@@ -252,7 +266,8 @@ benchmarks — not as a step you run before querying.
   agree on what scaffolding is. For the edit→find-the-test loop.
 - **What a diff affects:** `codeq affected --compare-to <ref>` — the definitions the
   diff touched, their transitive callers (impacted, `--depth N`), and the test
-  *files* to re-run. Composes `changed --symbols` + a caller BFS + `tests`; name-based,
+  *files* to re-run. An impacted row's `line` is the definition's, per the row
+  rule; **`call_line`** is where the impact enters it. Composes `changed --symbols` + a caller BFS + `tests`; name-based,
   so it over-includes rather than misses.
 - **Is this already implemented?** `codeq clones [<path>]` — definitions with an
   identical syntax shape (identifiers and literals normalised away). Exact
@@ -384,7 +399,10 @@ benchmarks — not as a step you run before querying.
 
 codeq tells you why, on stderr (or in the `note` field under `--json`):
 
-- `no symbol named 'ScanOpt'; closest: ScanOpts` — a typo, with the fix.
+- `no symbol named 'ScanOpt'; closest: ScanOpts` — a typo, with the fix. Only
+  when the name occurs *nowhere*: a name that is referenced but declared outside
+  the repo (`Path`, `HTTPException`) says so instead, because reading "no symbol
+  named 'Path'" as "that import is gone" is a mistake that has actually been made.
 - `'X' is defined at a.rs:2 but has no callers` — the symbol is real, the
   relation is genuinely empty.
 - `'X' is defined at a.rs:2 but nothing matches --path zzz` — your filter, not

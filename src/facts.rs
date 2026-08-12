@@ -373,7 +373,21 @@ impl LangSpec {
                     let visibility = if kind == "import" {
                         None
                     } else {
-                        visibility_of(self.lang, &name, node, src)
+                        let own = visibility_of(self.lang, &name, node, src);
+                        // A member of a private type is not public API in any
+                        // language codeq supports. Visibility was computed per
+                        // definition without consulting the type around it, so
+                        // the methods and fields of a Python `class _Draw` were
+                        // reported as public — putting them in `api`, in
+                        // `untested`, and into `api --compare-to` as newly *added*
+                        // public surface. The declaration is public; what it is
+                        // declared inside is what makes it reachable.
+                        match own.as_deref() {
+                            Some("public") if enclosed_by_private_type(self.lang, node, src) => {
+                                Some("private".to_string())
+                            }
+                            _ => own,
+                        }
                     };
                     let start = node.start_position();
                     let end = node.end_position();
@@ -1581,6 +1595,35 @@ const TYPE_KINDS: &[&str] = &[
     "create_type",
 ];
 
+/// Whether any type declaration enclosing `node` is itself private.
+///
+/// Walks every enclosing type, not just the nearest: a public inner class inside
+/// a private outer one is still unreachable from outside, so the most restrictive
+/// answer on the chain is the true one.
+fn enclosed_by_private_type(lang: &str, node: Node, src: &[u8]) -> bool {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if TYPE_KINDS.contains(&n.kind()) {
+            let mut c = n.walk();
+            let named = n.children(&mut c).find(|ch| {
+                let k = ch.kind();
+                k.ends_with("identifier") || k == "name" || k.ends_with("_name")
+            });
+            let name = n
+                .child_by_field_name("name")
+                .or(named)
+                .and_then(|c| c.utf8_text(src).ok());
+            if let Some(name) = name {
+                if visibility_of(lang, name, n, src).as_deref() == Some("private") {
+                    return true;
+                }
+            }
+        }
+        cur = n.parent();
+    }
+    false
+}
+
 /// Whether a definition carries a test attribute — the structural answer to a
 /// question codeq had only ever answered from spelling.
 ///
@@ -2097,6 +2140,33 @@ const PYTHON_QUERY: &str = r#"
 (class_definition
   body: (block (expression_statement (assignment left: (identifier) @name) @field)))
 (assignment left: (attribute object: (identifier) @guard attribute: (identifier) @name)) @field
+
+; A module-scope binding is a definition, exactly as it is in JS/TS. `DATA_DIR =
+; Path(...) / "data"`, a 52-entry `alias` dict, `ADULT_ONLY_FEATURES`, and every
+; settings constant in every Python project were indexed as *nothing*:
+; `definitions DATA_DIR` answered "no symbol named", with the message documented
+; to mean "you misspelled it", while `references` could see the assignment fine.
+; It degraded quietly rather than failing — `explore` returned an empty focus and
+; no source at all, and `outline` on a constants module listed its functions and
+; omitted the dict that is the point of the file.
+;
+; The two neighbouring cases were already handled, which is what makes this an
+; oversight rather than a decision: JS module-scope bindings are definitions (the
+; docs argue it at length) and Python *class-body* assignments are already
+; extracted as fields. Assignment extraction existed; it just never ran at module
+; scope.
+;
+; Anchored to `(module …)` so only module scope counts — matching every
+; `assignment` would bury the index in locals. Destructuring (`a, b = ...`) binds
+; several names at one site and is excluded by `left: (identifier)`; an augmented
+; assignment (`x += 1`) is a different node and never a declaration.
+; `right:`, not `value:` — Python's `assignment` names its fields left/type/right,
+; and the annotated form `X: int = 5` is the same node with a `type` as well, so
+; one pattern covers both. A bare annotation (`X: int`, no value) has no `right`
+; and is deliberately not matched: it declares a type, not a binding.
+(module
+  (expression_statement
+    (assignment left: (identifier) @name right: (_) @val)) @constant)
 "#;
 
 /// JavaScript definitions and ES imports. Node types here also exist in the

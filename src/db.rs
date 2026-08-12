@@ -66,7 +66,10 @@ use rusqlite::Connection;
 // `unused` and `untested` stop relying on the name and the path alone.
 // v28: definitions record a registering decorator (`@app.get`), so `unused` can
 // tag a framework entry point instead of reporting it as dead code.
-pub const SCHEMA_VERSION: i64 = 28;
+// v29: Python module-scope bindings are definitions, and a member of a private
+// type is private — both change what is extracted, so existing indexes must
+// reparse to see it.
+pub const SCHEMA_VERSION: i64 = 29;
 
 pub struct Db {
     pub conn: Connection,

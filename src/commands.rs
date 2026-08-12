@@ -240,6 +240,23 @@ fn note_if_empty_feat<T>(
         }
     }
     if sites.is_empty() {
+        // A name with no *definition* here is not necessarily a name that does
+        // not exist: `HTTPException`, `Path`, every third-party import is
+        // declared outside the repo. Saying "no symbol named 'Path'" to someone
+        // who just ran `references Path --path scripts` answers a different
+        // question than the one asked, and it is believable — an agent read
+        // exactly that as confirmation an import was gone, and moved on. The
+        // empty-result notes are sold as the reason to read stderr, which makes a
+        // wrong one costlier than none.
+        if name_is_used(s, name, None)? {
+            let scope = path
+                .map(|f| format!(" and nothing matches --path {f}"))
+                .unwrap_or_default();
+            return Ok(Some(format!(
+                "'{name}' has no definition in this repository — referenced here \
+                 but declared elsewhere (a dependency, or a built-in){scope}"
+            )));
+        }
         let near = nearest_names(s, name)?;
         let hint = if near.is_empty() {
             String::new()
@@ -4348,7 +4365,16 @@ struct ImpactNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<String>,
     path: String,
+    /// The impacted definition's own line, per ROW_KEY_RULE. This used to be the
+    /// *call site* — so `changed` and `impacted` rows in one result carried two
+    /// different meanings for `line`, and clicking an impacted row landed you
+    /// mid-body in the function rather than at it.
     line: i64,
+    /// Where inside it the impact enters: the line referencing the changed
+    /// symbol. The genuinely useful fact the old `line` was smuggling, kept as
+    /// its own field — the same shape `callees --examples` already uses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call_line: Option<i64>,
     depth: usize,
 }
 
@@ -4405,7 +4431,11 @@ pub fn cmd_affected(
                     name: cname.clone(),
                     kind: c.kind,
                     path: c.path,
-                    line: c.line as i64,
+                    // `callers_of` anchors a row at the *call site*. Resolved to
+                    // the definition's own line below; the call site keeps its
+                    // own field rather than being smuggled through `line`.
+                    line: 0,
+                    call_line: Some(c.line as i64),
                     depth: d,
                 });
                 if in_scope.insert(cname.clone()) {
@@ -4420,6 +4450,26 @@ pub fn cmd_affected(
         frontier.sort();
         if frontier.is_empty() {
             break;
+        }
+    }
+    // Resolve each impacted row to the *definition's* line. One statement reused
+    // across the rows rather than a query per hop; a row whose definition cannot
+    // be found in its own file falls back to the call site, which is still a real
+    // position in the right file.
+    {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT MIN(start_line) FROM facts
+             WHERE name = ?1 AND path = ?2 AND kind <> 'import'",
+        )?;
+        for node in &mut impacted {
+            let def: Option<i64> = stmt
+                .query_row((&node.name, &node.path), |r| r.get(0))
+                .unwrap_or(None);
+            node.line = def.or(node.call_line).unwrap_or(0);
+            // Nothing to add when the impact enters at the declaration itself.
+            if node.call_line == Some(node.line) {
+                node.call_line = None;
+            }
         }
     }
     impacted.sort_by(|a, b| {

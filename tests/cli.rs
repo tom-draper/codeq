@@ -168,7 +168,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "rows", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v2");
-    assert_eq!(v["index"]["schema"], 28);
+    assert_eq!(v["index"]["schema"], 29);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -993,7 +993,10 @@ fn members_are_definitions_and_name_the_type_that_declares_them() {
     f.write("a.rs", "pub struct Config { pub retries: u32, name: String }\npub enum Mode { Fast, Slow }\n");
     f.write("g.go", "type Server struct { Host string }\n");
     f.write("t.ts", "export class Widget { public width: number = 1; private secret: string = \"s\"; }\n");
-    f.write("J.java", "class Account { private int balance; public String holder; }\n");
+    // `public` on the class matters now: a member of a non-public type is not
+    // public API either (covered by `a_member_of_a_private_type_is_not_public_api`).
+    // This test is about the member's *own* modifier, so the class is public.
+    f.write("J.java", "public class Account { private int balance; public String holder; }\n");
 
     // The case that used to return nothing at all.
     let v = f.run(&["definitions", "retries"]);
@@ -6441,7 +6444,10 @@ fn a_reference_at_file_scope_says_so_instead_of_coming_back_blank() {
     // used to arrive with a location and no `name`, which reads as a broken row
     // and crashed two consumers that indexed the key.
     let f = Fixture::new();
-    f.write("a.py", "def helper():\n    return 1\n\nVALUE = helper()\n\ndef user():\n    return helper()\n");
+    // A bare call at module scope, deliberately *not* an assignment: a
+    // module-scope binding is now a definition, so `VALUE = helper()` has an
+    // enclosing definition to be attributed to and no longer exercises this path.
+    f.write("a.py", "def helper():\n    return 1\n\nhelper()\n\ndef user():\n    return helper()\n");
 
     let v = f.run(&["callers", "helper"]);
     let rows = v["data"].as_array().unwrap();
@@ -6760,4 +6766,102 @@ fn map_says_when_a_repo_is_mostly_things_it_cannot_index() {
         !String::from_utf8_lossy(&g.raw(&["map", "--totals"]).stderr)
             .contains("not source codeq indexes")
     );
+}
+
+#[test]
+fn a_python_module_scope_binding_is_a_definition() {
+    // JS module-scope bindings are definitions (the docs argue it at length) and
+    // Python class-body assignments already extract as fields. Module scope was
+    // the gap, which is where every settings constant in every Python project
+    // lives — `definitions DATA_DIR` answered "no symbol named", the message
+    // documented to mean "you misspelled it".
+    let f = Fixture::new();
+    f.write(
+        "lib.py",
+        "from pathlib import Path\n\
+         DATA_DIR = Path(__file__).parent / \"data\"\n\
+         ALIAS = {\n    \"a\": 1,\n    \"b\": 2,\n}\n\
+         COUNT: int = 5\n\
+         LATER: int\n\
+         a, b = 1, 2\n\n\
+         def fn():\n    local_thing = 1\n    return local_thing\n",
+    );
+
+    let names = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
+    for want in ["DATA_DIR", "ALIAS", "COUNT"] {
+        assert!(names.contains(&want.to_string()), "{want} missing: {names:?}");
+    }
+    // Module scope only, and only real bindings.
+    assert!(!names.contains(&"local_thing".to_string()), "a local: {names:?}");
+    assert!(!names.contains(&"LATER".to_string()), "annotation, not a binding: {names:?}");
+    assert!(!names.contains(&"a".to_string()), "destructuring declares nothing here: {names:?}");
+
+    // The commands above it work again, which is how this failed: quietly.
+    let defs = f.run(&["definitions", "DATA_DIR"]);
+    assert_eq!(defs["data"].as_array().unwrap().len(), 1, "{defs}");
+    let outline = field_set(&f.run(&["outline", "lib.py"]), "name");
+    assert!(outline.contains(&"ALIAS".to_string()), "{outline:?}");
+    // A multi-line value stops the signature where it begins, as for JS.
+    let sig = defs["data"][0]["signature"].as_str().unwrap();
+    assert!(sig.contains("DATA_DIR"), "{sig}");
+}
+
+#[test]
+fn a_member_of_a_private_type_is_not_public_api() {
+    let f = Fixture::new();
+    f.write(
+        "lib.py",
+        "class _Draw:\n    value = 1\n    def method(self):\n        return 2\n\n\
+         class Public:\n    size = 1\n    def visible(self):\n        return 3\n",
+    );
+
+    let api = field_set(&f.run(&["api", "lib.py"]), "name");
+    assert!(api.contains(&"Public".to_string()), "{api:?}");
+    assert!(api.contains(&"size".to_string()) && api.contains(&"visible".to_string()), "{api:?}");
+    for hidden in ["_Draw", "value", "method"] {
+        assert!(!api.contains(&hidden.to_string()), "{hidden} is inside a private type: {api:?}");
+    }
+    // `untested` is "public only", so it must agree.
+    let untested = field_set(&f.run(&["untested", "lib.py"]), "name");
+    assert!(!untested.contains(&"method".to_string()), "{untested:?}");
+}
+
+#[test]
+fn an_external_name_is_not_reported_as_a_typo() {
+    // An agent deleted an import, ran `references Path --path scripts`, read "no
+    // symbol named 'Path'" as confirmation it was gone, and moved on. The message
+    // was answering a different question.
+    let f = Fixture::new();
+    f.write("lib.py", "from pathlib import Path\nDATA = Path(\".\")\n");
+
+    let out = f.raw(&["references", "Path", "--path", "nosuch"]);
+    let note = String::from_utf8_lossy(&out.stderr);
+    assert!(note.contains("no definition in this repository"), "{note}");
+    assert!(!note.contains("no symbol named"), "wrong branch: {note}");
+
+    // A genuine typo still gets the typo message.
+    let typo_out = f.raw(&["references", "Pathhh"]);
+    let typo = String::from_utf8_lossy(&typo_out.stderr);
+    assert!(typo.contains("no symbol named 'Pathhh'"), "{typo}");
+    // And an in-repo name narrowed to nothing still blames the filter.
+    let scoped_out = f.raw(&["references", "DATA", "--path", "nosuch"]);
+    let scoped = String::from_utf8_lossy(&scoped_out.stderr);
+    assert!(scoped.contains("nothing matches --path"), "{scoped}");
+}
+
+#[test]
+fn an_impacted_row_points_at_the_definition_not_the_call_site() {
+    // `changed` rows carried the definition's line and `impacted` rows the call
+    // site's — one command, one key, two meanings. Click the line and you land
+    // mid-body.
+    let f = Fixture::new();
+    f.write("mod.py", "def touched():\n    return 1\n\ndef caller():\n    return touched()\n");
+    f.git_init_commit();
+    f.write("mod.py", "def touched():\n    return 2\n\ndef caller():\n    return touched()\n");
+
+    let v = f.run(&["affected", "--compare-to", "HEAD"]);
+    let imp = &v["data"]["impacted"][0];
+    assert_eq!(imp["name"], "caller", "{v}");
+    assert_eq!(imp["line"], 4, "the definition's own line: {v}");
+    assert_eq!(imp["call_line"], 5, "where the impact enters it: {v}");
 }

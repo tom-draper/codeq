@@ -4,6 +4,83 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — Acting on the second `persona` pass, and a process failure of mine
+
+First, the process failure, because it is the more useful lesson. Commit
+`52019bb` added **477 lines** to this file; my own entry was about sixty of them.
+`git add -A` swept up two entries written by other agents while I was working —
+the second `persona` pass below and the api-analytics one — and the commit
+message describes neither. I then told the user I could not find any new entries,
+having checked `git status` and the file's mtime: both clean, *because I had
+already committed the content unread*. The working tree is not the only place to
+look for something you might have absorbed; history is.
+
+I can't amend it (pushed, and force-pushing is off the table), so this is the
+record.
+
+Four of the five findings below are now fixed. All five reproduced on the current
+binary before I touched anything — worth saying, because two of them are the kind
+that get filed from a stale build.
+
+### The one that could do real damage: a wrong empty-result note (#2)
+
+`references Path --path scripts` answered `no symbol named 'Path'`. The filer had
+just deleted `from pathlib import Path`, read that as confirmation the name was
+gone, and moved on. Ruff happened to agree, so the edit survived — but the belief
+was formed on a message answering a different question.
+
+The "your filter, not the code" branch requires an in-repo *definition*, and a
+third-party name has none, so it fell through to "this name does not exist". Now
+a name that is referenced but not defined here says exactly that. codeq sells its
+empty-result notes as the reason to read stderr; that makes a confidently wrong
+one worse than silence, and it is why this was fixed before the bigger gap below.
+
+### The structural one: Python module-scope bindings (#1)
+
+`DATA_DIR = Path(__file__).parent / "data"` was indexed as nothing. Not a
+definition, not a constant — `definitions DATA_DIR` returned the *typo* message
+for a name whose assignment `references` could see perfectly well.
+
+What makes it an oversight rather than a decision, and the filer put this better
+than I would have: both neighbouring cases were already handled. The docs argue
+at length that a JS module-scope binding is a definition; Python class-body
+assignments already extract as fields. Assignment extraction existed and simply
+never ran at module scope — which is where every settings constant in every
+Python project lives.
+
+It also degraded quietly rather than failing: `explore` on such a name returned
+an empty focus and *no source at all*, despite having a caller it could have
+shown, against a documented contract that "the definition is always kept".
+
+One grammar note for anyone extending this: Python's `assignment` names its
+fields left/type/**right**, not `value`. The first draft used `value:` and
+tree-sitter rejected the pattern as impossible — which is the good failure, and
+`astgrep --explain` is now the way to check that before writing it.
+
+### Two smaller ones, both cheap and both plainly wrong
+
+**A member of a private type was public API (#5).** Visibility was computed per
+definition without consulting the type around it, so the methods and fields of a
+Python `class _Draw` landed in `api`, in `untested`, and in `api --compare-to` as
+newly *added* public surface. Now checked up the whole chain of enclosing types,
+so a public inner class inside a private outer one is private too.
+
+**`affected` used `line` for two things (#3).** `changed` rows carried the
+definition's line and `impacted` rows the call site's — one command, one key, two
+meanings, and clicking an impacted row landed you mid-body. The call site is
+worth reporting, so it kept it as `call_line`, the shape `callees --examples`
+already uses. That is the second time this month the fix for a row-key problem
+was "give the smuggled fact its own field".
+
+### Not done yet
+
+**#4, `api --compare-to` reporting a re-export as a removed export.** Real, and
+the reasoning is sound — a module-scope `from x import y` binds a public name in
+Python, and codeq already stores it as an import fact. It needs a decision about
+counting module-scope imports as public surface, which touches JS `export { x }
+from './y'` the same way, so it is its own change rather than a fifth item in
+this one.
+
 ## 2026-08-12 — Second pass on `persona`: five bugs, one of them structural
 
 Continuing the entry below. Same repo, deeper into the commands I hadn't
