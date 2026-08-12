@@ -843,6 +843,10 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
     let changed = s.repo.changed_since(compare_to)?;
     let mut ex = crate::facts::Extractor::new()?;
     let mut data: Vec<ApiChangeRow> = Vec::new();
+    // Names that left this file but are still exported from it via an import.
+    // Reported as a note rather than dropped silently: "it moved" is the fact,
+    // and it is not the same fact as "nothing happened".
+    let mut moved: Vec<String> = Vec::new();
 
     for file in changed {
         if path.is_some_and(|p| !file.contains(p)) {
@@ -907,18 +911,44 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
                 Some(_) => {}
             }
         }
+        // Names this file still binds through a module-scope import. Moving a
+        // definition down a layer and importing it back keeps every
+        // `from handler import resolve_key` working — the surface is unchanged —
+        // but the definition is no longer *here*, so a definitions-only
+        // comparison called it a removed public export. For the command pitched
+        // as "the review question a raw diff can't answer", that is the answer
+        // that would block a PR on a non-breaking change.
+        //
+        // The bound local name is the import's last segment: codeq stores
+        // `from pkg import x` as `pkg.x` and JS `import {a} from './x'` as
+        // `./x.a`, so the same rule reads both, and JS `export { x } from './y'`
+        // with it.
+        let rebound: HashSet<String> = {
+            let mut st = s.db.conn.prepare(
+                "SELECT name FROM facts WHERE path = ?1 AND kind = 'import' AND name IS NOT NULL",
+            )?;
+            let rows = st.query_map([&file], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok())
+                .filter_map(|m| m.rsplit(['.', '/']).next().map(str::to_string))
+                .collect()
+        };
         for (name, (kind, before)) in &old {
-            if !seen.contains(name) {
-                data.push(ApiChangeRow {
-                    change: "removed".into(),
-                    name: name.clone(),
-                    kind: kind.clone(),
-                    path: file.clone(),
-                    line: 0,
-                    signature: None,
-                    was: Some(before.clone()),
-                });
+            if seen.contains(name) {
+                continue;
             }
+            if rebound.contains(name) {
+                moved.push(name.clone());
+                continue;
+            }
+            data.push(ApiChangeRow {
+                change: "removed".into(),
+                name: name.clone(),
+                kind: kind.clone(),
+                path: file.clone(),
+                line: 0,
+                signature: None,
+                was: Some(before.clone()),
+            });
         }
     }
 
@@ -953,6 +983,15 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
         changed: take(&mut data, "changed"),
         added: take(&mut data, "added"),
     };
+    if !moved.is_empty() {
+        moved.sort();
+        moved.dedup();
+        let note = format!(
+            "still exported, now via an import rather than a definition here: {} — the surface is unchanged, so these are not removals",
+            moved.join(", "),
+        );
+        return s.emit_noted(out, Some(note));
+    }
     let note = data
         .is_empty()
         .then(|| format!("the exported surface is unchanged since {compare_to}"));
@@ -4983,6 +5022,18 @@ struct CloneRow {
     kind: String,
     path: String,
     line: i64,
+    /// The directories this group spans, sorted and joined — the same value on
+    /// every row of the group.
+    ///
+    /// On a multi-package monorepo the biggest groups are *intentional* mirrors:
+    /// a PHP `core` package vendored verbatim into the publishable `laravel` and
+    /// `php` packages, a Python monolith re-shipping each adapter it also
+    /// distributes standalone. codeq is right that they are clones, and the
+    /// deliberate ones bury the accidental ones. This gives a reviewer one thing
+    /// to dismiss per pair (`--fields pair,name`, or `--group`) instead of one
+    /// per row, without a config file encoding the judgement — which would make
+    /// an empty `clones` result unfalsifiable without reading it.
+    pair: String,
 }
 
 /// `clones` — definitions whose syntax shape is identical up to renaming.
@@ -5027,9 +5078,29 @@ pub fn cmd_clones(
             kind: r.get(4)?,
             path: r.get(5)?,
             line: r.get(6)?,
+            pair: String::new(),
         })
     })?;
     let mut data: Vec<CloneRow> = rows.collect::<std::result::Result<_, _>>()?;
+
+    // The directory span of each group, filled in once the whole group is known.
+    {
+        let dir_of = |p: &str| -> String {
+            match p.rfind('/') {
+                Some(i) => p[..i].to_string(),
+                None => "(root)".to_string(),
+            }
+        };
+        let mut dirs: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+        for r in &data {
+            dirs.entry(r.shape.clone()).or_default().insert(dir_of(&r.path));
+        }
+        for r in &mut data {
+            if let Some(d) = dirs.get(&r.shape) {
+                r.pair = d.iter().cloned().collect::<Vec<_>>().join(" <-> ");
+            }
+        }
+    }
 
     // Tests dominate this result and always will: two assertions in sequence is
     // the same shape however different the assertions are, so a suite of small

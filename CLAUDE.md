@@ -250,7 +250,10 @@ benchmarks — not as a step you run before querying.
   public API".
 - **Did this change the public surface:** `codeq api <path> --compare-to <ref>` —
   exported declarations added, removed, or changed shape, grouped and with the
-  previous signature. The review question a raw diff can't answer.
+  previous signature. The review question a raw diff can't answer. A definition
+  **moved out and imported back** is not a removal: the name is still bound and
+  still importable, so it is reported in a note ("still exported, now via an
+  import") rather than as a breaking change.
 - **Which tests exercise it:** `codeq tests NAME` — the test functions that
   reference NAME. A test is recognised **structurally first**: a test *attribute*
   the grammar already parses — `#[test]`, `#[tokio::test]` (any `::test` path),
@@ -278,6 +281,9 @@ benchmarks — not as a step you run before querying.
     a suite is a field of true positives that drowns the duplication worth
     finding — measured on a real repo, *every* row it returned was test
     boilerplate.
+  - **`pair`** on each row names the directories its group spans, the same value
+    across the group — so a monorepo's deliberate vendoring (`core <-> laravel`)
+    is one thing to dismiss with `--fields pair,name`, not one per row.
   - **Know what it cannot see.** It finds copy-paste that was never edited
     afterwards. Two implementations of one algorithm over different data
     representations — same names, same argument order, same call structure,

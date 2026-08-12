@@ -4,6 +4,183 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — Third `persona` pass: the fixes hold, and the empty-note bug has siblings
+
+Same external repo, third session. I re-ran every finding from the two entries
+below against the 19:00 build before writing anything new, because two of them
+were filed against a binary that has since been rebuilt twice.
+
+**All four fixes hold on a third-party repo**, which is worth stating since they
+were developed against codeq's own fixtures: module constants now resolve
+through `definitions`, `outline`, `about`, `explore` and `symbols --kind
+constant`; `untested` no longer lists private classes' members; `affected` rows
+carry `call_line=` separately; and `unused` now prints
+`decorator=@app.get("/v1/{location:path}/")` on the FastAPI route from the first
+entry. The new `references` note went past what I asked for — it separates
+"external name" from "your filter emptied it" in one line, where I had only
+asked it to stop saying "no symbol named".
+
+Everything below is new.
+
+### The #1 fix has one false positive: `__all__`
+
+It will fire on every Python package that declares one:
+
+```
+$ codeq unused src/persona
+src/persona/__init__.py:22: constant __all__ visibility=public
+$ codeq untested src/persona/__init__.py
+src/persona/__init__.py:22: __all__ = ["gen_samples", "generate", …]
+$ codeq api src/persona/__init__.py
+src/persona/__init__.py:22: __all__ = [...]
+```
+
+Two separate things are wrong. codeq's stated Python rule is that public means
+*non-underscore*, and `__all__` opens with two — so by the documented rule it is
+private and should not be in `api` at all. And it is a declaration the
+interpreter reads, never a name anything references, so `unused` will report it
+forever in every package that has one.
+
+The precedent for the fix is already in the docs, one section over: `unused`
+skips SQL indexes and triggers because they are "named exactly once by
+construction, so reporting them is noise, not a finding". `__all__` is that
+sentence exactly. (`__version__` is not — that one does get referenced — so this
+wants a small dunder list, not a blanket dunder rule.)
+
+### #4 is wider than when it was filed
+
+"Not done yet" is fine, but the surface grew when constants became definitions.
+I had moved *two* things out of `api/handler.py` and imported them back:
+
+```
+$ codeq api src/persona/api/handler.py --compare-to HEAD
+# removed
+src/persona/api/handler.py:0: constant DATA_DIR was=DATA_DIR = Path(__file__).parent.parent / "data"
+src/persona/api/handler.py:0: function resolve_key was=def resolve_key(name: str, data: dict) -> str | None:
+```
+
+Both still import from `persona.api.handler`. Before the constants fix only the
+function reported as removed; now every re-exported constant does too. Whenever
+the module-scope-imports decision gets made, it is worth knowing it covers more
+ground than it did this morning.
+
+### The empty-result note has two more siblings
+
+The entry below calls the wrong `references` note "the one that could do real
+damage" and fixed it first. That was right, and it is a *class* of bug rather
+than one bug — here are two more found in an hour of normal use, which suggests
+auditing every command that can return empty rather than fixing them as they
+surface.
+
+**`callpath` explains nothing at all.** Four distinct situations, one output —
+no stdout, no stderr, exit 0:
+
+```
+$ codeq callpath zzznotreal gen_sample          → (nothing), exit 0
+$ codeq callpath run zzznotreal                 → (nothing), exit 0
+$ codeq callpath run preprocess_location_data   → (nothing), exit 0
+$ codeq callpath run preprocess_location_data --json
+{"schema":"codeq.result.v2","rows":"data","data":[]}
+```
+
+No `note` under `--json` either, where `supertypes` on the same repo returns
+`"note":"'_ArrayDraw' is defined at … but has no supertypes (it extends
+nothing)"`. A misspelled `FROM`, a misspelled `TO`, an unreachable pair, and a
+chain past `--max-depth` are indistinguishable — on the one command where the
+empty answer has four plausible causes. My answer here was correct (the CLI
+genuinely does not reach `preprocess_location_data`, which is API-only), and I
+only knew that because I had already read both files. Without that I would have
+had to assume I typoed something.
+
+**`graph`'s empty note names languages that aren't in the tree.**
+
+```
+$ codeq graph
+# codeq: no relation edges — Go, C and Zig have no inheritance at all, and a
+  language with no `REFERENCES` or `impl` has nothing to graph
+```
+
+This repo is Python, which *does* produce inheritance edges per `capabilities`.
+It genuinely has no edges — two bare classes, no subclassing — so the answer is
+right and the explanation is about somebody else's repo. It reads as "your
+language is unsupported" when the truth is "your code has no edges", which is
+the precise failure mode the "don't be misled" section exists to prevent.
+
+### Markdown: the name `outline` prints is not the name `--symbol` takes
+
+Reading one entry of this very file, I copied its heading straight out of
+`outline` and it was rejected:
+
+```
+$ codeq outline DOGFOOD.md
+  88: ## 2026-08-12 — Acting on the second `persona` pass, and a process failure of mine
+
+$ codeq read DOGFOOD.md --symbol "### What it caught immediately"
+codeq: no definition named '### What it caught immediately' in DOGFOOD.md
+$ codeq read DOGFOOD.md --symbol "What it caught immediately"
+    34  ### What it caught immediately        ← works
+```
+
+`outline` and `at` render heading names *with* their `##` markers; `--symbol`
+and `definitions` want them *without*. The docs' own example
+(`read README.md --symbol "Output contract"`) uses the bare form, so the
+rendering is the odd one out. Copy-paste from `outline` into `--symbol` is the
+obvious workflow and it is the one that fails.
+
+### Cosmetic: a multi-line constant's signature stops at the `=`
+
+```
+$ codeq outline src/persona/lib/format.py
+4: alias =
+```
+
+`alias` is a 52-entry dict spanning lines 4–55, and it is the substance of that
+file. The JS rule of stopping after the wrapper reads well when something
+follows it (`const Card = memo` says what the binding *is*); a bare `alias =`
+reads like the renderer gave up. `alias = {…}`, or an element count, would carry
+the one fact worth having.
+
+## 2026-08-12 — The last two open findings: a re-export, and a monorepo's clones
+
+### `api --compare-to` called a move a removal (persona #4)
+
+`resolve_key` moved from `api/handler.py` down into `lib/generate.py` and was
+imported back at module scope. Every `from persona.api.handler import
+resolve_key` still resolved — nine call sites in a green test suite — and codeq
+reported it as a **removed public export**. From the command pitched as "the
+review question a raw diff can't answer", that is the answer that would block a
+PR on a non-breaking change.
+
+The comparison was definitions-only. It now also reads the file's import facts:
+the bound local name is the import's last segment, and codeq already stores
+`from pkg import x` as `pkg.x` and JS `import {a} from './x'` as `./x.a`, so one
+rule reads both — and JS `export { x } from './y'` with them.
+
+Reported as a note ("still exported, now via an import") rather than dropped:
+*it moved* is a fact, and it is not the same fact as *nothing happened*. A
+genuine deletion is still a removal, which is what the test pins.
+
+I deliberately did **not** take the filer's broader suggestion of counting every
+non-underscore module-scope import as public surface. It would fix this, and it
+would also list `os` and `sys` as the public API of every Python file. The
+narrow rule answers the question that was actually wrong.
+
+### `clones` on a monorepo (api-analytics #1)
+
+Rows now carry `pair`: the directories the group spans, the same value across
+every row of the group. On the repo that prompted it, thirty-plus of the top
+rows were a PHP `core` package vendored into `laravel` and `php` — with `pair`
+that is one thing to dismiss (`--fields pair,name`), not twelve.
+
+Presentational on purpose. It changes nothing about what counts as a clone, and
+I still declined `--exclude-pair`/a pairing-ignore file: persistent config
+encoding a judgement makes an empty `clones` result unfalsifiable without
+reading the config, and "no duplication found" is exactly the answer that must
+never be quietly configured into existence.
+
+That closes every finding from the three outside-repo entries except the ones
+explicitly recorded as declined.
+
 ## 2026-08-12 — The harness could not see a day's work, and found a bug the hour it could
 
 `bench/differential.py` is described in CLAUDE.md as the important one — the
@@ -4356,3 +4533,62 @@ lead, `read --lines`/`outline` to compare siblings without ingesting files, and
 `callers --examples` to size the bug — with no shell-out to grep/find. The one bug
 it surfaced was worth more than the eight dead functions it was actually asked
 about, which is becoming the recurring shape of these rounds.
+
+---
+
+## 2026-08-12 — same repo, round two: a cross-file data-flow bug, and two report-noise findings
+
+Asked to keep going. This round the win was the exact thing codeq's graph is *for*:
+a bug that lives in the seam between two functions in two files, invisible to either
+one read alone.
+
+### The win: `callers` → `read --lines` walked me across a three-file data-flow bug
+
+`callers aggregate --examples` had exactly one call site —
+`dashboardWorker.ts:83`, where `current` comes from `getPeriodData(...)` in
+`periodFilter.ts`. Reading just the two relevant ranges (`read --lines`, never
+opening either whole file) put both halves on screen at once, and the bug is only
+visible with both:
+
+- `getPeriodData` takes `now₁ = Date.now()`, then loops over *every* cached row
+  filtering `current` to `dateMs >= now₁ - periodMs`.
+- `aggregate` — called after that loop — takes `now₂ = Date.now()` (`now₂ > now₁`)
+  and buckets against `startMs = now₂ - periodMs`, with the index clamped on the
+  top (`Math.min(…, 4)`) but **not** the bottom.
+
+A row in the `[now₁ - periodMs, now₂ - periodMs)` window survives the filter and
+indexes the buckets at `-1`: `requestBuckets[-1]++` silently corrupts, and
+`userSets[-1].add()` throws `TypeError` and kills the aggregation worker. The window
+is as wide as the `getPeriodData` loop is slow, so it grows with dataset size — not
+theoretical. One-line fix (`Math.max(…, 0)`); `svelte-check` clean. The point for
+codeq: neither function is wrong by itself, so `unused`/`clones`/a single `read`
+would never surface it — the caller edge plus two cheap ranged reads is what made a
+two-`Date.now()` race legible. Committed `852eb08a`.
+
+### Friction: `deps --cycles` reports phantom cycles from stem collisions with stdlib/registry names
+
+`deps --cycles` led with
+`server/email/http.go → …/monitor/http.go → server/email/http.go`. It's a phantom:
+`server/email/http.go` imports stdlib **`net/http`**, and the resolver matched the
+stem `http` to the only other repo file with that stem. `deps server/email/http.go`
+even prints the edge as `net/http` — the disqualifying module string is right there,
+the cycle detector just doesn't consult it. The rest of the cycle list was the same
+failure on `express`/`fastify`/`hono`/`koa` (npm names that are also the example/test
+filenames) and Django's `admin`/`apps`/`models`/`urls`. CLAUDE.md does say deps
+resolution is heuristic and stem-based — but `--cycles` escalates that hedge into a
+confident, scary-looking claim a reader may act on, and *every* cycle it reported
+here was false. Suggest: don't resolve an import segment to a local file when the
+segment is a known stdlib/registry module (`net/http`, a bare npm name), or at least
+drop such edges from `--cycles` and tag them low-confidence elsewhere. A real
+intra-repo cycle is worth a lot; burying it under ten phantoms costs that value.
+
+### Nit: `unused` reports constructors as dead code
+
+`unused analytics/javascript` and `unused analytics/nodejs` both led with
+`method constructor visibility=public`. Constructors are invoked as `new Analytics()`
+and never named `constructor` textually, so the name-based reference scan finds zero
+uses — truthfully and uselessly, the same shape the SQL-index carve-out already
+handles ("named exactly once by construction, so reporting it is noise"). A
+constructor is dead only if the class is, which `unused` reports separately.
+Excluding constructor-kind methods (the way `unused` already excludes test
+scaffolding) would clear the top of the report of guaranteed false positives.

@@ -6899,3 +6899,63 @@ fn explore_at_refuses_a_line_that_declares_several_things() {
     let focus = v["data"]["focus"].as_array().unwrap();
     assert!(focus.iter().any(|d| d["name"] == "run"), "{v}");
 }
+
+#[test]
+fn a_moved_and_reexported_definition_is_not_a_removed_export() {
+    // Moving a definition down a layer and importing it back keeps every
+    // `from handler import resolve_key` working, so the surface is unchanged —
+    // but a definitions-only comparison called it a removed public export, which
+    // is the answer that would block a PR on a non-breaking change.
+    let f = Fixture::new();
+    f.write("pkg/handler.py", "def helper():\n    return 1\n\ndef resolve_key(n):\n    return n\n");
+    f.write("pkg/generate.py", "def other():\n    return 2\n");
+    f.git_init_commit();
+    f.write("pkg/handler.py", "from pkg.generate import resolve_key\n\ndef helper():\n    return 1\n");
+    f.write("pkg/generate.py", "def other():\n    return 2\n\ndef resolve_key(n):\n    return n\n");
+
+    let names = |v: &Value, section: &str| -> Vec<String> {
+        v["data"][section]
+            .as_array()
+            .map(|a| a.iter().filter_map(|r| r["name"].as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    };
+
+    let v = f.run(&["api", "pkg/handler.py", "--compare-to", "HEAD"]);
+    assert!(!names(&v, "removed").contains(&"resolve_key".to_string()), "still exported: {v}");
+    let out = f.raw(&["api", "pkg/handler.py", "--compare-to", "HEAD"]);
+    let note = String::from_utf8_lossy(&out.stderr);
+    assert!(note.contains("still exported, now via an import"), "{note}");
+    assert!(note.contains("resolve_key"), "{note}");
+
+    // A genuine removal is still a removal.
+    f.write("pkg/handler.py", "def helper():\n    return 1\n");
+    let v = f.run(&["api", "pkg/handler.py", "--compare-to", "HEAD"]);
+    assert!(names(&v, "removed").contains(&"resolve_key".to_string()), "{v}");
+}
+
+#[test]
+fn clone_rows_carry_the_directories_their_group_spans() {
+    // On a monorepo the biggest clone groups are deliberate vendoring, and they
+    // bury the accidental ones. One value per group to dismiss, rather than one
+    // judgement per row — and no config file encoding it, which would make an
+    // empty result unfalsifiable without reading the file.
+    let f = Fixture::new();
+    let dup = |n: &str| {
+        format!("fn {n}(a: u32, b: u32) -> u32 {{\n    let x = a + b;\n    let y = x * 2;\n    y - a\n}}\n")
+    };
+    f.write("core/a.rs", &dup("one"));
+    f.write("vendor/b.rs", &dup("two"));
+    f.write("core/c.rs", &format!("{}{}", dup("three"), dup("four")));
+
+    let rows = f.run(&["clones", "--min-nodes", "8"]);
+    let by_name: std::collections::HashMap<&str, &str> = rows["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["name"].as_str().unwrap(), r["pair"].as_str().unwrap()))
+        .collect();
+    // Every row of a group carries the same span, so it groups.
+    assert_eq!(by_name["one"], by_name["two"], "{rows}");
+    assert!(by_name["one"].contains("core") && by_name["one"].contains("vendor"), "{rows}");
+    assert!(by_name["one"].contains("<->"), "a cross-directory group: {rows}");
+}
