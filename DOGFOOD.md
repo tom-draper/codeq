@@ -59,7 +59,7 @@ the same question one screen away, already knew better. Now both use
 
 ### Four hand-rolled BFS walks — left alone, deliberately
 
-`cmd_callers`, `cmd_callees`, `cmd_affected` and `cmd_path` each hand-roll the
+`cmd_callers`, `cmd_callees`, `cmd_affected` and `cmd_callpath` each hand-roll the
 same breadth-first skeleton (~25 lines: seed a frontier, expand one hop, dedupe,
 tag depth, stop at `HOP_CAP`). The obvious move is to extract a generic walk.
 
@@ -88,6 +88,25 @@ abstraction and catches the same class of bug.
 - **`stats` is a strict subset of `map`** (`files`, `bytes`, `by_language` are
   all in `map`) and appears in neither CLAUDE.md nor SKILL.md — but it is an MCP
   tool, so removing it is a breaking change to that surface.
+
+### `callpath` vs `path` — the rename was complete outside, unfinished inside
+
+Checked the one pair that is a literal alias. Every *surface* is correct: the CLI
+takes `callpath` with `path` as a clap alias, `capabilities` lists only
+`callpath`, and MCP advertises only `codeq_callpath` while `build_args` still
+accepts `codeq_path` for hosts holding a cached tool list. That last compat arm
+is currently earning its keep — the agent session doing this review is itself
+holding a tool list that still names `codeq_path`, exactly the case the comment
+predicts. Keep it.
+
+What hadn't followed was the code: `cmd_path` was the **only** handler of 36 whose
+name didn't match its command, the clap variant was still `Path`, and the
+function's doc comment opened `/// \`path <from> <to>\``, presenting the old name
+as current. This cost a lookup during this very session — `codeq definitions
+cmd_callpath` returned "no symbol named", so the obvious way to get from a
+command to its handler failed on precisely the command whose name had moved.
+Renamed; `cmd_*` is now 1:1 with the command list (`mcp` aside, which isn't a
+query). Both CLI spellings still work.
 
 ## 2026-08-11 — a bug hunt on the output layer: four found, all in what we'd just shipped
 

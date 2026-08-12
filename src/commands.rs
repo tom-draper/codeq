@@ -1508,13 +1508,13 @@ struct PathStep {
     depth: usize,
 }
 
-/// `path <from> <to>` — the shortest call chain from `from` to `to`, if one
+/// `callpath <from> <to>` — the shortest call chain from `from` to `to`, if one
 /// exists: `from` calls … calls `to`. A BFS down the callee graph (so the chain
 /// is shortest by hops), bounded by `max_depth`. Reachability with the route
 /// shown, complementing `callees --depth` (which only says whether/at what depth
 /// something is reached). Name-based, like the other graph commands; emits an
 /// empty result when `to` isn't reachable from `from` within `max_depth`.
-pub fn cmd_path(
+pub fn cmd_callpath(
     cwd: &Path,
     from: &str,
     to: &str,

@@ -289,7 +289,7 @@ enum Command {
     /// (Was `path`, which still works: in a code CLI "path" reads as a *file*
     /// path first, so `codeq path a b` scanned as "the path to file a".)
     #[command(name = "callpath", alias = "path")]
-    Path {
+    Callpath {
         /// The symbol the chain starts at.
         from: String,
         /// The symbol the chain must reach.
@@ -835,12 +835,12 @@ fn main() -> ExitCode {
         Command::Callees { name, path, depth, resolved, examples } => {
             commands::cmd_callees(&cwd, &name, path.as_deref(), depth, resolved, examples, out)
         }
-        Command::Path {
+        Command::Callpath {
             from,
             to,
             max_depth,
             path,
-        } => commands::cmd_path(&cwd, &from, &to, max_depth, path.as_deref(), out),
+        } => commands::cmd_callpath(&cwd, &from, &to, max_depth, path.as_deref(), out),
         Command::About { name, path } => {
             commands::cmd_about(&cwd, &name, path.as_deref(), out)
         }
