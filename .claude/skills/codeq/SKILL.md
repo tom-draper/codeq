@@ -166,6 +166,11 @@ refresh the index — every command auto-refreshes changed files first.
   common `new`/`open` matching every same-named definition repo-wide). Rows tagged
   `via=ambiguous` mean several reachable files define that name: "one of these",
   not "this one". Same vocabulary as `callers --resolved`.
+- **JS/TS: `proto.use = function use(){}` is a method.** Module-scope property
+  assignment — `X.y = fn`, `X.prototype.y = fn`, `exports.y = fn` — is how most
+  of Node is written and it is now indexed under the *property* name (`use`), so
+  scope common names with `--path`. `exports.x` is public; other objects are
+  private (codeq doesn't trace whether they escape).
 - **JS/TS: a module-scope `const` is a definition**, whatever it's bound to. That's
   how React components are usually written — `memo(…)`, `forwardRef(…)`,
   `styled.div\`…\``, `createContext(…)` — so `symbols`/`outline`/`api` find them, and

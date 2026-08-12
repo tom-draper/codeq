@@ -4,6 +4,72 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — A cross-check sweep over 26 repos, and the three things it found
+
+Method, per the technique that keeps working: don't look for bugs, look for two
+commands that *must* agree and check whether they do. A script asserted seven
+such invariants across the codeq repo and all 25 corpus repos — `api` vs public
+`symbols`, `search -c` vs per-file match counts, `search -l` vs match paths,
+`callers` vs `references`, `tests` vs `callers`, `members` vs `symbols --owner`,
+`deps` vs `imports`. The invariants themselves all held. What found bugs was the
+script *crashing*, and one flag that turned out not to exist.
+
+### 1. JS: `proto.use = function use(){}` was not a definition
+
+The sweep died on `KeyError: 'name'` in express. Chasing it: `callers gettype`
+returned a row with a path and a line and no name, because `at
+lib/router/index.js:469` finds no definition there — and it finds none because
+codeq did not index a single one of that file's five methods.
+
+Express's entire router API — `proto.param`, `proto.handle`,
+`proto.process_params`, `proto.use`, `proto.route` — was invisible. `outline` on
+a 673-line core file of one of the most-used packages on npm returned nothing.
+A minimal fixture: seven function definitions, codeq found two.
+
+Module-scope property assignment is how essentially all pre-ES6 JavaScript is
+written and how much of Node still is. It is now a `method`, named by the
+property (`use`, not `proto.use`) — what a call site writes, and the same choice
+made for a schema-qualified SQL table. `exports.x` / `module.exports.x` count as
+public, since in CommonJS that assignment *is* the export; other objects stay
+private, because knowing that express's `var proto = module.exports = …` escapes
+needs data flow codeq doesn't do, and guessing would be worse than under-stating.
+
+I verified the fix with `astgrep --explain router.js:5`, built earlier the same
+day for exactly this — reading node kinds off the tree instead of guessing them.
+That is the first time one of these fixes has paid for another.
+
+### 2. `callers` returned rows that were not callers
+
+Independent of the above, and confirmed in six corpus repos across Python, C++,
+C, JS and PowerShell: a reference at module scope has no enclosing definition, so
+`callers` emitted `{"path": …, "line": …}` with no `name`. Text rendered it as a
+bare `a.py:5`, which reads like a rendering bug.
+
+The row is a real fact — a Python module-level call runs at import — so dropping
+it would lose something. But `callers` promises *definitions*, and the docs' only
+guidance was "ignore it", which is a tool emitting output it tells you to
+discard. It now carries `scope=file`. Two consumers had crashed on the missing
+key rather than noticing the fact it was carrying, which is the argument for
+labelling over blanking: a named absence is data, an unnamed one is a bug report.
+
+### 3. `callers` and `callees` had no `--limit`
+
+Found because the sweep passed `--limit 0` to `callers` and got `error:
+unexpected argument`, which made the `tests ⊆ callers` invariant fail in five
+repos — a false alarm that was still worth having. Fifteen of seventeen list
+commands take `--limit`; these two did not, and they are the likeliest to return
+a lot. `callers serverLog` in redis is 227 rows and 11 KB with no way to bound
+it, while `references serverLog --limit 5` gives you five.
+
+### The recurring hazard, now hit twice
+
+Changing extraction without bumping `SCHEMA_VERSION` ships to nobody: the files
+have not changed on disk, so the freshness check does not reparse them and the
+new facts never appear. I hit this while testing the JS fix — symbols still
+absent after a rebuild of the binary — and it is the same trap that left the SQL
+commit red. Both bumps are recorded in `db.rs`; the pin test in `cli.rs` is what
+catches a missing one, so it is worth keeping deliberately brittle.
+
 ## 2026-08-12 — Fixing the four things the SQL session complained about
 
 The friction log below was written the same day; this is what came of it. Worth

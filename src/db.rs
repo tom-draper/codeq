@@ -56,7 +56,11 @@ use rusqlite::Connection;
 // hold `.sql` files parsed under the old rule (searchable, no facts), and
 // nothing about those files has changed on disk for the freshness check to
 // notice, so only a version bump reparses them.
-pub const SCHEMA_VERSION: i64 = 24;
+// v25: JS/TS property-assignment methods (`proto.use = function use(){}`,
+// `Thing.prototype.render = …`, `exports.helper = …`) are definitions. Same
+// reason as v24: the files have not changed on disk, so only a version bump
+// reparses them — an extraction change without one ships to nobody.
+pub const SCHEMA_VERSION: i64 = 25;
 
 pub struct Db {
     pub conn: Connection,

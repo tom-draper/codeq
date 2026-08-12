@@ -50,6 +50,13 @@ benchmarks — not as a step you run before querying.
   import fact, so look for it with `imports`/`deps`, not `symbols`. When the value
   spans several lines the signature stops after the wrapper — `const Card = memo`
   — so it says what the binding *is*.
+  - **A module-scope property assignment is a method.** `proto.use = function
+    use(fn){}`, `Thing.prototype.render = …`, `exports.helper = …` — how most of
+    Node is written, and it used to be invisible: `outline` on Express's entire
+    router file returned nothing. The name is the *property* (`use`), so common
+    names collide across files — scope with `--path`. `exports.x`/
+    `module.exports.x` are `public`; anything else is `private`, because knowing
+    that `proto` escapes via `module.exports` needs data flow codeq doesn't do.
 - **Orient:** `codeq map` (grouped totals) · `codeq tree` (directory *shape*, folded
   to `--depth`, each directory carrying the file and symbol counts of everything
   below it). `map` collapses to top-level directories, so on a nested repo it hides
@@ -125,6 +132,10 @@ benchmarks — not as a step you run before querying.
   Python non-underscore, a `public` modifier, non-`static` in C/C++); `pub(crate)`
   and `protected` are `restricted`, not public. `--kind function` to narrow.
 - **Who uses it / what breaks:** `codeq callers NAME` · `codeq references NAME`
+  - A caller row with **`scope=file`** and no `name` is a reference at module
+    scope, with no definition around it — a Python module-level call, a JS
+    property assignment. Real, but not a definition, which is why it is labelled
+    rather than left blank. Both take `--limit` (default 0 = unlimited).
   - **Cut false positives.** Three opt-in, composable filters on `callers`/
     `references` (the default stays a safe textual superset):
     - `--resolved` — import-scoped: drops occurrences whose file can't reach a

@@ -260,6 +260,13 @@ enum Command {
         /// call site instead of one per caller, use `references NAME --calls`.
         #[arg(long)]
         examples: bool,
+        /// Maximum rows to return (0 = unlimited).
+        ///
+        /// Every other list command has had this; these two did not, and they are
+        /// the ones most likely to return a lot — `callers serverLog` in redis is
+        /// 227 rows and 11 KB with no way to bound it.
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
     },
     /// Definitions a symbol references (its callees, name-based).
     Callees {
@@ -283,6 +290,13 @@ enum Command {
         /// visible without having to suspect it first.
         #[arg(long)]
         examples: bool,
+        /// Maximum rows to return (0 = unlimited).
+        ///
+        /// Every other list command has had this; these two did not, and they are
+        /// the ones most likely to return a lot — `callers serverLog` in redis is
+        /// 227 rows and 11 KB with no way to bound it.
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
     },
     /// The shortest call chain from one symbol to another (`from` calls … calls
     /// `to`), if one exists — reachability with the route shown. Name-based.
@@ -842,6 +856,7 @@ fn main() -> ExitCode {
             calls,
             on,
             examples,
+            limit,
         } => commands::cmd_callers(
             &cwd,
             &name,
@@ -851,10 +866,11 @@ fn main() -> ExitCode {
             calls,
             on.as_deref(),
             examples,
+            limit,
             out,
         ),
-        Command::Callees { name, path, depth, resolved, examples } => {
-            commands::cmd_callees(&cwd, &name, path.as_deref(), depth, resolved, examples, out)
+        Command::Callees { name, path, depth, resolved, examples, limit } => {
+            commands::cmd_callees(&cwd, &name, path.as_deref(), depth, resolved, examples, limit, out)
         }
         Command::Callpath {
             from,

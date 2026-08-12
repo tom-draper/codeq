@@ -1688,6 +1688,23 @@ fn visibility_of(lang: &str, name: &str, def: Node, src: &[u8]) -> Option<String
                 }
             } else if has_ancestor_kind(def, "export_statement") {
                 s("public")
+            } else if def.kind() == "assignment_expression" {
+                // `exports.f = …` / `module.exports.f = …` *is* the export in
+                // CommonJS, so treating it like any other unexported top-level
+                // definition would call every Node module's public API private.
+                // Only the direct forms: whether some other object escapes
+                // (express's `var proto = module.exports = …`) needs data flow
+                // codeq does not do, so those stay private rather than guess.
+                let exported = def
+                    .child_by_field_name("left")
+                    .and_then(|l| l.child_by_field_name("object"))
+                    .and_then(|o| o.utf8_text(src).ok())
+                    .is_some_and(|o| o == "exports" || o == "module.exports");
+                if exported {
+                    s("public")
+                } else {
+                    s("private")
+                }
             } else {
                 s("private") // a top-level definition that isn't exported
             }
@@ -1955,6 +1972,37 @@ const JS_QUERY: &str = r#"
   (export_statement
     (variable_declaration
       (variable_declarator name: (identifier) @name value: (_) @val)) @constant))
+
+; Pre-ES6 JavaScript declares a method by assigning to a property —
+; `proto.use = function use(fn) {…}`, `Thing.prototype.render = function () {…}`,
+; `exports.helper = function () {…}` — and none of it was a definition. Express's
+; entire router API (`proto.param`/`handle`/`process_params`/`use`/`route`) was
+; invisible to `symbols`, and that is also why a call at that scope had no
+; enclosing definition for a `callers` row to name: the row came back blank.
+;
+; Module scope only, the same rule the `@constant` patterns above follow — a
+; `this.x = function(){}` in a constructor, or any local object literal, would
+; otherwise bury the index.
+;
+; The name is the property (`use`), not the path to it (`proto.use`): it is what
+; the call site writes, and it is the choice made for a schema-qualified SQL
+; table too. Common property names therefore collide across files — scope with
+; `--path`, as with any name-based lookup.
+(program
+  (expression_statement
+    (assignment_expression
+      left: (member_expression property: (property_identifier) @name)
+      right: (function_expression body: (statement_block) @body)) @method))
+(program
+  (expression_statement
+    (assignment_expression
+      left: (member_expression property: (property_identifier) @name)
+      right: (generator_function body: (statement_block) @body)) @method))
+(program
+  (expression_statement
+    (assignment_expression
+      left: (member_expression property: (property_identifier) @name)
+      right: (arrow_function body: (_) @body)) @method))
 
 ; ES module imports and re-exports (raw module string, quotes stripped).
 (import_statement source: (string (string_fragment) @name)) @import

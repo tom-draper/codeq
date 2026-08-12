@@ -165,7 +165,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v2");
-    assert_eq!(v["index"]["schema"], 24);
+    assert_eq!(v["index"]["schema"], 25);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -6352,4 +6352,93 @@ fn unused_exclusions_are_one_policy_not_a_growing_query() {
     for quiet in ["User", "Order", "url", "idx_kept", "kept"] {
         assert!(!dead.contains(&quiet.to_string()), "{quiet} is consumed elsewhere: {dead:?}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Found by dogfooding: cross-checking commands that must agree
+// ---------------------------------------------------------------------------
+
+#[test]
+fn javascript_property_assignment_is_a_definition() {
+    // How most of Node is written, and it was invisible: `outline` on Express's
+    // whole router file — five methods, 673 lines — returned nothing.
+    let f = Fixture::new();
+    f.write(
+        "router.js",
+        "var proto = module.exports = function () { return 1; };\n\
+         \n\
+         proto.use = function use(fn) {\n  return gettype(fn);\n};\n\
+         \n\
+         Thing.prototype.render = function render(x) {\n  return x;\n};\n\
+         \n\
+         exports.helper = function () {\n  return 2;\n};\n",
+    );
+    f.write("local.js", "function outer() {\n  var o = {};\n  o.inner = function () {};\n}\n");
+
+    let v = f.run(&["symbols", "--path", "router.js", "--limit", "0"]);
+    let names = field_set(&v, "name");
+    for want in ["use", "render", "helper"] {
+        assert!(names.contains(&want.to_string()), "{want} missing: {names:?}");
+    }
+    // The name is the property, not the path to it — what a call site writes.
+    assert!(!names.iter().any(|n| n.contains('.')), "{names:?}");
+    // They are methods: you call them on a value.
+    let kinds: Vec<String> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["name"] == "use")
+        .map(|r| r["kind"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(kinds, ["method"], "{v}");
+
+    // Module scope only: an assignment inside a function is not a definition, or
+    // every local object literal would bury the index.
+    let local = field_set(&f.run(&["symbols", "--path", "local.js", "--limit", "0"]), "name");
+    assert!(!local.contains(&"inner".to_string()), "{local:?}");
+
+    // `exports.x` *is* the CommonJS export; `proto.x` cannot be known to escape.
+    let api = field_set(&f.run(&["api", "router.js"]), "name");
+    assert_eq!(api, ["helper"], "{api:?}");
+}
+
+#[test]
+fn a_reference_at_file_scope_says_so_instead_of_coming_back_blank() {
+    // `callers` promises definitions, but a module-level call has none — the row
+    // used to arrive with a location and no `name`, which reads as a broken row
+    // and crashed two consumers that indexed the key.
+    let f = Fixture::new();
+    f.write("a.py", "def helper():\n    return 1\n\nVALUE = helper()\n\ndef user():\n    return helper()\n");
+
+    let v = f.run(&["callers", "helper"]);
+    let rows = v["data"].as_array().unwrap();
+    let anon: Vec<&Value> = rows.iter().filter(|r| r["name"].is_null()).collect();
+    assert_eq!(anon.len(), 1, "the module-level call is still reported: {v}");
+    assert_eq!(anon[0]["scope"], "file", "and it says what it is: {v}");
+    assert_eq!(anon[0]["line"], 4);
+    // A real definition never carries the label.
+    let named: Vec<&Value> = rows.iter().filter(|r| r["name"] == "user").collect();
+    assert_eq!(named.len(), 1, "{v}");
+    assert!(named[0]["scope"].is_null(), "{v}");
+}
+
+#[test]
+fn callers_and_callees_can_be_bounded_like_every_other_list() {
+    // They were the only two list commands with no `--limit`, and the likeliest
+    // to return a lot: `callers serverLog` in redis is 227 rows and 11 KB.
+    let f = Fixture::new();
+    let mut src = String::from("def target():\n    return 1\n");
+    for i in 0..12 {
+        src.push_str(&format!("\ndef c{i}():\n    return target()\n"));
+    }
+    f.write("a.py", &src);
+
+    assert_eq!(f.run(&["callers", "target", "--limit", "0"])["data"].as_array().unwrap().len(), 12);
+    assert_eq!(f.run(&["callers", "target", "--limit", "3"])["data"].as_array().unwrap().len(), 3);
+    // Also on the transitive walk, where an unbounded result is worse.
+    let deep = f.run(&["callers", "target", "--depth", "3", "--limit", "4"]);
+    assert_eq!(deep["data"].as_array().unwrap().len(), 4, "{deep}");
+
+    let callees = f.run(&["callees", "c0", "--limit", "1"]);
+    assert!(callees["data"].as_array().unwrap().len() <= 1, "{callees}");
 }

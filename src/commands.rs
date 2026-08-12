@@ -976,6 +976,17 @@ struct Caller {
     col: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
+    /// `"file"` when the reference sits at module scope with no definition
+    /// around it, which is why this row has no `name`.
+    ///
+    /// The row is real — a Python module-level call runs at import, and a JS
+    /// `proto.use = …` at file scope is how most of Node is written — but
+    /// `callers` promises *definitions*, so a nameless row read as a broken one.
+    /// Two consumers of this output (including a dogfooding sweep of ours)
+    /// crashed on the missing key rather than noticing the fact it carried. Say
+    /// what it is instead of leaving it blank.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<&'static str>,
     /// Best-effort: the caller looks like a test (path or symbol name).
     #[serde(skip_serializing_if = "is_false")]
     test: bool,
@@ -988,6 +999,19 @@ struct Caller {
 /// Distinct definitions that contain a word-boundary reference to `name`,
 /// excluding `name`'s own declaration. Textual (name-based), not type-resolved.
 /// `path` restricts to callers *located* in matching files.
+/// Apply `--limit` to a finished row list. `0` means unlimited, matching every
+/// other list command — which is why `callers`/`callees` finally have one: they
+/// were the only two without, and the likeliest to return a lot (`callers
+/// serverLog` in redis is 227 rows and 11 KB, unboundable).
+///
+/// Truncation happens after sorting so the rows kept are the first N of the
+/// answer, not the first N found.
+fn truncate_rows<T>(rows: &mut Vec<T>, limit: usize) {
+    if limit > 0 && rows.len() > limit {
+        rows.truncate(limit);
+    }
+}
+
 fn callers_of(
     s: &Session,
     name: &str,
@@ -1082,6 +1106,7 @@ fn callers_of(
         } else {
             (None, None)
         };
+        let scope = h.symbol.is_none().then_some("file");
         out.push(Caller {
             symbol: h.symbol,
             kind: h.kind,
@@ -1089,6 +1114,7 @@ fn callers_of(
             line: h.line,
             col,
             text,
+            scope,
             test,
             via: None,
         });
@@ -1398,11 +1424,13 @@ pub fn cmd_callers(
     call_only: bool,
     qualifier: Option<&str>,
     examples: bool,
+    limit: usize,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
-        let callers = callers_of(&s, name, path, call_only, qualifier, examples)?;
+        let mut callers = callers_of(&s, name, path, call_only, qualifier, examples)?;
+        truncate_rows(&mut callers, limit);
         let rows = resolve_rows(&s, name, resolved, callers, |c| c.path.as_str(), |c, v| {
             c.via = v;
         })?;
@@ -1452,6 +1480,7 @@ pub fn cmd_callers(
             .then(a.path.cmp(&b.path))
             .then(a.line.cmp(&b.line))
     });
+    truncate_rows(&mut hops, limit);
     let note = note_if_empty(&s, &hops, name, "callers", path)?;
     s.emit_noted(hops, note)
 }
@@ -1464,11 +1493,13 @@ pub fn cmd_callees(
     depth: usize,
     resolved: bool,
     examples: bool,
+    limit: usize,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
-        let rows = callees_of(&s, name, path, resolved, examples)?;
+        let mut rows = callees_of(&s, name, path, resolved, examples)?;
+        truncate_rows(&mut rows, limit);
         let note = note_if_empty(&s, &rows, name, "callees", path)?;
         return s.emit_noted(rows, note);
     }
@@ -1510,6 +1541,7 @@ pub fn cmd_callees(
             .then(a.path.cmp(&b.path))
             .then(a.line.cmp(&b.line))
     });
+    truncate_rows(&mut hops, limit);
     let note = note_if_empty(&s, &hops, name, "callees", path)?;
     s.emit_noted(hops, note)
 }
