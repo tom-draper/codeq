@@ -6865,3 +6865,37 @@ fn an_impacted_row_points_at_the_definition_not_the_call_site() {
     assert_eq!(imp["line"], 4, "the definition's own line: {v}");
     assert_eq!(imp["call_line"], 5, "where the impact enters it: {v}");
 }
+
+#[test]
+fn explore_at_refuses_a_line_that_declares_several_things() {
+    // A single line can declare several definitions — Ruby's `attr_accessor :a,
+    // :b`, a C++ enum's variants — and they tie for innermost because they share
+    // a span. `definition_at` took the first row, so asking about the line
+    // silently explored whichever name sorted first: ask about `response`, get
+    // `app`. `at` returned all five and was right to.
+    let f = Fixture::new();
+    f.write(
+        "base.rb",
+        "class Base\n  attr_accessor :app, :env, :request\n\n  def run\n    app\n  end\nend\n",
+    );
+
+    // `at` reports all three, as it always did.
+    let at = field_set(&f.run(&["at", "base.rb:2"]), "name");
+    for n in ["app", "env", "request"] {
+        assert!(at.contains(&n.to_string()), "{at:?}");
+    }
+
+    // `explore --at` refuses rather than picking one, and says why.
+    let out = f.raw(&["explore", "--at", "base.rb:2", "--max-tokens", "200"]);
+    assert!(out.status.success(), "a refusal is an answer, not an error");
+    let note = String::from_utf8_lossy(&out.stderr);
+    assert!(note.contains("declares 3 definitions"), "{note}");
+    assert!(note.contains("app") && note.contains("request"), "{note}");
+    let v = f.run(&["explore", "--at", "base.rb:2", "--max-tokens", "200"]);
+    assert!(v["data"]["focus"].as_array().unwrap().is_empty(), "{v}");
+
+    // A line declaring one thing still resolves.
+    let v = f.run(&["explore", "--at", "base.rb:4", "--max-tokens", "200"]);
+    let focus = v["data"]["focus"].as_array().unwrap();
+    assert!(focus.iter().any(|d| d["name"] == "run"), "{v}");
+}

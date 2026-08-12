@@ -1793,17 +1793,35 @@ pub fn cmd_explore(
     // `--at` asks the same question from the other end. A stack frame, a diff
     // hunk and a search hit all name a *position*, not a symbol, so answering
     // "what is this and who uses it" meant `at` to get the name, then `explore`
-    // with it. Resolving here collapses that to one call. The position also
-    // scopes the lookup: it identifies one definition exactly, so a common name
-    // can't drag in same-named definitions from elsewhere.
+    // with it. Resolving here collapses that to one call.
+    //
+    // The position scopes the lookup to that *file*, which keeps same-named
+    // definitions in other files out. It does not narrow to the one definition
+    // on that line: a name declared several times in one file (Ruby's repeated
+    // `attr_accessor :params`) still contributes every occurrence to the focus.
+    // Worth stating precisely — this comment used to claim the position
+    // "identifies one definition exactly", which it does not.
     let (target, scope): (String, Option<String>) = match at {
-        Some(loc) => match definition_at(&s, loc)? {
-            Some(found) => found,
-            None => {
-                // A position between definitions is a real empty answer, not a
-                // bad argument, so it gets a note rather than an error. The
-                // budget comes from a real (empty) assembly so the shape of the
-                // result is identical to any other explore.
+        Some(loc) => {
+            let found = definition_at(&s, loc)?;
+            // A position between definitions is a real empty answer, not a bad
+            // argument, so it gets a note rather than an error — as does a line
+            // that declares several things and therefore names no single symbol
+            // to explore. The budget comes from a real (empty) assembly so the
+            // shape of the result is identical to any other explore.
+            let refusal = match found.names.as_slice() {
+                [] => Some(format!("no definition encloses {loc}")),
+                [_one] => None,
+                many => Some(format!(
+                    "{}:{} declares {} definitions ({}) — a line, not a symbol; \
+                     explore one by name",
+                    found.rel,
+                    found.line,
+                    many.len(),
+                    many.join(", "),
+                )),
+            };
+            if let Some(note) = refusal {
                 let (budget, source, omitted) =
                     crate::context::source_for(&s.db, &s.repo, &[], max_tokens)?.into_source();
                 return s.emit_noted(
@@ -1816,10 +1834,11 @@ pub fn cmd_explore(
                         budget,
                         omitted,
                     },
-                    Some(format!("no definition encloses {loc}")),
+                    Some(note),
                 );
             }
-        },
+            (found.names[0].clone(), Some(found.rel))
+        }
         // clap guarantees one of the two is present.
         None => (
             name.unwrap_or_default().to_string(),
@@ -1931,7 +1950,7 @@ pub fn cmd_explore(
 /// question, and it should not have two implementations that can disagree.
 /// Innermost wins (smallest byte range), so a line inside a method resolves to
 /// the method rather than the type that contains it.
-fn definition_at(s: &Session, location: &str) -> Result<Option<(String, Option<String>)>> {
+fn definition_at(s: &Session, location: &str) -> Result<AtPosition> {
     let (path, line_str) = location
         .rsplit_once(':')
         .ok_or_else(|| anyhow!("expected <path>:<line>, got '{location}'"))?;
@@ -1939,18 +1958,48 @@ fn definition_at(s: &Session, location: &str) -> Result<Option<(String, Option<S
         .parse()
         .map_err(|_| anyhow!("invalid line number in '{location}'"))?;
     let rel = resolve_file(s, path)?;
+    // Every definition covering the line, innermost first. Not `LIMIT 1`: a
+    // single line can *declare several things* — Ruby's `attr_accessor :app,
+    // :env, :request`, a C++ enum's variants, a multi-name field declaration —
+    // and those tie for innermost because they share a span. Taking the first
+    // row silently answered about `app` when the question was about `response`,
+    // which `at` (which returns all five) already knew better than to do.
     let mut stmt = s.db.conn.prepare(
-        "SELECT name, path
+        "SELECT name, start_byte, end_byte
          FROM facts
          WHERE kind <> 'import' AND path = ?1
            AND start_line <= ?2 AND end_line >= ?2
-         ORDER BY (end_byte - start_byte) ASC, path
-         LIMIT 1",
+         ORDER BY start_byte ASC, name ASC",
     )?;
-    let mut rows = stmt.query_map((&rel, line), |r| {
-        Ok((r.get::<_, String>(0)?, Some(r.get::<_, String>(1)?)))
-    })?;
-    rows.next().transpose().map_err(Into::into)
+    let covering: Vec<(String, i64, i64)> = stmt
+        .query_map((&rel, line), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+
+    // The *leaves*: definitions covering the line that do not contain another
+    // one. Containment, not span size — the first attempt ranked by span and
+    // picked the shortest, so `enum Color { red, green, blue, unknown }` on one
+    // line resolved to `red` because it has the fewest characters. Four disjoint
+    // enumerators are equally innermost; only the enum around them is an
+    // ancestor, and that is what containment says and span does not.
+    let contains = |a: &(String, i64, i64), b: &(String, i64, i64)| {
+        a.1 <= b.1 && a.2 >= b.2 && (a.1 != b.1 || a.2 != b.2)
+    };
+    let mut names: Vec<String> = covering
+        .iter()
+        .filter(|d| !covering.iter().any(|other| contains(d, other)))
+        .map(|(n, _, _)| n.clone())
+        .collect();
+    names.dedup();
+    Ok(AtPosition { rel, line, names })
+}
+
+/// What a `<file>:<line>` resolved to: the innermost definitions covering it.
+/// More than one name means the line declares several things and does not
+/// identify a single symbol.
+struct AtPosition {
+    rel: String,
+    line: i64,
+    names: Vec<String>,
 }
 
 /// The imports declared by the files the focus definitions live in.

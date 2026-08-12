@@ -1,0 +1,434 @@
+{
+  "timestamp": "2026-08-12T17:39:48+00:00",
+  "codeq_commit": "5424b0adafee",
+  "per_command": {
+    "definitions": {
+      "pass": 750,
+      "total": 750,
+      "time_x": 1.19,
+      "bytes_x": 6.0
+    },
+    "graph": {
+      "pass": 50,
+      "total": 50,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "references": {
+      "pass": 1500,
+      "total": 1500,
+      "time_x": 1.801,
+      "bytes_x": 2.075
+    },
+    "imports": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.832,
+      "bytes_x": 5.036
+    },
+    "explore": {
+      "pass": 735,
+      "total": 750,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "map": {
+      "pass": 50,
+      "total": 50,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "envelope": {
+      "pass": 75,
+      "total": 75,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "outline": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.538,
+      "bytes_x": 4.411
+    },
+    "at": {
+      "pass": 1249,
+      "total": 1249,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "astgrep": {
+      "pass": 735,
+      "total": 735,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "read": {
+      "pass": 750,
+      "total": 750,
+      "time_x": 6.444,
+      "bytes_x": 0.067
+    },
+    "callers": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.216,
+      "bytes_x": 1.083
+    },
+    "search": {
+      "pass": 2250,
+      "total": 2250,
+      "time_x": 2.395,
+      "bytes_x": 1.758
+    }
+  },
+  "summary": {
+    "repos": 25,
+    "total_correctness_tests": 8159,
+    "correctness_pass": 8144,
+    "correctness_fail": 15,
+    "search_total": 750,
+    "search_fail": 0,
+    "errors": 0,
+    "invariant_total": 5909,
+    "invariant_fail": 15,
+    "fuzz_total": 1500,
+    "fuzz_fail": 0,
+    "actions_total": 750,
+    "median_codeq_over_rg_time": 2.395,
+    "median_codeq_over_rg_bytes": 1.758
+  },
+  "per_repo": {
+    "flask": {
+      "lang": "python",
+      "index_ms": 2101.67,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "requests": {
+      "lang": "python",
+      "index_ms": 2115.37,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "rich": {
+      "lang": "python",
+      "index_ms": 3116.3,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "httpie": {
+      "lang": "python",
+      "index_ms": 2128.83,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "gin": {
+      "lang": "go",
+      "index_ms": 2047.96,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "cobra": {
+      "lang": "go",
+      "index_ms": 2044.16,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "mux": {
+      "lang": "go",
+      "index_ms": 2002.48,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "express": {
+      "lang": "javascript",
+      "index_ms": 2174.07,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "lodash": {
+      "lang": "javascript",
+      "index_ms": 2803.52,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "zod": {
+      "lang": "typescript",
+      "index_ms": 2401.29,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "dayjs": {
+      "lang": "typescript",
+      "index_ms": 2367.34,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "ripgrep": {
+      "lang": "rust",
+      "index_ms": 2472.63,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "serde": {
+      "lang": "rust",
+      "index_ms": 2250.71,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "clap": {
+      "lang": "rust",
+      "index_ms": 2707.04,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "sinatra": {
+      "lang": "ruby",
+      "index_ms": 2133.0,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "rack": {
+      "lang": "ruby",
+      "index_ms": 2155.82,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "gson": {
+      "lang": "java",
+      "index_ms": 2537.35,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "jq": {
+      "lang": "c",
+      "index_ms": 2739.1,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "redis": {
+      "lang": "c",
+      "index_ms": 4949.99,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "json": {
+      "lang": "cpp",
+      "index_ms": 5169.06,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "fmt": {
+      "lang": "cpp",
+      "index_ms": 3221.23,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "spdlog": {
+      "lang": "cpp",
+      "index_ms": 2667.69,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "newtonsoft": {
+      "lang": "csharp",
+      "index_ms": 5524.13,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "guzzle": {
+      "lang": "php",
+      "index_ms": 2068.98,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "monolog": {
+      "lang": "php",
+      "index_ms": 2117.34,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    }
+  },
+  "failures": [
+    {
+      "repo": "dayjs",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "format",
+      "path": "types/index.d.ts"
+    },
+    {
+      "repo": "dayjs",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "FormatObject",
+      "path": "types/index.d.ts"
+    },
+    {
+      "repo": "dayjs",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "locale",
+      "path": "types/index.d.ts"
+    },
+    {
+      "repo": "sinatra",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "params",
+      "path": "lib/sinatra/base.rb"
+    },
+    {
+      "repo": "sinatra",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "request",
+      "path": "lib/sinatra/base.rb"
+    },
+    {
+      "repo": "sinatra",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "response",
+      "path": "lib/sinatra/base.rb"
+    },
+    {
+      "repo": "rack",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "response",
+      "path": "lib/rack/events.rb"
+    },
+    {
+      "repo": "jq",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "bytecoded_builtin",
+      "path": "src/builtin.c"
+    },
+    {
+      "repo": "jq",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "stack_out",
+      "path": "src/bytecode.h"
+    },
+    {
+      "repo": "json",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "searchIndex",
+      "path": "docs/docset/docSet.sql"
+    },
+    {
+      "repo": "json",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "green",
+      "path": "docs/examples/nlohmann_json_serialize_enum_2.cpp"
+    },
+    {
+      "repo": "fmt",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "arg_id_result",
+      "path": "test/core-test.cc"
+    },
+    {
+      "repo": "fmt",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "color",
+      "path": "test/format-test.cc"
+    },
+    {
+      "repo": "spdlog",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "line",
+      "path": "include/spdlog/common.h"
+    },
+    {
+      "repo": "spdlog",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "flags",
+      "path": "tests/test_file_helper.cpp"
+    }
+  ]
+}

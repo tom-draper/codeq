@@ -4,6 +4,87 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — The harness could not see a day's work, and found a bug the hour it could
+
+`bench/differential.py` is described in CLAUDE.md as the important one — the
+check that catches what small fixtures cannot. Its assertion count sat at
+5,226–5,227 all day, across SQL extraction, JS property-assignment methods,
+Python module bindings, test attributes, decorators, FK relations and a new
+`graph` command. That flatness was the tell.
+
+`sample_symbols` filtered candidates to `("function", "method", "class",
+"struct")`. So the battery never touched a field, a variant, a module-scope
+constant, or any SQL declaration. On flask alone that is **132 constants, 212
+fields and 2 tables** it was structurally unable to reach. Six schema bumps
+landed today on the strength of unit fixtures and a harness that could not
+exercise the facts they added.
+
+Sampling is now stratified: round-robin across kinds rather than a flat stride,
+so a kind with three instances in a repo is still sampled instead of being
+rounded away by a kind with a thousand. `INVARIANT_K` 20 → 30. New invariants for
+the commands added today — `explore --at` must agree with `at`, `astgrep
+--explain` must return a tree covering the line it was asked about — plus
+whole-repo ones: `map --totals` is a view of `map`, `graph`'s `--relation` filter
+is a real subset, and the envelope's `rows` pointer resolves.
+
+**5,226 → 8,159 assertions**, and no new corpus repo was needed: flask already
+ships `schema.sql`, so SQL extraction is now exercised against real code rather
+than only fixtures.
+
+### What it caught immediately
+
+Fifteen failures, every one of them `explore --at` disagreeing with `at`, and
+every one on a kind the sampler could not previously reach. Sinatra:
+
+```
+$ codeq at lib/sinatra/base.rb:977
+977: field app · field env · field request · field response · field params
+$ codeq explore --at lib/sinatra/base.rb:977      # focus
+app
+```
+
+The line is `attr_accessor :app, :env, :request, :response, :params`. Five
+definitions share a span, so they tie for innermost, and `definition_at` had
+`LIMIT 1` — it answered about `app` when the question was about `response`, with
+nothing to indicate it had chosen. `at`, asking the same question, returned all
+five and was right to. Same shape in the C++ repos (enum variants on one line)
+and jq (multi-name field declarations).
+
+`explore --at` now refuses: a line that declares several things is a line, not a
+symbol, and it says so with the candidates listed. That is the honest answer —
+the alternative is picking one silently, which is what it was doing.
+
+The first fix was **still wrong, and the harness caught that too.** I treated
+"innermost" as smallest span, so definitions only counted as ambiguous when they
+tied exactly. Ruby's `attr_accessor` ties; a C++ `enum Color { red, green, blue,
+unknown }` on one line does not — the four enumerators have different spans, so
+it picked `red`, *because `red` is the shortest name*. Ranking by span was
+measuring characters and calling it nesting.
+
+The rule is containment: the leaves are the covering definitions that do not
+contain another covering definition. Four disjoint enumerators are all leaves;
+the `enum` around them contains them and is an ancestor. That is what nesting
+means, and span only approximates it when the definitions happen to be siblings
+of equal width. Three rounds of the harness to get from 15 failures to 7 to 0,
+each round a real defect rather than a flaky check.
+
+### Two things worth keeping
+
+The first run of the new `astgrep --explain` invariant reported three CSS
+failures. Those were **my invariant being wrong**, not codeq: `_cq` returns
+stdout, and the "no grammar for 'css'" refusal goes to stderr, so the check
+tested an empty result and blamed the tool. Fixed to skip when the command
+produced no JSON. A dry run on one repo before the full sweep is what caught it,
+and is worth doing for any new invariant.
+
+While tracing this I found a comment claiming `--at` "identifies one definition
+exactly, so a common name can't drag in same-named definitions from elsewhere".
+It scopes to the *file*, so a name declared repeatedly in one file still
+contributes every occurrence to the focus — `explore --at base.rb:83` returns
+four `params`. The behaviour is defensible and the comment was not; the comment
+is now accurate. Whether `--at` should narrow to the one definition on the line
+is a separate question, deliberately left open.
+
 ## 2026-08-12 — Acting on the second `persona` pass, and a process failure of mine
 
 First, the process failure, because it is the more useful lesson. Commit

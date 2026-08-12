@@ -1,0 +1,378 @@
+{
+  "timestamp": "2026-08-12T17:57:54+00:00",
+  "codeq_commit": "5424b0adafee",
+  "per_command": {
+    "outline": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.567,
+      "bytes_x": 4.411
+    },
+    "map": {
+      "pass": 50,
+      "total": 50,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "definitions": {
+      "pass": 750,
+      "total": 750,
+      "time_x": 1.18,
+      "bytes_x": 6.0
+    },
+    "search": {
+      "pass": 2250,
+      "total": 2250,
+      "time_x": 2.353,
+      "bytes_x": 1.758
+    },
+    "imports": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.873,
+      "bytes_x": 5.036
+    },
+    "references": {
+      "pass": 1500,
+      "total": 1500,
+      "time_x": 1.762,
+      "bytes_x": 2.075
+    },
+    "at": {
+      "pass": 1249,
+      "total": 1249,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "explore": {
+      "pass": 743,
+      "total": 750,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "callers": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.174,
+      "bytes_x": 1.083
+    },
+    "astgrep": {
+      "pass": 735,
+      "total": 735,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "read": {
+      "pass": 750,
+      "total": 750,
+      "time_x": 6.552,
+      "bytes_x": 0.067
+    },
+    "envelope": {
+      "pass": 75,
+      "total": 75,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "graph": {
+      "pass": 50,
+      "total": 50,
+      "time_x": null,
+      "bytes_x": null
+    }
+  },
+  "summary": {
+    "repos": 25,
+    "total_correctness_tests": 8159,
+    "correctness_pass": 8152,
+    "correctness_fail": 7,
+    "search_total": 750,
+    "search_fail": 0,
+    "errors": 0,
+    "invariant_total": 5909,
+    "invariant_fail": 7,
+    "fuzz_total": 1500,
+    "fuzz_fail": 0,
+    "actions_total": 750,
+    "median_codeq_over_rg_time": 2.353,
+    "median_codeq_over_rg_bytes": 1.758
+  },
+  "per_repo": {
+    "flask": {
+      "lang": "python",
+      "index_ms": 2110.0,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "requests": {
+      "lang": "python",
+      "index_ms": 2153.59,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "rich": {
+      "lang": "python",
+      "index_ms": 3086.55,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "httpie": {
+      "lang": "python",
+      "index_ms": 2121.12,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "gin": {
+      "lang": "go",
+      "index_ms": 2081.89,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "cobra": {
+      "lang": "go",
+      "index_ms": 2038.0,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "mux": {
+      "lang": "go",
+      "index_ms": 2076.35,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "express": {
+      "lang": "javascript",
+      "index_ms": 2089.27,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "lodash": {
+      "lang": "javascript",
+      "index_ms": 2793.82,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "zod": {
+      "lang": "typescript",
+      "index_ms": 2419.22,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "dayjs": {
+      "lang": "typescript",
+      "index_ms": 2389.38,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "ripgrep": {
+      "lang": "rust",
+      "index_ms": 2506.77,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "serde": {
+      "lang": "rust",
+      "index_ms": 2245.69,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "clap": {
+      "lang": "rust",
+      "index_ms": 2770.98,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "sinatra": {
+      "lang": "ruby",
+      "index_ms": 2165.94,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "rack": {
+      "lang": "ruby",
+      "index_ms": 2127.65,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "gson": {
+      "lang": "java",
+      "index_ms": 2435.16,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "jq": {
+      "lang": "c",
+      "index_ms": 2926.24,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "redis": {
+      "lang": "c",
+      "index_ms": 5074.2,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "json": {
+      "lang": "cpp",
+      "index_ms": 5053.74,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "fmt": {
+      "lang": "cpp",
+      "index_ms": 3390.62,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "spdlog": {
+      "lang": "cpp",
+      "index_ms": 2763.51,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "newtonsoft": {
+      "lang": "csharp",
+      "index_ms": 5491.81,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "guzzle": {
+      "lang": "php",
+      "index_ms": 2112.14,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "monolog": {
+      "lang": "php",
+      "index_ms": 2167.7,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    }
+  },
+  "failures": [
+    {
+      "repo": "dayjs",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "format",
+      "path": "types/index.d.ts"
+    },
+    {
+      "repo": "dayjs",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "FormatObject",
+      "path": "types/index.d.ts"
+    },
+    {
+      "repo": "dayjs",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "locale",
+      "path": "types/index.d.ts"
+    },
+    {
+      "repo": "jq",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "bytecoded_builtin",
+      "path": "src/builtin.c"
+    },
+    {
+      "repo": "json",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "green",
+      "path": "docs/examples/nlohmann_json_serialize_enum_2.cpp"
+    },
+    {
+      "repo": "fmt",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "color",
+      "path": "test/format-test.cc"
+    },
+    {
+      "repo": "spdlog",
+      "battery": "explore",
+      "name": "explore-at-matches-at",
+      "symbol": "flags",
+      "path": "tests/test_file_helper.cpp"
+    }
+  ]
+}

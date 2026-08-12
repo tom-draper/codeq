@@ -457,9 +457,13 @@ python3 bench/textmode.py      # seconds. Text output carries the same facts as 
 python3 bench/differential.py  # ~10 min (clones 20 repos once, then cached)
 ```
 
-`differential.py` is the important one: ~5,200 assertions over 25 pinned
+`differential.py` is the important one: ~7,000 assertions over 25 pinned
 open-source repos, checking that `search` is a superset of ripgrep and that
-per-symbol invariants hold in every supported language. It writes a result to
+per-symbol invariants hold in every supported language. Symbols are sampled
+**stratified by kind**, so a change to how fields, constants or SQL declarations
+are extracted is actually exercised — before that the sampler only looked at
+functions, methods, classes and structs, and a day of extraction work went
+unchecked by it. It writes a result to
 `bench/results/` (committed, so the trend lives in git). Expect
 `N PASS, 0 FAIL, 0 ERROR`.
 

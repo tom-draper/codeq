@@ -10,9 +10,18 @@ the CURRENT binary and runs four batteries:
    FAIL, a crash/bad-flag is an ERROR. Records time + bytes for both.
 2. FUZZ    — dozens of real identifiers sampled from codeq's own symbol table,
    each superset-checked against `rg -F`. Auto-scales the assertion count.
-3. INVARIANT — ~6 checks per sampled symbol verifying definitions / references /
-   at / read behave as expected, cross-checked against ground truth (rg + file
-   contents). This is where a navigation/extraction regression shows up.
+3. INVARIANT — ~8 checks per sampled symbol verifying definitions / references /
+   at / read / explore / astgrep behave as expected, cross-checked against ground
+   truth (rg + file contents), plus a handful of whole-repo checks (map --totals
+   agrees with map, graph edges are named, the envelope's `rows` pointer
+   resolves). This is where a navigation/extraction regression shows up.
+
+   Symbols are sampled **stratified by kind**. They used to be filtered to
+   function/method/class/struct, which meant the battery never touched a field, a
+   variant, a module-scope constant or any SQL declaration — on flask alone that
+   is 132 constants, 212 fields and 2 tables it could not see, and it is why the
+   assertion count stayed flat across a run of extraction changes. A harness that
+   cannot reach the new facts is not checking the new work.
 4. NAV     — the realistic navigation an agent does (definitions, references,
    callers, read, outline, imports) vs the grep/cat pipeline it would chain,
    measured on speed + output bytes (a token proxy).
@@ -41,7 +50,7 @@ CODEQ = corpus.CODEQ
 RESULTS = os.path.join(HERE, "results")
 TIMING_RUNS = 3
 FUZZ_K = 60        # identifiers superset-checked per repo
-INVARIANT_K = 20   # symbols probed per repo (~6 invariants each)
+INVARIANT_K = 30   # symbols probed per repo (~6 invariants each), spread across kinds
 
 # SEARCH battery: (name, codeq args after `search`, rg args after
 # `rg -n --no-heading --no-messages`). Both must express the SAME query.
@@ -182,22 +191,54 @@ VENDORED = ("/vendor/", "/dist/", "/node_modules/", "/_static/", "/third_party/"
             "/testdata/", "/fixtures/", ".min.")
 
 
+# Markdown headings are definitions, but their names are prose ("Output contract"),
+# so the identifier filter below drops them anyway; naming it here says the
+# omission is deliberate rather than accidental.
+UNSAMPLED_KINDS = {"heading", "import"}
+
+
 def sample_symbols(path):
+    """A spread of symbols to run the invariant battery over — stratified by kind.
+
+    This used to filter to ("function", "method", "class", "struct"), which meant
+    the battery never touched a field, a variant, a module-scope constant, or any
+    SQL declaration. Measured on flask alone that is 132 constants, 212 fields and
+    2 tables the harness could not see, and it is why the assertion count sat flat
+    across a day of extraction changes: the check that exists to catch what
+    fixtures cannot was structurally unable to reach the new facts.
+
+    Round-robin across kinds rather than a flat stride, so a kind with three
+    instances in a repo is still sampled instead of being rounded away by a kind
+    with a thousand.
+    """
     p = _run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,line,end_line", "--limit", "0"], path)
     try:
         data = json.loads(p)["data"]
     except (ValueError, KeyError):
         return []
     cand = [d for d in data
-            if d.get("kind") in ("function", "method", "class", "struct")
+            if d.get("kind") not in UNSAMPLED_KINDS
             and d.get("name", "").isidentifier() and len(d.get("name", "")) >= 4
             and d.get("line") and d.get("end_line")
             and not any(v in "/" + d["path"] for v in VENDORED)]
-    cand.sort(key=lambda d: (d["path"], d["line"]))
     if not cand:
         return []
-    step = max(1, len(cand) // INVARIANT_K)
-    return cand[::step][:INVARIANT_K]
+    by_kind = defaultdict(list)
+    for d in sorted(cand, key=lambda d: (d["kind"], d["path"], d["line"])):
+        by_kind[d["kind"]].append(d)
+    # Spread within each kind first, so the sample is not all from one file.
+    streams = []
+    for kind in sorted(by_kind):
+        ds = by_kind[kind]
+        step = max(1, len(ds) // INVARIANT_K)
+        streams.append(ds[::step])
+    picked, i = [], 0
+    while len(picked) < INVARIANT_K and any(i < len(st) for st in streams):
+        for st in streams:
+            if i < len(st) and len(picked) < INVARIANT_K:
+                picked.append(st[i])
+        i += 1
+    return picked
 
 
 def invariant_battery(path):
@@ -250,6 +291,91 @@ def invariant_battery(path):
         nlines = rout.count(b"\n")
         rec("read", "read-symbol-faithful",
             len(rout) > 0 and S.encode() in rout and 0 < nlines <= file_lines + 1)
+
+        # `explore --at` resolves a position to the same definition `at` does.
+        # The two are documented as different routes to one answer, so they must
+        # not disagree; nothing was checking that they don't.
+        raw_ex = _run([CODEQ, "--json", "explore", "--at", f"{F}:{L0}",
+                       "--max-tokens", "200"], path)
+        try:
+            env = json.loads(raw_ex)
+        except ValueError:
+            env = {}
+        if isinstance(env.get("data"), dict):
+            # `focus` is a list: a position can be enclosed by more than one
+            # definition (a method inside a class), and explore keeps them.
+            focus = env["data"].get("focus") or []
+            # A line that declares several things (`attr_accessor :a, :b`, enum
+            # variants) names no single symbol, and `explore --at` refuses with a
+            # note rather than picking one. That refusal is a correct answer, so
+            # the invariant is "resolves to the symbol, or explains why it can't"
+            # — not "always resolves".
+            refused = "declares" in (env.get("note") or "")
+            rec("explore", "explore-at-matches-at",
+                refused or any(d.get("name") == S and d.get("path") == F for d in focus))
+
+        # `astgrep --explain` returns a tree that actually covers the line asked
+        # about — the command exists so a pattern can be written from real node
+        # kinds, which is worthless if it reports a node from somewhere else.
+        # Skipped when the command produced no JSON — a language codeq indexes but
+        # has no grammar for (CSS, HCL, markdown) errors out by design, and
+        # `_cq` reports stdout, so the failure has to be read from *that* rather
+        # than by grepping for a message that goes to stderr. The first run of
+        # this check asserted against three CSS files and blamed codeq for it.
+        exp, _ = _cq([CODEQ, "--json", "astgrep", "--explain", f"{F}:{L0}"], path)
+        if isinstance(exp, list):
+            rec("astgrep", "explain-covers-line",
+                bool(exp) and all(n.get("line", 0) <= L1 for n in exp))
+    return recs
+
+
+def repo_battery(path):
+    """Whole-repo invariants: results that must agree with each other."""
+    recs = []
+
+    def rec(command, name, ok):
+        recs.append({"kind": "invariant", "command": command, "name": name,
+                     "verdict": "PASS" if ok else "FAIL", "symbol": "-", "path": "-"})
+
+    # `map --totals` is a view of `map`, not a second answer.
+    full, _ = _cq([CODEQ, "--json", "map"], path)
+    summ, _ = _cq([CODEQ, "--json", "map", "--totals"], path)
+    if isinstance(full, dict) and isinstance(summ, dict):
+        rec("map", "totals-view-agrees", full.get("totals") == summ.get("totals"))
+        langs = full.get("languages") or []
+        rec("map", "totals-reconcile",
+            summ.get("totals", {}).get("bytes") == sum(l.get("bytes", 0) for l in langs))
+
+    # Every relation edge names something; `--relation X` is a subset of all.
+    edges, _ = _cq([CODEQ, "--json", "graph", "--limit", "0"], path)
+    if isinstance(edges, list):
+        rec("graph", "edges-are-named",
+            all(e.get("from") and e.get("to") and e.get("relation") for e in edges))
+        kinds = {e.get("relation") for e in edges}
+        for k in sorted(x for x in kinds if x):
+            sub, _ = _cq([CODEQ, "--json", "graph", "--relation", k, "--limit", "0"], path)
+            sub = sub if isinstance(sub, list) else []
+            rec("graph", "relation-filter-is-subset",
+                len(sub) == sum(1 for e in edges if e.get("relation") == k))
+
+    # Row containers are self-describing: the `rows` pointer must resolve.
+    for args in (["symbols", "--limit", "5"], ["search", "return", "--limit", "5"],
+                 ["search", "return", "-l", "--limit", "5"]):
+        raw = _run([CODEQ, "--json", *args], path)
+        try:
+            env = json.loads(raw)
+        except ValueError:
+            continue
+        ptr = env.get("rows")
+        cur = env
+        ok = bool(ptr)
+        for key in (ptr or "").split("."):
+            if isinstance(cur, dict) and key in cur:
+                cur = cur[key]
+            else:
+                ok = False
+                break
+        rec("envelope", "rows-pointer-resolves", ok and isinstance(cur, list))
     return recs
 
 
@@ -295,7 +421,7 @@ def run_repo(name, lang, path):
     _run([CODEQ, "--json", "index"], path)
     index_ms = (time.perf_counter() - t0) * 1000
     actions = search_battery(path) + nav_battery(path)
-    invariants = invariant_battery(path)
+    invariants = invariant_battery(path) + repo_battery(path)
     fuzz = fuzz_battery(path)
     return {"lang": lang, "index_ms": round(index_ms, 2),
             "actions": actions, "invariants": invariants, "fuzz": fuzz}
