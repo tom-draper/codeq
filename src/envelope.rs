@@ -222,7 +222,8 @@ pub fn render_data_text(data: &Value) -> String {
 /// - array of rows → one `path:line:col: payload` line each;
 /// - object with a single primary array (`matches`, `references`, …) → its rows;
 /// - object with several arrays (`about`, `map`) → each under a `# key` header;
-/// - object of scalars (`stats`) → `key: value` lines.
+/// - object of scalars → `key: value` lines (the same tail the branch above
+///   uses, so a scalar-only payload needs no special case).
 /// Did this result stop at `--limit`? Commands that truncate say so with a
 /// `truncated: true` sibling of their row array; the text renderer drops scalars
 /// next to a single row list, so it is read here instead and reported on stderr.
@@ -308,8 +309,14 @@ fn render_value(data: &Value, group: bool, truncated: &BTreeMap<String, usize>, 
                 for (k, v) in map {
                     out.push_str(&format!("{k}: {}\n", inline(v)));
                 }
-            } else if arrays == 1 && map.len() <= 2 {
-                // A single result list (+ maybe a scalar like `truncated`): just rows.
+            } else if arrays == 1 && map.keys().all(|k| k == "truncated" || map[k].is_array())
+            {
+                // A single result list whose only companions are *metadata*: emit
+                // just the rows. The test used to be positional (`len() <= 2`),
+                // which collapsed any two-key object — so `map --totals`, which is
+                // `{totals, languages}`, silently dropped its headline totals and
+                // printed only the language rows. Naming the metadata key makes
+                // the rule about what a field means rather than how many there are.
                 for v in map.values() {
                     if let Value::Array(rows) = v {
                         render_rows(rows, group, truncated, out);
@@ -517,6 +524,15 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
             Some(owner) => out.push_str(&format!("{pad}{loc}{sig}  [{owner}]{doc}\n")),
             None => out.push_str(&format!("{pad}{loc}{sig}{doc}\n")),
         }
+        return;
+    }
+    // A graph edge. Rendered as the arrow it is, rather than falling through to
+    // the generic `k=v` tail — which put the row's *language* first (the only
+    // bare field it had) and left `from=`/`to=` as trailing metadata, burying the
+    // one thing an edge row says. Same treatment the cycle list gets below.
+    if let (Some(from), Some(to)) = (str_of("from"), str_of("to")) {
+        let how = str_of("relation").map(|r| format!("  relation={r}")).unwrap_or_default();
+        out.push_str(&format!("{pad}{loc}{from} -> {to}{how}\n"));
         return;
     }
     // An import cycle: the ordered file list, closed back to its first member so

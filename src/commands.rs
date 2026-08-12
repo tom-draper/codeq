@@ -1,5 +1,5 @@
 //! Command implementations for the v1 proving spine:
-//! `index`, `files`, `changed`, `stats`.
+//! `index`, `files`, `changed`, `map`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -3023,43 +3023,6 @@ pub fn cmd_context(cwd: &Path, req: Request, out: Out) -> Result<()> {
     s.emit(result)
 }
 
-#[derive(Serialize)]
-struct Stats {
-    files: i64,
-    bytes: i64,
-    by_language: BTreeMap<String, i64>,
-}
-
-pub fn cmd_stats(cwd: &Path, out: Out) -> Result<()> {
-    let s = Session::open(cwd, false, out)?;
-    let files: i64 = s.db.file_count()?;
-    let bytes: i64 = s
-        .db
-        .conn
-        .query_row("SELECT COALESCE(SUM(size_bytes),0) FROM files", [], |r| {
-            r.get(0)
-        })?;
-
-    let mut by_language = BTreeMap::new();
-    let mut stmt = s.db.conn.prepare(
-        "SELECT COALESCE(language,'(unknown)') AS lang, COUNT(*)
-         FROM files GROUP BY lang ORDER BY lang",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-    })?;
-    for row in rows {
-        let (lang, count) = row?;
-        by_language.insert(lang, count);
-    }
-
-    let data = Stats {
-        files,
-        bytes,
-        by_language,
-    };
-    s.emit(data)
-}
 
 /// Include/exclude glob filter over repo-relative paths, ripgrep-style: a `!`
 /// prefix excludes; a pattern with no `/` matches by basename in any directory;
@@ -3329,6 +3292,95 @@ pub fn cmd_references(
 
     let note = note_if_empty(&s, &references, name, "references", path)?;
     s.emit_noted(ReferencesResult { references, truncated }, note)
+}
+
+/// `graph` — every type relation in the repository as an edge list.
+///
+/// `implementors`/`supertypes` answer about *one* node; this is the whole graph,
+/// which is what you need to draw a schema or an inheritance hierarchy. It is
+/// deliberately limited to relations and not offered for calls: relation edges
+/// come off the parse tree (`impl T for X`, `REFERENCES orgs`), so the graph is
+/// exact, whereas the call graph is name-based and every hop compounds the
+/// over-match — a whole-repo call graph would be mostly plausible-looking noise,
+/// which is worse than no graph at all. `callers`/`callees --depth N` stay the
+/// right tool there, rooted at a symbol you can sanity-check.
+#[derive(Serialize)]
+struct GraphEdge {
+    from: String,
+    to: String,
+    relation: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+}
+
+pub fn cmd_graph(
+    cwd: &Path,
+    relation: Option<&str>,
+    path: Option<&str>,
+    language: Option<&str>,
+    mermaid: bool,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let filters = Filters::new()
+        .eq("relation", relation)
+        .like("path", path)
+        .eq("language", language);
+    let sql = format!(
+        "SELECT subtype, supertype, relation, path, line, language FROM impls
+         WHERE 1=1{} ORDER BY path, line, subtype, supertype{}",
+        filters.sql(),
+        limit_clause(limit),
+    );
+    let edges: Vec<GraphEdge> = {
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
+            Ok(GraphEdge {
+                from: r.get(0)?,
+                to: r.get(1)?,
+                relation: r.get(2)?,
+                path: r.get(3)?,
+                line: r.get(4)?,
+                language: r.get(5)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+
+    if mermaid {
+        // A document, not rows — so it deliberately leaves the `path:line:col:`
+        // contract rather than pretending to honour it, the way `read --raw`
+        // does. Printed directly: the point is to paste it somewhere it renders.
+        let mut ids: BTreeMap<&str, String> = BTreeMap::new();
+        let mut lines = vec!["graph LR".to_string()];
+        for e in &edges {
+            let next = |n: usize| format!("n{n}");
+            let len = ids.len();
+            let a = ids.entry(e.from.as_str()).or_insert_with(|| next(len)).clone();
+            let len = ids.len();
+            let b = ids.entry(e.to.as_str()).or_insert_with(|| next(len)).clone();
+            lines.push(format!("  {a}[{}] -->|{}| {b}[{}]", e.from, e.relation, e.to));
+        }
+        if edges.is_empty() {
+            lines.push("  %% no relation edges".to_string());
+        }
+        println!("{}", lines.join("\n"));
+        return Ok(());
+    }
+
+    let note = edges.is_empty().then(|| {
+        let what = relation.map(|r| format!("'{r}' ")).unwrap_or_default();
+        format!(
+            "no {what}relation edges{} — Go, C and Zig have no inheritance at all, \
+             and a language with no `REFERENCES` or `impl` has nothing to graph \
+             (see `codeq capabilities`)",
+            path.map(|p| format!(" under '{p}'")).unwrap_or_default()
+        )
+    });
+    s.emit_noted(edges, note)
 }
 
 #[derive(Serialize)]
@@ -4458,8 +4510,25 @@ struct MapLang {
 #[derive(Serialize)]
 struct MapTotals {
     files: i64,
+    /// Total indexed bytes. Here because `stats` used to be the only way to get
+    /// it: `map` reported bytes per language but never the sum, which was the
+    /// single fact keeping a second, strictly-weaker command alive.
+    bytes: i64,
     symbols: i64,
     imports: i64,
+}
+
+/// `map --totals`: the two aggregate sections, without the four that cost.
+///
+/// `map`'s expense is not its aggregates — those are single GROUP BY queries —
+/// but the two full row scans it does for directories and manifests, which grow
+/// with the repo: 30 ms on redis, 200 ms on a 12k-file tree, against ~30 ms for
+/// this. That gap is what `stats` was really buying, so it survives as a flag on
+/// the command that already owns the concept rather than as a command of its own.
+#[derive(Serialize)]
+struct MapSummary {
+    totals: MapTotals,
+    languages: Vec<MapLang>,
 }
 
 #[derive(Serialize)]
@@ -4497,13 +4566,14 @@ struct RepoMap {
 /// `map` — one call that summarises the index for orientation. Deliberately
 /// factual: counts grouped by language, directory, imported module, and file.
 /// `--limit` bounds each list; `--limit 0` returns everything.
-pub fn cmd_map(cwd: &Path, limit: usize, out: Out) -> Result<()> {
+pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let conn = &s.db.conn;
     let cap = if limit == 0 { 1_000_000 } else { limit };
 
     let totals = MapTotals {
         files: conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?,
+        bytes: conn.query_row("SELECT COALESCE(SUM(size_bytes),0) FROM files", [], |r| r.get(0))?,
         symbols: conn.query_row(
             "SELECT COUNT(*) FROM facts WHERE kind <> 'import'",
             [],
@@ -4553,6 +4623,12 @@ pub fn cmd_map(cwd: &Path, limit: usize, out: Out) -> Result<()> {
         .collect();
     languages.sort_by(|a, b| b.files.cmp(&a.files).then(a.language.cmp(&b.language)));
     languages.truncate(cap);
+
+    // Everything above is aggregate queries; everything below scans rows. Stop
+    // here when only the totals were asked for.
+    if totals_only {
+        return s.emit(MapSummary { totals, languages });
+    }
 
     // Imports grouped by module (raw string), counted by distinct importing file.
     let imports_by_module: Vec<ModuleImports> = {

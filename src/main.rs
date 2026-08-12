@@ -698,13 +698,39 @@ enum Command {
         #[arg(long)]
         plan: bool,
     },
-    /// WHOLE-REPO TOTALS in a few lines: how many files, symbols and imports, and
-    /// how fresh the index is. Use `map` for the same repo broken down.
-    Stats {
+    /// EVERY TYPE RELATION as an edge list: the whole inheritance or schema graph
+    /// rather than one node's neighbours.
+    ///
+    /// Relations only, and deliberately not calls. A relation edge is read off
+    /// the parse tree (`impl T for X`, a SQL `REFERENCES`), so the graph is
+    /// exact; the call graph is name-based and every hop compounds the
+    /// over-match, so a whole-repo one would be mostly plausible-looking noise.
+    /// Use `callers`/`callees --depth N` there — rooted at a symbol, small
+    /// enough to check.
+    Graph {
+        /// Only this relation: `implements`, `extends`, or `references` (SQL FK).
+        #[arg(long)]
+        relation: Option<String>,
+        /// Restrict to paths containing this substring.
+        #[arg(long)]
+        path: Option<String>,
+        /// Restrict to a language.
+        #[arg(long)]
+        language: Option<String>,
+        /// Emit a Mermaid `graph LR` document instead of edge rows.
+        ///
+        /// A document, not rows: this leaves the `path:line:col:` contract on
+        /// purpose, as `read --raw` does, because the point is to paste it
+        /// somewhere it renders.
+        #[arg(long)]
+        mermaid: bool,
+        /// Maximum edges to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
     },
     /// REPO BROKEN DOWN for orientation: counts grouped by language, directory,
     /// imported module and file — what is here and where the weight sits. Start
-    /// here in an unfamiliar codebase; use `stats` for the one-line totals and
+    /// here in an unfamiliar codebase; `--totals` for the one-line summary and
     /// `tree` when the nesting itself is what you need.
     ///
     /// Each list is ordered by its visible count (files/importers/definitions)
@@ -713,6 +739,14 @@ enum Command {
         /// Max rows per list (0 = unlimited).
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Whole-repo totals and the per-language breakdown only.
+        ///
+        /// Skips the four sections that scan rows rather than aggregate them, so
+        /// it stays flat as the repo grows: ~30 ms where full `map` is 200 ms on
+        /// a 12k-file tree. This replaces the old `stats` command, which returned
+        /// a strict subset of `map` and cost a second name to choose between.
+        #[arg(long)]
+        totals: bool,
     },
     /// Describe what codeq can do: commands, languages, fact kinds, schema.
     Capabilities {
@@ -1090,8 +1124,16 @@ fn main() -> ExitCode {
         Command::Untested { path, kind, limit } => {
             commands::cmd_untested(&cwd, path.as_deref(), kind.as_deref(), limit, out)
         }
-        Command::Stats {} => commands::cmd_stats(&cwd, out),
-        Command::Map { limit } => commands::cmd_map(&cwd, limit, out),
+        Command::Graph { relation, path, language, mermaid, limit } => commands::cmd_graph(
+            &cwd,
+            relation.as_deref(),
+            path.as_deref(),
+            language.as_deref(),
+            mermaid,
+            limit,
+            out,
+        ),
+        Command::Map { limit, totals } => commands::cmd_map(&cwd, limit, totals, out),
         Command::Capabilities {} => {
             // Ask clap what subcommands exist instead of keeping a second list in
             // sync by hand — the hand-written one had silently gone stale.

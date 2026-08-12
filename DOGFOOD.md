@@ -4,6 +4,55 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — `stats` folded into `map --totals`, and a `graph` command
+
+### `stats` was a strict subset — but not a free one
+
+The instinct was to delete it outright. Measuring first changed the shape of the
+fix: `stats` is 11 ms on redis where `map` is 30 ms, and on a 12,664-file tree
+29 ms against 202 ms. The gap widens with the repo because `map`'s cost is not
+its aggregates — those are single GROUP BY queries — but the two full row scans
+it does for directories and manifests.
+
+So the cheap path was real and worth keeping; what was not worth keeping was a
+second command name to choose between. `map --totals` stops after the aggregate
+sections. `totals` also gained `bytes`, the one fact `stats` stated that `map`
+only left derivable by summing its language rows — without it the fold would have
+lost something and been a removal dressed up as a refactor.
+
+### The renderer bug it surfaced
+
+`map --totals` first shipped printing its language table and *silently dropping
+its own headline totals*. The text renderer collapses an object to just its rows
+when it has one array and `len() <= 2` — a positional test, meant for `{matches,
+truncated}`. `{totals, languages}` has the same shape and a completely different
+meaning. The condition now names the metadata key it is allowed to hide, so the
+rule is about what a field means rather than how many there are.
+
+Worth noting the near-miss: I nearly worked around it by flattening the summary's
+fields to the top level, which would have made `map` and `map --totals` disagree
+about where totals live — reintroducing exactly the per-command schema variance
+`ROW_KEY_RULE` exists to prevent. The renderer was the thing that was wrong.
+
+### `graph`
+
+Asked for after the FK work: can codeq draw the schema? It could not — relations
+were only reachable one node at a time. `codeq graph` emits every relation edge
+as `from -> to`, filterable by `--relation`/`--language`/`--path`, with
+`--mermaid` for a renderable document.
+
+**Relations only, and deliberately not calls.** A relation edge comes off the
+parse tree (`impl T for X`, `REFERENCES orgs`), so the graph is exact. The call
+graph is name-based, and a rooted `callees --depth 3` on flask already pulls in a
+`field response_class` and an unrelated `update` from an examples directory — at
+whole-repo scale that compounds at every hop into something mostly
+plausible-looking and wrong. Drawing it would make codeq look more capable and be
+less trustworthy, which is the trade this project keeps refusing.
+
+An edge row renders as an arrow rather than through the generic `k=v` tail, which
+had put the row's *language* first — the only bare field it had — and left
+`from=`/`to=` as trailing metadata, burying the one thing an edge says.
+
 ## 2026-08-12 — SQL foreign keys, and a doc that had been broken for a while
 
 ### The edge, finally

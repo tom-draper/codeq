@@ -234,7 +234,7 @@ The roadmap, not this list, defines sequencing.
 codeq index
 codeq files [query] --json
 codeq tree --json
-codeq stats --json
+codeq map --totals --json
 codeq changed --compare-to main --json
 ```
 

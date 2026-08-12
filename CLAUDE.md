@@ -57,7 +57,18 @@ benchmarks — not as a step you run before querying.
     names collide across files — scope with `--path`. `exports.x`/
     `module.exports.x` are `public`; anything else is `private`, because knowing
     that `proto` escapes via `module.exports` needs data flow codeq doesn't do.
-- **Orient:** `codeq map` (grouped totals) · `codeq tree` (directory *shape*, folded
+- **The whole relation graph:** `codeq graph [--relation references|implements|
+  extends] [--language L]` — every type edge in the repo as `from -> to`, not one
+  node's neighbours. `--mermaid` emits a renderable `graph LR` document (a
+  document, not rows — it leaves the `path:line:col:` contract on purpose, like
+  `read --raw`). Relations only, and **deliberately not calls**: a relation edge
+  is read off the parse tree (`impl T for X`, a SQL `REFERENCES`) so the graph is
+  exact, whereas the call graph is name-based and every hop compounds the
+  over-match — a whole-repo call graph would be mostly plausible-looking noise.
+  Use `callers`/`callees --depth N` there, rooted at a symbol you can check.
+- **Orient:** `codeq map` (grouped totals; `--totals` for just the headline
+  numbers and the per-language table, which skips the row scans and stays flat as
+  the repo grows) · `codeq tree` (directory *shape*, folded
   to `--depth`, each directory carrying the file and symbol counts of everything
   below it). `map` collapses to top-level directories, so on a nested repo it hides
   where the code is; `tree --min-symbols 1` goes straight to the directories that

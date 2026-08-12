@@ -147,11 +147,14 @@ fn default_output_is_lean_when_nothing_noteworthy() {
     let f = Fixture::new();
     f.write("a.py", "def x():\n    pass\n");
     f.run(&["index"]);
-    let v = f.run(&["stats"]); // second call: nothing changed
+    let v = f.run(&["map", "--totals"]); // second call: nothing changed
 
     let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|s| s.as_str()).collect();
     keys.sort();
-    assert_eq!(keys, ["data", "schema"], "clean call should carry no meta");
+    // `rows` is contract, not noise: it names where the row array lives, which is
+    // the alternative to a consumer knowing thirty commands' shapes in advance.
+    // What "lean" pins is the absence of the repo/index meta blocks.
+    assert_eq!(keys, ["data", "rows", "schema"], "clean call should carry no meta");
     assert_eq!(v["schema"], "codeq.result.v2");
 }
 
@@ -159,11 +162,11 @@ fn default_output_is_lean_when_nothing_noteworthy() {
 fn meta_flag_returns_full_stable_envelope() {
     let f = Fixture::new();
     f.write("a.py", "def x():\n    pass\n");
-    let v = f.run(&["stats", "--meta"]);
+    let v = f.run(&["map", "--totals", "--meta"]);
 
     let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|s| s.as_str()).collect();
     keys.sort();
-    assert_eq!(keys, ["data", "index", "repo", "schema"]);
+    assert_eq!(keys, ["data", "index", "repo", "rows", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v2");
     assert_eq!(v["index"]["schema"], 26);
     assert_eq!(v["index"]["fresh"], true);
@@ -304,10 +307,10 @@ fn binary_file_is_indexed_without_language() {
 fn non_git_directory_works() {
     let f = Fixture::new();
     f.write("a.py", "def z():\n    pass\n");
-    let v = f.run(&["stats", "--meta"]);
+    let v = f.run(&["map", "--totals", "--meta"]);
     assert_eq!(v["repo"]["vcs"], "none");
     assert!(v["repo"].get("head").is_none());
-    assert_eq!(v["data"]["files"], 1);
+    assert_eq!(v["data"]["totals"]["files"], 1);
 }
 
 #[test]
@@ -356,8 +359,8 @@ fn large_file_is_handled() {
     let big = "x".repeat(1_500_000);
     f.write("big.txt", &big);
     f.write("a.py", "def small():\n    pass\n");
-    let v = f.run(&["stats"]);
-    assert!(v["data"]["files"].as_i64().unwrap() >= 2);
+    let v = f.run(&["map", "--totals"]);
+    assert!(v["data"]["totals"]["files"].as_i64().unwrap() >= 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +376,7 @@ fn reindex_counts_only_content_changes() {
     // Rewrite identical bytes: mtime may bump but content hash is unchanged, so
     // nothing is reparsed and the whole index block stays out of the envelope.
     f.write("a.rs", "fn one() {}\n");
-    let v = f.run(&["stats"]);
+    let v = f.run(&["map", "--totals"]);
     assert!(
         v.get("index").is_none(),
         "identical rewrite must not count as reindex: {v}"
@@ -381,7 +384,7 @@ fn reindex_counts_only_content_changes() {
 
     // Real content change: exactly one file reparsed.
     f.write("a.rs", "fn one() {}\nfn two() {}\n");
-    let v = f.run(&["stats"]);
+    let v = f.run(&["map", "--totals"]);
     assert_eq!(v["index"]["reindexed_files"], 1);
 }
 
@@ -3507,17 +3510,17 @@ fn context_changed_mode_can_expand_to_referenced_defs() {
 }
 
 #[test]
-fn map_totals_agree_with_stats_and_symbols() {
-    // The aggregate counts must reconcile: map.totals == stats == actual symbols.
+fn map_totals_agree_with_the_summary_and_symbols() {
+    // The aggregate counts must reconcile: map.totals == map --totals == symbols.
     let f = Fixture::new();
     f.write("a.rs", "fn one() {}\nfn two() {}\n");
     f.write("b.py", "def three():\n    pass\n");
     f.run(&["index"]);
-    let files_stats = f.run(&["stats"])["data"]["files"].as_u64().unwrap();
+    let files_stats = f.run(&["map", "--totals"])["data"]["totals"]["files"].as_u64().unwrap();
     let map = f.run(&["map"]);
     assert_eq!(files_stats, 2);
     assert_eq!(map["data"]["totals"]["files"].as_u64().unwrap(), files_stats,
-               "map totals.files must match stats.files");
+               "map totals.files must match the --totals summary");
     let nsym = f.run(&["symbols", "--limit", "0"])["data"].as_array().unwrap().len() as u64;
     assert_eq!(nsym, 3);
     assert_eq!(map["data"]["totals"]["symbols"].as_u64().unwrap(), nsym,
@@ -4000,15 +4003,45 @@ fn deps_disambiguates_same_stem_by_path_alignment() {
 }
 
 #[test]
-fn stats_reports_per_language_file_counts() {
+fn map_totals_reports_per_language_counts_and_the_byte_total() {
+    // `stats` used to own this. It was a strict subset of `map` — the only thing
+    // it stated that `map` did not was the repo's total bytes, which `map` merely
+    // left derivable by summing its language rows. That is now in `totals`, and
+    // the cheap path is a flag rather than a second command to choose between.
     let f = Fixture::new();
     f.write("a.rs", "fn a() {}\n");
     f.write("b.rs", "fn b() {}\n");
     f.write("c.py", "def c():\n    pass\n");
     f.run(&["index"]);
-    let bylang = &f.run(&["stats"])["data"]["by_language"];
-    assert_eq!(bylang["rust"], 2, "rust file count wrong: {bylang}");
-    assert_eq!(bylang["python"], 1, "python file count wrong: {bylang}");
+
+    let v = f.run(&["map", "--totals"]);
+    let by: std::collections::HashMap<&str, i64> = v["data"]["languages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["language"].as_str().unwrap(), r["files"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(by.get("rust"), Some(&2), "{v}");
+    assert_eq!(by.get("python"), Some(&1), "{v}");
+
+    // The byte total is stated, not just derivable — and it reconciles with the
+    // per-language rows it replaced summing.
+    let total: i64 = v["data"]["totals"]["bytes"].as_i64().unwrap();
+    let summed: i64 = v["data"]["languages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["bytes"].as_i64().unwrap())
+        .sum();
+    assert_eq!(total, summed, "{v}");
+    assert!(total > 0);
+
+    // `--totals` is a view of `map`, not a different answer.
+    let full = f.run(&["map"]);
+    assert_eq!(full["data"]["totals"], v["data"]["totals"], "{full}");
+
+    // And the command it replaced is gone.
+    assert!(!f.raw(&["stats"]).status.success(), "`stats` should no longer exist");
 }
 
 #[test]
@@ -4361,9 +4394,9 @@ fn variants_extracted_across_languages() {
 fn indexing_a_normal_repo_yields_facts() {
     let f = Fixture::new();
     f.write("a.rs", "pub struct S { pub a: u32 }\n");
-    let stats = f.run(&["stats"]);
+    let stats = f.run(&["map", "--totals"]);
     assert!(
-        stats["data"]["files"].as_i64().unwrap() > 0,
+        stats["data"]["totals"]["files"].as_i64().unwrap() > 0,
         "index must not come back silently empty: {stats}"
     );
 }
@@ -6482,4 +6515,58 @@ fn a_sql_foreign_key_is_an_edge_but_not_an_is_a() {
     assert!(inherit["data"].as_array().unwrap().is_empty(), "{inherit}");
     let fk = field_set(&f.run(&["supertypes", "orders", "--relation", "references"]), "name");
     assert_eq!(fk.len(), 3, "{fk:?}");
+}
+
+#[test]
+fn graph_emits_the_whole_relation_graph_not_one_node() {
+    // `implementors`/`supertypes` answer about one node; drawing a schema or a
+    // hierarchy needs all the edges at once.
+    let f = Fixture::new();
+    f.write(
+        "db.sql",
+        "CREATE TABLE orders (id INT, u BIGINT REFERENCES users(id));\n\
+         CREATE TABLE items (id INT, o BIGINT REFERENCES orders(id));\n",
+    );
+    f.write("a.ts", "interface Node {}\nclass Post implements Node {}\n");
+
+    let all = f.run(&["graph"]);
+    let pairs: Vec<(String, String)> = all["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["from"].as_str().unwrap().to_string(),
+                e["to"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert!(pairs.contains(&("orders".into(), "users".into())), "{pairs:?}");
+    assert!(pairs.contains(&("items".into(), "orders".into())), "{pairs:?}");
+    assert!(pairs.contains(&("Post".into(), "Node".into())), "one graph, all languages: {pairs:?}");
+
+    // Filterable to one kind of edge, which is how you get just the schema.
+    let fks = f.run(&["graph", "--relation", "references"]);
+    assert_eq!(fks["data"].as_array().unwrap().len(), 2, "{fks}");
+    assert!(fks["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|e| e["relation"] == "references"));
+
+    // Mermaid is a document, not rows — it deliberately leaves the row contract.
+    let out = f.raw(&["graph", "--relation", "references", "--mermaid"]);
+    let doc = String::from_utf8_lossy(&out.stdout);
+    assert!(doc.starts_with("graph LR"), "{doc}");
+    assert!(doc.contains("-->|references|"), "{doc}");
+    assert!(doc.contains("[orders]") && doc.contains("[users]"), "{doc}");
+
+    // An empty graph says why rather than looking like a failure.
+    let none = f.raw(&["graph", "--relation", "extends"]);
+    assert!(none.status.success());
+    assert!(
+        String::from_utf8_lossy(&none.stderr).contains("no 'extends' relation edges"),
+        "{:?}",
+        String::from_utf8_lossy(&none.stderr)
+    );
 }

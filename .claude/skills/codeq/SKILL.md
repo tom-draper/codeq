@@ -24,6 +24,13 @@ refresh the index — every command auto-refreshes changed files first.
 
 **Orient in an unfamiliar repo**
 - `codeq map` — high-level structure (languages, file/symbol counts, top-level directories).
+  `--totals` for just the headline numbers and the language table: it skips the sections
+  that scan rows, so it stays fast on a big repo.
+- `codeq graph [--relation references|implements|extends]` — the whole type-relation
+  graph as `from -> to` edges (`--mermaid` to render it). Relations only, not calls:
+  relation edges come off the parse tree so the graph is exact, while a name-based
+  call graph compounds its over-match at every hop — use `callers/callees --depth N`
+  there instead.
 - `codeq tree [<path>]` — the directory shape with nesting kept, folded at `--depth`
   (default 3); each directory reports the files and symbols of everything below it.
   `--min-symbols 1` jumps straight to where the code is — the fastest orientation in a

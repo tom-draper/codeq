@@ -208,7 +208,9 @@ Repo state:
 - `codeq affected --compare-to <ref>` takes a diff and reports the definitions it touched,
   their transitive callers (the impacted set), and the test files that exercise any of them,
   so you know what to re-check and re-run.
-- `codeq files`, `codeq symbols`, and `codeq stats` list and count.
+- `codeq files`, `codeq symbols`, and `codeq map --totals` list and count.
+- `codeq graph` emits the whole type-relation graph (SQL foreign keys, `implements`/
+  `extends`) as edges, or a Mermaid diagram with `--mermaid`.
 - `codeq capabilities` self-describes: commands, languages, fact kinds, schema.
 
 Cross-cutting flags: `--path <substr>` scopes a name-based lookup to matching files,
