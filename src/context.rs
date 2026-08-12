@@ -103,12 +103,17 @@ pub(crate) struct Budget {
 #[derive(Serialize)]
 pub(crate) struct Chunk {
     path: String,
+    // The chunk *is* one definition's source, so its identity is `name`
+    // (ROW_KEY_RULE); `symbol` stays reserved for an enclosing definition.
+    #[serde(rename = "name")]
     symbol: String,
     kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
+    #[serde(rename = "line")]
     start_line: i64,
     end_line: i64,
+    #[serde(rename = "byte")]
     start_byte: usize,
     end_byte: usize,
     est_tokens: u64,
@@ -127,6 +132,9 @@ pub(crate) struct Chunk {
 #[derive(Serialize)]
 pub(crate) struct Omitted {
     path: String,
+    // A dropped definition is still a definition (ROW_KEY_RULE) -- and it sits
+    // beside `chunks` in the same payload, so the two must agree.
+    #[serde(rename = "name")]
     symbol: String,
     est_tokens: u64,
     reason: &'static str,

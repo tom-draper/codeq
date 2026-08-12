@@ -55,12 +55,13 @@ def not_json(t):
 
 def missing_locators(t, rs):
     """Rows whose `path:line` locator is absent from the text output."""
+    # One key, per ROW_KEY_RULE. This used to try `line` then fall back to
+    # `start_line` -- the harness carrying the same papering-over as the
+    # renderer, which is why neither of them ever reported the split.
     miss = []
     for r in rs[:80]:
         p = r.get("path")
         line = r.get("line")
-        if line is None:
-            line = r.get("start_line")
         if p and line is not None and f"{p}:{line}" not in t:
             miss.append(f"{p}:{line}")
     return miss
@@ -80,11 +81,11 @@ def main():
     subprocess.run([CODEQ, "index"], cwd=REPO, capture_output=True)
 
     # A representative function symbol + its file (chosen via codeq itself).
-    syms = data(["symbols", "--fields", "name,kind,path,start_line", "--limit", "0"]) or []
+    syms = data(["symbols", "--fields", "name,kind,path,line", "--limit", "0"]) or []
     funcs = [s for s in syms
              if s.get("kind") in ("function", "method")
              and s.get("name", "").isidentifier() and len(s.get("name", "")) >= 5]
-    funcs.sort(key=lambda s: (s["path"], s.get("start_line", 0)))
+    funcs.sort(key=lambda s: (s["path"], s.get("line", 0)))
     if not funcs:
         sys.exit("no functions found to test against")
     sym = funcs[len(funcs) // 2]["name"]
@@ -144,7 +145,7 @@ def main():
 
     defs = data(["definitions", sym]) or []
     if defs:
-        loc = f"{defs[0]['path']}:{defs[0]['start_line']}"
+        loc = f"{defs[0]['path']}:{defs[0]["line"]}"
         t = text(["at", loc])
         check("at/not-json", not_json(t), t[:50])
         check("at/resolves", sym in t, f"'{sym}' absent from `at {loc}`")

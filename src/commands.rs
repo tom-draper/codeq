@@ -444,6 +444,7 @@ struct ChangedSymbolRow {
     name: String,
     kind: String,
     path: String,
+    #[serde(rename = "line")]
     start_line: i64,
     end_line: i64,
 }
@@ -544,6 +545,7 @@ struct SymbolRow {
     path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
+    #[serde(rename = "line")]
     start_line: i64,
     end_line: i64,
     /// Only populated when the caller passes --signatures.
@@ -632,10 +634,18 @@ struct DefinitionRow {
     path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
+    // A row's *primary position* is `line`/`col`/`byte`; its extent is
+    // `end_line`/`end_col`/`end_byte`. The Rust fields keep the `start_` prefix
+    // that mirrors the facts table, but the emitted key must not — see
+    // ROW_KEY_RULE. `start_line` here and `line` on the next command over is how
+    // `--fields line` came to work on some commands and not others.
+    #[serde(rename = "line")]
     start_line: i64,
+    #[serde(rename = "col")]
     start_col: i64,
     end_line: i64,
     end_col: i64,
+    #[serde(rename = "byte")]
     start_byte: i64,
     end_byte: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -952,6 +962,8 @@ fn declaration_header(kind: &str, sig: Option<String>) -> Option<String> {
 #[derive(Serialize)]
 struct Caller {
     #[serde(skip_serializing_if = "Option::is_none")]
+    // This row *is* a definition, so its identity is `name` (ROW_KEY_RULE).
+    #[serde(rename = "name")]
     symbol: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<String>,
@@ -1347,6 +1359,10 @@ fn collect_idents(
 #[derive(Serialize)]
 struct Hop {
     #[serde(skip_serializing_if = "Option::is_none")]
+    // A caller row *is* a definition, so its identity is `name` like every
+    // other definition row. `symbol` stays reserved for "the definition this
+    // row sits inside" (search/references), which is a different fact.
+    #[serde(rename = "name")]
     symbol: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<String>,
@@ -1500,6 +1516,8 @@ pub fn cmd_callees(
 
 #[derive(Serialize)]
 struct PathStep {
+    // This row *is* a definition, so its identity is `name` (ROW_KEY_RULE).
+    #[serde(rename = "name")]
     symbol: String,
     kind: String,
     path: String,
@@ -1965,6 +1983,7 @@ struct OutlineRow {
     kind: String,
     /// Nesting level derived from byte containment (methods inside a class, …).
     depth: usize,
+    #[serde(rename = "line")]
     start_line: i64,
     end_line: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2400,6 +2419,7 @@ struct ImportRow {
     path: String,
     /// The imported module, as written in source (raw / unresolved).
     module: String,
+    #[serde(rename = "line")]
     start_line: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
@@ -3148,6 +3168,10 @@ pub fn cmd_references(
 #[derive(Serialize)]
 struct ImplementorRow {
     /// The implementing/deriving type.
+    // ROW_KEY_RULE: the row *is* this type, so the key is `name`. The side of
+    // the relation is already said by the command you ran and by `relation`;
+    // spelling it `subtype` here only cost consumers a per-command special case.
+    #[serde(rename = "name")]
     subtype: String,
     /// How it relates: "implements" or "extends".
     relation: String,
@@ -3160,6 +3184,10 @@ struct ImplementorRow {
 #[derive(Serialize)]
 struct SupertypeRow {
     /// The trait / interface / base class this type extends or implements.
+    // ROW_KEY_RULE: the row *is* this type, so the key is `name`. The side of
+    // the relation is already said by the command you ran and by `relation`;
+    // spelling it `supertype` here only cost consumers a per-command special case.
+    #[serde(rename = "name")]
     supertype: String,
     /// How it relates: "implements" or "extends".
     relation: String,

@@ -43,7 +43,7 @@ struct Cli {
     #[arg(long, global = true, value_name = "DIR")]
     root: Option<PathBuf>,
 
-    /// Emit JSON (the `codeq.result.v1` envelope). Default is compact grep-style
+    /// Emit JSON (the `codeq.result.v2` envelope). Default is compact grep-style
     /// text — fewer tokens. Use this for programmatic consumers.
     #[arg(long, global = true)]
     json: bool,

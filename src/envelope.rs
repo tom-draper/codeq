@@ -1,4 +1,4 @@
-//! The `codeq.result.v1` output envelope.
+//! The `codeq.result.v2` output envelope.
 //!
 //! Designed for the actual consumer: an AI agent paying tokens per byte. So:
 //!
@@ -9,13 +9,32 @@
 //!   omitted unless something is noteworthy (files reparsed, staleness, a
 //!   partial failure) or the caller asks with `--meta`.
 //! - **Projectable.** `--fields` drops columns the agent did not ask for.
+//!
+//! # ROW_KEY_RULE
+//!
+//! Every row, from every command, keys the same fact the same way. One rule,
+//! because `--fields`/`--json` consumers move between commands and an agent that
+//! learns a key on one must be able to use it on the next:
+//!
+//! - **`name`** — the definition this row *is*.
+//! - **`symbol`** — the definition this row sits *inside* (a `search` or
+//!   `references` match). Never the row's own identity.
+//! - **`line`, `col`, `byte`** — the row's primary position.
+//! - **`end_line`, `end_col`, `end_byte`** — its extent, where one is known.
+//!
+//! Rust fields may keep the `start_` prefix that mirrors the facts table; the
+//! emitted key is what this rule governs, so those carry `#[serde(rename)]`.
+//! v1 leaked the internal spelling: `definitions`/`symbols`/`imports`/`outline`
+//! emitted `start_line` while eight other commands emitted `line`, so
+//! `--fields line` worked on some and silently matched nothing on the rest, and
+//! `render_row` carried an `or_else(start_line)` fallback to hide it in text.
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 use serde_json::Value;
 
-pub const RESULT_SCHEMA: &str = "codeq.result.v1";
+pub const RESULT_SCHEMA: &str = "codeq.result.v2";
 
 /// Output rendering options, threaded from the CLI.
 #[derive(Clone, Copy, Default)]
@@ -366,7 +385,9 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     // than flat, and the two must carry the same facts.
     let mut loc = String::new();
     if let Some(p) = str_of("path") {
-        let line = int_of("line").or_else(|| int_of("start_line"));
+        // One key, per ROW_KEY_RULE. This used to fall back to `start_line`,
+        // which let the schema split survive unnoticed in text mode.
+        let line = int_of("line");
         if !in_group {
             loc.push_str(p);
         }
@@ -386,7 +407,7 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
         if !in_group || line.is_some() {
             loc.push_str(": ");
         }
-    } else if let Some(l) = int_of("line").or_else(|| int_of("start_line")) {
+    } else if let Some(l) = int_of("line") {
         loc.push_str(&format!("{l}: "));
     }
 
@@ -477,7 +498,7 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     // scalar fields as `key=value` — so metric rows like map's `definitions`/
     // `files`/`importers` counts render instead of vanishing.
     let mut parts: Vec<String> = Vec::new();
-    for key in ["kind", "name", "module", "symbol", "subtype", "supertype", "dir"] {
+    for key in ["kind", "name", "module", "symbol", "dir"] {
         if let Some(v) = str_of(key) {
             parts.push(inline(&Value::from(v)));
         }
@@ -487,11 +508,13 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
             parts.push(l.to_string()); // language identifies a row only when nothing else does
         }
     }
+    // Keys the locator/payload above already rendered, so the generic `k=v` tail
+    // below doesn't print them twice. Position keys follow ROW_KEY_RULE; the
+    // `start_*` spellings are gone from the wire, so they are gone from here too.
     const CONSUMED: &[&str] = &[
-        "path", "line", "col", "start_line", "end_line", "start_col", "end_col",
-        "start_byte", "end_byte", "depth", "text", "signature", "doc", "source", "receiver",
-        "id", "confidence", "language", "kind", "name", "module", "symbol", "subtype",
-        "supertype", "dir",
+        "path", "line", "col", "byte", "end_line", "end_col", "end_byte", "depth",
+        "text", "signature", "doc", "source", "receiver", "id", "confidence",
+        "language", "kind", "name", "module", "symbol", "dir",
     ];
     for (k, v) in o {
         if CONSUMED.contains(&k.as_str()) {

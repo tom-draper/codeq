@@ -310,7 +310,7 @@ Every JSON response should have a predictable envelope:
 
 ```json
 {
-  "schema": "codeq.result.v1",
+  "schema": "codeq.result.v2",
   "repo": {
     "root": "/workspace/project",
     "vcs": "git",

@@ -183,7 +183,7 @@ VENDORED = ("/vendor/", "/dist/", "/node_modules/", "/_static/", "/third_party/"
 
 
 def sample_symbols(path):
-    p = _run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,start_line,end_line", "--limit", "0"], path)
+    p = _run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,line,end_line", "--limit", "0"], path)
     try:
         data = json.loads(p)["data"]
     except (ValueError, KeyError):
@@ -191,9 +191,9 @@ def sample_symbols(path):
     cand = [d for d in data
             if d.get("kind") in ("function", "method", "class", "struct")
             and d.get("name", "").isidentifier() and len(d.get("name", "")) >= 4
-            and d.get("start_line") and d.get("end_line")
+            and d.get("line") and d.get("end_line")
             and not any(v in "/" + d["path"] for v in VENDORED)]
-    cand.sort(key=lambda d: (d["path"], d["start_line"]))
+    cand.sort(key=lambda d: (d["path"], d["line"]))
     if not cand:
         return []
     step = max(1, len(cand) // INVARIANT_K)
@@ -205,7 +205,7 @@ def invariant_battery(path):
     Verifies definitions / references / at / read do what they claim."""
     recs = []
     for sym in sample_symbols(path):
-        S, F, L0, L1 = sym["name"], sym["path"], sym["start_line"], sym["end_line"]
+        S, F, L0, L1 = sym["name"], sym["path"], sym["line"], sym["end_line"]
 
         def rec(command, name, ok):
             recs.append({"kind": "invariant", "command": command, "name": name,
@@ -214,13 +214,13 @@ def invariant_battery(path):
         # definitions agrees with the symbol table
         defs, _ = _cq([CODEQ, "--json", "definitions", S], path)
         rec("definitions", "def-matches-symbol",
-            bool(defs) and any(d.get("path") == F and d.get("start_line") == L0 for d in defs))
+            bool(defs) and any(d.get("path") == F and d.get("line") == L0 for d in defs))
 
         # references includes the def site and is a superset of `rg -nw`
         # (--limit 0: the default caps results at 100, which isn't a miss).
         rd, _ = _cq([CODEQ, "--json", "references", S, "--limit", "0"], path)
         refset = {(r["path"], r["line"]) for r in rd.get("references", [])} if isinstance(rd, dict) else set()
-        # The name may sit anywhere in the def's span (start_line can be a
+        # The name may sit anywhere in the def's span (line can be a
         # leading annotation/attribute/decorator line), so check span membership.
         rec("references", "ref-includes-def",
             any(p == F and L0 <= ln <= L1 for (p, ln) in refset))
@@ -236,7 +236,7 @@ def invariant_battery(path):
             mid = (L0 + L1) // 2
             atm, _ = _cq([CODEQ, "--json", "at", f"{F}:{mid}"], path)
             rec("at", "at-body-encloses",
-                bool(atm) and any(d.get("start_line", 1 << 30) <= mid <= d.get("end_line", -1) for d in atm))
+                bool(atm) and any(d.get("line", 1 << 30) <= mid <= d.get("end_line", -1) for d in atm))
 
         # read --symbol returns the symbol's source: non-empty, contains the
         # name, and never more lines than the whole file (it may print several

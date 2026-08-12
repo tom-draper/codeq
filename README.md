@@ -337,9 +337,19 @@ which apply to every command:
   server captures only stdout). It is diagnostic, never data: `data` stays empty and
   the exit status stays 0.
 
-**JSON.** Every result is `{"schema": "codeq.result.v1", "data": ...}`. Facts carry byte
+**JSON.** Every result is `{"schema": "codeq.result.v2", "data": ...}`. Facts carry byte
 ranges, 1-based line and column ranges, an extraction source (e.g. `treesitter/rust`),
 and a confidence.
+
+Every row, from every command, keys the same fact the same way — so a `--fields`
+selection learned on one command works on the next:
+
+| key | meaning |
+| --- | --- |
+| `name` | the definition this row **is** |
+| `symbol` | the definition this row sits **inside** (a `search`/`references`/`astgrep` match) |
+| `line`, `col`, `byte` | the row's primary position |
+| `end_line`, `end_col`, `end_byte` | its extent, where one is known |
 
 codeq refreshes on read, so answers are almost always fresh and the metadata envelope is
 omitted unless it carries signal. Pass `--meta` to always include the `repo` and `index`

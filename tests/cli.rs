@@ -132,7 +132,7 @@ fn chunk_symbols(data: &Value) -> Vec<String> {
         .as_array()
         .unwrap()
         .iter()
-        .filter_map(|c| c["symbol"].as_str().map(|s| s.to_string()))
+        .filter_map(|c| c["name"].as_str().map(|s| s.to_string()))
         .collect()
 }
 
@@ -152,7 +152,7 @@ fn default_output_is_lean_when_nothing_noteworthy() {
     let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|s| s.as_str()).collect();
     keys.sort();
     assert_eq!(keys, ["data", "schema"], "clean call should carry no meta");
-    assert_eq!(v["schema"], "codeq.result.v1");
+    assert_eq!(v["schema"], "codeq.result.v2");
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn meta_flag_returns_full_stable_envelope() {
     let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|s| s.as_str()).collect();
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "schema"]);
-    assert_eq!(v["schema"], "codeq.result.v1");
+    assert_eq!(v["schema"], "codeq.result.v2");
     assert_eq!(v["index"]["schema"], 23);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
@@ -222,7 +222,7 @@ fn capabilities_describes_the_tool() {
     assert!(cmds.contains(&"capabilities".to_string()));
     let langs = field_names(&d["extraction_languages"]);
     assert!(langs.contains(&"rust".to_string()) && langs.contains(&"python".to_string()));
-    assert_eq!(d["result_schema"], "codeq.result.v1");
+    assert_eq!(d["result_schema"], "codeq.result.v2");
 
     // Default output is text like every other command, not a raw JSON dump.
     let text = String::from_utf8_lossy(&f.raw(&["capabilities"]).stdout).into_owned();
@@ -456,8 +456,8 @@ fn definitions_returns_precise_ranges() {
     assert_eq!(rows.len(), 1);
     let r = &rows[0];
     assert_eq!(r["kind"], "function");
-    assert_eq!(r["start_line"], 4); // 1-based
-    assert!(r["end_byte"].as_i64().unwrap() > r["start_byte"].as_i64().unwrap());
+    assert_eq!(r["line"], 4); // 1-based
+    assert!(r["end_byte"].as_i64().unwrap() > r["byte"].as_i64().unwrap());
 }
 
 // ---------------------------------------------------------------------------
@@ -816,7 +816,7 @@ fn callers_callees_and_about() {
     // callers = distinct code callers, excluding the definition and comments.
     let callers = f.run(&["callers", "helper"]);
     let syms: Vec<String> = callers["data"].as_array().unwrap().iter()
-        .filter_map(|r| r["symbol"].as_str().map(String::from)).collect();
+        .filter_map(|r| r["name"].as_str().map(String::from)).collect();
     assert!(syms.contains(&"caller".to_string()) && syms.contains(&"other".to_string()), "{syms:?}");
     assert!(!syms.contains(&"helper".to_string()), "own definition is not a caller");
     // The comment mention must not appear (code-only).
@@ -866,7 +866,7 @@ fn callers_prefer_a_usage_site_over_an_import_as_the_anchor() {
     let rows = v["data"].as_array().unwrap();
     let paths: Vec<&str> = rows.iter().map(|r| r["path"].as_str().unwrap()).collect();
     assert!(paths.contains(&"shelf.js"), "superset default lost a row: {paths:?}");
-    let run_row = rows.iter().find(|r| r["symbol"] == "run").expect("run caller");
+    let run_row = rows.iter().find(|r| r["name"] == "run").expect("run caller");
     assert_eq!(run_row["line"], 4);
 }
 
@@ -886,7 +886,7 @@ fn callers_resolved_prunes_unreachable_and_tags_via() {
     let res = f.run(&["callers", "target", "--resolved"]);
     let rows = res["data"].as_array().unwrap();
     let via = |sym: &str| rows.iter()
-        .find(|r| r["symbol"] == sym)
+        .find(|r| r["name"] == sym)
         .map(|r| r["via"].as_str().unwrap().to_string());
     assert_eq!(via("self_caller"), Some("same-file".into()), "{rows:?}");
     assert_eq!(via("user"), Some("imported".into()), "{rows:?}");
@@ -925,13 +925,13 @@ fn callers_examples_surface_the_call_expression() {
     // Plain callers: the enclosing definition, no source text.
     let plain = f.run(&["callers", "target"]);
     let row = &plain["data"].as_array().unwrap()[0];
-    assert_eq!(row["symbol"], "caller");
+    assert_eq!(row["name"], "caller");
     assert!(row.get("text").is_none(), "plain callers should carry no source text: {row:?}");
 
     // --examples: the row becomes a usage example with the actual call line + column.
     let ex = f.run(&["callers", "target", "--examples"]);
     let row = &ex["data"].as_array().unwrap()[0];
-    assert_eq!(row["symbol"], "caller");
+    assert_eq!(row["name"], "caller");
     assert!(row["text"].as_str().unwrap().contains("target(41)"),
             "example should show the call expression: {row:?}");
     assert!(row["col"].as_i64().is_some(), "example row should carry a column: {row:?}");
@@ -962,7 +962,7 @@ fn explore_bundles_definition_callers_callees_and_source() {
     let src = d["source"].as_array().unwrap();
     let focus_chunk = src.iter().find(|c| c["reason"] == "focus").expect("focus source chunk");
     assert!(focus_chunk["text"].as_str().unwrap().contains("x + 1"), "{focus_chunk}");
-    assert!(src.iter().any(|c| c["reason"] == "caller" && c["symbol"] == "caller"),
+    assert!(src.iter().any(|c| c["reason"] == "caller" && c["name"] == "caller"),
             "caller source missing: {src:?}");
 }
 
@@ -978,7 +978,7 @@ fn explore_forces_focus_source_under_a_tight_budget() {
     // The focus is forced in even over budget; the oversized caller is omitted.
     assert!(src.iter().any(|c| c["reason"] == "focus"), "focus must survive the budget: {src:?}");
     let omitted: Vec<&str> = d["data"]["omitted"].as_array().unwrap().iter()
-        .filter_map(|o| o["symbol"].as_str()).collect();
+        .filter_map(|o| o["name"].as_str()).collect();
     assert!(omitted.contains(&"caller"), "oversized caller should be reported omitted: {omitted:?}");
 }
 
@@ -1139,9 +1139,9 @@ fn graphql_implements_is_a_type_relation() {
         "interface A { id: ID! }\ninterface B { id: ID! }\ninterface C { id: ID! }\n\
          type User implements A & B & C { id: ID! }\ntype Post implements A { id: ID! }\n",
     );
-    let supers = field_set(&f.run(&["supertypes", "User"]), "supertype");
+    let supers = field_set(&f.run(&["supertypes", "User"]), "name");
     assert_eq!(supers, vec!["A", "B", "C"], "every interface, not just the last: {supers:?}");
-    let impls = field_set(&f.run(&["implementors", "A"]), "subtype");
+    let impls = field_set(&f.run(&["implementors", "A"]), "name");
     assert!(impls.contains(&"User".to_string()) && impls.contains(&"Post".to_string()), "{impls:?}");
 }
 
@@ -1310,13 +1310,13 @@ fn python_attributes_are_members_despite_having_no_declaration_site() {
     let v = f.run(&["definitions", "retries"]);
     let rows = v["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "one member per (name, owner): {v}");
-    assert_eq!(rows[0]["start_line"], 6, "earliest declaration wins: {v}");
+    assert_eq!(rows[0]["line"], 6, "earliest declaration wins: {v}");
     assert_eq!(rows[0]["owner"], "Config");
 
     // `other.retries = 99` sits in a plain function: not self-qualified, and no
     // enclosing type, so it is not a member.
     assert!(
-        rows.iter().all(|r| r["start_line"] != 11),
+        rows.iter().all(|r| r["line"] != 11),
         "an assignment through another object is not a declaration: {v}"
     );
 }
@@ -1401,22 +1401,26 @@ fn concurrent_invocations_all_succeed() {
 #[test]
 fn fields_reports_names_that_matched_no_row() {
     // Projecting an unknown name silently yielded a narrower row, which reads as
-    // "this record has no such value" rather than "that isn't a field". `line` vs
-    // `start_line` is the easy wrong guess, since `search` rows do use `line`.
+    // "this record has no such value" rather than "that isn't a field".
+    //
+    // The wrong guess this used to test for was `line` vs `start_line` -- one
+    // spelling on `search`, another on `definitions`. ROW_KEY_RULE removed that
+    // trap, so the guess here is simply a name codeq has never had.
     let f = Fixture::new();
     f.write("a.rs", "fn target() {}\n");
 
-    let v = f.run(&["definitions", "target", "--fields", "path,line"]);
+    let v = f.run(&["definitions", "target", "--fields", "path,lineno"]);
     let notes = &v["notes"];
-    assert_eq!(notes["unmatched_fields"][0], "line", "{v}");
+    assert_eq!(notes["unmatched_fields"][0], "lineno", "{v}");
     let avail: Vec<&str> = notes["available_fields"].as_array().unwrap().iter()
         .map(|s| s.as_str().unwrap()).collect();
-    assert!(avail.contains(&"start_line"), "must name the real field: {avail:?}");
+    assert!(avail.contains(&"line"), "must name the real field: {avail:?}");
     // The projection still happens — this is a note, not a failure.
     assert_eq!(v["data"][0]["path"], "a.rs");
 
-    // A field that exists produces no note at all.
-    let ok = f.run(&["definitions", "target", "--fields", "path,start_line"]);
+    // A field that exists produces no note at all -- and `line` is now that
+    // field on every command, which is the point of the rule.
+    let ok = f.run(&["definitions", "target", "--fields", "path,line"]);
     assert!(ok["notes"].is_null(), "clean projection must not be annotated: {ok}");
 }
 
@@ -1468,7 +1472,7 @@ fn offsets_stay_aligned_when_a_file_is_not_valid_utf8() {
     let callers = f.run(&["callers", "helper"]);
     let rows = callers["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{rows:?}");
-    assert_eq!(rows[0]["symbol"], "alpha", "wrong enclosing definition: {rows:?}");
+    assert_eq!(rows[0]["name"], "alpha", "wrong enclosing definition: {rows:?}");
 
     // `search` and `at` must agree about which definition line 2 belongs to.
     let v = f.run(&["search", "helper"]);
@@ -1593,12 +1597,12 @@ fn explore_does_not_emit_source_already_inside_another_chunk() {
             if i == j || b["path"] != o["path"] || !o["reduced"].is_null() {
                 continue;
             }
-            let (bs, be) = (b["start_byte"].as_u64().unwrap(), b["end_byte"].as_u64().unwrap());
-            let (os, oe) = (o["start_byte"].as_u64().unwrap(), o["end_byte"].as_u64().unwrap());
+            let (bs, be) = (b["byte"].as_u64().unwrap(), b["end_byte"].as_u64().unwrap());
+            let (os, oe) = (o["byte"].as_u64().unwrap(), o["end_byte"].as_u64().unwrap());
             assert!(
                 !(os <= bs && be <= oe && (oe - os) > (be - bs)),
                 "{} is already inside {}, emitting both wastes budget",
-                b["symbol"], o["symbol"]
+                b["name"], o["name"]
             );
         }
     }
@@ -1723,7 +1727,7 @@ fn extracts_svelte_components_scripts_and_snippets() {
 
     // Positions are the *file's*, not the script block's: line 7 of the file.
     let def = &f.run(&["definitions", "handleClick"])["data"][0];
-    assert_eq!(def["start_line"], 7, "{def}");
+    assert_eq!(def["line"], 7, "{def}");
     assert_eq!(def["path"], "src/Button.svelte");
 
     // The call graph crosses the component boundary in both directions.
@@ -1789,7 +1793,7 @@ fn extracts_vue_single_file_components() {
 
     // Positions are the file's: handleClick sits on line 7, not line 4 of the block.
     let def = &f.run(&["definitions", "handleClick"])["data"][0];
-    assert_eq!(def["start_line"], 7, "{def}");
+    assert_eq!(def["line"], 7, "{def}");
 
     // A template binding is *code*, so the call graph sees it. Vue quotes its
     // directive values (`@click="handleClick"`), which must not be classified as
@@ -1833,7 +1837,7 @@ fn resolved_follows_rust_mod_declarations_as_edges() {
 
     let res = f.run(&["callers", "make", "--resolved"]);
     let row = res["data"].as_array().unwrap().iter()
-        .find(|r| r["symbol"] == "root").expect("root should survive resolution");
+        .find(|r| r["name"] == "root").expect("root should survive resolution");
     assert_eq!(row["via"], "imported", "mod-declared dependency should resolve: {res}");
 }
 
@@ -1850,7 +1854,7 @@ fn resolved_follows_python_from_import_of_a_submodule() {
 
     let res = f.run(&["callers", "make", "--resolved"]);
     let row = res["data"].as_array().unwrap().iter()
-        .find(|r| r["symbol"] == "use").expect("use() should survive resolution");
+        .find(|r| r["name"] == "use").expect("use() should survive resolution");
     assert_eq!(row["via"], "imported", "from-import of a submodule should resolve: {res}");
 }
 
@@ -1872,7 +1876,7 @@ fn resolved_follows_js_named_imports() {
     // user.js calls make() directly → resolves as imported.
     let res = f.run(&["callers", "make", "--resolved"]);
     let row = res["data"].as_array().unwrap().iter()
-        .find(|r| r["symbol"] == "use").expect("use() should survive resolution");
+        .find(|r| r["name"] == "use").expect("use() should survive resolution");
     assert_eq!(row["via"], "imported", "{res}");
 }
 
@@ -1886,11 +1890,11 @@ fn calls_filter_excludes_non_call_references() {
          fn mentioner() { let make = 1; let _ = make; }\n",
     );
     // Default (name-based) counts the unrelated local `make` in mentioner.
-    let all = field_set(&f.run(&["callers", "make"]), "symbol");
+    let all = field_set(&f.run(&["callers", "make"]), "name");
     assert!(all.contains(&"mentioner".to_string()), "default should include the mention: {all:?}");
 
     // --calls keeps only the real call site.
-    let calls = field_set(&f.run(&["callers", "make", "--calls"]), "symbol");
+    let calls = field_set(&f.run(&["callers", "make", "--calls"]), "name");
     assert!(calls.contains(&"caller".to_string()), "real caller dropped: {calls:?}");
     assert!(!calls.contains(&"mentioner".to_string()), "bare mention not excluded: {calls:?}");
 }
@@ -1952,14 +1956,14 @@ fn callers_depth_walks_transitively() {
     // depth 1: only direct callers of leaf.
     let d1 = f.run(&["callers", "leaf"]);
     let syms1: Vec<String> = d1["data"].as_array().unwrap().iter()
-        .filter_map(|r| r["symbol"].as_str().map(String::from)).collect();
+        .filter_map(|r| r["name"].as_str().map(String::from)).collect();
     assert_eq!(syms1, ["mid"], "depth 1 is direct only: {syms1:?}");
 
     // depth 2: reaches top through mid, each tagged with its hop distance.
     let d2 = f.run(&["callers", "leaf", "--depth", "2"]);
     let rows = d2["data"].as_array().unwrap();
     let depth_of = |sym: &str| rows.iter()
-        .find(|r| r["symbol"] == sym).unwrap()["depth"].as_u64().unwrap();
+        .find(|r| r["name"] == sym).unwrap()["depth"].as_u64().unwrap();
     assert_eq!(depth_of("mid"), 1, "direct caller is hop 1");
     assert_eq!(depth_of("top"), 2, "transitive caller is hop 2");
 }
@@ -1978,7 +1982,7 @@ fn implementors_finds_rust_trait_impls() {
     );
     let v = f.run(&["implementors", "Shape"]);
     let rows = v["data"].as_array().unwrap();
-    let subs: Vec<&str> = rows.iter().map(|r| r["subtype"].as_str().unwrap()).collect();
+    let subs: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
     assert!(subs.contains(&"Circle") && subs.contains(&"Square"), "{subs:?}");
     // The inherent `impl Circle {}` is not a relation to Shape.
     assert_eq!(rows.len(), 2, "inherent impl leaked: {rows:?}");
@@ -1996,11 +2000,11 @@ fn implementors_distinguishes_extends_from_implements() {
          class Dog extends Animal implements Runner {}\n",
     );
     let animal = f.run(&["implementors", "Animal"]);
-    assert_eq!(animal["data"][0]["subtype"], "Dog");
+    assert_eq!(animal["data"][0]["name"], "Dog");
     assert_eq!(animal["data"][0]["relation"], "extends");
 
     let runner = f.run(&["implementors", "Runner"]);
-    assert_eq!(runner["data"][0]["subtype"], "Dog");
+    assert_eq!(runner["data"][0]["name"], "Dog");
     assert_eq!(runner["data"][0]["relation"], "implements");
 
     // --relation filters.
@@ -2022,7 +2026,7 @@ fn supertypes_is_the_inverse_of_implementors() {
     let sup = f.run(&["supertypes", "Dog"]);
     let rows = sup["data"].as_array().unwrap();
     let by: std::collections::HashMap<&str, &str> = rows.iter()
-        .map(|r| (r["supertype"].as_str().unwrap(), r["relation"].as_str().unwrap()))
+        .map(|r| (r["name"].as_str().unwrap(), r["relation"].as_str().unwrap()))
         .collect();
     assert_eq!(by.get("Animal"), Some(&"extends"), "{by:?}");
     assert_eq!(by.get("Runner"), Some(&"implements"), "{by:?}");
@@ -2031,13 +2035,13 @@ fn supertypes_is_the_inverse_of_implementors() {
     for (sup_name, rel) in [("Animal", "extends"), ("Runner", "implements")] {
         let imp = f.run(&["implementors", sup_name]);
         let row = imp["data"].as_array().unwrap().iter()
-            .find(|r| r["subtype"] == "Dog").expect("Dog missing from implementors");
+            .find(|r| r["name"] == "Dog").expect("Dog missing from implementors");
         assert_eq!(row["relation"], rel);
     }
 
     // --relation filters supertypes too.
     let ext = f.run(&["supertypes", "Dog", "--relation", "extends"]);
-    let names = field_set(&ext, "supertype");
+    let names = field_set(&ext, "name");
     assert!(names.contains(&"Animal".to_string()) && !names.contains(&"Runner".to_string()), "{names:?}");
 }
 
@@ -2048,9 +2052,9 @@ fn implementors_covers_python_and_ruby_inheritance() {
     f.write("m.rb", "class Base\nend\nclass Sub < Base\nend\n");
 
     let py = f.run(&["implementors", "Animal"]);
-    assert_eq!(py["data"][0]["subtype"], "Dog");
+    assert_eq!(py["data"][0]["name"], "Dog");
     let rb = f.run(&["implementors", "Base"]);
-    assert_eq!(rb["data"][0]["subtype"], "Sub");
+    assert_eq!(rb["data"][0]["name"], "Sub");
 }
 
 #[test]
@@ -2256,7 +2260,7 @@ fn callpath_is_the_command_name_and_path_still_works() {
     let old = f.run(&["path", "top", "bottom"]);
     assert_eq!(new["data"], old["data"], "alias must behave identically");
     let steps = new["data"].as_array().unwrap();
-    let names: Vec<&str> = steps.iter().map(|s| s["symbol"].as_str().unwrap()).collect();
+    let names: Vec<&str> = steps.iter().map(|s| s["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["top", "mid", "bottom"], "{steps:?}");
 }
 
@@ -2293,7 +2297,7 @@ fn path_finds_shortest_call_chain() {
     );
     let v = f.run(&["path", "top", "leaf"]);
     let steps: Vec<&str> = v["data"].as_array().unwrap().iter()
-        .map(|r| r["symbol"].as_str().unwrap()).collect();
+        .map(|r| r["name"].as_str().unwrap()).collect();
     assert_eq!(steps, ["top", "mid", "leaf"], "chain wrong: {steps:?}");
     // Depth indexes the position in the chain.
     let depths: Vec<u64> = v["data"].as_array().unwrap().iter()
@@ -2315,9 +2319,9 @@ fn path_scopes_the_start_symbol_by_path() {
     // Scoped to a.rs, it does — and starts from the a.rs definition.
     let hit = f.run(&["path", "entry", "leaf", "--path", "a.rs"]);
     let rows = hit["data"].as_array().unwrap();
-    assert_eq!(rows[0]["symbol"], "entry");
+    assert_eq!(rows[0]["name"], "entry");
     assert_eq!(rows[0]["path"], "a.rs", "start location should be the scoped def");
-    let syms: Vec<&str> = rows.iter().map(|r| r["symbol"].as_str().unwrap()).collect();
+    let syms: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
     assert_eq!(syms, ["entry", "leaf"]);
 }
 
@@ -2334,7 +2338,7 @@ fn path_empty_when_unreachable_and_single_when_self() {
     let self_path = f.run(&["path", "top", "top"]);
     let rows = self_path["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["symbol"], "top");
+    assert_eq!(rows[0]["name"], "top");
     assert_eq!(rows[0]["depth"], 0);
 }
 
@@ -2350,7 +2354,7 @@ fn path_respects_max_depth() {
     assert_eq!(shallow["data"].as_array().unwrap().len(), 0, "3-hop chain found at depth 2");
     let deep = f.run(&["path", "a1", "d4", "--max-depth", "3"]);
     let steps: Vec<&str> = deep["data"].as_array().unwrap().iter()
-        .map(|r| r["symbol"].as_str().unwrap()).collect();
+        .map(|r| r["name"].as_str().unwrap()).collect();
     assert_eq!(steps, ["a1", "b2", "c3", "d4"]);
 }
 
@@ -3051,7 +3055,7 @@ fn mcp_context_forwards_path_and_no_text_flags() {
     let data: Value = serde_json::from_str(text).unwrap();
     let chunks = data["data"]["chunks"].as_array().expect("chunks array");
     // --path a.rs kept the seed; --no-text dropped its source text.
-    assert!(chunks.iter().any(|c| c["symbol"] == "target"), "seed missing: {chunks:?}");
+    assert!(chunks.iter().any(|c| c["name"] == "target"), "seed missing: {chunks:?}");
     assert!(chunks.iter().all(|c| c.get("text").is_none()),
             "no_text was not forwarded — source text leaked: {chunks:?}");
 }
@@ -3126,9 +3130,9 @@ fn context_symbol_seed_returns_chunk_with_text_and_range() {
     let chunks = d["chunks"].as_array().unwrap();
     assert_eq!(chunks.len(), 1, "only the seed, no references: {chunks:?}");
     let c = &chunks[0];
-    assert_eq!(c["symbol"], "solo");
+    assert_eq!(c["name"], "solo");
     assert_eq!(c["reason"], "seed");
-    assert_eq!(c["start_line"], 1);
+    assert_eq!(c["line"], 1);
     assert!(c["text"].as_str().unwrap().contains("return 42"));
     assert!(d["budget"]["used_tokens"].as_u64().unwrap() > 0);
     assert_eq!(d["budget"]["tokenizer"], "approx:4-bytes-per-token");
@@ -3144,8 +3148,8 @@ fn context_expands_to_referenced_definitions() {
     // Expansion is opt-in.
     let v = f.run(&["context", "--symbols", "caller", "--expand", "--no-text"]);
     let chunks = v["data"]["chunks"].as_array().unwrap();
-    let seed = chunks.iter().find(|c| c["symbol"] == "caller").unwrap();
-    let neigh = chunks.iter().find(|c| c["symbol"] == "helper").unwrap();
+    let seed = chunks.iter().find(|c| c["name"] == "caller").unwrap();
+    let neigh = chunks.iter().find(|c| c["name"] == "helper").unwrap();
     assert_eq!(seed["reason"], "seed");
     assert_eq!(neigh["reason"], "referenced");
     // --no-text means provenance only.
@@ -3358,7 +3362,7 @@ fn definition_site_appears_in_its_references() {
     f.write("a.rs", "fn helper() {}\nfn caller() { helper(); }\n");
     let d0 = f.run(&["definitions", "helper"])["data"][0].clone();
     let dp = d0["path"].as_str().unwrap().to_string();
-    let dl = d0["start_line"].as_u64().unwrap();
+    let dl = d0["line"].as_u64().unwrap();
     let refs = f.run(&["references", "helper", "--limit", "0"]);
     let present = refs["data"]["references"]
         .as_array()
@@ -3374,7 +3378,7 @@ fn at_roundtrips_a_definition_and_encloses_its_body() {
     f.write("a.rs", "fn outer() {\n    let x = 1;\n    let y = 2;\n}\n");
     let d0 = f.run(&["definitions", "outer"])["data"][0].clone();
     let p = d0["path"].as_str().unwrap().to_string();
-    let (s, e) = (d0["start_line"].as_u64().unwrap(), d0["end_line"].as_u64().unwrap());
+    let (s, e) = (d0["line"].as_u64().unwrap(), d0["end_line"].as_u64().unwrap());
 
     let at_def = f.run(&["at", &format!("{p}:{s}")]);
     assert_eq!(at_def["data"][0]["name"], "outer", "at the def line must resolve to it");
@@ -3383,7 +3387,7 @@ fn at_roundtrips_a_definition_and_encloses_its_body() {
     let d = f.run(&["at", &format!("{p}:{mid}")])["data"][0].clone();
     assert_eq!(d["name"], "outer");
     assert!(
-        d["start_line"].as_u64().unwrap() <= mid && mid <= d["end_line"].as_u64().unwrap(),
+        d["line"].as_u64().unwrap() <= mid && mid <= d["end_line"].as_u64().unwrap(),
         "at a body line must be enclosed by the def"
     );
 }
@@ -5223,9 +5227,9 @@ fn relations_extracted_for_the_remaining_languages() {
     for (file, src) in cases {
         let f = Fixture::new();
         f.write(file, src);
-        let subs = field_set(&f.run(&["implementors", "B"]), "subtype");
+        let subs = field_set(&f.run(&["implementors", "B"]), "name");
         assert_eq!(subs, ["A"], "{file}: A derives from B");
-        let supers = field_set(&f.run(&["supertypes", "A"]), "supertype");
+        let supers = field_set(&f.run(&["supertypes", "A"]), "name");
         assert!(supers.iter().any(|s| s == "B"), "{file}: {supers:?}");
         assert!(supers.iter().any(|s| s == "C"), "{file}: {supers:?}");
     }
@@ -5514,7 +5518,7 @@ fn namespaced_base_class_yields_a_relation() {
         "a.tsx",
         "class Legacy extends React.Component<{}> {}\nclass Plain extends Base {}\n",
     );
-    let supers = field_set(&f.run(&["supertypes", "Legacy"]), "supertype");
+    let supers = field_set(&f.run(&["supertypes", "Legacy"]), "name");
     assert!(
         supers.iter().any(|s| s == "React.Component"),
         "namespaced supertype missing: {supers:?}"
@@ -5522,14 +5526,14 @@ fn namespaced_base_class_yields_a_relation() {
     // Stored dotted, but nobody asks for it that way: the bare last segment must
     // find it, and so must the full path.
     for query in ["Component", "React.Component"] {
-        let subs = field_set(&f.run(&["implementors", query]), "subtype");
+        let subs = field_set(&f.run(&["implementors", query]), "name");
         assert!(
             subs.iter().any(|s| s == "Legacy"),
             "implementors {query} missed Legacy: {subs:?}"
         );
     }
     // A bare supertype must not start matching everything as a side effect.
-    let subs = field_set(&f.run(&["implementors", "Base"]), "subtype");
+    let subs = field_set(&f.run(&["implementors", "Base"]), "name");
     assert_eq!(subs.len(), 1, "Base gained unrelated implementors: {subs:?}");
 }
 
@@ -5948,7 +5952,7 @@ fn the_call_graph_walks_agree_on_depth_semantics() {
 
     let up = f.run(&["callers", "leaf", "--depth", "3"]);
     let up: Vec<(&str, i64)> = up["data"].as_array().unwrap().iter()
-        .map(|r| (r["symbol"].as_str().unwrap(), r["depth"].as_i64().unwrap())).collect();
+        .map(|r| (r["name"].as_str().unwrap(), r["depth"].as_i64().unwrap())).collect();
     // `top` calls leaf directly *and* sits above mid: shortest depth wins.
     assert_eq!(up, [("mid", 1), ("top", 1), ("root", 2)], "callers depth changed");
 
@@ -5957,7 +5961,7 @@ fn the_call_graph_walks_agree_on_depth_semantics() {
         .map(|r| (r["name"].as_str().unwrap(), r["depth"].as_i64().unwrap())).collect();
     assert_eq!(down, [("top", 1), ("leaf", 2), ("mid", 2)], "callees depth changed");
 
-    for (cmd, seed, key) in [("callers", "leaf", "symbol"), ("callees", "root", "name")] {
+    for (cmd, seed, key) in [("callers", "leaf", "name"), ("callees", "root", "name")] {
         let v = f.run(&[cmd, seed, "--depth", "3"]);
         assert!(
             !v["data"].as_array().unwrap().iter().any(|r| r[key] == seed),

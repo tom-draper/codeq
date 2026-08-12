@@ -157,7 +157,11 @@ refresh the index — every command auto-refreshes changed files first.
 - **A namespaced base class is stored dotted** (`extends React.Component` →
   `React.Component`), but `implementors` matches the last segment too, so
   `implementors Component` finds it.
-- **Trim output tokens** with `--fields name,path,line`.
+- **Trim output tokens** with `--fields name,path,line`. The keys are identical on
+  every command: `name` = the definition this row *is*; `symbol` = the definition it
+  sits *inside* (only on `search`/`references`/`astgrep` matches); `line`/`col`/`byte`
+  for position, `end_line`/`end_col`/`end_byte` for extent. No command uses
+  `start_line`.
 - **`--group`** replaces the repeated path prefix with a `path (count)` header. Opt-in,
   and the default is flat for a reason: a flat row names its own file, so it survives
   being piped, grepped or quoted in isolation, and a grouped row does not. Group when

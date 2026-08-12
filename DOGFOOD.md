@@ -4,6 +4,62 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — `codeq.result.v2`: one key per fact, across every command
+
+With no downstream users yet, the row schema got the breaking change it needed.
+
+### The bug the rename fixes
+
+`--fields line` worked on `callers`, `callees`, `references`, `members`,
+`untested`, `hotspots`, `api` and `tests` — and matched **nothing** on
+`definitions`, `symbols`, `imports` and `outline`, which spelled it `start_line`.
+The internal facts-table column name had leaked onto the wire for four commands
+and not the other eight.
+
+Two things had been hiding it. `render_row` carried
+`int_of("line").or_else(|| int_of("start_line"))`, so text output looked
+uniform — and `bench/textmode.py`, the harness whose whole job is catching text
+that disagrees with `--json`, carried *the same fallback*. The check and the
+thing being checked papered over the identical crack. Both are gone; the harness
+now reads one key, so a future split fails it.
+
+I hit this twice while dogfooding before recognising it as a bug rather than my
+own bad memory, which is the tell: a schema you have to memorise per command is
+one an agent gets wrong silently.
+
+### The rule
+
+Documented as `ROW_KEY_RULE` in `envelope.rs`, since a convention with no written
+home is one that drifts back:
+
+- **`name`** — the definition this row *is*.
+- **`symbol`** — the definition this row sits *inside*. Only `search`,
+  `references` and `astgrep` matches have one; never a row's own identity.
+- **`line`, `col`, `byte`** — primary position. **`end_line`, `end_col`,
+  `end_byte`** — extent.
+
+Rust fields keep the `start_` prefix that mirrors the DB; `#[serde(rename)]`
+governs the wire. That kept the diff to the schema instead of the query layer.
+
+Renamed on the way: `callers`/`callpath`/`context`-chunk/`explore`-omitted rows
+from `symbol` to `name` (each *is* a definition), and — a scope call beyond what
+was approved — `implementors.subtype` / `supertypes.supertype` to `name` too. I
+had argued a week ago that those two distinct spellings were a readability win.
+They aren't: the command you ran and the row's own `relation` field already say
+which side of the edge you are on, so the special-case key bought nothing and
+cost the one thing the rule exists for. Shipping the rule with a silent exception
+would have been worse than either choice.
+
+`astgrep`, `references` and `search` keep `symbol` — correctly. Those rows are
+matches sitting inside a definition, which is a different fact from being one.
+
+### Cost
+
+265 tests, 36 of which asserted the old keys; the failures were the change
+working. `bench/differential.py`, `completion.py` and `textmode.py` all sampled
+`start_line` and needed updating too — worth noting for anyone who thinks a row
+key is an internal detail: four harnesses and a hundred assertions disagreed.
+
 ## 2026-08-12 — duplicated *operations*: two fixed, one refactor declined again
 
 Asked whether codeq has operations that mean the same thing. `clones` — the tool

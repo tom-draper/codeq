@@ -305,7 +305,7 @@ TASKS = [
 def pick_target(path):
     # --json here: we parse the symbol table. The task commands below measure the
     # default (text) output — the real agent cost we're comparing.
-    p = subprocess.run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,start_line", "--limit", "0"],
+    p = subprocess.run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,line", "--limit", "0"],
                        cwd=path, capture_output=True).stdout
     try:
         data = json.loads(p)["data"]
@@ -315,7 +315,7 @@ def pick_target(path):
             if d.get("kind") in ("function", "method")
             and d.get("name", "").isidentifier() and len(d.get("name", "")) >= 5
             and not any(v in "/" + d["path"] for v in VENDORED)]
-    cand.sort(key=lambda d: (d["path"], d.get("start_line", 0)))
+    cand.sort(key=lambda d: (d["path"], d.get("line", 0)))
     if not cand:
         return None
     s = cand[len(cand) // 2]

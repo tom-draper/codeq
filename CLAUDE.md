@@ -6,7 +6,7 @@ reads and grep, and log any friction in [DOGFOOD.md](./DOGFOOD.md).
 
 Build with `cargo build` → run `./target/debug/codeq` from the repo root
 (`--release` for benchmarking). Output defaults to compact grep-style text
-(`path:line:col: payload`); pass `--json` for the `codeq.result.v1` envelope
+(`path:line:col: payload`); pass `--json` for the `codeq.result.v2` envelope
 (what the MCP server and programmatic consumers use).
 
 **Never run `codeq index` for correctness — every query auto-refreshes first.**
@@ -254,7 +254,11 @@ benchmarks — not as a step you run before querying.
   filters on the stored `owner` tag, which only fields and variants carry, so it
   silently answers the same question minus every method. `--owner` is for browsing
   fields (`--owner X --kind field`), not for "what does this type have".
-- **Trim tokens on list output:** append `--fields a,b`
+- **Trim tokens on list output:** append `--fields a,b`. Row keys are the same on
+  every command: **`name`** is the definition a row *is*, **`symbol`** is the
+  definition it sits *inside* (`search`/`references`/`astgrep` matches only), and
+  position is **`line`/`col`/`byte`** with **`end_line`/`end_col`/`end_byte`** for
+  the extent. So `--fields path,line` works everywhere — there is no `start_line`.
 - **`--group`** hoists the repeated path onto a `path (count)` header instead of
   prefixing every row with it, and the count saves counting lines. **Opt-in on
   purpose, and worth understanding before reaching for it:** the default flat
