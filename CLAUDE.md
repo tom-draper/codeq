@@ -142,9 +142,12 @@ benchmarks — not as a step you run before querying.
     `callees codeq_commit` lists four unrelated `run`s, and `--examples` shows all
     four came from one `subprocess.run`. It also takes `--resolved`, which keeps only
     callees whose definition file NAME's *own* file can reach through imports (tags
-    each `via` same-file / imported) — pruning the name-based over-match where a
-    common callee name (`new`, `open`) matches unrelated same-named defs in
-    unreachable files.
+    each `via` same-file / imported / **ambiguous**) — pruning the name-based
+    over-match where a common callee name (`new`, `open`) matches unrelated
+    same-named defs in unreachable files. `ambiguous` is the residual it can
+    narrow but not resolve: several reachable files define that name, so read the
+    rows as "one of these" rather than "this one". Same vocabulary as `callers
+    --resolved`, so the two agree about the same situation.
   - **Transitive call tree:** `codeq callers NAME --depth N` (up) ·
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For impact / reachability.
@@ -175,7 +178,10 @@ benchmarks — not as a step you run before querying.
   evidence of absence, and the empty-result note says so.
 - **Public API with no tests:** `codeq untested [<path>]` — `api` composed with
   `tests` in one call instead of one per symbol. Public only; over-reports
-  coverage (a test that never names the symbol is invisible).
+  coverage (a test that never names the symbol is invisible). Test scaffolding is
+  excluded by the same rule `unused` uses — path, name, *or* enclosing test
+  module — so a `pub fn` helper inside `#[cfg(test)] mod tests` is not "untested
+  public API".
 - **Did this change the public surface:** `codeq api <path> --compare-to <ref>` —
   exported declarations added, removed, or changed shape, grouped and with the
   previous signature. The review question a raw diff can't answer.

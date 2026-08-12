@@ -146,7 +146,9 @@ refresh the index — every command auto-refreshes changed files first.
   (`subprocess.run`, not `run`) — the quickest way to tell a real callee from a
   name collision. It does take `--resolved`, which keeps only callees whose definition file
   the symbol's own file can reach via imports — pruning unrelated same-named defs (a
-  common `new`/`open` matching every same-named definition repo-wide).
+  common `new`/`open` matching every same-named definition repo-wide). Rows tagged
+  `via=ambiguous` mean several reachable files define that name: "one of these",
+  not "this one". Same vocabulary as `callers --resolved`.
 - **JS/TS: a module-scope `const` is a definition**, whatever it's bound to. That's
   how React components are usually written — `memo(…)`, `forwardRef(…)`,
   `styled.div\`…\``, `createContext(…)` — so `symbols`/`outline`/`api` find them, and

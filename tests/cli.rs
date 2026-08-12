@@ -5881,3 +5881,87 @@ fn members_and_symbols_owner_answer_different_questions() {
         .filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
     assert_eq!(owned, ["name"], "--owner's scope changed; the docs need to change with it");
 }
+
+#[test]
+fn resolved_reports_ambiguity_in_both_directions() {
+    // `via` was classified in two places -- Resolver for callers/references,
+    // an inline branch in callees_of -- anchored in opposite directions but
+    // answering the same question. The copies drifted: callees had no
+    // `ambiguous` arm, so the identical situation came back as a confident
+    // `imported` one way and `ambiguous` the other.
+    let f = Fixture::new();
+    f.write("main.rs", "mod a;\nmod b;\nfn run() { helper(); }\n");
+    f.write("a.rs", "pub fn helper() {}\n");
+    f.write("b.rs", "pub fn helper() {}\n");
+
+    let callees = f.run(&["callees", "run", "--resolved"]);
+    let vias: Vec<&str> = callees["data"].as_array().unwrap().iter()
+        .filter_map(|r| r["via"].as_str()).collect();
+    assert_eq!(vias, ["ambiguous", "ambiguous"], "callees hid the ambiguity: {callees:?}");
+
+    let callers = f.run(&["callers", "helper", "--resolved"]);
+    assert_eq!(callers["data"][0]["via"], "ambiguous", "the mirror question disagrees: {callers:?}");
+
+    // One reachable definition is still a confident resolution, not ambiguity.
+    f.write("b.rs", "pub fn unrelated() {}\n");
+    let one = f.run(&["callees", "run", "--resolved"]);
+    assert_eq!(one["data"][0]["via"], "imported", "over-tagged a single match: {one:?}");
+}
+
+#[test]
+fn unused_and_untested_agree_on_what_counts_as_test_scaffolding() {
+    // Both ask "is this definition test scaffolding?" and used to answer with
+    // different rules -- `unused` with the full path/name/enclosing-scope test,
+    // `untested` with the path alone. So a `pub fn` inside a `#[cfg(test)] mod
+    // tests` in a production file was invisible to one and reported as untested
+    // public API by the other.
+    let f = Fixture::new();
+    f.write(
+        "lib.rs",
+        "pub fn real() {}\n#[cfg(test)]\nmod tests {\n    pub fn fixture_builder() {}\n    #[test]\n    fn t() { super::real(); }\n}\n",
+    );
+
+    let untested: Vec<String> = f.run(&["untested"])["data"].as_array().unwrap().iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
+    assert!(
+        !untested.contains(&"fixture_builder".to_string()),
+        "a test-module helper was reported as untested public API: {untested:?}"
+    );
+
+    let unused: Vec<String> = f.run(&["unused"])["data"].as_array().unwrap().iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
+    assert!(!unused.contains(&"fixture_builder".to_string()), "the two disagree again: {unused:?}");
+}
+
+#[test]
+fn the_call_graph_walks_agree_on_depth_semantics() {
+    // callers/callees/affected each hand-roll the same breadth-first skeleton.
+    // They are consistent today and unifying them would cost more indirection
+    // than it saves, so this pins the invariants instead: depth 1 is a direct
+    // edge, a node is reported at its *shortest* depth, and the seed is never
+    // in its own result. A fifth walk that gets one of these wrong fails here.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "pub fn leaf() {}\npub fn mid() { leaf(); }\npub fn top() { mid(); leaf(); }\npub fn root() { top(); }\n",
+    );
+
+    let up = f.run(&["callers", "leaf", "--depth", "3"]);
+    let up: Vec<(&str, i64)> = up["data"].as_array().unwrap().iter()
+        .map(|r| (r["symbol"].as_str().unwrap(), r["depth"].as_i64().unwrap())).collect();
+    // `top` calls leaf directly *and* sits above mid: shortest depth wins.
+    assert_eq!(up, [("mid", 1), ("top", 1), ("root", 2)], "callers depth changed");
+
+    let down = f.run(&["callees", "root", "--depth", "3"]);
+    let down: Vec<(&str, i64)> = down["data"].as_array().unwrap().iter()
+        .map(|r| (r["name"].as_str().unwrap(), r["depth"].as_i64().unwrap())).collect();
+    assert_eq!(down, [("top", 1), ("leaf", 2), ("mid", 2)], "callees depth changed");
+
+    for (cmd, seed, key) in [("callers", "leaf", "symbol"), ("callees", "root", "name")] {
+        let v = f.run(&[cmd, seed, "--depth", "3"]);
+        assert!(
+            !v["data"].as_array().unwrap().iter().any(|r| r[key] == seed),
+            "{cmd} reported its own seed"
+        );
+    }
+}

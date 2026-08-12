@@ -1255,12 +1255,24 @@ fn callees_of(
             }
         }
         out.retain(|c| reach.contains(&c.path));
-        for c in &mut out {
-            c.via = Some(if target_files.contains(&c.path) {
-                "same-file".to_string()
-            } else {
-                "imported".to_string()
-            });
+        // How many reachable files define each callee name: >1 is the residual
+        // over-match this filter narrows but cannot resolve, and saying so is the
+        // difference between "this is the definition" and "one of these is".
+        let mut reachable_defs: HashMap<&str, usize> = HashMap::new();
+        for c in &out {
+            *reachable_defs.entry(c.name.as_str()).or_default() += 1;
+        }
+        let tags: Vec<&'static str> = out
+            .iter()
+            .map(|c| {
+                via_of(
+                    target_files.contains(&c.path),
+                    reachable_defs.get(c.name.as_str()).copied().unwrap_or(0),
+                )
+            })
+            .collect();
+        for (c, tag) in out.iter_mut().zip(tags) {
+            c.via = Some(tag.to_string());
         }
     }
     out.sort_by(|a, b| {
@@ -2545,18 +2557,31 @@ impl Resolver {
         let v = if self.defs.contains(file) {
             "same-file"
         } else {
-            let hits = {
-                let reach = self.graph.reachable_from(file);
-                self.defs.iter().filter(|d| reach.contains(d.as_str())).count()
-            };
-            match hits {
-                0 => "unresolved",
-                1 => "imported",
-                _ => "ambiguous",
-            }
+            let reach = self.graph.reachable_from(file);
+            via_of(false, self.defs.iter().filter(|d| reach.contains(d.as_str())).count())
         };
         self.cache.insert(file.to_string(), v);
         v
+    }
+}
+
+/// Classify a `via` tag from how many definition files of one name the anchor can
+/// reach. The single source of truth for that vocabulary.
+///
+/// It used to exist twice — here for `callers`/`references`, and as an inline
+/// two-way branch in `callees_of` — anchored in opposite directions but answering
+/// the same question. The copies had already drifted: `callees --resolved` had no
+/// `ambiguous` arm, so two reachable same-named definitions came back as two rows
+/// tagged `imported`, each reading like a confident resolution, while `callers`
+/// called the identical situation `ambiguous`. Same graph, same facts, two answers.
+fn via_of(same_file: bool, reachable_defs: usize) -> &'static str {
+    if same_file {
+        return "same-file";
+    }
+    match reachable_defs {
+        0 => "unresolved",
+        1 => "imported",
+        _ => "ambiguous",
     }
 }
 
@@ -3976,12 +4001,16 @@ pub fn cmd_untested(
     };
 
     // One lookup per distinct name, not per definition.
+    let scopes = TestScopes::load(&s.db.conn)?;
     let mut covered: HashMap<String, bool> = HashMap::new();
     let mut data: Vec<UntestedRow> = Vec::new();
     for cand in candidates {
-        // A definition that lives in a test file is test scaffolding, not
-        // production code that needs covering.
-        if is_test_path(&cand.path) {
+        // Test scaffolding is not production code that needs covering. Same rule
+        // `unused` applies, via the same predicate: this used to be a path-only
+        // check, so a `pub fn` inside a `#[cfg(test)] mod tests` in a production
+        // file was reported as untested public API — which `unused`, asking the
+        // identical question one screen away, already knew better than to do.
+        if is_test_site(&cand.path, Some(&cand.name), cand.line, &scopes) {
             continue;
         }
         let has_test = match covered.get(&cand.name) {

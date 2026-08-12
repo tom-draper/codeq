@@ -4,6 +4,91 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-12 — duplicated *operations*: two fixed, one refactor declined again
+
+Asked whether codeq has operations that mean the same thing. `clones` — the tool
+built for exactly this — found nothing worth acting on: `cmd_implementors`/
+`cmd_supertypes` are structurally identical but already share `impl_edges` and
+differ only in a field *name* the output is better for keeping (`subtype=` vs
+`supertype=`); `mcp::opt`/`optn` and `print_range`/`print_range_raw` are 6-line
+pairs that differ by type and would be worse behind a boolean parameter.
+
+That is `clones` working as designed and also its limit: it matches syntax
+shapes, and the duplication that actually bites is **semantic** — the same
+question answered twice in different code, where the copies drift.
+
+### `via` was classified twice, and the copies had already drifted
+
+`--resolved` tags each row with how it reaches a definition. `Resolver::via`
+(callers/references) emits same-file / imported / ambiguous / unresolved. An
+inline branch in `callees_of` emitted same-file / imported — **no `ambiguous`
+arm**. Same graph, same facts, and the identical situation reported two ways:
+
+```
+mod a; mod b;  fn run() { helper(); }   # a.rs and b.rs both define helper
+
+callers helper --resolved  ->  main.rs  ambiguous
+callees run --resolved     ->  a.rs  imported          # each reads as confident
+                               b.rs  imported
+```
+
+The `ambiguous` case is precisely the over-match `callees --resolved` exists to
+narrow, so the copy that lost the arm was the one that most needed it. Both now
+go through one `via_of(same_file, reachable_defs)`.
+
+The two anchors genuinely differ — Resolver asks "can this *reference's* file
+reach a def?", `callees_of` asks "can NAME's *own* file reach this callee's def?"
+— so this was never a candidate for `clones`. The shared thing is the
+vocabulary, not the traversal.
+
+### `unused` and `untested` disagreed about test scaffolding
+
+Both ask "is this definition test scaffolding, and therefore not the thing I'm
+reporting on?" `unused` used `is_test_site` (path **or** test-like name **or**
+enclosing test module); `untested` used `is_test_path` alone. So:
+
+```rust
+pub fn real() {}
+#[cfg(test)]
+mod tests { pub fn fixture_builder() {} #[test] fn t() { super::real(); } }
+```
+
+`untested` reported `fixture_builder` as untested public API. `unused`, asking
+the same question one screen away, already knew better. Now both use
+`is_test_site`.
+
+### Four hand-rolled BFS walks — left alone, deliberately
+
+`cmd_callers`, `cmd_callees`, `cmd_affected` and `cmd_path` each hand-roll the
+same breadth-first skeleton (~25 lines: seed a frontier, expand one hop, dedupe,
+tag depth, stop at `HOP_CAP`). The obvious move is to extract a generic walk.
+
+Checked for drift first, since that is the only thing that makes duplication
+*cost* anything: depth 1 means a direct edge in all of them, every node is
+reported at its shortest depth, no walk emits its own seed, and `HOP_CAP` is
+applied in all four. They agree.
+
+A generic version would need closures for the expand function, the dedupe key
+and the row constructor, to serve three call sites with three row types and two
+different answers to "what about a caller with no enclosing symbol" — five type
+parameters to remove a loop that is correct in all four copies. Same verdict as
+the `commands.rs` split, on the same grounds. What went in instead is a test
+(`the_call_graph_walks_agree_on_depth_semantics`) that pins the invariants across
+the walks, so a fifth one that gets them wrong fails loudly. Cheaper than the
+abstraction and catches the same class of bug.
+
+### Reported, not fixed
+
+- **`callers` rows key the found definition as `symbol`; `callees` uses `name`.**
+  Mirror commands, same concept, different key. `symbol` is faithful to how a
+  caller is computed (the enclosing symbol of a call site) and matches
+  `references`, so it isn't wrong — but an agent consuming both pays for it.
+  Renaming breaks `codeq.result.v1` and every `--fields` invocation, so it wants
+  a deliberate schema decision, not a drive-by.
+- **`stats` is a strict subset of `map`** (`files`, `bytes`, `by_language` are
+  all in `map`) and appears in neither CLAUDE.md nor SKILL.md — but it is an MCP
+  tool, so removing it is a breaking change to that surface.
+
 ## 2026-08-11 — a bug hunt on the output layer: four found, all in what we'd just shipped
 
 Went looking for bugs rather than features. All four live in the two output flags
