@@ -43,6 +43,9 @@ benchmarks — not as a step you run before querying.
   C#, Python, C, C++, PHP, Kotlin and Swift; the remaining languages return just
   the type. Python has no declaration site, so a member is its earliest class-body
   or `self.x =` assignment (`other.x =` is not a declaration).
+- **`__all__` and `__path__` are private, not API.** Metadata the interpreter
+  reads, declared once and referenced never, so they stay out of `api` and out of
+  `unused`. Not a blanket dunder rule — `__version__` *does* get referenced.
 - **Python: a module-scope binding is a definition too**, on the same rule as
   JS/TS below. `DATA_DIR = Path(...)`, a 52-entry `alias` dict, every settings
   constant — all `constant` facts, so `definitions`/`outline`/`api` see them.
@@ -96,7 +99,8 @@ benchmarks — not as a step you run before querying.
     prose and code are both wanted.
 - **Docs are indexed too.** A markdown heading is a definition, so `outline
   README.md` is a table of contents, `read README.md` folds to that ToC with each
-  section's line range, `read README.md --symbol "Output contract"` returns just
+  section's line range, `read README.md --symbol "Output contract"` (or
+  `"## Output contract"`, the form `outline` prints) returns just
   that section (read this instead of the whole file), and `at README.md:230` says
   which section a line is in. Search hits carry their `[Section]`. `--in strings`
   searches fenced examples, `--in comments` searches prose (`--in code` is
@@ -218,8 +222,9 @@ benchmarks — not as a step you run before querying.
     `codeq callees NAME --depth N` (down) — BFS to N hops, each result tagged
     with its `depth`; text output indents by hop. For impact / reachability.
   - **Call chain between two symbols:** `codeq callpath FROM TO` — the shortest chain
-    where FROM calls … calls TO, shown step by step (empty if unreachable within
-    `--max-depth`, default 8). Reachability *with the route*, vs `callees --depth`
+    where FROM calls … calls TO, shown step by step. An empty result says *which*
+    of the four causes it was: a misspelled FROM, a misspelled TO, both real but
+    unconnected, or a chain past `--max-depth` (default 8). Reachability *with the route*, vs `callees --depth`
     which only says whether/at what depth.
 - **Who implements / extends a type:** `codeq implementors NAME` — the inheritance
   edges the call graph misses, across 18 languages (`impl T for X` in Rust,

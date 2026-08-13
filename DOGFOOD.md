@@ -4,6 +4,89 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-13 — Five from the third `persona` pass, and the check that kept failing
+
+### The process failure, third occurrence
+
+The entry below sat unread at the top of this file for two commits. It came in
+via `bb4a0ee` — mine — on the same `git add -A` habit that did it in `52019bb`,
+and that I caught in `2c26519` only by counting headings in the diff first. Asked
+to double-check, I looked at `git status` and mtime, found both clean, and said
+so twice. They *were* clean: the unread content was already committed. Those
+commands answer "has anything changed since my last commit", which is a different
+question from "is there anything here I have not read". Only the headings answer
+that, and the check costs one command.
+
+### `callpath` explained nothing — the widest of the empty-note family
+
+Four causes, one output: no stdout, no stderr, exit 0, and no `note` under
+`--json` either. A misspelled FROM, a misspelled TO, a real pair that does not
+connect, and a chain past `--max-depth` were indistinguishable, on the command
+where an empty answer has the *most* plausible explanations. It now names which,
+and the unreachable case reports how many symbols the walk explored so "raise
+--max-depth" and "these genuinely do not connect" are separable.
+
+The reporter's framing is the durable part: the wrong `references` note fixed
+this morning is a **class**, not an instance, and they found two more siblings in
+an hour of ordinary use.
+
+### `graph`'s note was about somebody else's repo — and it was mine
+
+Written today. On a Python-only tree it said "Go, C and Zig have no inheritance
+at all", which reads as *your language is unsupported* when the truth is *your
+code has no edges*. It now partitions the languages actually present into those
+that can produce relation edges and those that cannot, and says which case this
+is. Writing a helpful note about the general case is exactly how you produce a
+misleading one about the specific case in front of the reader.
+
+### `__all__` was public API and dead code, in every Python package that has one
+
+Declared once, referenced never, by construction — the same sentence that already
+excludes SQL indexes and triggers. Now private and excluded, via a three-name list
+rather than a blanket dunder rule: `__version__` *is* referenced, and hiding it
+would be the opposite mistake. The reporter drew that distinction themselves,
+which is why the fix is a list and not a pattern.
+
+### Copy-paste from `outline` into `--symbol` failed on markdown
+
+`outline` renders a heading's *signature* — the source line, `## Heading` —
+while `--symbol` stores the name bare. The obvious workflow was the broken one.
+`--symbol` now accepts the copied form. Nothing in any supported language
+declares a name starting with `#`, so this can only rescue the case it is for.
+
+### And `alias =`
+
+A 52-entry dict, the substance of its file, rendered as a bare `alias =`. The
+fold is right; the rendering read like the renderer had given up. It now carries
+the bracket the value opens with — `alias = {…}`, `ITEMS = […]` — which is three
+characters for the one fact that was missing. Single-line values still show
+whole.
+
+Item #4 from that entry (`api --compare-to` on re-exported *constants*) needed no
+work: the fix landed in `bb4a0ee` reads import facts by last segment, so it
+covers constants and functions alike. Verified rather than assumed.
+
+### Round four, which landed while this was being written
+
+No defect in it — a boundary, stated as one: codeq indexes the working tree,
+while the Go build linked a *published* sibling module resolved from the module
+cache, so `read core.go --symbol Shutdown` was truthfully describing code the
+adapters do not run. Forty minutes of deadlock hunting, and the runtime stack was
+the only thing that revealed it.
+
+The suggestion — annotate an intra-repo import that resolves to a published
+version rather than the local module — is real, and I am not building it today.
+It requires per-language dependency resolution (read `go.mod`, compare module
+paths, notice a missing `replace`), which is the thing codeq deliberately does
+not do; its import graph is stem-matching and says so. A Go-only, heuristic
+version of "your build links something else" would be a confident answer about
+the one question where being wrong costs the most, and the entry itself asks for
+a thought rather than a feature. Recorded as the boundary it is.
+
+The fourth entry in a row to arrive mid-task, and the second the heading check
+caught before a commit. That check is now the only reason this file's contents
+and my commit messages agree.
+
 ## 2026-08-12 — Third `persona` pass: the fixes hold, and the empty-note bug has siblings
 
 Same external repo, third session. I re-ran every finding from the two entries
@@ -4809,3 +4892,53 @@ The real cause is that it's outside the current index. "file not found" sends yo
 checking the path; "not in the current index (run from /home/tomdraper/dev/codeq)" sends
 you to the fix. Same class as the malformed-query note further up — the message describes
 the lookup that failed rather than the state that caused it.
+
+---
+
+## 2026-08-12 — round four: the index is the source tree, not the linked build
+
+This round turned the round-three shutdown finding into a real fix across the Go
+client family, and in doing so hit the sharpest codeq limitation I've found on this
+repo — not a bug, a boundary worth stating.
+
+### The win, continued: `search` found the gap, `read` scoped the fix
+
+The lead was still `search "Shutdown" analytics/go` from last round (drain hook
+defined once, never called by an adapter). Turning it into a fix meant exposing the
+client from four adapters and making `core.Shutdown()` actually block until the
+final upload — and codeq's per-symbol `read`/`about` across the five modules was how
+I kept the refactor consistent without opening whole files. Standard, and it worked.
+
+### The limitation: codeq indexes the working tree; the Go build links a *pinned module version*
+
+After wiring the adapters to call `client.Shutdown()`, the tests **deadlocked**. codeq
+had told me — correctly — that the local `core.go` at HEAD has a fixed, non-deadlocking
+`Shutdown` (`read core.go --symbol Shutdown` showed it plainly). But the deadlock stack
+pointed at `core@v0.0.0-20251222101928/core.go:139` — the adapters don't build against
+the sibling `../core` I was reading; they pin a **published** module version resolved
+from the gitignored module cache, and that published version predates the deadlock fix.
+
+codeq could not have shown this, and shouldn't pretend to: the resolved dependency is a
+cached artifact, not this repo's tracked code, so it is correctly outside the index. But
+it means a symbol query answers *"what does the source in front of you say"* — not
+*"what will this module actually link"* — and on a multi-module repo where one module
+depends on a **published** sibling instead of the local one, those two questions have
+different answers. Every other round, source-truth and build-truth coincided and the
+distinction never surfaced; here `read`/`about` on `core` were describing code the
+adapters don't run. The runtime stack (module-cache path in the frame) was the only
+thing that revealed it. `--root <cache-dir> api` is the manual bridge for reading a
+dependency, but nothing connects an *import* to the specific cached version it resolves
+to, or flags "this sibling module is shadowed by a pinned release." Worth a thought:
+a `deps`/`imports` annotation that marks an intra-repo import which resolves to a
+*published* version rather than the local module would have turned a 40-minute deadlock
+hunt into one line.
+
+### Smaller win: a config convention audit in one grep
+
+`replace` directives are how this repo's `server/` modules use local siblings; the
+analytics adapters lacked them, which is *why* they linked the stale published core.
+One repo-wide search over `go.mod` files established both the convention and its
+absence — the kind of cross-cutting "is this consistent everywhere" question that is
+tedious by hand and a single query here. codeq remains at its best when the question
+is a fact spanning many files; it is only the dependency-resolution boundary above
+where the map stops matching the territory.

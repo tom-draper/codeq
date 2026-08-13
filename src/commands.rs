@@ -1690,7 +1690,50 @@ pub fn cmd_callpath(
     }
 
     if !found {
-        return s.emit(Vec::<PathStep>::new());
+        // Four causes, one output. `callpath` is the command where an empty
+        // answer has the most plausible explanations — a misspelled FROM, a
+        // misspelled TO, a real pair that simply does not connect, or a chain
+        // longer than `--max-depth` — and it used to distinguish none of them:
+        // no stdout, no stderr, exit 0, and no `note` under `--json` either.
+        // Someone who had not already read both files could only assume a typo.
+        let from_sites = definition_sites(&s, from)?;
+        let to_sites = definition_sites(&s, to)?;
+        let where_ = |sites: &[(String, i64)]| {
+            sites
+                .iter()
+                .map(|(p, l)| format!("{p}:{l}"))
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let note = match (from_sites.is_empty(), to_sites.is_empty()) {
+            (true, true) => format!("neither '{from}' nor '{to}' is defined in this repository"),
+            (true, false) => format!(
+                "no symbol named '{from}' (the FROM end); '{to}' is defined at {}",
+                where_(&to_sites)
+            ),
+            (false, true) => format!(
+                "no symbol named '{to}' (the TO end); '{from}' is defined at {}",
+                where_(&from_sites)
+            ),
+            (false, false) if path.is_some_and(|f| !from_sites.iter().any(|(p, _)| p.contains(f))) => {
+                format!(
+                    "'{from}' is defined at {} but nothing matches --path {}",
+                    where_(&from_sites),
+                    path.unwrap_or_default(),
+                )
+            }
+            // Both real and both reachable-in-principle: say how far the walk got,
+            // because "raise --max-depth" and "they genuinely do not connect" are
+            // different next actions.
+            (false, false) => format!(
+                "both are defined ('{from}' at {}, '{to}' at {}) but no call chain reaches one from the other within --max-depth {max_depth} ({} symbols explored)",
+                where_(&from_sites),
+                where_(&to_sites),
+                visited.len(),
+            ),
+        };
+        return s.emit_noted(Vec::<PathStep>::new(), Some(note));
     }
 
     // Rebuild the chain from `to` back to `from`, then reverse.
@@ -2455,9 +2498,23 @@ pub fn cmd_read(
             "SELECT start_line, end_line FROM facts
              WHERE path = ?1 AND name = ?2 AND kind <> 'import' ORDER BY start_line",
         )?;
-        let ranges: Vec<(i64, i64)> = stmt
+        let mut ranges: Vec<(i64, i64)> = stmt
             .query_map((&rel, name), |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<std::result::Result<_, _>>()?;
+        // A markdown heading is stored bare, but `outline` renders its signature —
+        // the raw source line, `## Heading` — so copying a heading out of
+        // `outline` and into `--symbol` is the obvious workflow and it failed.
+        // Accept the copied form: strip the leading `#` run and retry. Nothing in
+        // any supported language declares a name starting with `#`, so this can
+        // only ever rescue the case it is for.
+        if ranges.is_empty() {
+            let bare = name.trim_start_matches('#').trim();
+            if bare != name && !bare.is_empty() {
+                ranges = stmt
+                    .query_map((&rel, bare), |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<std::result::Result<_, _>>()?;
+            }
+        }
         if ranges.is_empty() {
             return Err(anyhow!("no definition named '{name}' in {rel}"));
         }
@@ -3517,15 +3574,39 @@ pub fn cmd_graph(
         return Ok(());
     }
 
-    let note = edges.is_empty().then(|| {
+    // The note used to name Go, C and Zig unconditionally — so on a Python-only
+    // tree it read as "your language is unsupported" when the truth was "your
+    // code has no edges". That is the exact failure the don't-be-misled section
+    // exists to prevent, and it was my own note. Answer about *this* repo:
+    // separate the languages here that cannot produce edges from the ones that
+    // can and did not.
+    let note = if edges.is_empty() {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT DISTINCT language FROM files WHERE language IS NOT NULL ORDER BY language",
+        )?;
+        let langs: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let (capable, incapable): (Vec<&String>, Vec<&String>) = langs
+            .iter()
+            .partition(|l| crate::facts::support(l).is_some_and(|sup| sup.relations));
         let what = relation.map(|r| format!("'{r}' ")).unwrap_or_default();
-        format!(
-            "no {what}relation edges{} — Go, C and Zig have no inheritance at all, \
-             and a language with no `REFERENCES` or `impl` has nothing to graph \
-             (see `codeq capabilities`)",
-            path.map(|p| format!(" under '{p}'")).unwrap_or_default()
-        )
-    });
+        let scope = path.map(|p| format!(" under '{p}'")).unwrap_or_default();
+        Some(if capable.is_empty() && !incapable.is_empty() {
+            format!(
+                "no {what}relation edges{scope} — codeq extracts no inheritance edges for {}, which is what this repository is written in, so this is not evidence there are none",
+                incapable.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("/"),
+            )
+        } else {
+            format!(
+                "no {what}relation edges{scope} — {} does produce them, so this repository genuinely has no inheritance or foreign-key edges to graph",
+                capable.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("/"),
+            )
+        })
+    } else {
+        None
+    };
     s.emit_noted(edges, note)
 }
 
@@ -4122,7 +4203,7 @@ pub fn cmd_unused(
         rows.collect::<std::result::Result<Vec<_>, _>>()?
             .into_iter()
             .filter(|(row, lang)| {
-                !crate::facts::unreferenced_by_design(lang.as_deref(), &row.kind)
+                !crate::facts::unreferenced_by_design(lang.as_deref(), &row.kind, &row.name)
             })
             .map(|(row, _)| row)
             .collect()

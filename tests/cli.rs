@@ -168,7 +168,7 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "rows", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v2");
-    assert_eq!(v["index"]["schema"], 29);
+    assert_eq!(v["index"]["schema"], 30);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
@@ -7015,4 +7015,116 @@ fn a_file_outside_the_index_says_so_rather_than_not_found() {
     let gone = f.raw(&["outline", "nosuchfile.rs"]);
     assert!(String::from_utf8_lossy(&gone.stderr).contains("file not found in this index"));
     let _ = std::fs::remove_file(&outside);
+}
+
+#[test]
+fn callpath_says_which_of_the_four_reasons_it_found_nothing() {
+    // The command where an empty answer has the most plausible causes — a
+    // misspelled FROM, a misspelled TO, a real pair that does not connect, or a
+    // chain past --max-depth — and it distinguished none of them: no stdout, no
+    // stderr, exit 0, and no `note` under --json either.
+    let f = Fixture::new();
+    f.write("a.py", "def alpha():\n    return 1\n\ndef beta():\n    return 2\n");
+
+    let note = |args: &[&str]| -> String {
+        let mut v = vec!["callpath"];
+        v.extend_from_slice(args);
+        String::from_utf8_lossy(&f.raw(&v).stderr).to_string()
+    };
+    assert!(note(&["zzznotreal", "alpha"]).contains("(the FROM end)"));
+    assert!(note(&["alpha", "zzznotreal"]).contains("(the TO end)"));
+    assert!(note(&["zzznotreal", "alsonotreal"]).contains("neither"));
+    let unreachable = note(&["alpha", "beta"]);
+    assert!(unreachable.contains("both are defined"), "{unreachable}");
+    assert!(unreachable.contains("--max-depth"), "raise it or give up: {unreachable}");
+
+    // The note reaches --json too, where there was nothing at all before.
+    let v = f.run(&["callpath", "alpha", "beta"]);
+    assert!(v["note"].as_str().unwrap_or_default().contains("both are defined"), "{v}");
+}
+
+#[test]
+fn an_empty_graph_explains_this_repo_not_some_other_one() {
+    // The note named Go, C and Zig unconditionally, so on a Python-only tree it
+    // read as "your language is unsupported" when the truth was "your code has
+    // no edges".
+    let f = Fixture::new();
+    f.write("a.py", "class A:\n    pass\n\nclass B:\n    pass\n");
+    let py = String::from_utf8_lossy(&f.raw(&["graph"]).stderr).to_string();
+    assert!(py.contains("python does produce them"), "{py}");
+    assert!(!py.contains("Zig"), "not about languages that aren't here: {py}");
+
+    let g = Fixture::new();
+    g.write("m.go", "package main\n\nfunc main() {}\n");
+    let go = String::from_utf8_lossy(&g.raw(&["graph"]).stderr).to_string();
+    assert!(go.contains("no inheritance edges for go"), "{go}");
+    assert!(go.contains("not evidence"), "{go}");
+}
+
+#[test]
+fn python_names_the_interpreter_reads_are_not_api_or_dead_code() {
+    // `__all__` is declared in every package that curates its exports and named
+    // nowhere else, by construction — the same sentence that already excludes
+    // SQL indexes. `__version__` is not: that one gets referenced.
+    let f = Fixture::new();
+    f.write(
+        "pkg/__init__.py",
+        "__all__ = [\"a\"]\n__version__ = \"1.0\"\n\ndef a():\n    return 1\n",
+    );
+
+    let dead = field_set(&f.run(&["unused"]), "name");
+    assert!(!dead.contains(&"__all__".to_string()), "{dead:?}");
+    assert!(dead.contains(&"__version__".to_string()), "not a blanket dunder rule: {dead:?}");
+
+    let api = field_set(&f.run(&["api", "pkg/__init__.py"]), "name");
+    assert!(!api.contains(&"__all__".to_string()), "metadata, not surface: {api:?}");
+    assert!(api.contains(&"a".to_string()), "{api:?}");
+}
+
+#[test]
+fn a_heading_copied_out_of_outline_works_as_a_symbol() {
+    // `outline` renders a heading's signature (`## Heading`); `--symbol` stores
+    // it bare. Copy-paste between them is the obvious workflow and it failed.
+    let f = Fixture::new();
+    f.write("doc.md", "# Title\n\nintro\n\n## Second Part\n\nbody text\n");
+
+    // `read` prints source, not the row envelope, so compare the bytes.
+    let bare = f.raw(&["read", "doc.md", "--symbol", "Second Part"]);
+    assert!(bare.status.success());
+    let bare_out = String::from_utf8_lossy(&bare.stdout).to_string();
+    assert!(bare_out.contains("body text"), "{bare_out}");
+    let copied = f.raw(&["read", "doc.md", "--symbol", "## Second Part"]);
+    assert!(copied.status.success(), "the form `outline` prints must work too");
+    assert_eq!(
+        String::from_utf8_lossy(&copied.stdout),
+        bare_out,
+        "both forms, one answer"
+    );
+
+    // A name that genuinely doesn't exist still fails.
+    assert!(!f.raw(&["read", "doc.md", "--symbol", "## Nope"]).status.success());
+}
+
+#[test]
+fn a_folded_multiline_constant_says_what_it_folded() {
+    // A 52-entry dict rendered as a bare `alias =`, which reads like the
+    // renderer gave up rather than like a deliberate fold.
+    let f = Fixture::new();
+    f.write("m.py", "alias = {\n  \"a\": 1,\n  \"b\": 2,\n}\nITEMS = [\n  1,\n  2,\n]\nVERSION = \"1.0\"\n");
+
+    let sigs: std::collections::HashMap<String, String> = f.run(&["outline", "m.py"])["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["name"].as_str().unwrap().to_string(),
+                r["signature"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    assert!(sigs["alias"].ends_with("{…}"), "{sigs:?}");
+    assert!(sigs["ITEMS"].ends_with("[…]"), "{sigs:?}");
+    // A single-line value is still worth showing whole.
+    assert!(sigs["VERSION"].contains("1.0"), "{sigs:?}");
 }

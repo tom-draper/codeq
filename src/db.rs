@@ -69,7 +69,9 @@ use rusqlite::Connection;
 // v29: Python module-scope bindings are definitions, and a member of a private
 // type is private — both change what is extracted, so existing indexes must
 // reparse to see it.
-pub const SCHEMA_VERSION: i64 = 29;
+// v30: Python `__all__` and friends are private (metadata the interpreter reads,
+// not surface), and a folded multi-line constant's signature carries its shape.
+pub const SCHEMA_VERSION: i64 = 30;
 
 pub struct Db {
     pub conn: Connection,

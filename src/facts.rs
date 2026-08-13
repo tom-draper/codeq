@@ -409,7 +409,11 @@ impl LangSpec {
                         start_col: start.column,
                         end_line: end.row + 1,
                         end_col: end.column,
-                        signature: signature_of(src, node, body),
+                        signature: with_value_shape(
+                            signature_of(src, node, body),
+                            kind,
+                            val,
+                        ),
                         doc: doc_of(src, self.lang, node, body),
                         source: self.source.clone(),
                         confidence: 1.0,
@@ -1373,13 +1377,25 @@ pub const UNREFERENCED_BY_DESIGN: &[(&str, Option<&str>)] = &[
     ("sql", Some("variant")),
 ];
 
+/// Names the *runtime* reads and code never references. `__all__` is declared in
+/// every Python package that curates its exports and named nowhere else, by
+/// construction — the same sentence that already excludes SQL indexes and
+/// triggers. A short list rather than a blanket dunder rule: `__version__` *is*
+/// referenced, routinely, and hiding it would be the opposite mistake.
+pub const RUNTIME_READ_NAMES: &[(&str, &str)] = &[
+    ("python", "__all__"),
+    ("python", "__path__"),
+    ("python", "__getattr__"),
+];
+
 /// Whether `unused` should stay silent about a definition because nothing in
 /// this repository was ever going to reference it. See [`UNREFERENCED_BY_DESIGN`].
-pub fn unreferenced_by_design(language: Option<&str>, kind: &str) -> bool {
+pub fn unreferenced_by_design(language: Option<&str>, kind: &str, name: &str) -> bool {
     let Some(lang) = language else { return false };
     UNREFERENCED_BY_DESIGN
         .iter()
         .any(|(l, k)| *l == lang && k.is_none_or(|k| k == kind))
+        || RUNTIME_READ_NAMES.iter().any(|(l, n)| *l == lang && *n == name)
 }
 
 /// What codeq can extract for one language.
@@ -1622,6 +1638,28 @@ fn enclosed_by_private_type(lang: &str, node: Node, src: &[u8]) -> bool {
         cur = n.parent();
     }
     false
+}
+
+/// Put back a hint of what a folded multi-line value *is*.
+///
+/// A constant's signature stops where its value begins, which reads well when a
+/// wrapper survives the cut (`const Card = memo(`) and badly when nothing does:
+/// a 52-entry dict — the substance of its file — rendered as a bare `alias =`,
+/// which looks like the renderer gave up rather than like a deliberate fold.
+/// Appending the bracket the value opens with costs three characters and says
+/// which kind of thing was folded.
+fn with_value_shape(sig: String, kind: &str, val: Option<Node>) -> String {
+    if kind != "constant" || !sig.trim_end().ends_with('=') {
+        return sig;
+    }
+    let Some(v) = val else { return sig };
+    let shape = match v.kind() {
+        "dictionary" | "object" | "set" | "block_mapping" => "{…}",
+        "list" | "array" | "list_display" => "[…]",
+        "tuple" | "arguments" | "parenthesized_expression" => "(…)",
+        _ => return sig,
+    };
+    format!("{} {shape}", sig.trim_end())
 }
 
 /// Whether a definition carries a test attribute — the structural answer to a
@@ -1870,6 +1908,13 @@ fn visibility_of(lang: &str, name: &str, def: Node, src: &[u8]) -> Option<String
             None => None,
         },
         "python" => {
+            // A dunder is normally public — `__init__`, `__enter__` and friends
+            // are how a type is used. But the module-level names the *interpreter*
+            // reads are metadata, not surface: listing `__all__` as public API
+            // says the module exports a name nobody can call.
+            if RUNTIME_READ_NAMES.iter().any(|(l, n)| *l == "python" && *n == name) {
+                return s("private");
+            }
             let dunder = name.starts_with("__") && name.ends_with("__");
             if name.starts_with('_') && !dunder {
                 s("private")
