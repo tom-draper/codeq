@@ -192,6 +192,33 @@ impl Graph {
             .is_some_and(|es| es.iter().any(|e| e.module == module))
     }
 
+    /// Direct internal targets of an import whose path explicitly contains the
+    /// single-segment module name `receiver`. This is deliberately narrower
+    /// than general dependency resolution: it is used to disambiguate a call
+    /// like `context::build()` only when `context` is actually an imported
+    /// module. Value receivers such as `client.build()` stay ambiguous rather
+    /// than being mistaken for a module based on their spelling alone.
+    pub fn direct_targets_for_receiver<'a>(
+        &'a self,
+        from: &str,
+        receiver: &str,
+    ) -> HashSet<&'a str> {
+        if receiver.is_empty()
+            || !receiver
+                .bytes()
+                .all(|b| b == b'_' || b.is_ascii_alphanumeric())
+        {
+            return HashSet::new();
+        }
+        self.edges
+            .get(from)
+            .into_iter()
+            .flatten()
+            .filter(|edge| segments(&edge.module).contains(&receiver))
+            .map(|edge| edge.to.as_str())
+            .collect()
+    }
+
     pub fn contains(&self, file: &str) -> bool {
         self.edges.contains_key(file)
     }

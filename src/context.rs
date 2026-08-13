@@ -6,9 +6,9 @@
 //!
 //! - **Seeds are explicit.** codeq does not guess task intent. The agent names
 //!   symbols, or asks for changed code; we assemble from that.
-//! - **Ranking is deterministic and explainable.** Seeds first, then a single
-//!   name-based expansion hop (definitions referenced by name inside the seed
-//!   chunks), then a stable path+line tiebreak. No hidden semantic scoring.
+//! - **Ranking is deterministic and explainable.** Seeds first, then syntax
+//!   calls, then lexical references from the seed chunks, each with a stable
+//!   path+line tiebreak. No hidden semantic scoring.
 //! - **Omissions are visible.** When the budget truncates, dropped candidates
 //!   are reported so the agent can request the next slice instead of silently
 //!   missing code.
@@ -203,21 +203,26 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         }
     }
 
-    // One-hop expansion: definitions referenced by name inside the seed chunks,
-    // that are not already seeds. Looked up by name (indexed), never a full scan.
+    // One-hop expansion: syntax-derived calls first, then the existing lexical
+    // identifiers as a conservative supplement for types, constants and opaque
+    // grammars. Both resolve through the facts(name) index, never a full scan.
     if req.expand {
-        let mut refs: HashSet<String> = HashSet::new();
+        let mut calls = called_names(db, &defs[..seed_count])?;
+        let mut syntax_names = calls.names();
+        let mut lexical: HashSet<String> = HashSet::new();
         for t in seed_text.values() {
-            collect_identifiers(t, &mut refs);
+            collect_identifiers(t, &mut lexical);
         }
         let seed_names: HashSet<&str> = defs[..seed_count].iter().map(|d| d.name.as_str()).collect();
-        refs.retain(|r| !seed_names.contains(r.as_str()));
+        calls.unscoped.retain(|r| !seed_names.contains(r.as_str()));
+        calls.scoped.retain(|r, _| !seed_names.contains(r.as_str()));
+        syntax_names.retain(|r| !seed_names.contains(r.as_str()));
+        lexical.retain(|r| !seed_names.contains(r.as_str()) && !syntax_names.contains(r));
         let seed_keys: HashSet<(String, usize)> = defs[..seed_count]
             .iter()
             .map(|d| (d.path.clone(), d.start_byte))
             .collect();
 
-        let names: Vec<String> = refs.into_iter().collect();
         let mut neighbors: Vec<Def> = Vec::new();
         let mut added: HashSet<(String, usize)> = HashSet::new();
         // Expansion is by name, so a seed mentioning `new` or `open` pulls in
@@ -240,21 +245,42 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         } else {
             None
         };
-        for d in defs_by_column(db, "name", &names)? {
-            if let Some(r) = &reach {
-                if !r.contains(&d.path) {
-                    continue;
+        let mut add_group = |
+            names: HashSet<String>,
+            only_in: Option<&HashMap<String, HashSet<String>>>
+        | -> Result<()> {
+            let mut names: Vec<String> = names.into_iter().collect();
+            names.sort();
+            let mut group = defs_by_column(db, "name", &names)?;
+            group.sort_by(|a, b| {
+                (a.name.as_str(), a.path.as_str(), a.start_line)
+                    .cmp(&(b.name.as_str(), b.path.as_str(), b.start_line))
+            });
+            for d in group {
+                if let Some(paths) = only_in.and_then(|targets| targets.get(&d.name)) {
+                    if !paths.contains(&d.path) {
+                        continue;
+                    }
+                }
+                if let Some(r) = &reach {
+                    if !r.contains(&d.path) {
+                        continue;
+                    }
+                }
+                let key = (d.path.clone(), d.start_byte);
+                if !seed_keys.contains(&key) && added.insert(key) {
+                    neighbors.push(d);
                 }
             }
-            let key = (d.path.clone(), d.start_byte);
-            if !seed_keys.contains(&key) && added.insert(key) {
-                neighbors.push(d);
-            }
-        }
-        neighbors.sort_by(|a, b| {
-            (a.name.as_str(), a.path.as_str(), a.start_line)
-                .cmp(&(b.name.as_str(), b.path.as_str(), b.start_line))
-        });
+            Ok(())
+        };
+        // A module-qualified syntax call is more specific than a bare name:
+        // `context::build()` can be tied to the direct `context` import, while
+        // an unqualified `build()` deliberately remains a conservative superset.
+        let scoped_names = calls.scoped.keys().cloned().collect();
+        add_group(scoped_names, Some(&calls.scoped))?;
+        add_group(calls.unscoped, None)?;
+        add_group(lexical, None)?;
         neighbors.truncate(MAX_NEIGHBORS);
         defs.extend(neighbors);
     }
@@ -328,7 +354,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         modes,
         seeds,
         expansion: if req.expand {
-            "one-hop: definitions referenced by name in seed chunks"
+            "one-hop: syntax calls first, then lexical references in seed chunks"
         } else {
             "disabled"
         },
@@ -512,6 +538,63 @@ fn defs_by_column(db: &Db, column: &str, values: &[String]) -> Result<Vec<Def>> 
         let rows = stmt.query_map(params.as_slice(), row_to_def)?;
         for r in rows {
             out.push(r?);
+        }
+    }
+    Ok(out)
+}
+
+/// Names called within the seed definitions, read from the syntax-derived
+/// callsite index. One statement is reused for every seed; the byte bounds keep
+/// a class/module seed from accidentally borrowing calls outside its own span.
+struct CalledNames {
+    /// Bare calls, calls on values, and external/unknown receivers. They retain
+    /// the historical name-based expansion because no repository file is a
+    /// safe target to prefer.
+    unscoped: HashSet<String>,
+    /// Calls on a directly imported, single-segment module, keyed by callee
+    /// name and narrowed to the module's resolved internal files.
+    scoped: HashMap<String, HashSet<String>>,
+}
+
+impl CalledNames {
+    fn names(&self) -> HashSet<String> {
+        self.unscoped
+            .iter()
+            .chain(self.scoped.keys())
+            .cloned()
+            .collect()
+    }
+}
+
+fn called_names(db: &Db, seeds: &[Def]) -> Result<CalledNames> {
+    let mut stmt = db.conn.prepare(
+        "SELECT name, receiver FROM calls WHERE path = ?1 AND start_byte >= ?2 AND start_byte < ?3",
+    )?;
+    let graph = crate::commands::load_dep_graph(db)?;
+    let mut out = CalledNames { unscoped: HashSet::new(), scoped: HashMap::new() };
+    for seed in seeds {
+        let rows = stmt.query_map(
+            rusqlite::params![
+                &seed.path,
+                seed.start_byte as i64,
+                seed.end_byte as i64
+            ],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+        )?;
+        for row in rows {
+            let (name, receiver) = row?;
+            let targets = receiver
+                .as_deref()
+                .map(|receiver| graph.direct_targets_for_receiver(&seed.path, receiver))
+                .unwrap_or_default();
+            if targets.is_empty() {
+                out.unscoped.insert(name);
+            } else {
+                out.scoped
+                    .entry(name)
+                    .or_default()
+                    .extend(targets.into_iter().map(str::to_string));
+            }
         }
     }
     Ok(out)

@@ -432,6 +432,28 @@ fn extracts_rust_symbols_and_imports() {
 }
 
 #[test]
+fn rust_parser_recovery_keeps_definitions_after_a_valid_trailing_closure_comma() {
+    // Rust accepts a trailing comma in closure parameters. Older bundled
+    // Tree-sitter Rust grammars recover by wrapping the rest of the file in an
+    // ERROR node; dropping every definition after that makes the index lie.
+    let f = Fixture::new();
+    f.write(
+        "lib.rs",
+        "use std::collections::{HashMap, HashSet};\n\
+         fn before() {}\n\
+         fn uses_closure() {\n\
+             let _f = |\n\
+                 _value: HashSet<String>,\n\
+                 _paths: Option<&HashMap<String, HashSet<String>>>,\n\
+             | -> Result<(), ()> { Ok(()) };\n\
+         }\n\
+         pub fn after() {}\n",
+    );
+    let names = field_set(&f.run(&["definitions", "after"]), "name");
+    assert_eq!(names, ["after"], "valid Rust after parser recovery disappeared: {names:?}");
+}
+
+#[test]
 fn ruby_require_is_an_import() {
     // Ruby has no import statement — `require`/`require_relative` are method
     // calls — but they are its import mechanism, so codeq captures them (guarded
@@ -918,6 +940,59 @@ fn callees_resolved_prunes_unreachable_same_named_defs() {
     assert!(rows.iter().any(|r| r["path"] == "core.rs" && r["via"] == "same-file"), "{rows:?}");
     assert!(!rows.iter().any(|r| r["path"] == "orphan.rs"),
             "unreachable same-named callee should be pruned: {rows:?}");
+}
+
+#[test]
+fn callees_use_an_imported_module_receiver_to_narrow_same_named_defs() {
+    let f = Fixture::new();
+    f.write("context.rs", "pub fn build() {}\n");
+    f.write("other.rs", "pub fn build() {}\n");
+    f.write(
+        "app.rs",
+        "use crate::context;\npub fn run() { context::build(); }\n",
+    );
+
+    let paths = field_set(&f.run(&["callees", "run"]), "path");
+    assert_eq!(paths, ["context.rs"], "module-qualified call was not narrowed: {paths:?}");
+}
+
+#[test]
+fn callees_do_not_treat_fields_or_variants_as_callable_definitions() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct Worker { run: fn() }\n\
+         enum State { run }\n\
+         fn run() {}\n\
+         fn caller() { run(); }\n",
+    );
+
+    let rows = f.run(&["callees", "caller"])["data"].as_array().unwrap().clone();
+    let runs: Vec<&Value> = rows.iter().filter(|r| r["name"] == "run").collect();
+    assert_eq!(runs.len(), 1, "a call should resolve only to callable definitions: {rows:?}");
+    assert_eq!(runs[0]["kind"], "function");
+}
+
+#[test]
+fn dollar_prefixed_javascript_identifiers_have_exact_boundaries() {
+    let f = Fixture::new();
+    f.write(
+        "app.js",
+        "export const $ZodError = () => {};\n\
+         function caller() { $ZodError(); }\n\
+         const almost$ZodError = 1;\n",
+    );
+
+    let refs = f.run(&["references", "$ZodError"]);
+    let rows = refs["data"]["references"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "definition and call only: {refs}");
+    assert!(rows.iter().any(|r| r["definition"] == true));
+
+    let callers = f.run(&["callers", "$ZodError", "--calls"]);
+    assert_eq!(field_set(&callers, "name"), vec!["caller".to_string()], "{callers}");
+
+    let word = f.run(&["search", "$ZodError", "--fixed", "--word"]);
+    assert_eq!(word["data"]["matches"].as_array().unwrap().len(), 2, "{word}");
 }
 
 #[test]
@@ -3169,6 +3244,46 @@ fn context_expands_to_referenced_definitions() {
 }
 
 #[test]
+fn context_expand_prioritizes_syntax_calls_over_lexical_mentions() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn seed() { z_called(); let a_mentioned = 1; }\n\
+         fn z_called() { let payload = \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"; }\n\
+         fn a_mentioned() { let payload = \"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\"; }\n",
+    );
+
+    // Both neighbours fit individually, but not together. The direct call must
+    // take the expansion slot ahead of the lexical-only mention, even though it
+    // sorts later by name.
+    let v = f.run(&["context", "--symbols", "seed", "--expand", "--max-tokens", "45"]);
+    let names = chunk_symbols(&v["data"]);
+    assert!(names.contains(&"z_called".to_string()), "called neighbour missing: {v}");
+    assert!(!names.contains(&"a_mentioned".to_string()), "lexical neighbour outranked call: {v}");
+}
+
+#[test]
+fn context_expand_uses_a_module_qualified_call_to_rank_the_right_definition() {
+    let f = Fixture::new();
+    f.write("context.rs", "pub fn build() { let data = \"right\"; }\n");
+    f.write("other.rs", "pub fn build() { let data = \"wrong\"; }\n");
+    f.write(
+        "app.rs",
+        "use crate::context;\nfn seed() { context::build(); }\n",
+    );
+
+    let v = f.run(&["context", "--symbols", "seed", "--expand", "--no-text"]);
+    let paths: Vec<&str> = v["data"]["chunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|chunk| chunk["name"] == "build")
+        .filter_map(|chunk| chunk["path"].as_str())
+        .collect();
+    assert_eq!(paths, ["context.rs"], "qualified expansion was not narrowed: {v}");
+}
+
+#[test]
 fn context_default_returns_only_the_seeds() {
     // No expansion, no surprises: the default is exactly what was asked for.
     let f = Fixture::new();
@@ -5164,6 +5279,9 @@ fn capabilities_reports_per_language_support() {
     assert_eq!(get("elixir")["members"], false, "no field declarations");
     assert_eq!(get("markdown")["definitions"], true, "headings");
     assert_eq!(get("markdown")["calls"], false);
+    for lang in ["svelte", "vue"] {
+        assert_eq!(get(lang)["calls"], false, "{lang} scripts are opaque to the call parser");
+    }
     for lang in ["rust", "python", "go", "markdown"] {
         assert_eq!(get(lang)["spans"], true, "{lang} classifies comments/strings");
     }

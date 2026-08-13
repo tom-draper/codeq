@@ -33,11 +33,13 @@ def best(cmd):
 
 
 def codeq_count(out):
-    """Number of result entries in a codeq JSON response."""
+    """Number of result entries in codeq's JSON or compact-text response."""
     try:
         d = json.loads(out)["data"]
     except Exception:
-        return 0
+        # Benchmarked invocations use compact text. Every result row occupies one
+        # non-empty stdout line; refresh diagnostics are stderr by contract.
+        return sum(1 for line in out.splitlines() if line.strip())
     if isinstance(d, list):
         return len(d)
     if isinstance(d, dict):
@@ -54,7 +56,11 @@ def line_count(out):
 
 
 def pick(cmd, extract):
-    _, out = run(cmd)
+    # Target discovery reads the structured envelope, while the benchmarked
+    # tasks deliberately exercise codeq's compact text default. The CLI used to
+    # default to JSON, so this distinction was implicit; without it every
+    # discovery parse fails and the supposedly repo-agnostic benchmark exits.
+    _, out = run([cmd[0], "--json", *cmd[1:]])
     try:
         return extract(json.loads(out)["data"])
     except Exception:
@@ -66,41 +72,37 @@ def main():
     t_index, _ = run([CODEQ, "index", "--rebuild"])
 
     # Pick real targets from the index so the benchmark is repo-agnostic.
-    # Prefer a plain-identifier class name that both codeq and rg handle cleanly.
-    def clean_name(d):
-        for s in d:
-            if re.fullmatch(r"[A-Za-z][A-Za-z0-9]{3,}", s["name"]):
-                return s["name"]
-        return d[0]["name"]
-
-    klass = pick([CODEQ, "symbols", "--kind", "class", "--limit", "200"], clean_name)
-    tsfile = pick([CODEQ, "files", "--language", "typescript", "--limit", "1"],
-                  lambda d: d[0]["path"])
+    # Prefer a plain identifier that both codeq and rg handle cleanly; requiring
+    # a TypeScript file or a class made this script crash on perfectly valid
+    # repositories written in another supported language.
+    target = pick([CODEQ, "symbols", "--limit", "200"],
+                  lambda d: next((s for s in d if re.fullmatch(r"[A-Za-z][A-Za-z0-9]{3,}", s["name"])), d[0]))
+    if target is None:
+        print("no indexable symbols; benchmark needs at least one supported source definition", file=sys.stderr)
+        return 2
+    symbol = target["name"]
+    source_file = target["path"]
     module = pick([CODEQ, "map", "--limit", "1"],
-                  lambda d: d["imports_by_module"][0]["module"])
+                  lambda d: d["imports_by_module"][0]["module"] if d["imports_by_module"] else None)
 
     print(f"repo: {REPO}")
     print(f"codeq index (rebuild, cold): {t_index*1000:.0f} ms")
-    print(f"targets: class={klass!r} file={tsfile!r} module={module!r}\n")
+    print(f"targets: symbol={symbol!r} file={source_file!r} module={module!r}\n")
 
     # (task, codeq argv, baseline name, baseline argv, note)
     tasks = [
         ("find definition of a symbol",
-         [CODEQ, "definitions", klass],
-         "rg", ["rg", "-n", rf"\b{klass}\b"],
+         [CODEQ, "definitions", symbol],
+         "rg", ["rg", "-n", rf"\b{symbol}\b"],
          "codeq: 1 precise def; rg: every mention"),
         ("find all references to a symbol",
-         [CODEQ, "references", klass],
-         "rg", ["rg", "-nw", klass],
+         [CODEQ, "references", symbol],
+         "rg", ["rg", "-nw", symbol],
          "codeq adds enclosing symbol + def flag"),
         ("outline a file's structure",
-         [CODEQ, "outline", tsfile],
-         "rg", ["rg", "-n", r"function |class |interface |=>", tsfile],
+         [CODEQ, "outline", source_file],
+         "rg", ["rg", "-n", r"fn |function |class |interface |=>", source_file],
          "codeq: structured + nesting"),
-        ("who imports a module",
-         [CODEQ, "importers", module],
-         "rg", ["rg", "-n", rf"from ['\"].*{module}"],
-         ""),
         ("TODO comments only",
          [CODEQ, "search", "TODO", "--in", "comments"],
          "rg", ["rg", "-n", "TODO"],
@@ -110,10 +112,15 @@ def main():
          "rg", ["rg", "-n", r"class \w+"],
          ""),
         ("text search with context",
-         [CODEQ, "search", klass, "-C", "2", "--limit", "0"],
-         "rg", ["rg", "-n", "-C", "2", klass],
+         [CODEQ, "search", symbol, "-C", "2", "--limit", "0"],
+         "rg", ["rg", "-n", "-C", "2", symbol],
          "pure text search (rg's home turf)"),
     ]
+    if module is not None:
+        tasks.insert(3, ("who imports a module",
+                         [CODEQ, "importers", module],
+                         "rg", ["rg", "-n", rf"from ['\"].*{module}"],
+                         ""))
 
     hdr = f"{'task':<34}{'tool':<7}{'ms':>8}{'bytes':>9}{'~tok':>7}{'results':>9}"
     print(hdr)

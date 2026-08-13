@@ -89,13 +89,6 @@ pub(crate) enum InFilter {
     Code,
     Comments,
     Strings,
-    /// Everything except a comment. Not exposed as a `--in` value: it exists for
-    /// `unused`, where a mention in a comment must not count as a use, but a
-    /// mention in a *string* still can — reflection, `getattr`, serde renames,
-    /// DI registration, SQL identifiers and config keys are all real uses that
-    /// live in string literals. Excluding comments removes the clearly-wrong
-    /// masking without making the command guess about the ambiguous case.
-    NotComment,
 }
 
 impl InFilter {
@@ -115,18 +108,13 @@ impl InFilter {
             InFilter::Code => cls.is_none(),
             InFilter::Comments => cls == Some(Span::Comment),
             InFilter::Strings => cls == Some(Span::Str),
-            InFilter::NotComment => cls != Some(Span::Comment),
         }
     }
 
     /// Whether a file codeq cannot classify must be skipped entirely.
     ///
-    /// True for the `--in` filters, which are a positive claim ("this match is
-    /// in a comment") that cannot be made without spans. False for
-    /// [`InFilter::NotComment`], which is an exclusion: with no spans nothing is
-    /// known to be a comment, so every match stands. That keeps `unused` reading
-    /// occurrences in JSON, TOML and other unparsed files as uses, rather than
-    /// silently dropping them and reporting live code as dead.
+    /// True for the `--in` filters, which are positive claims about syntax that
+    /// cannot be made without cached spans.
     fn requires_spans(self) -> bool {
         matches!(self, InFilter::Code | InFilter::Comments | InFilter::Strings)
     }
@@ -174,6 +162,10 @@ pub(crate) struct ScanOpts {
     /// Keep only matches qualified by this receiver: `RECV.name`, `RECV::name`,
     /// or `RECV->name`. For disambiguating a method/associated name by its type.
     pub(crate) qualifier: Option<String>,
+    /// Require identifier boundaries around a match. Unlike regex `\b`, this
+    /// treats `$` as part of an identifier so JavaScript names such as
+    /// `$ZodError` are matched as one symbol.
+    pub(crate) identifier_boundary: bool,
     /// Mirror of `--max-per-file`: matches past the Nth in a file still get
     /// collected (the envelope needs them to report each file's true count) but
     /// they do not spend `limit`. Without this the two budgets fight — the scan
@@ -184,7 +176,18 @@ pub(crate) struct ScanOpts {
 }
 
 fn is_ident_byte(b: u8) -> bool {
-    b == b'_' || b.is_ascii_alphanumeric()
+    b == b'_' || b == b'$' || b.is_ascii_alphanumeric() || b >= 0x80
+}
+
+pub(crate) fn has_identifier_boundaries(bytes: &[u8], start: usize, end: usize) -> bool {
+    !bytes.get(start.wrapping_sub(1)).is_some_and(|b| is_ident_byte(*b))
+        && !bytes.get(end).is_some_and(|b| is_ident_byte(*b))
+}
+
+/// Whether an offset is not in a cached comment span. Used by `unused`, whose
+/// conservative rule counts code and strings as uses but never comments.
+pub(crate) fn is_not_comment(spans: &[(usize, usize, Span)], off: usize) -> bool {
+    class_at(spans, off) != Some(Span::Comment)
 }
 
 /// Whether the match is a markup instantiation — `<Name …/>` or `</Name>`.
@@ -501,6 +504,9 @@ pub(crate) fn scan_doc(
 ) -> bool {
     let filtering = opts.in_filter != InFilter::Any;
     let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(spans, off));
+    let bounded = |m: &regex::Match<'_>| {
+        !opts.identifier_boundary || has_identifier_boundaries(body.as_bytes(), m.start(), m.end())
+    };
     // Line starts are only needed once there's a match (Files mode never needs
     // them). Compute lazily, so a non-matching candidate — and every candidate
     // in Files mode — skips the full-body newline scan.
@@ -508,7 +514,7 @@ pub(crate) fn scan_doc(
 
     match opts.out {
         OutMode::Files => {
-            if re.find_iter(body).any(|m| accept(m.start())) {
+            if re.find_iter(body).any(|m| bounded(&m) && accept(m.start())) {
                 acc.files.push(path.to_string());
                 if acc.files.len() >= cap {
                     acc.truncated = true;
@@ -520,6 +526,9 @@ pub(crate) fn scan_doc(
             let mut last = usize::MAX;
             let mut n = 0usize;
             for m in re.find_iter(body) {
+                if !bounded(&m) {
+                    continue;
+                }
                 if !accept(m.start()) {
                     continue;
                 }
@@ -548,6 +557,9 @@ pub(crate) fn scan_doc(
             let mut kept_here = 0usize;
             let mut stop = false;
             for m in re.find_iter(body) {
+                if !bounded(&m) {
+                    continue;
+                }
                 let off = m.start();
                 if !accept(off) {
                     continue;

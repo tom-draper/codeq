@@ -71,7 +71,8 @@ use rusqlite::Connection;
 // reparse to see it.
 // v30: Python `__all__` and friends are private (metadata the interpreter reads,
 // not surface), and a folded multi-line constant's signature carries its shape.
-pub const SCHEMA_VERSION: i64 = 30;
+// v31: syntax-derived callsites are cached for structural navigation commands.
+pub const SCHEMA_VERSION: i64 = 31;
 
 pub struct Db {
     pub conn: Connection,
@@ -212,6 +213,18 @@ impl Db {
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
             );
 
+            -- Syntax-derived invocations. `name` is the final called identifier;
+            -- `receiver` preserves how a member call was written for later
+            -- import-aware resolution without reparsing the source at query time.
+            CREATE TABLE IF NOT EXISTS calls (
+                path       TEXT NOT NULL,
+                start_byte INTEGER NOT NULL,
+                name       TEXT NOT NULL,
+                receiver   TEXT,
+                PRIMARY KEY(path, start_byte),
+                FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
+            );
+
             -- Directory mtimes: codeq's own index cache for cheap, git-free
             -- freshness. A file added/removed/renamed bumps its parent dir's
             -- mtime, so checking these detects structural changes without a walk.
@@ -228,6 +241,8 @@ impl Db {
             CREATE INDEX IF NOT EXISTS impls_supertype ON impls(supertype);
             CREATE INDEX IF NOT EXISTS impls_subtype ON impls(subtype);
             CREATE INDEX IF NOT EXISTS impls_path ON impls(path);
+            CREATE INDEX IF NOT EXISTS calls_name ON calls(name);
+            CREATE INDEX IF NOT EXISTS calls_path ON calls(path);
             "#,
         )?;
 

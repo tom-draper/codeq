@@ -50,6 +50,7 @@ struct Parsed {
     facts: Vec<Fact>,
     spans: Vec<(usize, usize, Span)>,
     relations: Vec<Relation>,
+    calls: Vec<crate::callsite::CallSite>,
 }
 
 /// Read, hash, and (if the content changed) parse one file. Pure and
@@ -78,7 +79,7 @@ fn parse_one(
         .unwrap_or(true);
     let was_indexed = prev.is_some();
 
-    let (body, facts, spans, relations) = if content_changed && !is_binary {
+    let (body, facts, spans, relations, calls) = if content_changed && !is_binary {
         // Everything downstream shares one coordinate system: the file decoded as
         // UTF-8 with invalid bytes replaced (and the BOM already stripped above).
         // Extracting from the raw bytes instead would put fact offsets and the
@@ -93,9 +94,12 @@ fn parse_one(
             Some(lang) => extractor.extract(lang, rel, text.as_bytes()),
             None => (Vec::new(), Vec::new(), Vec::new()),
         };
-        (Some(text), f, s, r)
+        let calls = language
+            .and_then(|lang| crate::callsite::call_sites_in(lang, &text))
+            .unwrap_or_default();
+        (Some(text), f, s, r, calls)
     } else {
-        (None, Vec::new(), Vec::new(), Vec::new())
+        (None, Vec::new(), Vec::new(), Vec::new(), Vec::new())
     };
 
     Some(Parsed {
@@ -111,6 +115,7 @@ fn parse_one(
         facts,
         spans,
         relations,
+        calls,
     })
 }
 
@@ -274,12 +279,11 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             partial_failures,
         });
     }
-    // Build one extractor up front purely to validate: each worker constructs its
-    // own (a Parser is not Sync), and a failure there is a malformed query, i.e. a
-    // bug in codeq rather than anything about this repo. Without this check the
-    // workers would each bail and the index would come back empty and *silent* —
-    // indistinguishable from a repo with no source files.
-    Extractor::new().context("building the fact extractor (malformed query?)")?;
+    // Worker-local extractors keep their parsers thread-confined. Do not build a
+    // separate validation extractor here: constructing one compiles every
+    // language's three queries, then the workers immediately compile the same
+    // set again. A malformed query is still fatal in the worker below, before it
+    // can write partial index content.
     let parse_failures = AtomicU64::new(0);
     let reindexed = {
         let workers = std::thread::available_parallelism()
@@ -357,6 +361,10 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 "INSERT INTO impls(path, line, subtype, supertype, relation, language)
                  VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
             )?;
+            let mut del_calls = tx.prepare("DELETE FROM calls WHERE path = ?1")?;
+            let mut ins_call = tx.prepare(
+                "INSERT INTO calls(path, start_byte, name, receiver) VALUES(?1, ?2, ?3, ?4)",
+            )?;
 
             let mut reindexed: u64 = 0;
             for p in res_rx {
@@ -374,6 +382,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                     del_facts.execute([&p.rel])?;
                     del_spans.execute([&p.rel])?;
                     del_impls.execute([&p.rel])?;
+                    del_calls.execute([&p.rel])?;
                 }
                 if let Some(body) = &p.body {
                     // Every indexed file's body goes in, whatever its size. A cap
@@ -427,6 +436,14 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                             &r.supertype,
                             r.relation,
                             lang,
+                        ))?;
+                    }
+                    for call in &p.calls {
+                        ins_call.execute((
+                            &p.rel,
+                            call.start_byte as i64,
+                            &call.name,
+                            &call.receiver,
                         ))?;
                     }
                 }

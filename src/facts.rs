@@ -195,6 +195,22 @@ impl LangSpec {
             Some(t) => t,
             None => return (Vec::new(), Vec::new(), Vec::new()),
         };
+        // tree-sitter-rust 0.24.2 has a recovery bug for a valid closure with
+        // nested generic parameter types and a trailing parameter comma. It
+        // wraps the rest of the file in ERROR, so the normal declaration query
+        // cannot see any following items. Substitute just that comma with a
+        // space (the same byte width), retry, and accept the tree only when it
+        // has fewer error nodes. Coordinates and all source slices still refer
+        // to the original bytes, so facts remain exact.
+        if self.lang == "rust" && tree.root_node().has_error() {
+            if let Some(repaired) = repair_rust_closure_trailing_commas(src) {
+                if let Some(repaired_tree) = self.parser.parse(&repaired, None) {
+                    if error_nodes(repaired_tree.root_node()) < error_nodes(tree.root_node()) {
+                        return self.harvest(repaired_tree.root_node(), src);
+                    }
+                }
+            }
+        }
         self.harvest(tree.root_node(), src)
     }
 
@@ -519,6 +535,55 @@ impl LangSpec {
 
         (facts, spans, relations)
     }
+}
+
+/// Number of explicit parser recovery nodes in a tree. `has_error` alone is
+/// not enough to choose between two parses: both may have errors, while one
+/// still preserves substantially more of the file's structure.
+fn error_nodes(root: Node) -> usize {
+    let mut count = 0;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.is_error() {
+            count += 1;
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.children(&mut cursor));
+    }
+    count
+}
+
+/// Work around a Tree-sitter Rust recovery bug without changing any source
+/// coordinate. The only replacement is a closure's trailing parameter comma:
+/// `..., | -> Return { ... }` becomes `...  | -> Return { ... }`. The explicit
+/// return arrow makes this distinct from an argument separator before a closure
+/// expression (`call(value, |x| x)`), so valid source is never reinterpreted.
+fn repair_rust_closure_trailing_commas(src: &[u8]) -> Option<Vec<u8>> {
+    let mut repaired: Option<Vec<u8>> = None;
+    let mut i = 0;
+    while i < src.len() {
+        if src[i] != b',' {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        while j < src.len() && src[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j >= src.len() || src[j] != b'|' {
+            i += 1;
+            continue;
+        }
+        j += 1;
+        while j < src.len() && src[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if src.get(j..j + 2) == Some(b"->") {
+            repaired.get_or_insert_with(|| src.to_vec())[i] = b' ';
+        }
+        i += 1;
+    }
+    repaired
 }
 
 impl Extractor {
@@ -1487,7 +1552,10 @@ pub fn support(language: &str) -> Option<Support> {
         // A component file is itself a definition, and the `<script>` body is
         // extracted with the JS/TS queries — so imports, members and relations
         // all come through from the embedded code.
-        "svelte" | "vue" => return hand(true, true, true, true, true),
+        // Their component grammars keep embedded script bodies as opaque text,
+        // so calls are found only by the conservative textual fallback, not by
+        // the syntax-call index advertised by this capability.
+        "svelte" | "vue" => return hand(true, true, true, true, false),
         _ => {}
     }
     let (query, rel) = queries_for(language)?;

@@ -1107,7 +1107,7 @@ fn callers_of(
     qualifier: Option<&str>,
     examples: bool,
 ) -> Result<Vec<Caller>> {
-    let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))?;
+    let re = regex::Regex::new(&regex::escape(name))?;
     // Callers means references in *code* — not comments, strings, or prose in
     // unparseable files (which are excluded). Uses the cached comment/string spans.
     let opts = ScanOpts {
@@ -1118,6 +1118,7 @@ fn callers_of(
         limit: 0,
         call_only,
         qualifier: qualifier.map(str::to_string),
+        identifier_boundary: true,
         per_file: None,
     };
     let hits = match run_search(&s.db.conn, &re, like_of(name).as_deref(), path, None, None, &opts)?
@@ -1276,8 +1277,19 @@ fn callees_of(
     // for chained or whitespace-separated receivers.
     let mut idents: HashSet<String> = HashSet::new();
     let mut sites: HashMap<String, (String, i64)> = HashMap::new();
+    // For a call such as `context::build()`, retain the target file of the
+    // imported `context` module. A receiver is only trusted when it exactly
+    // names a direct import; ordinary value receivers and unknown modules keep
+    // the established name-based superset.
+    let graph = load_dep_graph(&s.db)?;
+    let mut module_targets: HashMap<String, Vec<Option<HashSet<String>>>> = HashMap::new();
     {
         let mut body_stmt = s.db.conn.prepare("SELECT body FROM content_fts WHERE path = ?1")?;
+        let mut calls_stmt = s.db.conn.prepare(
+            "SELECT start_byte, name, receiver FROM calls
+             WHERE path = ?1 AND start_byte >= ?2 AND start_byte < ?3
+             ORDER BY start_byte",
+        )?;
         let mut span_stmt = s.db.conn.prepare(
             "SELECT start_byte, end_byte FROM spans WHERE path = ?1 ORDER BY start_byte",
         )?;
@@ -1287,20 +1299,38 @@ fn callees_of(
             let Some(slice) = b.get(*sb..(*eb).min(b.len())) else {
                 continue;
             };
-            // Prefer the parse tree: it knows exactly which identifiers are
-            // being called, so a declaration, a macro name, a type in call
-            // position and prose are all handled without guessing. One parse per
-            // file that actually defines the symbol, which is at most a handful.
+            // Prefer the syntax-derived callsites collected during indexing: they
+            // know exactly which identifiers are called, without reparsing this
+            // file for every `callees` query. Unsupported/opaque grammars keep
+            // the existing textual fallback below.
             let lang = language_for(path).unwrap_or("");
-            if let Some(calls) = crate::callsite::calls_in(lang, &b) {
-                for (off, recv) in calls.iter().filter(|(off, _)| **off >= *sb && **off < *eb) {
-                    let Some(word) = ident_at(&b, *off) else { continue };
+            if crate::callsite::supports_syntax_calls(lang) {
+                let rows = calls_stmt.query_map(
+                    rusqlite::params![path, *sb as i64, *eb as i64],
+                    |r| Ok((r.get::<_, i64>(0)? as usize, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+                )?;
+                for row in rows {
+                    let (off, word, recv) = row?;
+                    let targets = recv.as_deref().map(|receiver| {
+                        graph
+                            .direct_targets_for_receiver(path, receiver)
+                            .into_iter()
+                            .map(str::to_string)
+                            .collect::<HashSet<_>>()
+                    });
+                    // An empty target set is no evidence: it may be an external
+                    // module or a value receiver. Represent that as `None` so
+                    // candidate filtering remains conservative.
+                    module_targets
+                        .entry(word.clone())
+                        .or_default()
+                        .push(targets.filter(|targets| !targets.is_empty()));
                     if examples {
-                        let expr = match recv {
+                        let expr = match &recv {
                             Some(r) => format!("{r}.{word}"),
                             None => word.clone(),
                         };
-                        let line = b[..(*off).min(b.len())].bytes().filter(|c| *c == b'\n').count()
+                        let line = b[..off.min(b.len())].bytes().filter(|c| *c == b'\n').count()
                             as i64
                             + 1;
                         sites.entry(word.clone()).or_insert((expr, line));
@@ -1333,7 +1363,7 @@ fn callees_of(
         let placeholders = vec!["?"; chunk.len()].join(",");
         let sql = format!(
             "SELECT name, kind, path, start_line FROM facts
-             WHERE kind <> 'import' AND name IN ({placeholders})"
+             WHERE kind NOT IN ('import', 'field', 'variant') AND name IN ({placeholders})"
         );
         let mut stmt = s.db.conn.prepare(&sql)?;
         let params: Vec<&dyn rusqlite::ToSql> =
@@ -1348,7 +1378,14 @@ fn callees_of(
         })?;
         for row in rows {
             let (n, k, p, l) = row?;
-            if n != name && seen.insert((n.clone(), p.clone(), l)) {
+            let allowed = module_targets.get(&n).is_none_or(|calls| {
+                calls.iter().any(|targets| {
+                    targets
+                        .as_ref()
+                        .is_none_or(|targets| targets.contains(&p))
+                })
+            });
+            if n != name && allowed && seen.insert((n.clone(), p.clone(), l)) {
                 let site = sites.get(&n);
                 out.push(Callee {
                     name: n,
@@ -1404,26 +1441,6 @@ fn callees_of(
         (a.name.as_str(), a.path.as_str(), a.line).cmp(&(b.name.as_str(), b.path.as_str(), b.line))
     });
     Ok(out)
-}
-
-/// Collect the identifiers that are *called* in `text`: a name (>= 2 chars)
-/// immediately followed by `(`, ignoring whitespace. Keeping only call sites
-/// (`foo()`, `obj.method()`, `Type::new()`) drops the field accesses, variable
-/// uses and type references that merely share a name with some definition — the
-/// main source of callee noise. Real callees are always called, so nothing that
-/// is genuinely a callee is lost. (Still name-based, not type-resolved: a std
-/// `.remove()` can't be told apart from a local `remove`.)
-/// The identifier beginning at byte `off`, if any.
-fn ident_at(text: &str, off: usize) -> Option<String> {
-    let bytes = text.as_bytes();
-    if off >= bytes.len() {
-        return None;
-    }
-    let mut end = off;
-    while end < bytes.len() && (bytes[end] == b'_' || bytes[end].is_ascii_alphanumeric()) {
-        end += 1;
-    }
-    (end > off).then(|| text[off..end].to_string())
 }
 
 /// Identifiers in call position within `text`, skipping any that fall inside a
@@ -3395,14 +3412,11 @@ pub struct SearchArgs<'a> {
 /// no catastrophic backtracking); `--fixed` for a literal string. A strict
 /// superset of grep: same regex engine, plus structure grep cannot see.
 pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
-    let mut expr = if args.fixed {
+    let expr = if args.fixed {
         regex::escape(args.pattern)
     } else {
         args.pattern.to_string()
     };
-    if args.word {
-        expr = format!(r"\b(?:{expr})\b");
-    }
     // Match line-by-line semantics like grep/ripgrep: the scan runs over each
     // whole file body, so `^`/`$` must anchor to line boundaries, not the start
     // and end of the buffer. Without this, `^use` matches only a file that
@@ -3458,6 +3472,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         limit: args.limit,
         call_only: false,
         qualifier: None,
+        identifier_boundary: args.word,
         per_file: out.max_per_file,
     };
 
@@ -3549,7 +3564,7 @@ pub fn cmd_references(
     let per_file = out.max_per_file;
     let s = Session::open(cwd, false, out)?;
 
-    let expr = format!(r"\b{}\b", regex::escape(name));
+    let expr = regex::escape(name);
     let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
     // The name is a substring of every reference, so the trigram index narrows
     // to files that contain it (the \b matcher then confirms word boundaries).
@@ -3569,6 +3584,7 @@ pub fn cmd_references(
         limit,
         call_only,
         qualifier: qualifier.map(str::to_string),
+        identifier_boundary: true,
         per_file,
     };
     let (hits, truncated) =
@@ -3881,41 +3897,92 @@ struct UnusedRow {
     decorator: Option<String>,
 }
 
-/// Whether `name` occurs anywhere in the repo outside its own definition
-/// site(s). Conservative: a word-boundary mention in code, a comment, or a
-/// string all count as a use, so `unused` only ever flags a name with *zero*
-/// occurrences elsewhere. Name-based (not type-resolved), like `references`.
+/// Every candidate name that occurs outside its own definition site. This is
+/// deliberately one pass over the indexed bodies: the previous implementation
+/// ran an FTS search once *per name*, making `unused` scale with definitions ×
+/// repository size. The matching rules are unchanged — exact identifier
+/// boundaries, comments excluded, strings included, and declaration sites
+/// ignored — so this only changes cost, not findings.
+fn used_definition_names(
+    s: &Session,
+    names: &HashSet<String>,
+    defsites: &HashMap<String, HashSet<(String, i64)>>,
+) -> Result<HashSet<String>> {
+    if names.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    // Longest-first matters when one identifier is a prefix of another: regex
+    // alternation otherwise picks the short one first, whose right boundary
+    // fails, and never retries the longer alternative at that position.
+    let mut alternatives: Vec<&String> = names.iter().collect();
+    alternatives.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+    let expr = alternatives
+        .iter()
+        .map(|name| regex::escape(name))
+        .collect::<Vec<_>>()
+        .join("|");
+    let re = regex::Regex::new(&format!("(?:{expr})"))
+        .map_err(|e| anyhow!("building unused-name matcher: {e}"))?;
+
+    let mut body_stmt = s.db.conn.prepare("SELECT path, language, body FROM content_fts")?;
+    let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
+    let mut used = HashSet::new();
+    let mut rows = body_stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let path = row.get_ref(0)?.as_str()?;
+        let language: Option<String> = row.get(1)?;
+        let body = row.get_ref(2)?.as_str()?;
+        let spans = if crate::facts::has_spans(language.as_deref().unwrap_or("")) {
+            span_stmt
+                .query_map([path], crate::search::span_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+        let bytes = body.as_bytes();
+        let mut line_starts = vec![0];
+        line_starts.extend(
+            bytes
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| **b == b'\n')
+                .map(|(i, _)| i + 1),
+        );
+        for m in re.find_iter(body) {
+            if !crate::search::has_identifier_boundaries(bytes, m.start(), m.end())
+                || !crate::search::is_not_comment(&spans, m.start())
+            {
+                continue;
+            }
+            let line = line_starts.partition_point(|&start| start <= m.start()) as i64;
+            let is_definition = defsites
+                .get(m.as_str())
+                .is_some_and(|sites| sites.contains(&(path.to_string(), line)));
+            if !is_definition {
+                used.insert(m.as_str().to_string());
+                if used.len() == names.len() {
+                    return Ok(used);
+                }
+            }
+        }
+    }
+    Ok(used)
+}
+
+/// Single-name form used only for the explanatory empty-result note. `unused`
+/// itself calls [`used_definition_names`] once for the complete candidate set.
 fn name_is_used(
     s: &Session,
     name: &str,
     defsites: Option<&HashSet<(String, i64)>>,
 ) -> Result<bool> {
-    let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(name)))
-        .map_err(|e| anyhow!("invalid name: {e}"))?;
-    let like = like_of(name);
-    let opts = ScanOpts {
-        before: 0,
-        after: 0,
-        out: OutMode::Matches,
-        // A name mentioned only in a comment ("TODO: wire up foo later") used to
-        // count as a use and mask genuinely dead code. A comment is never a use.
-        // String mentions still count: reflection, serde renames, config keys and
-        // SQL identifiers are real uses that live in string literals.
-        in_filter: InFilter::NotComment,
-        limit: 0,
-        call_only: false,
-        qualifier: None,
-        per_file: None,
-    };
-    let hits = match run_search(&s.db.conn, &re, like.as_deref(), None, None, None, &opts)? {
-        SearchData::Matches { matches, .. } => matches,
-        _ => unreachable!("unused always uses Matches mode"),
-    };
-    let empty = HashSet::new();
-    let ds = defsites.unwrap_or(&empty);
-    Ok(hits
-        .iter()
-        .any(|h| !ds.contains(&(h.path.clone(), h.line as i64))))
+    let names = HashSet::from([name.to_string()]);
+    let mut sites = HashMap::new();
+    if let Some(defsites) = defsites {
+        sites.insert(name.to_string(), defsites.clone());
+    }
+    Ok(used_definition_names(s, &names, &sites)?.contains(name))
 }
 
 /// One directory in the repo's shape, with what it contains.
@@ -4184,8 +4251,37 @@ pub fn cmd_hotspots(
         }
     })?;
 
-    // One pass over every indexed body, counting only the names we care about.
-    let mut counts: HashMap<&str, i64> = HashMap::new();
+    // `--calls` can use the syntax-derived callsite index directly: declarations
+    // never appear there, and this avoids reparsing or byte-scanning every body.
+    // Svelte/Vue intentionally have no reliable stored calls (their script body
+    // is opaque to the component parser), so those files retain the old textual
+    // fallback in the pass below rather than silently losing coverage.
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    if calls_only {
+        let wanted_names: Vec<&str> = wanted.iter().copied().collect();
+        for chunk in wanted_names.chunks(500) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT c.name, COUNT(*) FROM calls c
+                 JOIN files f ON f.path = c.path
+                 WHERE c.name IN ({placeholders}) AND f.language NOT IN ('svelte', 'vue')
+                 GROUP BY c.name"
+            );
+            let mut stmt = s.db.conn.prepare(&sql)?;
+            let params: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|name| name as &dyn rusqlite::ToSql).collect();
+            let rows = stmt.query_map(params.as_slice(), |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })?;
+            for row in rows {
+                let (name, count) = row?;
+                counts.insert(name, count);
+            }
+        }
+    }
+
+    // One pass over indexed bodies for normal hotspots, or only the opaque
+    // grammar fallback in --calls mode.
     {
         let mut stmt = s.db.conn.prepare("SELECT path, language, body FROM content_fts")?;
         let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
@@ -4193,6 +4289,11 @@ pub fn cmd_hotspots(
         while let Some(row) = rows.next()? {
             let rel = row.get_ref(0)?.as_str()?;
             let lang: Option<String> = row.get(1)?;
+            if calls_only
+                && crate::callsite::supports_syntax_calls(lang.as_deref().unwrap_or(""))
+            {
+                continue;
+            }
             // Unparseable files have no comment/string spans, so every match in
             // them would look like code. `callers` skips them; so do we.
             if !crate::facts::has_spans(lang.as_deref().unwrap_or("")) {
@@ -4219,7 +4320,7 @@ pub fn cmd_hotspots(
                     if defsites.contains(&((*name).to_string(), rel.to_string(), line)) {
                         return; // this name's own declaration
                     }
-                    *counts.entry(name).or_insert(0) += 1;
+                    *counts.entry((*name).to_string()).or_insert(0) += 1;
                 }
             });
         }
@@ -4234,7 +4335,7 @@ pub fn cmd_hotspots(
             continue;
         }
         let declared = declarations.get(name).copied().unwrap_or(0);
-        let refs = counts.get(name.as_str()).copied().unwrap_or(0);
+        let refs = counts.get(name).copied().unwrap_or(0);
         if refs < min_refs {
             continue;
         }
@@ -4332,9 +4433,12 @@ pub fn cmd_unused(
             .collect()
     };
 
-    // Scan each distinct name once; keep the defs whose name is never used.
+    // Scan all candidate names in one pass; keep the defs whose name is never
+    // used. This preserves the old per-name semantics without repeatedly
+    // rescanning the same indexed bodies.
     let scopes = TestScopes::load(&s.db.conn)?;
-    let mut used: HashMap<String, bool> = HashMap::new();
+    let names: HashSet<String> = candidates.iter().map(|c| c.name.clone()).collect();
+    let used = used_definition_names(&s, &names, &defsites)?;
     let mut data: Vec<UnusedRow> = Vec::new();
     for cand in candidates {
         // Test functions are invoked by the test runner (by discovery/attribute),
@@ -4345,15 +4449,7 @@ pub fn cmd_unused(
         if !include_tests && is_test_site(&cand.path, Some(&cand.name), cand.line, &scopes) {
             continue;
         }
-        let is_used = match used.get(&cand.name) {
-            Some(&u) => u,
-            None => {
-                let u = name_is_used(&s, &cand.name, defsites.get(&cand.name))?;
-                used.insert(cand.name.clone(), u);
-                u
-            }
-        };
-        if !is_used {
+        if !used.contains(&cand.name) {
             data.push(cand);
             if limit > 0 && data.len() >= limit {
                 break;
@@ -4494,7 +4590,7 @@ fn test_sites(
     name: &str,
     path: Option<&str>,
 ) -> Result<std::collections::BTreeSet<(String, String)>> {
-    let expr = format!(r"\b{}\b", regex::escape(name));
+    let expr = regex::escape(name);
     let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
     let opts = ScanOpts {
         before: 0,
@@ -4504,6 +4600,7 @@ fn test_sites(
         limit: 0,
         call_only: false,
         qualifier: None,
+        identifier_boundary: true,
         per_file: None,
     };
     let hits = match run_search(&s.db.conn, &re, like_of(name).as_deref(), path, None, None, &opts)? {

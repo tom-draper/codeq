@@ -35,6 +35,15 @@ pub type Receiver = Option<String>;
 /// Byte offset of each called identifier in a file, mapped to its receiver.
 pub type CallMap = HashMap<usize, Receiver>;
 
+/// One syntax-derived invocation, suitable for storing in the repository index.
+/// `name` is the final identifier as written; `receiver` is retained separately
+/// so consumers can distinguish `db.query()` from a free `query()` call.
+pub struct CallSite {
+    pub start_byte: usize,
+    pub name: String,
+    pub receiver: Receiver,
+}
+
 /// Fields naming the called function on a call node, most specific first.
 const CALLEE_FIELDS: &[&str] = &["function", "method", "name", "constructor"];
 /// Fields naming the receiver, on either the call node or a member-access node.
@@ -56,7 +65,17 @@ const MEMBER_FIELDS: &[&str] = &[
 /// silently emptied `callees` for every component. Returning `None` sends them to
 /// the byte-level scan, which can see into the script.
 pub fn calls_in(language: &str, src: &str) -> Option<CallMap> {
-    if matches!(language, "svelte" | "vue") {
+    Some(
+        call_sites_in(language, src)?
+            .into_iter()
+            .map(|site| (site.start_byte, site.receiver))
+            .collect(),
+    )
+}
+
+/// Every syntax-derived invocation in `src`, in source order.
+pub fn call_sites_in(language: &str, src: &str) -> Option<Vec<CallSite>> {
+    if !supports_syntax_calls(language) {
         return None;
     }
     let lang = crate::astgrep::ts_language(language)?;
@@ -64,12 +83,16 @@ pub fn calls_in(language: &str, src: &str) -> Option<CallMap> {
     parser.set_language(&lang).ok()?;
     let tree = parser.parse(src, None)?;
 
-    let mut map = CallMap::new();
+    let mut sites = Vec::new();
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         if is_call(node) {
             if let Some((name_node, receiver)) = callee_of(node, src) {
-                map.insert(name_node.start_byte(), receiver);
+                sites.push(CallSite {
+                    start_byte: name_node.start_byte(),
+                    name: text_of(name_node, src),
+                    receiver,
+                });
             }
         }
         let mut c = node.walk();
@@ -77,7 +100,16 @@ pub fn calls_in(language: &str, src: &str) -> Option<CallMap> {
             stack.push(child);
         }
     }
-    Some(map)
+    sites.sort_by_key(|site| site.start_byte);
+    Some(sites)
+}
+
+/// Whether a language's parser exposes its ordinary call expressions. Svelte
+/// and Vue deliberately return false: their component grammar leaves script
+/// bodies opaque, so treating its empty call list as authoritative would lose
+/// real calls that the textual fallback can still find.
+pub fn supports_syntax_calls(language: &str) -> bool {
+    !matches!(language, "svelte" | "vue") && crate::astgrep::ts_language(language).is_some()
 }
 
 /// Whether a node invokes something.
