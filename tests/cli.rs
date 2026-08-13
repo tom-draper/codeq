@@ -6836,7 +6836,7 @@ fn an_external_name_is_not_reported_as_a_typo() {
 
     let out = f.raw(&["references", "Path", "--path", "nosuch"]);
     let note = String::from_utf8_lossy(&out.stderr);
-    assert!(note.contains("no definition in this repository"), "{note}");
+    assert!(note.contains("no definition codeq indexes"), "{note}");
     assert!(!note.contains("no symbol named"), "wrong branch: {note}");
 
     // A genuine typo still gets the typo message.
@@ -7188,4 +7188,41 @@ fn context_names_a_seed_that_resolved_to_nothing() {
     let v = f.run(&["context", "--symbols", "alpha,beta", "--max-tokens", "400"]);
     assert!(v["note"].is_null(), "{v}");
     assert_eq!(v["data"]["chunks"].as_array().unwrap().len(), 2, "{v}");
+}
+
+#[test]
+fn a_huge_data_file_is_still_searchable() {
+    // A body cap was tried — it made a repo committing 1.3 GB of geodata index
+    // 200x smaller — and reverted, because the differential harness showed it
+    // also stopped `search` being a strict superset of ripgrep: 20,000 lines of
+    // a 6.6 MB test fixture that `rg` finds and codeq no longer would. That
+    // guarantee is the loudest claim this tool makes, and no threshold separates
+    // "somebody's test fixture" from "committed geodata" on principle rather
+    // than by fitting the two data points in front of you. `.codeqignore` is the
+    // answer. This pins the decision so the cap is not quietly reintroduced.
+    let f = Fixture::new();
+    let big = format!("{{\"needle\":\"{}\"}}\n", "x".repeat(3 * 1024 * 1024));
+    f.write("huge.json", &big);
+
+    let hits = f.run(&["search", "needle"])["data"]["matches"].as_array().unwrap().len();
+    assert!(hits >= 1, "a big data file stays searchable — search is a superset of grep");
+}
+
+#[test]
+fn an_undefined_name_does_not_guess_why_it_is_undefined() {
+    // The note used to say "declared elsewhere (a dependency, or a built-in)".
+    // For a function *parameter* in a file two lines away, that sent the reader
+    // looking outward at dependencies — wrong in the most expensive direction.
+    // A note that states the fact beats one that picks a cause.
+    let f = Fixture::new();
+    f.write("a.ts", "export function match(columnData: string, areaBank: string) { return areaBank + columnData }\n");
+
+    let err = String::from_utf8_lossy(&f.raw(&["definitions", "areaBank"]).stderr).to_string();
+    assert!(err.contains("no definition codeq indexes"), "{err}");
+    assert!(err.contains("a parameter"), "the likeliest cause must be listed: {err}");
+    assert!(!err.contains("(a dependency, or a built-in)"), "no longer picks one: {err}");
+
+    // A genuine typo still gets the typo message, not this one.
+    let typo = String::from_utf8_lossy(&f.raw(&["definitions", "zzznotanything"]).stderr).to_string();
+    assert!(typo.contains("no symbol named"), "{typo}");
 }

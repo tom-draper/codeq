@@ -49,8 +49,22 @@ def rows(d, key=None):
 
 
 def not_json(t):
-    """Text mode must not emit the JSON envelope."""
-    return not t.lstrip().startswith("{") and '"data"' not in t
+    """Text mode must not emit the JSON envelope.
+
+    Checked by *parsing*, not by looking for the substring `"data"`. The old
+    substring test failed whenever a legitimate text result happened to quote it
+    — `search field_names` returns source lines containing `v["data"]`, so the
+    harness reported codeq emitting JSON when it had emitted exactly the grep-style
+    rows it should. Target selection varies by repo, so it passed for months and
+    then didn't."""
+    stripped = t.lstrip()
+    if not stripped.startswith("{"):
+        return True
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        return True  # starts with a brace but isn't JSON: not the envelope
+    return not (isinstance(parsed, dict) and "schema" in parsed and "data" in parsed)
 
 
 def missing_locators(t, rs):

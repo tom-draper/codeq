@@ -4,6 +4,64 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-13 — I tried the body cap, the harness said no, and it was right
+
+The Next.js entry below measures the problem exactly: `content_fts` stores every
+indexed file's body *plus* a trigram index over it, ~2.7x, so 1.3 GB of committed
+geodata became a 3.2 GB index and a four-minute cold build for 800 KB of source.
+Its suggestion — skip the FTS body for large unextractable files — is the obvious
+fix, and I implemented it. On a synthetic repro: **21 MB index → 108 KB**, same
+file count, same symbols.
+
+Then `bench/differential.py` failed six assertions:
+
+```
+newtonsoft/search/anchor-brace-eol: missed 20000 rg lines
+  e.g. Src/Newtonsoft.Json.Tests/large.json:2, :31, :35
+```
+
+`large.json` is 6.6 MB and 225,002 lines — somebody's test fixture, in a real
+repo, that ripgrep searches. The cap made `codeq search` stop being a strict
+superset of `rg`, which is the loudest claim this tool makes and the harness's
+primary assertion. Reverted.
+
+The tempting move was to raise the threshold until `large.json` fit: 6.6 MB here,
+45 MB there, so anything around 20 MB "works". That is not a principle, it is
+fitting a constant to the two data points in front of me — and the next repo has
+a 30 MB fixture. There is no size at which a file stops being something somebody
+might grep.
+
+What was actually missing is not a cap; it is that **codeq had the diagnosis and
+kept it to itself**. It knows the bytes and symbol count per language on the
+first walk. `.codeqignore` fixed the reporter's repo completely in one line — 3.2
+GB to 6.9 MB, 240 s to 2.8 s, *identical* symbol and import counts — they just
+had to work out for themselves that it was the answer. Surfacing that is the fix
+this warrants, and it costs no guarantee.
+
+Two other things fell out of the attempt:
+
+- The cap broke `concurrent_invocations_all_succeed` — a longer write lock during
+  the bigger build pushed a concurrent reader past the busy timeout, producing
+  the exact `database is locked: Error code 5` the entry below reports from a real
+  cold build. Reverting fixed the test, but **the underlying issue is real**: a
+  four-minute build outlasts the 15 s `busy_timeout`, and a raw SQLite error for
+  "a build is in progress" reads like corruption. Recorded, not fixed.
+- `map`'s unindexable-bytes note **does** fire on plain `map`, contrary to the
+  entry — verified after a shell-redirection mistake nearly had me agree with it.
+  The reporter was likely on a build predating it. Their deeper point stands
+  regardless: the note arrives after the four minutes are spent, and the moment
+  to say it is during the build.
+
+### The note that guessed wrong, fixed
+
+`definitions areaBank` said "declared elsewhere (a dependency, or a built-in)".
+`areaBank` is a *function parameter* two lines away. My note, added this morning,
+guessing outward in the most expensive available direction. It now lists the
+possibilities — local, parameter, destructured binding, dependency — and picks
+none. The entry's framing is the one to keep: **notes that guess a cause are
+worse than notes that state the fact.** Second time that has been filed; the
+first was the note this one replaced.
+
 ## 2026-08-13 — First Next.js repo: the index ate the data directory
 
 First run against a foreign codebase — `uk-data-atlas`, a Next.js 16 / React 19 /
@@ -45,8 +103,58 @@ Writing a `.codeqignore` for `data/**` fixed it completely:
 | imports | 2236 | **2236** |
 
 **Identical code coverage, a 470× smaller index, 85× faster.** Which is the real
-finding: the 1.3 GB bought *nothing*. codeq has everything it needs to work this out
-by itself — it knows the byte count and the symbol count per extension the first time
+finding: the 1.3 GB bought *nothing*.
+
+### Where the 3.2 GB actually went — `content_fts`, measured
+
+Worth pinning down rather than hand-waving, because the mechanism is not the facts
+table. `content_fts` is an FTS5 virtual table with `tokenize = 'trigram'` holding
+**every indexed file's full body**, and `src/index.rs:350` populates it for any file
+that survives the walk — a grammar is not required. That is a deliberate and good
+design (it is what lets `search` replace grep over files codeq cannot parse), but it
+means *symbol count is irrelevant to index size*. A file with zero symbols costs the
+same as one with a hundred.
+
+Controlled test — one 45 MB `.geojson`, one 52 MB `.shp`, one 20-byte `.ts`:
+
+```
+$ sqlite3 .codeq/index.db "SELECT path, language, LENGTH(body)/1048576.0 FROM content_fts;"
+a.ts       | typescript | 0.00002
+w.geojson  |            | 44.83        <-- no language, full body stored anyway
+                                       <-- z.shp absent: binary files ARE excluded
+
+$ sqlite3 .codeq/index.db "SELECT name, SUM(pgsize)/1048576.0 FROM dbstat GROUP BY name ..."
+content_fts_data    | 76.32     <-- the trigram index
+content_fts_content | 44.88     <-- FTS5's verbatim copy of the body
+```
+
+**45 MB of text in, 121 MB of index out — ~2.7×**, split roughly 1.0× for FTS5's
+stored copy and 1.7× for the trigram postings. Scale that to the ~1.05 GB of
+*textual* data files in this repo (870 MB geojson + 126 MB topojson + 44 MB json +
+37 MB csv) and you land at ~2.8–3.2 GB. That is the whole of the observed 3.2 GB,
+accounted for.
+
+Two things fall out of this that are worth acting on:
+
+1. **Binary exclusion already exists; a size/extension policy does not.** The `.shp`
+   was correctly skipped, so the machinery for "do not FTS this" is in place — it
+   just has no rule for "this is a 45 MB machine-generated JSON blob". Even a default
+   body cap (skip FTS above N MB, still index symbols) would have prevented all of
+   this, and would cost almost nothing in real repos.
+2. **`map`'s `bytes=` counts files that were never FTS-indexed.** It reported
+   `bytes=101419817` for the test above, including the 52 MB `.shp` that contributed
+   nothing to the index. So the number is "bytes walked", not "bytes indexed", and
+   as a proxy for index size it is wrong in both directions.
+
+This also explains the differential slowness below exactly. `clones`/`tree`/`outline`
+read the `facts` table (0.86 MB here) and stayed instant. `search`, `references`,
+`unused` and `hotspots` issue `SELECT path, language, body FROM content_fts` —
+`src/search.rs:357` and `src/commands.rs:4187` both do it with no `WHERE` — so every
+one of those queries streams the entire body column out of SQLite. On the fat index
+that is ~1.05 GB of text per query. The 17-minute `unused` hang was not a deadlock;
+it was a full scan of a gigabyte of geojson, once.
+
+codeq has everything it needs to work this out by itself — it knows the byte count and the symbol count per extension the first time
 it walks the tree. A first-run prompt ("142 files / 1.3 GB yielded no symbols — add
 to `.codeqignore`?"), or a `codeq ignore --suggest` that emits the file, would have
 turned a 40-minute detour into one line. Right now the tool has the diagnosis and

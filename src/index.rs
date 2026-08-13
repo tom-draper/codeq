@@ -376,6 +376,16 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                     del_impls.execute([&p.rel])?;
                 }
                 if let Some(body) = &p.body {
+                    // Every indexed file's body goes in, whatever its size. A cap
+                    // was tried and reverted: it made a data-heavy repo's index
+                    // 200x smaller, and it also made `search` stop being a strict
+                    // superset of ripgrep — the differential harness caught 20,000
+                    // lines of a 6.6 MB test fixture that `rg` finds and codeq no
+                    // longer would. That guarantee is the loudest thing this tool
+                    // claims, and no size threshold separates "somebody's test
+                    // fixture" from "committed geodata" on principle rather than
+                    // by fitting two data points. `.codeqignore` is the answer,
+                    // and `index` now says when it is worth writing one.
                     ins_fts.execute((&p.rel, p.language, body.as_str()))?;
                 }
                 if let Some(lang) = p.language {
@@ -633,6 +643,7 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
 /// extract definitions from — no grammar is wired up for them. Kept explicit so
 /// the drift test can tell "deliberately data-only" from "someone forgot".
 pub const NO_EXTRACTION: &[&str] = &["json", "yaml", "toml"];
+
 
 /// Extension-based language classification. Deliberately syntactic and cheap;
 /// this is not content sniffing.

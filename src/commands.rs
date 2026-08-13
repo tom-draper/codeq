@@ -270,19 +270,22 @@ fn note_if_empty_feat<T>(
     if sites.is_empty() {
         // A name with no *definition* here is not necessarily a name that does
         // not exist: `HTTPException`, `Path`, every third-party import is
-        // declared outside the repo. Saying "no symbol named 'Path'" to someone
-        // who just ran `references Path --path scripts` answers a different
-        // question than the one asked, and it is believable — an agent read
-        // exactly that as confirmation an import was gone, and moved on. The
-        // empty-result notes are sold as the reason to read stderr, which makes a
-        // wrong one costlier than none.
+        // declared outside the repo — and so is every local, parameter and
+        // destructured binding, none of which codeq records as definitions.
+        //
+        // The first version of this note guessed: "declared elsewhere (a
+        // dependency, or a built-in)". For `areaBank`, a *function parameter*
+        // sitting in a file two lines away, that sent the reader looking outward
+        // at dependencies — wrong in the most expensive available direction. The
+        // fix is to stop guessing which: list the possibilities and let the
+        // reader pick. A note that states the fact beats a note that picks a
+        // cause, and this is the second time that lesson has been filed.
         if name_is_used(s, name, None)? {
             let scope = path
                 .map(|f| format!(" and nothing matches --path {f}"))
                 .unwrap_or_default();
             return Ok(Some(format!(
-                "'{name}' has no definition in this repository — referenced here \
-                 but declared elsewhere (a dependency, or a built-in){scope}"
+                "'{name}' has no definition codeq indexes — referenced here, but declared somewhere codeq does not record it: a local, a parameter, a destructured binding, or a symbol from a dependency{scope}"
             )));
         }
         let near = nearest_names(s, name)?;
