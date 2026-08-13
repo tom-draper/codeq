@@ -358,6 +358,39 @@ def repo_battery(path):
             rec("graph", "relation-filter-is-subset",
                 len(sub) == sum(1 for e in edges if e.get("relation") == k))
 
+    # An empty result explains itself. Eleven of twenty-six commands once
+    # returned empty with no note, no stderr and exit 0, and they were fixed one
+    # at a time as each was tripped over. This is the check that stops the
+    # twelfth arriving quietly: every case below is empty *because a filter
+    # selected nothing*, which is the ambiguous kind. A bare pattern miss is
+    # deliberately not asserted — an empty `search zzz` is unambiguous.
+    Z = "zzznotarealsymbol"
+    for args in (
+        ["definitions", Z], ["callers", Z], ["callees", Z], ["tests", Z],
+        ["members", Z], ["implementors", Z], ["supertypes", Z],
+        ["callpath", Z, "alsonotreal"],
+        ["imports", "nosuchdir"], ["hotspots", "nosuchdir"], ["clones", "nosuchdir"],
+        ["tree", "nosuchdir"], ["unused", "nosuchdir"], ["untested", "nosuchdir"],
+        ["api", "nosuchdir"], ["context", "--symbols", Z],
+        ["search", "fn", "--path", "nosuchdir"],
+        ["astgrep", "$X.zzz()", "--language", "rust", "--path", "nosuchdir"],
+    ):
+        raw = _run([CODEQ, "--json", *args], path)
+        try:
+            env = json.loads(raw)
+        except ValueError:
+            continue
+        d = env.get("data")
+        if isinstance(d, list):
+            empty = not d
+        elif isinstance(d, dict):
+            arrs = [v for v in d.values() if isinstance(v, list)]
+            empty = bool(arrs) and all(not a for a in arrs)
+        else:
+            empty = False
+        if empty:
+            rec("empty-note", f"{args[0]}-explains-empty", bool(env.get("note")))
+
     # Row containers are self-describing: the `rows` pointer must resolve.
     for args in (["symbols", "--limit", "5"], ["search", "return", "--limit", "5"],
                  ["search", "return", "-l", "--limit", "5"]):

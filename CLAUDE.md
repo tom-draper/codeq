@@ -434,6 +434,22 @@ codeq tells you why, on stderr (or in the `note` field under `--json`):
   defs exist, none are public (`pub(crate)` is restricted, not public).
 - `no unused definitions ...` — a clean result, not a failed one.
 
+- `no indexed file matches 'zzz' — the filter selected nothing` vs `74 indexed
+  file(s) match 'bench/results', but none has any import` — a scope that selected
+  no file and a scope that genuinely holds none of the thing are *different
+  answers*, and every path-scoped command now distinguishes them.
+- `no symbol named zzznotreal — 1 of 2 seeds contributed nothing` (`context`) —
+  a bad seed beside good ones is the dangerous case: the bundle looks full and
+  the name you got wrong is the one missing from it.
+- `pattern ran over 15 rust file(s) and matched nothing` (`astgrep`) — the
+  pattern parsed and ran, so this is a real miss rather than a wrong node kind;
+  `--explain` tells the two apart when you're unsure.
+
+A **bare pattern miss stays silent on purpose**: an empty `search zzz` is
+unambiguous, and a note on every one of those would be the noise these exist to
+avoid. `symbols`/`files`/`importers` are likewise quiet — "nothing matched that
+substring" needs no gloss.
+
 So read stderr before assuming a command doesn't work or a symbol doesn't exist.
 
 It also says when an answer is **incomplete**: `result stopped at --limit` means

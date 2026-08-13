@@ -4,6 +4,255 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-13 — First Next.js repo: the index ate the data directory
+
+First run against a foreign codebase — `uk-data-atlas`, a Next.js 16 / React 19 /
+TypeScript app. The language support was never in doubt. What nearly sank the
+session was that the repo **commits 1.3 GB of geospatial data**, and codeq indexed
+all of it.
+
+### The headline: 96.5% of the index was files that produce zero symbols
+
+`codeq map` was my first command. It ran for **four minutes** and left a **3.2 GB**
+`index.db` for a repo whose actual source is 800 KB. The output says why, if you
+know to look:
+
+```
+totals: files=398 bytes=1359946429 symbols=2363 imports=2236
+typescript  files=149 bytes=395311    symbols=1486
+(unknown)   files=142 bytes=1313000330 symbols=0      <-- 96.5% of bytes, no symbols
+tsx         files=69  bytes=349437    symbols=800
+```
+
+142 `.geojson`/`.shp`/`.dbf` files, 1.31 GB, **zero symbols**. `CLAUDE.md` promises
+a stderr warning "when most of the repo is assets codeq cannot index, so the byte
+total isn't misread as coverage" — but that warning is on `map --totals`, and plain
+`map` printed nothing. I got the unqualified byte total on the command a newcomer
+actually runs first.
+
+Worse, the warning fires on `map`, which is not where it is needed. The moment to
+say this is **during the first index build**, while the user is watching a progress
+bar and can still act. By the time `map` prints, the four minutes and the 3.2 GB are
+already spent.
+
+Writing a `.codeqignore` for `data/**` fixed it completely:
+
+| | before | after |
+|---|---|---|
+| cold build | ~240 s | **2.8 s** |
+| `index.db` | 3.2 GB | **6.9 MB** |
+| symbols | 2363 | **2363** |
+| imports | 2236 | **2236** |
+
+**Identical code coverage, a 470× smaller index, 85× faster.** Which is the real
+finding: the 1.3 GB bought *nothing*. codeq has everything it needs to work this out
+by itself — it knows the byte count and the symbol count per extension the first time
+it walks the tree. A first-run prompt ("142 files / 1.3 GB yielded no symbols — add
+to `.codeqignore`?"), or a `codeq ignore --suggest` that emits the file, would have
+turned a 40-minute detour into one line. Right now the tool has the diagnosis and
+keeps it to itself.
+
+### The bloat is not a flat tax — it hits the reference-scanning commands
+
+This is what made it hard to diagnose. On the fat index:
+
+- `codeq clones lib` — **instant**, full correct output.
+- `codeq tree` — **18 ms**.
+- `codeq affected --compare-to HEAD` — **44 s wall** to reparse **one edited file**
+  (2.2 s user, 0.99 s system, 7% CPU — 40 seconds of pure I/O).
+- `codeq unused lib` — **hung for 17+ minutes**, zero bytes of output, killed.
+
+After the `.codeqignore`, `unused lib` returned in **0.9 s**. Same query, same repo,
+same code. The commands that only touch the parse tree stayed fast and told me
+everything was fine, so the first slow command reads as "this command is broken",
+not "your index is 470× too big". A `--meta`-style line on the slow path — indexed
+bytes being scanned, or just "scanning 1.3 GB of file content" — would have pointed
+at the cause immediately.
+
+`unused` deserves a specific note: **17 minutes with no output and no progress
+indication is indistinguishable from a deadlock.** I killed it. If a command is
+going to scan the whole content table it should say so on stderr before it starts.
+
+### `database is locked: Error code 5` leaked a raw SQLite error
+
+I issued two independent queries in one batch (`map` and `tree`) — the normal way an
+agent parallelises work with no data dependency. The second died instantly with:
+
+```
+codeq: database is locked: Error code 5: The database file is locked
+```
+
+A raw driver error for an ordinary situation: a build was in progress and the second
+reader arrived early. It should block on the write lock, or fail with "an index build
+is in progress — retry shortly". As written it reads like index corruption, and my
+first instinct was to go delete `.codeq/`. Note this is *most* likely to happen on
+exactly the first-run cold build that already takes four minutes, i.e. at the moment
+the user knows least about what is going on.
+
+### `explore` puts the focus block in the middle of its own output
+
+`codeq explore updateGenericMap` on a 15-caller symbol emits ~460 lines. The `#
+source` section is sorted **by path**, so:
+
+```
+ 85: lib/data/gazetteer/gazetteer.ts:29     (callee)
+ 89: lib/helpers/mapManager/eventHandler.ts (callee)
+105: lib/helpers/mapManager/featureBuilder.ts (callee)
+113: lib/helpers/mapManager/layerManager.ts (callee)
+133: lib/helpers/mapManager/mapManager.ts:396 (focus)   <-- the thing I asked about
+193: ... 15 caller blocks ...
+```
+
+I ran `explore … | head -90` — the obvious way to sample a large result — and got
+four callees and **not the definition**. The docs say "the definition is always
+kept", which is true of the *budget* and not of the *reading order*, and the gap
+between those two is invisible until you pipe the output. Emitting the focus block
+first would cost nothing and make `head` do the right thing.
+
+### A note that guessed the wrong cause, again
+
+```
+$ codeq definitions areaBank
+# codeq: 'areaBank' has no definition in this repository —
+#         referenced here but declared elsewhere (a dependency, or a built-in)
+```
+
+`lib/data/areaBank.ts` is sitting right there in the repo. The name resolves to a
+*parameter* (`matchColumnAgainstBank(columnData, areaBank)`) and a destructured
+local, neither of which is a definition — so the first clause is correct, and the
+parenthetical is wrong in the most misleading available direction. It sent me
+looking outward at dependencies when the answer was a local binding two lines away.
+For a lowercase identifier, "it is a local or a parameter" is far and away the
+likeliest cause and is not in the list. Same class as the note audit logged below —
+the notes that guess a cause are worse than the notes that just state the fact.
+
+### Minor: `--lines A,B`
+
+`codeq read file.ts --lines 456,500` → `--lines must be A-B, e.g. 40-80`. Good
+message, but comma-for-hyphen is the obvious slip and the intent is unambiguous.
+
+---
+
+### What actually worked, and it was most of the session
+
+**`clones` found the target in one command.** On a repo I had never opened:
+
+```
+mapManager.ts:456,474,494,715,745,777,807,837,871,905,930,955,980,996,1030
+  method updateMapFor{HousePrices,CrimeRate,Income,IMD,SIMD,…} shape=43ac98e5eed5918f group=15
+```
+
+Fifteen structurally identical methods, plus a group of 5 and a group of 4 in
+`featureBuilder.ts`. That is the whole "where is the duplication" question answered
+before I had read a single file.
+
+It is also worth recording that **reading the groups talked me out of refactoring
+four of them.** The `featureBuilder` clones turned out to be thin, correctly-typed
+wrappers over a shared `buildColorFeatures` — identical in shape precisely because
+they were already factored well, and collapsing them further would have traded type
+safety for line count. `clones` reporting no similarity score is what made that
+judgement mine to make. Good signal even when the verdict is "leave it alone".
+
+**The dead-code removal set came out of the index, not out of reading the file.**
+Four commands established the complete transitive set before I touched anything:
+`references buildAreaBank` (dead — only its own definition, a comment and the design
+doc), then `references BOUNDARY_META` → used only by it, then `search PROPERTY_KEYS`
+and `search BoundaryData` scoped to the file → each used only by those two. So the
+edit was one function, one const, and **both of the file's imports**, known up front.
+
+Then the verification loop, which is the bit I would most want to keep:
+
+```
+$ codeq deps lib/data/areaBank.ts     # before
+lib/data/boundaries/boundaries.ts: @lib/data/boundaries/boundaries
+lib/types/boundaries.ts: @lib/types/boundaries
+
+$ codeq deps lib/data/areaBank.ts     # after
+(empty)
+```
+
+The module went from two internal edges to zero — it no longer depends on the eager
+boundary loader at all. codeq proved the cleanup landed, in the same vocabulary it
+proposed it in. `tsc --noEmit` clean, 111/111 tests pass.
+
+**`importers` at named-import granularity was the decisive evidence.** `importers
+areaBank` listed `@lib/data/areaBank.buildAreaBankFromIndex`,
+`.matchColumnAgainstBank`, `.detectCoordinateColumns` — and no `.buildAreaBank`.
+That distinction between "the module is imported" and "this export is imported" is
+what let me delete a `pub`-equivalent export with confidence. On a TS codebase with
+barrel files it is the single most useful thing in the import index.
+
+**Path aliases resolved correctly.** `@lib/...`, `@/lib/...` and relative forms all
+resolved in `imports`/`importers`/`deps`. `const X = memo(...)` components indexed as
+expected. No Next.js-specific breakage anywhere — the app-router `app/` directory,
+`"use client"` files and `.tsx` all behaved.
+
+**`affected --compare-to HEAD`** gave the changed symbol and a correct three-hop
+impact chain (`useMapUpdates` → `MapView` → `MapInterface` → `AtlasClient`) with an
+honest empty `# tests` section, which was accurate — nothing covers that hook.
+
+### The boundary: codeq got me to the bug, it did not find the bug
+
+The actual defect this session — two React effects fighting over the same map layer,
+one clearing the boundary source and the next repainting it — is a cross-effect
+semantic bug in a hook. No index finds that. What codeq did was collapse the search:
+`clones` → `mapManager` → `explore updateGenericMap` → the dispatch switch, in about
+five commands and no whole-file reads, at which point the bug was visible by reading
+40 lines. That is the right division of labour and I would not want it overstated in
+either direction.
+
+## 2026-08-13 — Auditing the empty-result notes instead of waiting to trip over them
+
+The third `persona` entry said the wrong `references` note was "a class of bug
+rather than one bug ... which suggests auditing every command that can return
+empty rather than fixing them as they surface". Four had been fixed reactively by
+then — `references`, `callpath`, `graph`, `astgrep --path` — each after somebody
+lost time to it. So: a script that runs every command in a way that returns
+nothing and checks whether it says why.
+
+**Eleven of twenty-six returned empty with no note, no stderr and exit 0.** Now
+three, and those three are deliberate.
+
+The distinction that made this tractable is which empties are *ambiguous*. A bare
+`search zzz` finding nothing is unambiguous — grep behaves identically and nobody
+is confused; a note on every one would be the noise these notes exist to avoid.
+What is ambiguous is a **filter** that selected no file, because then the query
+never ran and "no matches" is a statement about the filter rather than the code.
+Most of the eleven were that one sentence with a different noun, which is why
+they are one helper and not eleven messages — and why the list should not regrow.
+
+Ranked by what a misreading costs, which is not the same as by how odd it looks:
+
+- **`context` was the worst**, and it did not look it. It hands source to an
+  agent, so an empty bundle reads as *nothing more is needed here*. Worse, a bad
+  seed *beside good ones* was invisible: the bundle looked full and the one name
+  you got wrong was silently missing from it. That case is now reported whether
+  or not the bundle is empty — I had written a comment claiming it was handled
+  before the code did, and caught the gap only by testing the mixed case.
+- **`at` vs `explore --at`** disagreed about explaining themselves on the
+  identical position. Two commands, one question, one of them mute.
+- **`hotspots`/`imports`/`clones`/`tree`** with a path matching nothing.
+- **`search`/`astgrep`** when a *filter* rather than the pattern emptied it.
+  `astgrep` gets a note on a genuine miss too — alone among these — because its
+  own docs concede that a wrong node kind and a real miss look identical, so it
+  points at `--explain`.
+
+`clones`'s empty note now also says what it cannot see, which is the third time
+that limitation has cost somebody an assumption.
+
+### Two things this turned up on the way
+
+`hotspots` had a **second, silent emit** in an early return for the commonest
+empty case. The note added at the end of the function was unreachable from there,
+so the fix tested green on one route (`--min-refs 999999`) while doing nothing on
+the one anybody would hit (`--path nosuchdir`). Worth stating because it looked
+applied: the code was present, the test I would have written first passed, and
+the behaviour was unchanged.
+
+And the harness now asserts the class rather than the instances: eighteen
+commands, run in a way that empties them via a filter, each required to carry a
+note. The twelfth instance cannot arrive quietly.
+
 ## 2026-08-13 — Five from the third `persona` pass, and the check that kept failing
 
 ### The process failure, third occurrence

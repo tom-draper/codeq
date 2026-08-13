@@ -192,6 +192,34 @@ fn definition_sites(s: &Session, name: &str) -> Result<Vec<(String, i64)>> {
 ///
 /// `relation` names what was being looked for ("callers", "members", …) and is
 /// used verbatim in the message. Returns `None` when the result was not empty.
+/// Why a path-scoped listing came back empty: because the filter selected no
+/// indexed file, or because the files it selected genuinely hold nothing.
+///
+/// Eleven of twenty-six commands returned empty with no note, no stderr and exit
+/// 0. Most were this one sentence with a different noun, which is why they are
+/// one helper rather than eleven bespoke messages — the shared form is also what
+/// stops the list regrowing. A bare pattern miss stays silent on purpose: an
+/// empty `search zzz` is unambiguous, and a note on every one would be noise.
+fn note_if_scope_empty(
+    s: &Session,
+    path: Option<&str>,
+    what: &str,
+) -> Result<Option<String>> {
+    let Some(p) = path else { return Ok(None) };
+    let n: i64 = s.db.conn.query_row(
+        "SELECT COUNT(*) FROM files WHERE path LIKE ?1",
+        [format!("%{p}%")],
+        |r| r.get(0),
+    )?;
+    Ok(Some(if n == 0 {
+        format!(
+            "no indexed file matches '{p}' — the filter selected nothing, so this says nothing about {what}"
+        )
+    } else {
+        format!("{n} indexed file(s) match '{p}', but none has {what}")
+    }))
+}
+
 fn note_if_empty<T>(
     s: &Session,
     rows: &[T],
@@ -2154,7 +2182,12 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
         })
     })?;
     let data: Vec<DefinitionRow> = rows.collect::<std::result::Result<_, _>>()?;
-    s.emit(data)
+    // `explore --at` on the identical position says "no definition encloses"; this
+    // said nothing at all. Two commands answering one question, one of them mute.
+    let note = data
+        .is_empty()
+        .then(|| format!("no definition encloses {rel}:{line} (between definitions, or past the end)"));
+    s.emit_noted(data, note)
 }
 
 #[derive(Serialize)]
@@ -2724,7 +2757,12 @@ pub fn cmd_imports(cwd: &Path, path: Option<&str>, limit: usize, out: Out) -> Re
         })
     })?;
     let data: Vec<ImportRow> = rows.collect::<std::result::Result<_, _>>()?;
-    s.emit(data)
+    let note = if data.is_empty() {
+        note_if_scope_empty(&s, path, "any import")?
+    } else {
+        None
+    };
+    s.emit_noted(data, note)
 }
 
 /// `importers <query>` — files that import a module matching `query`. This is a
@@ -3136,7 +3174,14 @@ pub fn cmd_astgrep(
             Some(p) if scanned == 0 => Some(format!(
                 "no indexed {language} file matches --path {p}; the pattern was never run"
             )),
-            _ => None,
+            // The pattern parsed and ran and found nothing. Silence would be
+            // right for `search`, where an empty grep is unambiguous — but
+            // astgrep is structurally exact, and its own docs concede that a
+            // wrong node kind and a genuine miss look identical. Point at the
+            // command that tells them apart.
+            _ => Some(format!(
+                "pattern ran over {scanned} {language} file(s) and matched nothing; if it should have matched, `astgrep --explain <file>:<line>` shows the node kinds to write it against"
+            )),
         }
     } else {
         None
@@ -3222,8 +3267,38 @@ pub fn cmd_astgrep_explain(cwd: &Path, location: &str, out: Out) -> Result<()> {
 
 pub fn cmd_context(cwd: &Path, req: Request, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
+    let seeds: Vec<String> = req.symbols.clone();
     let result = context::build(&s.db, &s.repo, &req)?;
-    s.emit(result)
+    // The worst of the silent empties. `context` exists to hand source to an
+    // agent, so an empty bundle reads as "nothing more is needed here" rather
+    // than "the symbol you named does not exist". Name the seeds that resolved
+    // to nothing — with several seeds, one bad name is otherwise invisible
+    // because the others still fill the bundle.
+    let mut missing: Vec<&str> = Vec::new();
+    for name in &seeds {
+        if definition_sites(&s, name)?.is_empty() {
+            missing.push(name);
+        }
+    }
+    // Checked whether or not the bundle came back empty. A seed that resolves to
+    // nothing is *more* dangerous when the others succeeded: the result looks
+    // full, and the one name you got wrong is the one silently missing from it.
+    let note = if !missing.is_empty() {
+        Some(format!(
+            "no symbol named {} — {} of {} seeds contributed nothing",
+            missing.join(", "),
+            missing.len(),
+            seeds.len(),
+        ))
+    } else if result.chunks.is_empty() && !seeds.is_empty() {
+        Some(
+            "the seeds resolved but produced no source — a zero budget, or definitions with no readable body"
+                .to_string(),
+        )
+    } else {
+        None
+    };
+    s.emit_noted(result, note)
 }
 
 
@@ -3392,6 +3467,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     }
 
     let s = Session::open(cwd, false, out)?;
+    let scoped = args.path.is_some() || !args.paths.is_empty() || args.language.is_some();
     let data = run_search(
         &s.db.conn,
         &re,
@@ -3401,7 +3477,36 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         path_accept,
         &opts,
     )?;
-    s.emit(data)
+    // A bare pattern miss stays silent — an empty `search zzz` is unambiguous and
+    // a note on every one would be noise. What is ambiguous is a *filter* that
+    // selected no file: then the pattern never ran, and "no matches" is a
+    // statement about the filter rather than about the code.
+    let note = if scoped && data.is_empty() {
+        let mut stmt = s.db.conn.prepare(
+            "SELECT COUNT(*) FROM files WHERE (?1 IS NULL OR path LIKE ?2) AND (?3 IS NULL OR language = ?3)",
+        )?;
+        let like = args.path.map(|p| format!("%{p}%"));
+        let n: i64 = stmt.query_row(
+            rusqlite::params![args.path, like, args.language],
+            |r| r.get(0),
+        )?;
+        (n == 0).then(|| {
+            let mut which: Vec<String> = Vec::new();
+            if let Some(p) = args.path {
+                which.push(format!("--path {p}"));
+            }
+            if let Some(l) = args.language {
+                which.push(format!("--language {l}"));
+            }
+            format!(
+                "no indexed file matches {} — the pattern was never run",
+                which.join(" and ")
+            )
+        })
+    } else {
+        None
+    };
+    s.emit_noted(data, note)
 }
 
 #[derive(Serialize)]
@@ -3949,7 +4054,12 @@ pub fn cmd_tree(
     if limit > 0 {
         data.truncate(limit);
     }
-    s.emit(data)
+    let note = if data.is_empty() {
+        note_if_scope_empty(&s, path, "any indexed content")?
+    } else {
+        None
+    };
+    s.emit_noted(data, note)
 }
 
 /// One *name* ranked by how often it is referenced in code.
@@ -4044,7 +4154,12 @@ pub fn cmd_hotspots(
         rows.collect::<std::result::Result<_, _>>()?
     };
     if candidates.is_empty() {
-        return s.emit(Vec::<HotspotRow>::new());
+        // The short-circuit had its own silent emit, so the note added at the end
+        // of this function was unreachable for the commonest empty case — a
+        // `--path` that selects nothing. Worth recording: the fix looked applied
+        // and tested fine on one route while doing nothing on the other.
+        let note = note_if_scope_empty(&s, path, "a referenced definition")?;
+        return s.emit_noted(Vec::<HotspotRow>::new(), note);
     }
     let wanted: HashSet<&str> = candidates.iter().map(|(n, _, _, _)| n.as_str()).collect();
 
@@ -4136,7 +4251,12 @@ pub fn cmd_hotspots(
     if limit > 0 {
         data.truncate(limit);
     }
-    s.emit(data)
+    let note = if data.is_empty() {
+        note_if_scope_empty(&s, path, "a referenced definition")?
+    } else {
+        None
+    };
+    s.emit_noted(data, note)
 }
 
 /// `unused [<path>]` — definitions with no reference anywhere outside their own
@@ -5244,5 +5364,18 @@ pub fn cmd_clones(
             r.group = per_shape.get(&r.shape).copied().unwrap_or(0);
         }
     }
-    s.emit(data)
+    // An empty `clones` is the result most likely to be misread as "no
+    // duplication", when it means "no *exact* structural copies" — so point at
+    // the tool that finds the near-duplicates this one cannot see.
+    let note = if data.is_empty() {
+        match note_if_scope_empty(&s, path, "an exact structural clone")? {
+            Some(n) => Some(n),
+            None => Some(
+                "no exact structural clones — two implementations differing only in their accessor expressions have different trees, so try `astgrep` for those".to_string(),
+            ),
+        }
+    } else {
+        None
+    };
+    s.emit_noted(data, note)
 }

@@ -62,6 +62,19 @@ pub(crate) enum SearchData {
     Counts { counts: Vec<FileCount>, truncated: bool },
 }
 
+impl SearchData {
+    /// Whether the result holds no rows, whichever shape it took. `search`
+    /// returns three different containers depending on `-l`/`-c`, so a caller
+    /// asking "did this find anything" should not have to match on all three.
+    pub(crate) fn is_empty(&self) -> bool {
+        match self {
+            SearchData::Matches { matches, .. } => matches.is_empty(),
+            SearchData::Files { files, .. } => files.is_empty(),
+            SearchData::Counts { counts, .. } => counts.is_empty(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum OutMode {
     Matches,

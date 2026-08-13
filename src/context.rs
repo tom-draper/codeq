@@ -64,7 +64,9 @@ pub struct ContextResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     plan: Option<Plan>,
     budget: Budget,
-    chunks: Vec<Chunk>,
+    /// Readable so `cmd_context` can tell an empty bundle from a full one and
+    /// explain which — an empty `context` reads as "no source needed" otherwise.
+    pub(crate) chunks: Vec<Chunk>,
     /// Candidates dropped by the token budget — a trust signal, so omitted only
     /// when there actually were omissions.
     #[serde(skip_serializing_if = "Vec::is_empty")]

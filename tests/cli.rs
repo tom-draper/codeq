@@ -7128,3 +7128,64 @@ fn a_folded_multiline_constant_says_what_it_folded() {
     // A single-line value is still worth showing whole.
     assert!(sigs["VERSION"].contains("1.0"), "{sigs:?}");
 }
+
+#[test]
+fn an_empty_result_says_why_it_is_empty() {
+    // Eleven of twenty-six commands returned empty with no note, no stderr and
+    // exit 0. They were being fixed one at a time as each was tripped over; this
+    // pins the class. Every case here is empty *because a filter selected
+    // nothing*, which is the ambiguous kind — a bare pattern miss is deliberately
+    // still silent, since an empty `search zzz` is unambiguous.
+    let f = Fixture::new();
+    // Line 1 is a comment, so it sits between definitions — that is the `at`
+    // case, and it is what `explore --at` already explained while `at` did not.
+    f.write("src/a.py", "# a comment outside every definition\ndef alpha():\n    return 1\n");
+
+    let note = |args: &[&str]| -> String {
+        String::from_utf8_lossy(&f.raw(args).stderr).to_string()
+    };
+    for (args, want) in [
+        (vec!["imports", "nosuchdir"], "no indexed file matches"),
+        (vec!["hotspots", "nosuchdir"], "no indexed file matches"),
+        (vec!["clones", "nosuchdir"], "no indexed file matches"),
+        (vec!["tree", "nosuchdir"], "no indexed file matches"),
+        (vec!["search", "def", "--path", "nosuchdir"], "the pattern was never run"),
+        (vec!["search", "def", "--language", "cobol"], "the pattern was never run"),
+        (vec!["context", "--symbols", "zzznotreal"], "no symbol named"),
+        (vec!["at", "src/a.py:1"], "no definition encloses"),
+    ] {
+        let got = note(&args);
+        assert!(got.contains(want), "{args:?} should say '{want}', said: {got}");
+    }
+
+    // A real scope that genuinely holds none of the thing says *that* instead —
+    // the two are different answers and must not collapse into one.
+    let real = note(&["imports", "src/a.py"]);
+    assert!(real.contains("but none has"), "{real}");
+
+    // A bare pattern miss stays quiet.
+    assert!(note(&["search", "zzznotrealpattern"]).is_empty());
+}
+
+#[test]
+fn context_names_a_seed_that_resolved_to_nothing() {
+    // The worst of the silent empties: `context` exists to hand source to an
+    // agent, so an empty bundle reads as "nothing more is needed". And a bad seed
+    // beside good ones is *more* dangerous — the bundle looks full, and the name
+    // you got wrong is the one missing from it.
+    let f = Fixture::new();
+    f.write("a.py", "def alpha():\n    return 1\n\ndef beta():\n    return 2\n");
+
+    let note = |args: &[&str]| String::from_utf8_lossy(&f.raw(args).stderr).to_string();
+    let only_bad = note(&["context", "--symbols", "zzznotreal"]);
+    assert!(only_bad.contains("no symbol named zzznotreal"), "{only_bad}");
+
+    let mixed = note(&["context", "--symbols", "alpha,zzznotreal", "--max-tokens", "400"]);
+    assert!(mixed.contains("zzznotreal"), "a bad seed among good ones: {mixed}");
+    assert!(mixed.contains("1 of 2 seeds"), "{mixed}");
+
+    // All seeds good: no note, and the bundle is real.
+    let v = f.run(&["context", "--symbols", "alpha,beta", "--max-tokens", "400"]);
+    assert!(v["note"].is_null(), "{v}");
+    assert_eq!(v["data"]["chunks"].as_array().unwrap().len(), 2, "{v}");
+}
