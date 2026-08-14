@@ -76,7 +76,9 @@ use rusqlite::Connection;
 // signature field, so qualified/bare alias calls can resolve to direct imports.
 // v33: Svelte/Vue script blocks contribute syntax-derived calls at component
 // file offsets; cached component call rows must be rebuilt.
-pub const SCHEMA_VERSION: i64 = 33;
+// v34: indexed files retain parser recovery diagnostics, so agents can detect
+// partial syntax extraction instead of treating every index row as equally sound.
+pub const SCHEMA_VERSION: i64 = 34;
 
 pub struct Db {
     pub conn: Connection,
@@ -154,6 +156,11 @@ impl Db {
                 -- real edit; ctime moves on any write and cannot be forged from
                 -- userspace, which closes that hole.
                 ctime_ns     INTEGER,
+                -- Count of parser ERROR nodes in the tree used for extraction.
+                -- NULL means this format is intentionally not parser-backed.
+                parse_errors INTEGER,
+                -- The extractor selected a safer recovery parse (currently Rust).
+                parse_recovered INTEGER NOT NULL DEFAULT 0,
                 content_hash TEXT,
                 indexed_at   INTEGER NOT NULL
             );
@@ -276,6 +283,13 @@ impl Db {
         let _ = self
             .conn
             .execute("ALTER TABLE files ADD COLUMN ctime_ns INTEGER", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE files ADD COLUMN parse_errors INTEGER", []);
+        let _ = self.conn.execute(
+            "ALTER TABLE files ADD COLUMN parse_recovered INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN owner TEXT", []);

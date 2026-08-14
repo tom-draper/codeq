@@ -105,6 +105,21 @@ impl Fact {
 /// and its type relations.
 pub type Extraction = (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>);
 
+/// Parser recovery observed while producing an extraction. `errors` counts
+/// Tree-sitter `ERROR` nodes in the tree actually harvested; `recovered` means
+/// codeq selected a byte-preserving repaired parse over the grammar's first
+/// recovery attempt.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParseHealth {
+    pub errors: usize,
+    pub recovered: bool,
+}
+
+/// Facts plus parser health. Languages extracted without a parser (Markdown)
+/// and unsupported languages report `None`, rather than pretending they parsed
+/// cleanly.
+pub type Extracted = (Extraction, Option<ParseHealth>);
+
 pub struct Extractor {
     rust: LangSpec,
     python: LangSpec,
@@ -190,10 +205,10 @@ impl LangSpec {
     }
 
     /// One parse yields definition facts, comment/string spans, and type relations.
-    fn extract(&mut self, src: &[u8]) -> Extraction {
+    fn extract(&mut self, src: &[u8]) -> Extracted {
         let tree = match self.parser.parse(src, None) {
             Some(t) => t,
-            None => return (Vec::new(), Vec::new(), Vec::new()),
+            None => return ((Vec::new(), Vec::new(), Vec::new()), None),
         };
         // tree-sitter-rust 0.24.2 has a recovery bug for a valid closure with
         // nested generic parameter types and a trailing parameter comma. It
@@ -206,12 +221,17 @@ impl LangSpec {
             if let Some(repaired) = repair_rust_closure_trailing_commas(src) {
                 if let Some(repaired_tree) = self.parser.parse(&repaired, None) {
                     if error_nodes(repaired_tree.root_node()) < error_nodes(tree.root_node()) {
-                        return self.harvest(repaired_tree.root_node(), src);
+                        let root = repaired_tree.root_node();
+                        return (self.harvest(root, src), Some(ParseHealth {
+                            recovered: true,
+                            ..parse_health(root)
+                        }));
                     }
                 }
             }
         }
-        self.harvest(tree.root_node(), src)
+        let root = tree.root_node();
+        (self.harvest(root, src), Some(parse_health(root)))
     }
 
     /// Run the three queries over an already-parsed tree. Split out of `extract`
@@ -558,6 +578,15 @@ fn error_nodes(root: Node) -> usize {
     count
 }
 
+/// `has_error` is a cached tree property, so clean files avoid a second full
+/// tree walk. Count individual recovery nodes only when the parser reports one.
+fn parse_health(root: Node) -> ParseHealth {
+    ParseHealth {
+        errors: if root.has_error() { error_nodes(root) } else { 0 },
+        recovered: false,
+    }
+}
+
 /// Work around a Tree-sitter Rust recovery bug without changing any source
 /// coordinate. The only replacement is a closure's trailing parameter comma:
 /// `..., | -> Return { ... }` becomes `...  | -> Return { ... }`. The explicit
@@ -813,7 +842,7 @@ impl Extractor {
         language: &str,
         path: &str,
         src: &[u8],
-    ) -> Extraction {
+    ) -> Extracted {
         match language {
             "rust" => self.rust.extract(src),
             "python" => self.python.extract(src),
@@ -836,18 +865,18 @@ impl Extractor {
             "zig" => self.zig.extract(src),
             "elixir" => self.elixir.extract(src),
             "solidity" => self.solidity.extract(src),
-            "markdown" => markdown_facts(src),
+            "markdown" => (markdown_facts(src), None),
             "css" => self.css.extract(src),
             // Derived rather than queried — see `hcl_facts`.
             "hcl" => {
                 let tree = match self.hcl.parser.parse(src, None) {
                     Some(t) => t,
-                    None => return (Vec::new(), Vec::new(), Vec::new()),
+                    None => return ((Vec::new(), Vec::new(), Vec::new()), None),
                 };
                 let root = tree.root_node();
                 let (mut facts, spans, rels) = self.hcl.harvest(root, src);
                 facts.extend(hcl_facts(root, src));
-                (facts, spans, rels)
+                ((facts, spans, rels), Some(parse_health(root)))
             }
             "powershell" => self.powershell.extract(src),
             "proto" => self.proto.extract(src),
@@ -857,7 +886,7 @@ impl Extractor {
             "sql" => {
                 let tree = match self.sql.parser.parse(src, None) {
                     Some(t) => t,
-                    None => return (Vec::new(), Vec::new(), Vec::new()),
+                    None => return ((Vec::new(), Vec::new(), Vec::new()), None),
                 };
                 let root = tree.root_node();
                 let (mut facts, mut spans, rels) = self.sql.harvest(root, src);
@@ -869,7 +898,7 @@ impl Extractor {
                     f.name = unqualify(&f.name);
                     f.owner = f.owner.as_deref().map(unqualify);
                 }
-                (facts, spans, rels)
+                ((facts, spans, rels), Some(parse_health(root)))
             }
             // Single-file component formats: markup wrapping the real code. Both
             // grammars name the nodes the same way, so one path serves both —
@@ -889,7 +918,7 @@ impl Extractor {
                 path,
                 src,
             ),
-            _ => (Vec::new(), Vec::new(), Vec::new()),
+            _ => ((Vec::new(), Vec::new(), Vec::new()), None),
         }
     }
 }
@@ -913,28 +942,33 @@ fn extract_component(
     typescript: &mut LangSpec,
     path: &str,
     src: &[u8],
-) -> (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>) {
+) -> Extracted {
     let tree = match markup.parser.parse(src, None) {
         Some(t) => t,
-        None => return (Vec::new(), Vec::new(), Vec::new()),
+        None => return ((Vec::new(), Vec::new(), Vec::new()), None),
     };
     let root = tree.root_node();
     let (mut facts, mut spans, mut relations) = markup.harvest(root, src);
+    let mut health = parse_health(root);
 
     for (start, end, is_ts) in script_regions(root, src) {
         let blanked = blank_outside(src, start, end);
-        let (f, s, r) = if is_ts {
+        let ((f, s, r), nested_health) = if is_ts {
             typescript.extract(&blanked)
         } else {
             javascript.extract(&blanked)
         };
+        if let Some(nested) = nested_health {
+            health.errors += nested.errors;
+            health.recovered |= nested.recovered;
+        }
         facts.extend(f);
         spans.extend(s);
         relations.extend(r);
     }
     facts.extend(component_fact(path, src));
     spans.sort_by_key(|(s, _, _)| *s);
-    (facts, spans, relations)
+    ((facts, spans, relations), Some(health))
 }
 
 /// The byte range of each `<script>` block's *contents*, plus whether the block

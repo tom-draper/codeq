@@ -336,6 +336,12 @@ struct FileRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     size_bytes: i64,
+    /// Parser recovery nodes in the syntax tree used for facts. Absent for
+    /// intentionally non-parser-backed formats and binary files.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parse_errors: Option<i64>,
+    #[serde(skip_serializing_if = "is_false")]
+    parse_recovered: bool,
 }
 
 /// Optional `AND …` filter clauses shared by the list commands, built with
@@ -455,7 +461,7 @@ pub fn cmd_files(
 
     let filters = Filters::new().like("path", pattern).eq("language", language);
     let sql = format!(
-        "SELECT path, language, size_bytes FROM files WHERE 1=1{} ORDER BY path{}",
+        "SELECT path, language, size_bytes, parse_errors, parse_recovered FROM files WHERE 1=1{} ORDER BY path{}",
         filters.sql(),
         limit_clause(limit),
     );
@@ -465,6 +471,8 @@ pub fn cmd_files(
             path: r.get(0)?,
             language: r.get(1)?,
             size_bytes: r.get(2)?,
+            parse_errors: r.get(3)?,
+            parse_recovered: r.get(4)?,
         })
     })?;
     let data: Vec<FileRow> = rows.collect::<std::result::Result<_, _>>()?;
@@ -891,6 +899,7 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
         let old: HashMap<String, (String, String)> = match s.repo.file_at(compare_to, &file) {
             Some(bytes) => ex
                 .extract(lang, &file, &bytes)
+                .0
                 .0
                 .into_iter()
                 .filter(|f| f.visibility.as_deref() == Some("public") && f.kind != "import")

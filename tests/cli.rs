@@ -304,6 +304,20 @@ fn binary_file_is_indexed_without_language() {
 }
 
 #[test]
+fn files_surface_parser_recovery_health() {
+    let f = Fixture::new();
+    f.write("clean.rs", "fn clean() {}\n")
+        .write("broken.rs", "fn broken( {\n")
+        .write("README.md", "# prose\n");
+
+    let rows = f.run(&["files"])["data"].as_array().unwrap().clone();
+    let row = |path: &str| rows.iter().find(|r| r["path"] == path).unwrap();
+    assert_eq!(row("clean.rs")["parse_errors"], 0);
+    assert!(row("broken.rs")["parse_errors"].as_i64().unwrap() > 0);
+    assert!(row("README.md").get("parse_errors").is_none());
+}
+
+#[test]
 fn non_git_directory_works() {
     let f = Fixture::new();
     f.write("a.py", "def z():\n    pass\n");
@@ -451,6 +465,10 @@ fn rust_parser_recovery_keeps_definitions_after_a_valid_trailing_closure_comma()
     );
     let names = field_set(&f.run(&["definitions", "after"]), "name");
     assert_eq!(names, ["after"], "valid Rust after parser recovery disappeared: {names:?}");
+    let files = f.run(&["files"]);
+    let row = files["data"].as_array().unwrap().iter().find(|r| r["path"] == "lib.rs").unwrap();
+    assert_eq!(row["parse_errors"], 0, "repaired parse still looks broken: {row}");
+    assert_eq!(row["parse_recovered"], true, "recovery was not surfaced: {row}");
 }
 
 #[test]

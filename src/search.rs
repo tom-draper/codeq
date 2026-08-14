@@ -692,7 +692,7 @@ pub(crate) fn scan_stdin(
             // No path: stdin has no filename. Only single-file component
             // formats use it (to name the component after its file), and a
             // piped Svelte buffer has no file to be named after.
-            let (facts, spans, _) = ex.extract(lang, "", body.as_bytes());
+            let ((facts, spans, _), _) = ex.extract(lang, "", body.as_bytes());
             let defs: Vec<FileDef> = facts
                 .into_iter()
                 .filter(|f| f.kind != "import")

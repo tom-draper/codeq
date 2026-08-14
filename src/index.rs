@@ -30,6 +30,8 @@ struct Stored {
     mtime_ns: i64,
     ctime_ns: i64,
     hash: Option<String>,
+    parse_errors: Option<i64>,
+    parse_recovered: bool,
 }
 
 /// A file parsed by a worker thread, ready for the serial writer to store. The
@@ -51,6 +53,10 @@ struct Parsed {
     spans: Vec<(usize, usize, Span)>,
     relations: Vec<Relation>,
     calls: Vec<crate::callsite::CallSite>,
+    /// `None` when this format is deliberately not parsed (for example Markdown)
+    /// or the file is binary.
+    parse_errors: Option<i64>,
+    parse_recovered: bool,
 }
 
 /// Read, hash, and (if the content changed) parse one file. Pure and
@@ -79,7 +85,7 @@ fn parse_one(
         .unwrap_or(true);
     let was_indexed = prev.is_some();
 
-    let (body, facts, spans, relations, calls) = if content_changed && !is_binary {
+    let (body, facts, spans, relations, calls, parse_errors, parse_recovered) = if content_changed && !is_binary {
         // Everything downstream shares one coordinate system: the file decoded as
         // UTF-8 with invalid bytes replaced (and the BOM already stripped above).
         // Extracting from the raw bytes instead would put fact offsets and the
@@ -90,16 +96,28 @@ fn parse_one(
         // byte-identical and free: the string is materialised for the FTS body
         // either way.
         let text = String::from_utf8_lossy(&bytes).into_owned();
-        let (f, s, r) = match language {
+        let ((f, s, r), health) = match language {
             Some(lang) => extractor.extract(lang, rel, text.as_bytes()),
-            None => (Vec::new(), Vec::new(), Vec::new()),
+            None => ((Vec::new(), Vec::new(), Vec::new()), None),
         };
         let calls = language
             .and_then(|lang| crate::callsite::call_sites_in(lang, &text))
             .unwrap_or_default();
-        (Some(text), f, s, r, calls)
+        let (parse_errors, parse_recovered) = health
+            .map(|h| (Some(h.errors as i64), h.recovered))
+            .unwrap_or((None, false));
+        (Some(text), f, s, r, calls, parse_errors, parse_recovered)
     } else {
-        (None, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        let previous_health = prev.map(|p| (p.parse_errors, p.parse_recovered));
+        (
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            previous_health.map(|h| h.0).flatten(),
+            previous_health.is_some_and(|h| h.1),
+        )
     };
 
     Some(Parsed {
@@ -116,6 +134,8 @@ fn parse_one(
         spans,
         relations,
         calls,
+        parse_errors,
+        parse_recovered,
     })
 }
 
@@ -148,7 +168,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     {
         let mut stmt = db
             .conn
-            .prepare("SELECT path, size_bytes, mtime_ns, ctime_ns, content_hash FROM files")?;
+            .prepare("SELECT path, size_bytes, mtime_ns, ctime_ns, content_hash, parse_errors, parse_recovered FROM files")?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -157,6 +177,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                     mtime_ns: r.get::<_, i64>(2).unwrap_or(0),
                     ctime_ns: r.get::<_, i64>(3).unwrap_or(0),
                     hash: r.get::<_, Option<String>>(4)?,
+                    parse_errors: r.get::<_, Option<i64>>(5)?,
+                    parse_recovered: r.get::<_, bool>(6).unwrap_or(false),
                 },
             ))
         })?;
@@ -330,15 +352,17 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
             // Serial writer: owns the transaction and its prepared statements.
             let mut upsert = tx.prepare(
-                "INSERT INTO files(path, language, size_bytes, mtime_ns, ctime_ns, content_hash, indexed_at)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO files(path, language, size_bytes, mtime_ns, ctime_ns, content_hash, indexed_at, parse_errors, parse_recovered)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(path) DO UPDATE SET
                     language = excluded.language,
                     size_bytes = excluded.size_bytes,
                     mtime_ns = excluded.mtime_ns,
                     ctime_ns = excluded.ctime_ns,
                     content_hash = excluded.content_hash,
-                    indexed_at = excluded.indexed_at",
+                    indexed_at = excluded.indexed_at,
+                    parse_errors = excluded.parse_errors,
+                    parse_recovered = excluded.parse_recovered",
             )?;
             let mut del_facts = tx.prepare("DELETE FROM facts WHERE path = ?1")?;
             let mut ins_fact = tx.prepare(
@@ -368,7 +392,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
             let mut reindexed: u64 = 0;
             for p in res_rx {
-                upsert.execute((&p.rel, p.language, p.size, p.mtime_ns, p.ctime_ns, &p.hash, now))?;
+                upsert.execute((&p.rel, p.language, p.size, p.mtime_ns, p.ctime_ns, &p.hash, now, p.parse_errors, p.parse_recovered))?;
                 if !p.content_changed {
                     continue;
                 }
