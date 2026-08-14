@@ -449,6 +449,20 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// Definitions registered as framework entry points by syntax — for example
+    /// `@app.get`, `@click.command`, or a plugin registration decorator. Tests
+    /// are discovered entry points too, but are opt-in to keep production routes
+    /// and commands easy to inspect.
+    Entrypoints {
+        /// Restrict to definitions in paths containing this substring.
+        path: Option<String>,
+        /// Include definitions structurally marked as tests.
+        #[arg(long)]
+        include_tests: bool,
+        /// Maximum rows to return (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// The repo's directory SHAPE, folded to a depth, with each directory's file
     /// and symbol counts aggregated from everything below it. Unlike `tree`(1) it
     /// is ignore-aware (no node_modules/.git noise) and says where the *code* is,
@@ -997,6 +1011,13 @@ fn main() -> ExitCode {
             &cwd,
             path.as_deref(),
             kind.as_deref(),
+            include_tests,
+            limit,
+            out,
+        ),
+        Command::Entrypoints { path, include_tests, limit } => commands::cmd_entrypoints(
+            &cwd,
+            path.as_deref(),
             include_tests,
             limit,
             out,

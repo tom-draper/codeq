@@ -308,6 +308,14 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             flag(&mut args, a, "include_tests", "--include-tests");
             optn(&mut args, a, "limit", "--limit");
         }
+        "codeq_entrypoints" => {
+            args.push("entrypoints".into());
+            if let Some(p) = s(a, "path") {
+                pos.push(p.into());
+            }
+            flag(&mut args, a, "include_tests", "--include-tests");
+            optn(&mut args, a, "limit", "--limit");
+        }
         "codeq_tree" => {
             args.push("tree".into());
             if let Some(p) = s(a, "path") {
@@ -505,6 +513,9 @@ fn tools() -> Value {
         tool("codeq_unused",
             "Definitions with no reference anywhere outside their own definition site — candidate dead code. A mention in a comment is not a use, so a stale TODO cannot mask dead code; a mention in a string still is, because reflection, serde renames, config keys and SQL identifiers are real uses. Name-based, so a same-named symbol elsewhere masks it; it under-reports rather than misleads. visibility is shown so a public symbol (maybe external API, not dead) is distinguishable from a private one. Test-file definitions are excluded by default (framework entry points look unused); set include_tests to include them. path/kind scope what is reported; the usage check is always repo-wide.",
             json!({ "path": str_, "kind": str_, "include_tests": bool_, "limit": num_ }), &[]),
+        tool("codeq_entrypoints",
+            "Definitions explicitly registered as framework entry points (routes, commands, plugin hooks) by decorator syntax. registration is the exact decorator observed, not an inferred framework. Tests are excluded by default; set include_tests to list definitions structurally marked as tests too.",
+            json!({ "path": str_, "include_tests": bool_, "limit": num_ }), &[]),
         tool("codeq_tree",
             "The repo's directory SHAPE, folded to a depth, with each directory's file and symbol counts aggregated from everything below it. Use this to orient in an unfamiliar repo: unlike tree(1) it is ignore-aware (no node_modules/.git noise) and reports where the *code* is rather than just where files are; unlike codeq_map it keeps the nesting instead of collapsing to top-level directories. min_symbols=1 jumps straight to the directories that hold code, which is the fastest way to find the source in a data- or asset-heavy repo. depth defaults to 3; counts still include everything below the fold, so folding summarises rather than truncates.",
             json!({ "path": str_, "depth": num_, "min_symbols": num_, "files": bool_, "limit": num_ }), &[]),

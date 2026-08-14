@@ -6876,6 +6876,26 @@ fn unused_tags_a_framework_entry_point_instead_of_calling_it_dead() {
 }
 
 #[test]
+fn entrypoints_lists_syntax_registered_routes_and_optional_tests() {
+    let f = Fixture::new();
+    f.write(
+        "app.py",
+        "@app.get('/health')\ndef health():\n    return {}\n\n\
+         def ordinary():\n    return None\n\n\
+         @pytest.mark.unit\ndef test_health():\n    assert health() == {}\n",
+    );
+
+    let routes = f.run(&["entrypoints"])["data"].as_array().unwrap().clone();
+    assert_eq!(routes.len(), 1, "ordinary/test definitions leaked in: {routes:?}");
+    assert_eq!(routes[0]["name"], "health");
+    assert!(routes[0]["registration"].as_str().unwrap().starts_with("@app.get"));
+    assert!(routes[0]["test"].is_null(), "route is not a test: {routes:?}");
+
+    let all = f.run(&["entrypoints", "--include-tests"])["data"].as_array().unwrap().clone();
+    assert!(all.iter().any(|row| row["name"] == "test_health" && row["test"] == true), "{all:?}");
+}
+
+#[test]
 fn clones_excludes_tests_and_takes_a_positional_path() {
     // Two assertions in sequence share a shape however different the assertions
     // are, so a test suite is a field of true positives nobody wants — measured

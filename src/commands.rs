@@ -3916,6 +3916,65 @@ struct UnusedRow {
     decorator: Option<String>,
 }
 
+/// A definition invoked by a framework or test runner rather than by an
+/// ordinary source-level call. The `registration` field is the exact decorator
+/// syntax CodeQ observed; it is evidence, not a framework guess.
+#[derive(Serialize)]
+struct EntrypointRow {
+    name: String,
+    kind: String,
+    path: String,
+    line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    registration: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    test: bool,
+}
+
+/// `entrypoints` — definitions structurally registered with a framework, plus
+/// optionally test-runner entry points. This intentionally does not call every
+/// public export an entry point: export visibility is an API fact, whereas this
+/// command reports concrete invocation registration.
+pub fn cmd_entrypoints(
+    cwd: &Path,
+    path: Option<&str>,
+    include_tests: bool,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
+    let s = Session::open(cwd, false, out)?;
+    let mut sql = String::from(
+        "SELECT name, kind, path, start_line, decorator, is_test FROM facts
+         WHERE kind <> 'import' AND (decorator IS NOT NULL",
+    );
+    if include_tests {
+        sql.push_str(" OR is_test = 1");
+    }
+    sql.push(')');
+    if !include_tests {
+        sql.push_str(" AND is_test = 0");
+    }
+    let like = path.map(|path| format!("%{path}%"));
+    sql.push_str(" AND (?1 IS NULL OR path LIKE ?1)");
+    sql.push_str(" ORDER BY path, start_line");
+    if limit > 0 {
+        sql.push_str(&format!(" LIMIT {limit}"));
+    }
+    let mut stmt = s.db.conn.prepare(&sql)?;
+    let rows = stmt.query_map([&like], |r| {
+        Ok(EntrypointRow {
+            name: r.get(0)?, kind: r.get(1)?, path: r.get(2)?, line: r.get(3)?,
+            registration: r.get(4)?, test: r.get::<_, bool>(5)?,
+        })
+    })?;
+    let data: Vec<EntrypointRow> = rows.collect::<std::result::Result<_, _>>()?;
+    let note = data.is_empty().then(|| match path {
+        Some(path) => format!("no registered entry points in '{path}'"),
+        None => "no registered entry points".to_string(),
+    });
+    s.emit_noted(data, note)
+}
+
 /// Every candidate name that occurs outside its own definition site. This is
 /// deliberately one pass over the indexed bodies: the previous implementation
 /// ran an FTS search once *per name*, making `unused` scale with definitions ×
