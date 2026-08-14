@@ -940,7 +940,7 @@ fn extract_component(
 /// The byte range of each `<script>` block's *contents*, plus whether the block
 /// declares TypeScript. Walked from the tree rather than queried so the one
 /// parse in `extract_svelte` serves both passes.
-fn script_regions(root: Node, src: &[u8]) -> Vec<(usize, usize, bool)> {
+pub(crate) fn script_regions(root: Node, src: &[u8]) -> Vec<(usize, usize, bool)> {
     let mut out = Vec::new();
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
@@ -1340,7 +1340,7 @@ fn is_method(lang: &str, node: Node) -> bool {
 /// newlines excepted. Parsing this instead of the slice keeps the embedded
 /// region at its original byte offsets, rows and columns, so facts extracted
 /// from it are already in file coordinates.
-fn blank_outside(src: &[u8], start: usize, end: usize) -> Vec<u8> {
+pub(crate) fn blank_outside(src: &[u8], start: usize, end: usize) -> Vec<u8> {
     let mut buf = src.to_vec();
     for (i, b) in buf.iter_mut().enumerate() {
         if (i < start || i >= end) && *b != b'\n' {
@@ -1557,10 +1557,9 @@ pub fn support(language: &str) -> Option<Support> {
         // A component file is itself a definition, and the `<script>` body is
         // extracted with the JS/TS queries — so imports, members and relations
         // all come through from the embedded code.
-        // Their component grammars keep embedded script bodies as opaque text,
-        // so calls are found only by the conservative textual fallback, not by
-        // the syntax-call index advertised by this capability.
-        "svelte" | "vue" => return hand(true, true, true, true, false),
+        // Their markup grammars keep scripts opaque, but callsite extraction
+        // reparses each structural `<script>` region as JS/TS at file offsets.
+        "svelte" | "vue" => return hand(true, true, true, true, true),
         _ => {}
     }
     let (query, rel) = queries_for(language)?;

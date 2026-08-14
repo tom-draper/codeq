@@ -1814,6 +1814,10 @@ fn extracts_svelte_components_scripts_and_snippets() {
     // The call graph crosses the component boundary in both directions.
     let callees = field_set(&f.run(&["callees", "pretty"]), "path");
     assert!(callees.contains(&"src/labels.js".to_string()), "{callees:?}");
+    let structural = f.run(&["callees", "pretty", "--examples"]);
+    let fmt = structural["data"].as_array().unwrap().iter()
+        .find(|row| row["name"] == "formatLabel").expect("formatLabel call");
+    assert_eq!(fmt["call"], "formatLabel", "script call lost its syntax evidence: {structural}");
     let v = f.run(&["references", "Button"]);
     let refs = v["data"]["references"].as_array().unwrap();
     // Both the import and the `<Button …/>` markup usage.
@@ -1904,6 +1908,10 @@ fn extracts_vue_single_file_components() {
     // Cross-file graph and dependency resolution both work through the SFC.
     let callees = field_set(&f.run(&["callees", "handleClick"]), "path");
     assert!(callees.contains(&"lib/labels.ts".to_string()), "{callees:?}");
+    let structural = f.run(&["callees", "handleClick", "--examples"]);
+    let fmt = structural["data"].as_array().unwrap().iter()
+        .find(|row| row["name"] == "fmt").expect("fmt call");
+    assert_eq!(fmt["call"], "fmt", "script call lost its syntax evidence: {structural}");
     let deps = field_set(&f.run(&["deps", "App.vue"]), "path");
     assert!(deps.contains(&"Button.vue".to_string()), "{deps:?}");
 }
@@ -5332,7 +5340,7 @@ fn capabilities_reports_per_language_support() {
     assert_eq!(get("markdown")["definitions"], true, "headings");
     assert_eq!(get("markdown")["calls"], false);
     for lang in ["svelte", "vue"] {
-        assert_eq!(get(lang)["calls"], false, "{lang} scripts are opaque to the call parser");
+        assert_eq!(get(lang)["calls"], true, "{lang} embedded scripts have structural calls");
     }
     for lang in ["rust", "python", "go", "markdown"] {
         assert_eq!(get(lang)["spans"], true, "{lang} classifies comments/strings");

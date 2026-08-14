@@ -74,7 +74,9 @@ use rusqlite::Connection;
 // v31: syntax-derived callsites are cached for structural navigation commands.
 // v32: import facts retain their local alias binding in the otherwise-empty
 // signature field, so qualified/bare alias calls can resolve to direct imports.
-pub const SCHEMA_VERSION: i64 = 32;
+// v33: Svelte/Vue script blocks contribute syntax-derived calls at component
+// file offsets; cached component call rows must be rebuilt.
+pub const SCHEMA_VERSION: i64 = 33;
 
 pub struct Db {
     pub conn: Connection,

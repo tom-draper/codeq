@@ -75,6 +75,9 @@ pub fn calls_in(language: &str, src: &str) -> Option<CallMap> {
 
 /// Every syntax-derived invocation in `src`, in source order.
 pub fn call_sites_in(language: &str, src: &str) -> Option<Vec<CallSite>> {
+    if matches!(language, "svelte" | "vue") {
+        return component_call_sites(language, src);
+    }
     if !supports_syntax_calls(language) {
         return None;
     }
@@ -109,7 +112,28 @@ pub fn call_sites_in(language: &str, src: &str) -> Option<Vec<CallSite>> {
 /// bodies opaque, so treating its empty call list as authoritative would lose
 /// real calls that the textual fallback can still find.
 pub fn supports_syntax_calls(language: &str) -> bool {
-    !matches!(language, "svelte" | "vue") && crate::astgrep::ts_language(language).is_some()
+    matches!(language, "svelte" | "vue") || crate::astgrep::ts_language(language).is_some()
+}
+
+/// Parse opaque component script blocks as JavaScript/TypeScript while keeping
+/// their byte offsets in the original component file.
+fn component_call_sites(language: &str, src: &str) -> Option<Vec<CallSite>> {
+    let markup_lang = match language {
+        "svelte" => tree_sitter_svelte_ng::LANGUAGE.into(),
+        "vue" => tree_sitter_vue_next::LANGUAGE.into(),
+        _ => return None,
+    };
+    let mut parser = Parser::new();
+    parser.set_language(&markup_lang).ok()?;
+    let tree = parser.parse(src, None)?;
+    let mut sites = Vec::new();
+    for (start, end, is_ts) in crate::facts::script_regions(tree.root_node(), src.as_bytes()) {
+        let blanked = crate::facts::blank_outside(src.as_bytes(), start, end);
+        let blanked = std::str::from_utf8(&blanked).ok()?;
+        sites.extend(call_sites_in(if is_ts { "typescript" } else { "javascript" }, blanked)?);
+    }
+    sites.sort_by_key(|site| site.start_byte);
+    Some(sites)
 }
 
 /// Whether a node invokes something.
