@@ -28,6 +28,10 @@ pub struct Edge {
     pub to: String,
     /// The raw import string that produced this edge (for verification).
     pub module: String,
+    /// The import spelling structurally matches this file. Heuristic edges are
+    /// still useful for broad dependency exploration, but must not manufacture
+    /// a high-confidence architectural claim such as an import cycle.
+    exact: bool,
 }
 
 /// One reached file in a transitive walk.
@@ -110,6 +114,49 @@ fn path_components(path: &str) -> HashSet<&str> {
     set
 }
 
+/// Whether `module` names `path` structurally, rather than merely sharing one
+/// segment with it. Directory entry files stand in for their directory. A
+/// named import can append an exported symbol (`from pkg.util import run`), but
+/// facts intentionally do not retain enough syntax to distinguish that from an
+/// ordinary dotted module import, so that useful resolution stays heuristic.
+fn exact_module_match(from: &str, path: &str, module: &str) -> bool {
+    let mut parts: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+    let file = parts.pop().unwrap_or(path);
+    let stem = stem(file);
+    if matches!(file, "__init__.py" | "mod.rs") || file.starts_with("index.") {
+        // `pkg/__init__.py`, `pkg/index.ts`, and `pkg/mod.rs` are imported as
+        // `pkg`, not their conventional entry-file name.
+    } else {
+        parts.push(stem);
+    }
+    if module.starts_with('.') {
+        let mut expected: Vec<&str> = from
+            .rsplit_once(['/', '\\'])
+            .map(|(dir, _)| dir.split(['/', '\\']).filter(|s| !s.is_empty()).collect())
+            .unwrap_or_default();
+        for segment in module.split(['/', '\\']) {
+            match segment {
+                "" | "." => {}
+                ".." => {
+                    expected.pop();
+                }
+                other => expected.push(other),
+            }
+        }
+        if let Some(last) = expected.pop() {
+            expected.push(Path::new(last).file_stem().and_then(|s| s.to_str()).unwrap_or(last));
+        }
+        return parts == expected;
+    }
+
+    let module = segments(module);
+    if module.is_empty() || module.len() > parts.len() {
+        return false;
+    }
+    let matches_tail = |needle: &[&str]| parts.ends_with(needle);
+    matches_tail(&module)
+}
+
 impl Graph {
     /// Build the internal graph from all repo `files` and all import facts
     /// `(importing_file, raw_module)`.
@@ -178,7 +225,11 @@ impl Graph {
             best.dedup();
             let bucket = edges.entry(from.clone()).or_default();
             for cand in best {
-                bucket.push(Edge { to: cand.to_string(), module: module.clone() });
+                bucket.push(Edge {
+                    to: cand.to_string(),
+                    module: module.clone(),
+                    exact: exact_module_match(&from, cand, &module),
+                });
                 if let Some(binding) = &binding {
                     bindings
                         .entry(from.clone())
@@ -342,9 +393,18 @@ impl Graph {
                     on_path.insert(node);
                 }
                 let targets = self.edges.get(node);
-                let deg = targets.map(|v| v.len()).unwrap_or(0);
+                let deg = targets
+                    .map(|v| v.iter().filter(|e| e.exact).count())
+                    .unwrap_or(0);
                 if *idx < deg {
-                    let to = targets.unwrap()[*idx].to.as_str();
+                    let to = targets
+                        .unwrap()
+                        .iter()
+                        .filter(|e| e.exact)
+                        .nth(*idx)
+                        .unwrap()
+                        .to
+                        .as_str();
                     *idx += 1;
                     // Only explore forward from `start` to avoid re-finding cycles
                     // rooted at already-processed nodes.

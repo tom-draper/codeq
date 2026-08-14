@@ -4184,6 +4184,30 @@ fn deps_cycles_reports_import_cycle() {
 }
 
 #[test]
+fn deps_cycles_ignores_segment_overlap_that_is_not_an_import_target() {
+    // `teams` imports a symbol from `dataframes`, whose module path happens to
+    // share `updater.data` with `data.py`. The old best-segment heuristic turned
+    // that overlap into a reverse edge and claimed a cycle. The real package
+    // entry makes the intended target explicit.
+    let f = Fixture::new();
+    f.write("updater/data/data.py", "from updater.data import teams\n")
+        .write(
+            "updater/data/teams.py",
+            "from updater.data.dataframes import serialize\n",
+        )
+        .write("updater/data/dataframes/__init__.py", "def serialize(): pass\n");
+
+    let v = f.run(&["deps", "--cycles"]);
+    assert!(v["data"].as_array().unwrap().is_empty(), "false cycle: {v}");
+
+    let deps = field_set(&f.run(&["deps", "updater/data/teams.py"]), "path");
+    assert!(
+        deps.contains(&"updater/data/dataframes/__init__.py".to_string()),
+        "concrete package dependency disappeared: {deps:?}"
+    );
+}
+
+#[test]
 fn deps_disambiguates_same_stem_by_path_alignment() {
     // Two files share the stem `util`; an import naming the package picks the
     // aligned one, not the unrelated same-stem file.

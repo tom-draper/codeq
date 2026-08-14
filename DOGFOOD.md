@@ -4,6 +4,31 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-14 — `deps --cycles` reported cycles that do not exist
+
+In `pldashboard`, `codeq deps --cycles` reported these Python cycles:
+
+```
+updater/src/updater/data/data.py -> updater/src/updater/data/teams.py -> updater/src/updater/data/data.py
+updater/src/updater/predictions/model_predictions.py -> updater/src/updater/updater.py -> updater/src/updater/predictions/model_predictions.py
+```
+
+Both were false positives. Reading the imports showed that `data.py` imports
+`teams.py`, but `teams.py` does not import `data.py`; it imports the
+`dataframes` package and serialization helpers. Likewise, `updater.py` imports
+`model_predictions.py`, while `model_predictions.py` imports raw-data helpers,
+formatting, distributions, and the model registry—not `updater.py`.
+
+`uv run python -c "import updater.data.data; import updater.data.teams; import updater.updater; import updater.predictions.model_predictions"`
+also completed successfully.
+
+The likely cause is the documented heuristic module resolution matching names
+or path segments rather than verified import edges. For `deps --cycles`, that
+is especially costly: it presents a high-confidence architectural defect and
+can invite needless indirection to break a cycle that is not real. Cycle output
+should either resolve only concrete import edges, or label heuristic edges and
+show the import statement that created each edge.
+
 ## 2026-08-13 — I tried the body cap, the harness said no, and it was right
 
 The Next.js entry below measures the problem exactly: `content_fts` stores every
