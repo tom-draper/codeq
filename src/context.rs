@@ -583,10 +583,19 @@ fn called_names(db: &Db, seeds: &[Def]) -> Result<CalledNames> {
         )?;
         for row in rows {
             let (name, receiver) = row?;
+            let name = if receiver.is_none() {
+                graph
+                    .source_name_for_binding(&seed.path, &name)
+                    .unwrap_or(&name)
+                    .to_string()
+            } else {
+                name
+            };
             let targets = receiver
                 .as_deref()
                 .map(|receiver| graph.direct_targets_for_receiver(&seed.path, receiver))
-                .unwrap_or_default();
+                .filter(|targets| !targets.is_empty())
+                .unwrap_or_else(|| graph.direct_targets_for_receiver(&seed.path, &name));
             if targets.is_empty() {
                 out.unscoped.insert(name);
             } else {

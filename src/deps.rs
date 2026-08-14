@@ -42,6 +42,13 @@ pub struct DepHop {
 /// The internal import graph: file -> the files it depends on.
 pub struct Graph {
     edges: HashMap<String, Vec<Edge>>,
+    /// Local import binding -> resolved direct files. Kept separately from the
+    /// raw dependency edge because `make as m` must be resolved by `m()` while
+    /// `imports` continues to truthfully report the source spelling `make`.
+    bindings: HashMap<String, HashMap<String, HashSet<String>>>,
+    /// Local binding -> source symbol name, when an import binds a named export
+    /// (`import { make as m }`). Module aliases have no source symbol here.
+    binding_names: HashMap<String, HashMap<String, String>>,
 }
 
 /// Split a module string into candidate path segments. Anything that is not an
@@ -109,7 +116,7 @@ impl Graph {
     pub fn build<F, I>(files: F, imports: I) -> Graph
     where
         F: IntoIterator<Item = String>,
-        I: IntoIterator<Item = (String, String)>,
+        I: IntoIterator<Item = (String, String, Option<String>)>,
     {
         // stem -> files with that stem (usually one; more when names collide).
         let paths: Vec<String> = files.into_iter().collect();
@@ -132,12 +139,14 @@ impl Graph {
             paths.iter().map(|p| (p.as_str(), path_components(p))).collect();
 
         let mut edges: HashMap<String, Vec<Edge>> = HashMap::new();
+        let mut bindings: HashMap<String, HashMap<String, HashSet<String>>> = HashMap::new();
+        let mut binding_names: HashMap<String, HashMap<String, String>> = HashMap::new();
         // Every importing file gets an entry (even if all imports are external),
         // so a file with only external deps is still a known node.
         for p in &paths {
             edges.entry(p.clone()).or_default();
         }
-        for (from, module) in imports {
+        for (from, module, binding) in imports {
             let segs = segments(&module);
             if segs.is_empty() {
                 continue;
@@ -170,6 +179,20 @@ impl Graph {
             let bucket = edges.entry(from.clone()).or_default();
             for cand in best {
                 bucket.push(Edge { to: cand.to_string(), module: module.clone() });
+                if let Some(binding) = &binding {
+                    bindings
+                        .entry(from.clone())
+                        .or_default()
+                        .entry(binding.clone())
+                        .or_default()
+                        .insert(cand.to_string());
+                    if let Some(name) = segments(&module).last() {
+                        binding_names
+                            .entry(from.clone())
+                            .or_default()
+                            .insert(binding.clone(), (*name).to_string());
+                    }
+                }
             }
         }
         // Deterministic edge order per node.
@@ -177,7 +200,7 @@ impl Graph {
             bucket.sort_by(|a, b| a.to.cmp(&b.to).then(a.module.cmp(&b.module)));
             bucket.dedup_by(|a, b| a.to == b.to && a.module == b.module);
         }
-        Graph { edges }
+        Graph { edges, bindings, binding_names }
     }
 
     /// Whether `file` is a known node in the graph.
@@ -210,6 +233,17 @@ impl Graph {
         {
             return HashSet::new();
         }
+        let bound: HashSet<&str> = self
+            .bindings
+            .get(from)
+            .and_then(|bindings| bindings.get(receiver))
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        if !bound.is_empty() {
+            return bound;
+        }
         self.edges
             .get(from)
             .into_iter()
@@ -217,6 +251,17 @@ impl Graph {
             .filter(|edge| segments(&edge.module).contains(&receiver))
             .map(|edge| edge.to.as_str())
             .collect()
+    }
+
+    /// The exported definition name bound locally as `binding`, if this was a
+    /// named import. `m()` after `import { make as m }` therefore looks up
+    /// `make` in the resolved target file rather than looking for a definition
+    /// literally named `m`.
+    pub fn source_name_for_binding(&self, from: &str, binding: &str) -> Option<&str> {
+        self.binding_names
+            .get(from)
+            .and_then(|bindings| bindings.get(binding))
+            .map(String::as_str)
     }
 
     pub fn contains(&self, file: &str) -> bool {

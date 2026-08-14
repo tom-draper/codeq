@@ -1311,20 +1311,36 @@ fn callees_of(
                 )?;
                 for row in rows {
                     let (off, word, recv) = row?;
+                    let lookup = if recv.is_none() {
+                        graph
+                            .source_name_for_binding(path, &word)
+                            .unwrap_or(&word)
+                            .to_string()
+                    } else {
+                        word.clone()
+                    };
                     let targets = recv.as_deref().map(|receiver| {
                         graph
                             .direct_targets_for_receiver(path, receiver)
                             .into_iter()
                             .map(str::to_string)
                             .collect::<HashSet<_>>()
+                    }).filter(|targets| !targets.is_empty());
+                    let targets = targets.or_else(|| {
+                        let targets = graph
+                            .direct_targets_for_receiver(path, &word)
+                            .into_iter()
+                            .map(str::to_string)
+                            .collect::<HashSet<_>>();
+                        (!targets.is_empty()).then_some(targets)
                     });
                     // An empty target set is no evidence: it may be an external
                     // module or a value receiver. Represent that as `None` so
                     // candidate filtering remains conservative.
                     module_targets
-                        .entry(word.clone())
+                        .entry(lookup.clone())
                         .or_default()
-                        .push(targets.filter(|targets| !targets.is_empty()));
+                        .push(targets);
                     if examples {
                         let expr = match &recv {
                             Some(r) => format!("{r}.{word}"),
@@ -1333,9 +1349,9 @@ fn callees_of(
                         let line = b[..off.min(b.len())].bytes().filter(|c| *c == b'\n').count()
                             as i64
                             + 1;
-                        sites.entry(word.clone()).or_insert((expr, line));
+                        sites.entry(lookup.clone()).or_insert((expr, line));
                     }
-                    idents.insert(word);
+                    idents.insert(lookup);
                 }
                 continue;
             }
@@ -2841,16 +2857,19 @@ struct CycleRow {
 }
 
 /// Load the internal import graph: every indexed file, and every import fact as
-/// an `(importing_file, raw_module)` pair, resolved to file→file edges.
+/// an `(importing_file, raw_module, local_binding)` tuple, resolved to file→file
+/// edges. Bindings are optional metadata for alias-aware call resolution.
 pub(crate) fn load_dep_graph(db: &Db) -> Result<deps::Graph> {
     let files: Vec<String> = {
         all_file_paths(&db.conn)?
     };
-    let imports: Vec<(String, String)> = {
+    let imports: Vec<(String, String, Option<String>)> = {
         let mut stmt = db
             .conn
-            .prepare("SELECT path, name FROM facts WHERE kind = 'import'")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            .prepare("SELECT path, name, NULLIF(signature, '') FROM facts WHERE kind = 'import'")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))
+        })?;
         rows.collect::<std::result::Result<_, _>>()?
     };
     Ok(deps::Graph::build(files, imports))

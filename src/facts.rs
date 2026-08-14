@@ -240,6 +240,10 @@ impl LangSpec {
                 // imported name, combined below into qualified `MODULE.a` imports.
                 let mut from_module: Option<&str> = None;
                 let mut from_names: Vec<Node> = Vec::new();
+                // The local spelling of an imported name (`make as m`). Import
+                // rows retain the source module/name for dependency resolution;
+                // this records what call sites actually write.
+                let mut binding: Option<String> = None;
                 for cap in m.captures {
                     match self.capture_names[cap.index as usize].as_str() {
                         "name" => {
@@ -255,6 +259,7 @@ impl LangSpec {
                         "val" => val = Some(cap.node),
                         "from_module" => from_module = cap.node.utf8_text(src).ok(),
                         "from_name" => from_names.push(cap.node),
+                        "binding" => binding = cap.node.utf8_text(src).ok().map(str::to_string),
                         other => {
                             kind = Some(other);
                             def = Some(cap.node);
@@ -280,7 +285,7 @@ impl LangSpec {
                                 start_col: start.column,
                                 end_line: end.row + 1,
                                 end_col: end.column,
-                                signature: String::new(),
+                                signature: binding.clone().unwrap_or_default(),
                                 doc: None,
                                 source: self.source.clone(),
                                 confidence: 1.0,
@@ -425,11 +430,11 @@ impl LangSpec {
                         start_col: start.column,
                         end_line: end.row + 1,
                         end_col: end.column,
-                        signature: with_value_shape(
-                            signature_of(src, node, body),
-                            kind,
-                            val,
-                        ),
+                        signature: if kind == "import" {
+                            binding.unwrap_or_default()
+                        } else {
+                            with_value_shape(signature_of(src, node, body), kind, val)
+                        },
                         doc: doc_of(src, self.lang, node, body),
                         source: self.source.clone(),
                         confidence: 1.0,
@@ -2229,7 +2234,7 @@ const PYTHON_QUERY: &str = r#"
 
 ; Raw syntactic imports.
 (import_statement (dotted_name) @name) @import
-(import_statement (aliased_import (dotted_name) @name)) @import
+(import_statement (aliased_import (dotted_name) @name alias: (identifier) @binding)) @import
 ; `from X import a, b [as c]` — capture the module and each imported name; the
 ; extractor combines them into qualified `X.a` imports so the name (which the
 ; bare module string drops) resolves to its defining file.
@@ -2238,7 +2243,7 @@ const PYTHON_QUERY: &str = r#"
   name: (dotted_name (identifier) @from_name))
 (import_from_statement
   module_name: (dotted_name) @from_module
-  name: (aliased_import name: (dotted_name (identifier) @from_name)))
+  name: (aliased_import name: (dotted_name (identifier) @from_name) alias: (identifier) @binding))
 ; `from X import *` (wildcard) and relative `from . import x` — keep the coarse
 ; module string (no specific name to qualify with).
 (import_from_statement module_name: (dotted_name) @name (wildcard_import)) @import
@@ -2362,6 +2367,9 @@ const JS_QUERY: &str = r#"
 ; binding resolves. The coarse module capture above still covers default/namespace.
 (import_statement
   (import_clause (named_imports (import_specifier name: (identifier) @from_name)))
+  source: (string (string_fragment) @from_module))
+(import_statement
+  (import_clause (named_imports (import_specifier name: (identifier) @from_name alias: (identifier) @binding)))
   source: (string (string_fragment) @from_module))
 ; CommonJS require("x") — a call, not a syntactic import, so it's guarded by the
 ; callee name (`require`) via the @guard handling in `extract`.

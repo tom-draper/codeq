@@ -1962,6 +1962,58 @@ fn resolved_follows_js_named_imports() {
 }
 
 #[test]
+fn import_aliases_narrow_bare_calls_and_context_expansion() {
+    let f = Fixture::new();
+    f.write("util.js", "export function make() { return 1; }\n");
+    f.write("other.js", "export function make() { return 2; }\n");
+    f.write(
+        "app.js",
+        "import { make as m } from './util';\nexport function run() { return m(); }\n",
+    );
+
+    let paths = field_set(&f.run(&["callees", "run"]), "path");
+    assert_eq!(paths, ["util.js"], "bare alias call was not narrowed: {paths:?}");
+
+    let context = f.run(&["context", "--symbols", "run", "--expand", "--no-text"]);
+    let paths: Vec<&str> = context["data"]["chunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|chunk| chunk["name"] == "make")
+        .filter_map(|chunk| chunk["path"].as_str())
+        .collect();
+    assert_eq!(paths, ["util.js"], "alias expansion was not narrowed: {context}");
+}
+
+#[test]
+fn python_from_import_alias_narrows_a_bare_call() {
+    let f = Fixture::new();
+    f.write("helper.py", "def make():\n    return 1\n");
+    f.write("other.py", "def make():\n    return 2\n");
+    f.write(
+        "app.py",
+        "from helper import make as m\ndef run():\n    return m()\n",
+    );
+
+    let paths = field_set(&f.run(&["callees", "run"]), "path");
+    assert_eq!(paths, ["helper.py"], "Python alias call was not narrowed: {paths:?}");
+}
+
+#[test]
+fn rust_module_alias_narrows_a_qualified_call() {
+    let f = Fixture::new();
+    f.write("helper.rs", "pub fn make() {}\n");
+    f.write("other.rs", "pub fn make() {}\n");
+    f.write(
+        "app.rs",
+        "use crate::helper as h;\npub fn run() { h::make(); }\n",
+    );
+
+    let paths = field_set(&f.run(&["callees", "run"]), "path");
+    assert_eq!(paths, ["helper.rs"], "Rust module alias was not narrowed: {paths:?}");
+}
+
+#[test]
 fn calls_filter_excludes_non_call_references() {
     let f = Fixture::new();
     f.write(
