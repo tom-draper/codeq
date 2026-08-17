@@ -149,6 +149,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         "codeq_map" => {
             args.push("map".into());
             optn(&mut args, a, "limit", "--limit");
+            flag(&mut args, a, "totals", "--totals");
         }
         "codeq_search" => {
             args.push("search".into());
@@ -160,6 +161,8 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "language", "--language");
             opt(&mut args, a, "in", "--in");
             optn(&mut args, a, "context", "-C");
+            optn(&mut args, a, "before", "-B");
+            optn(&mut args, a, "after", "-A");
             flag(&mut args, a, "files_with_matches", "-l");
             flag(&mut args, a, "count", "-c");
             optn(&mut args, a, "limit", "--limit");
@@ -176,6 +179,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
                 pos.push(p.into());
             }
             opt(&mut args, a, "kind", "--kind");
+            opt(&mut args, a, "owner", "--owner");
             opt(&mut args, a, "language", "--language");
             opt(&mut args, a, "path", "--path");
             flag(&mut args, a, "signatures", "--signatures");
@@ -323,6 +327,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             }
             optn(&mut args, a, "depth", "--depth");
             optn(&mut args, a, "min_symbols", "--min-symbols");
+            opt(&mut args, a, "language", "--language");
             flag(&mut args, a, "files", "--files");
             optn(&mut args, a, "limit", "--limit");
         }
@@ -343,6 +348,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
                 pos.push(p.into());
             }
             opt(&mut args, a, "kind", "--kind");
+            opt(&mut args, a, "compare_to", "--compare-to");
             optn(&mut args, a, "limit", "--limit");
         }
         "codeq_deps" => {
@@ -369,6 +375,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "path", "--path");
             opt(&mut args, a, "kind", "--kind");
             optn(&mut args, a, "min_nodes", "--min-nodes");
+            flag(&mut args, a, "include_tests", "--include-tests");
             optn(&mut args, a, "limit", "--limit");
         }
         "codeq_tests" => {
@@ -405,6 +412,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
             opt(&mut args, a, "compare_to", "--compare-to");
             opt(&mut args, a, "path", "--path");
             flag(&mut args, a, "expand", "--expand");
+            flag(&mut args, a, "resolved", "--resolved");
             flag(&mut args, a, "no_text", "--no-text");
             flag(&mut args, a, "plan", "--plan");
             optn(&mut args, a, "max_tokens", "--max-tokens");
@@ -415,6 +423,14 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
                 pos.push(p.into());
             }
             opt(&mut args, a, "language", "--language");
+            optn(&mut args, a, "limit", "--limit");
+        }
+        "codeq_graph" => {
+            args.push("graph".into());
+            opt(&mut args, a, "relation", "--relation");
+            opt(&mut args, a, "path", "--path");
+            opt(&mut args, a, "language", "--language");
+            flag(&mut args, a, "mermaid", "--mermaid");
             optn(&mut args, a, "limit", "--limit");
         }
         "codeq_capabilities" => args.push("capabilities".into()),
@@ -453,18 +469,18 @@ fn tools() -> Value {
             json!({ "name": str_, "at": str_, "path": str_, "max_tokens": int_ }), &[]),
         tool("codeq_map",
             "Orient in the repo: factual counts by language, directory, imported module, and file. Start here in an unfamiliar codebase.",
-            json!({ "limit": int_ }), &[]),
+            json!({ "limit": int_, "totals": bool_ }), &[]),
         tool("codeq_search",
             "Search file contents. Regex by default (same engine as ripgrep); set fixed for a literal. Each match is annotated with its enclosing definition. Superset of grep: -A/-B/-C context, files_with_matches, count, and 'in' (code|comments|strings) which grep can't do. In markdown, fenced code blocks count as strings and prose as comments, so 'in' separates documented examples from the text around them.",
             json!({
                 "pattern": str_, "fixed": bool_, "ignore_case": bool_, "word": bool_,
                 "path": str_, "language": str_, "glob": { "type": "array", "items": str_ },
                 "in": { "type": "string", "enum": ["code", "comments", "strings"] },
-                "context": int_, "files_with_matches": bool_, "count": bool_, "limit": int_
+                "context": int_, "before": int_, "after": int_, "files_with_matches": bool_, "count": bool_, "limit": int_
             }), &["pattern"]),
         tool("codeq_symbols",
             "List defined symbols (functions, classes, structs, interfaces, …), optionally filtered by name substring, kind, language, or path. Set signatures to include each declaration.",
-            json!({ "pattern": str_, "kind": str_, "language": str_, "path": str_, "signatures": bool_, "limit": int_ }), &[]),
+            json!({ "pattern": str_, "kind": str_, "owner": str_, "language": str_, "path": str_, "signatures": bool_, "limit": int_ }), &[]),
         tool("codeq_definitions",
             "Locate the definition(s) of an exact symbol name, with signature, doc, and precise byte/line ranges. path scopes to matching files.",
             json!({ "symbol": str_, "path": str_, "limit": int_ }), &["symbol"]),
@@ -505,7 +521,7 @@ fn tools() -> Value {
             "Files whose imports match a module string.",
             json!({ "query": str_, "limit": int_ }), &["query"]),
         tool("codeq_implementors",
-            "Types that implement or extend a trait / interface / base class — the inheritance edges the call graph doesn't cover (impl T for X in Rust, extends/implements in Java/TS/PHP, class X(Base) in Python, class X < Y in Ruby, base lists in C++/C#). Use it to answer 'who implements this interface' before changing it. Go (structural typing) and C have none. Name-based. relation filters to 'implements' or 'extends'.",
+            "Types that implement or extend a trait / interface / base class — the inheritance edges the call graph doesn't cover (impl T for X in Rust, extends/implements in Java/TS/PHP, class X(Base) in Python, class X < Y in Ruby, base lists in C++/C#). Use it to answer 'who implements this interface' before changing it. Go (structural typing), C, and Zig have no extracted relation edges. Name-based. relation filters to 'implements' or 'extends'.",
             json!({ "name": str_, "relation": str_, "path": str_, "limit": num_ }), &["name"]),
         tool("codeq_supertypes",
             "The traits / interfaces / base classes a type extends or implements — the reverse of implementors (what does X derive from). The names as written at the declaration, not transitively resolved. Name-based. relation filters to 'implements' or 'extends'.",
@@ -518,22 +534,22 @@ fn tools() -> Value {
             json!({ "path": str_, "include_tests": bool_, "limit": num_ }), &[]),
         tool("codeq_tree",
             "The repo's directory SHAPE, folded to a depth, with each directory's file and symbol counts aggregated from everything below it. Use this to orient in an unfamiliar repo: unlike tree(1) it is ignore-aware (no node_modules/.git noise) and reports where the *code* is rather than just where files are; unlike codeq_map it keeps the nesting instead of collapsing to top-level directories. min_symbols=1 jumps straight to the directories that hold code, which is the fastest way to find the source in a data- or asset-heavy repo. depth defaults to 3; counts still include everything below the fold, so folding summarises rather than truncates.",
-            json!({ "path": str_, "depth": num_, "min_symbols": num_, "files": bool_, "limit": num_ }), &[]),
+            json!({ "path": str_, "depth": num_, "min_symbols": num_, "language": str_, "files": bool_, "limit": num_ }), &[]),
         tool("codeq_hotspots",
             "Definitions ranked by how often their name is referenced in code — the inverse of codeq_unused, and the fastest way to find what is load-bearing in a file or repo you have just met. One row per name (the count is a property of the name), with defs telling you how many definitions share it, and path/line pointing at the first. Set calls=true to count only call sites, which is what you usually want for functions: without it a name that is also a common variable scores high. Name-based, so a short common name (new, get, path) ranks high because many unrelated symbols spell it the same way — treat a row as 'this identifier carries weight' and use codeq_callers with calls=true for the precise question. path/kind/language scope what is reported; the count is always repo-wide.",
             json!({ "path": str_, "kind": str_, "language": str_, "calls": bool_, "min_refs": num_, "limit": num_ }), &[]),
         tool("codeq_api",
             "The public API surface of a file or directory. compare_to=<git ref> instead reports how that surface differs from the ref — what was added, removed, or changed shape — which is the review question a raw diff cannot answer, since most edited lines are internal. Otherwise: the definitions it exports for outside use, with signatures. \"Public\" is each language's own notion (Rust pub, JS/TS export, Go capitalization, Python non-underscore, a public modifier in Java/C#/PHP, non-static in C/C++); pub(crate)/protected are excluded. Use it to learn how to call an unfamiliar module without reading whole files. path scopes to a file/dir substring; kind filters to one kind (function, struct, class, …).",
-            json!({ "path": str_, "kind": str_, "limit": num_ }), &[]),
+            json!({ "path": str_, "kind": str_, "compare_to": str_, "limit": num_ }), &[]),
         tool("codeq_deps",
-            "Internal files a file depends on, resolved from its imports (raw import strings matched to file stems — heuristic, not a real module resolver). Pass file, cycles=true, or external=true — calling with none of them is an error. depth (default 1) walks transitive dependencies. cycles=true reports every import cycle in the repo instead (omit file). external=true instead lists imports that resolve to no file in the repo: the third-party dependency list, plus broken local references (a markdown link or ./path pointing at nothing) flagged broken=true.",
+            "Internal files a file depends on, resolved from their imports. Go imports under the module declared in go.mod resolve to their package directory exactly; other languages use deterministic path-stem heuristics. Pass file, cycles=true, or external=true — calling with none of them is an error. depth (default 1) walks transitive dependencies. cycles=true reports every import cycle in the repo instead (omit file). external=true instead lists imports that resolve to no file in the repo: the third-party dependency list, plus broken local references (a markdown link or ./path pointing at nothing) flagged broken=true.",
             json!({ "file": str_, "depth": num_, "cycles": bool_, "external": bool_ }), &[]),
         tool("codeq_astgrep",
             "Structural (AST) search: match a code pattern with $NAME / $_ metavariables (and $$$ for any run of siblings, e.g. foo($$$)), parsed with the language's own grammar so it matches syntax not text — e.g. '$X.unwrap()' finds every .unwrap() call whatever the receiver. Deterministic; a repeated $NAME must bind identically. Cannot see inside macro invocations. language is required.",
             json!({ "pattern": str_, "language": str_, "path": str_, "limit": int_ }), &["pattern", "language"]),
         tool("codeq_clones",
             "Definitions whose syntax shape is identical up to renaming — the same code written twice. Exact, not fuzzy: shapes either match or they don't, so there is no similarity score to interpret and no threshold to tune. Rows are grouped by a shared shape hash, biggest duplication first. Use it before writing a helper (is this already implemented?) and to find the copy-paste that needs the same fix in several places. min_nodes (default 24) sets how much code a shared shape must cover; kind narrows to e.g. function.",
-            json!({ "path": str_, "kind": str_, "min_nodes": int_, "limit": int_ }), &[]),
+            json!({ "path": str_, "kind": str_, "min_nodes": int_, "include_tests": bool_, "limit": int_ }), &[]),
         tool("codeq_tests",
             "Which tests exercise a symbol: the test functions that reference the given name (heuristic — a test-file path or test-like function name). Great for the edit-then-find-the-test loop.",
             json!({ "name": str_, "path": str_, "limit": int_ }), &["name"]),
@@ -545,12 +561,15 @@ fn tools() -> Value {
             json!({ "compare_to": str_, "depth": num_, "limit": int_ }), &[]),
         tool("codeq_context",
             "Assemble token-budgeted code context from explicit seeds: named symbols and/or changed files. path scopes the seeds to matching files. Set expand for one deterministic hop to referenced definitions; no_text returns provenance only (locations without source, for a cheap map).",
-            json!({ "symbols": { "type": "array", "items": str_ }, "changed": bool_, "compare_to": str_, "path": str_, "expand": bool_, "no_text": bool_, "plan": bool_, "max_tokens": int_ }), &[]),
+            json!({ "symbols": { "type": "array", "items": str_ }, "changed": bool_, "compare_to": str_, "path": str_, "expand": bool_, "resolved": bool_, "no_text": bool_, "plan": bool_, "max_tokens": int_ }), &[]),
         tool("codeq_files",
             "List indexed files, optionally filtered by path substring or language.",
             json!({ "pattern": str_, "language": str_, "limit": int_ }), &[]),
         tool("codeq_capabilities",
-            "Describe what codeq supports: commands, languages, fact kinds, schema, and language_support — a per-language matrix of which extractions exist (definitions, imports, members, relations, spans, calls). Check it before reading an empty result as evidence of absence: Go and C have no inheritance edges at all, Ruby declares no fields, and several languages have no import syntax codeq reads.",
+            "Describe what codeq supports: commands, languages, fact kinds, schema, and language_support — a per-language matrix of which extractions exist (definitions, imports, members, relations, spans, calls). Check it before reading an empty result as evidence of absence: Go, C, and Zig have no extracted relation edges, Ruby declares no fields, and several languages have no import syntax codeq reads.",
             json!({}), &[]),
+        tool("codeq_graph",
+            "Every explicit type or schema relation in the repository as an edge list. relation filters to implements, extends, or references; mermaid emits a graph LR document. This is not a call graph: use callers or callees for a call relationship rooted at a symbol. Go's structural interfaces have no explicit relation edge.",
+            json!({ "relation": str_, "path": str_, "language": str_, "mermaid": bool_, "limit": int_ }), &[]),
     ])
 }

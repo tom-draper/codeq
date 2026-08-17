@@ -3138,6 +3138,68 @@ fn mcp_server_handshake_and_tool_call() {
     assert_eq!(data["data"][0]["kind"], "function");
 }
 
+#[test]
+fn mcp_exposes_every_agent_query_command_and_its_schema_flags() {
+    use std::io::Write;
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    let expected: std::collections::BTreeSet<String> = field_names(
+        &f.run(&["capabilities"])["data"]["commands"],
+    )
+    .into_iter()
+    // These commands manage Codeq itself or start the MCP server; they are not
+    // repository-query tools an MCP client should recursively expose.
+    .filter(|name| !matches!(name.as_str(), "index" | "install" | "mcp"))
+    .map(|name| format!("codeq_{name}"))
+    .collect();
+
+    let mut child = PCommand::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"tools/list"}}"#).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let tools = reply["result"]["tools"].as_array().expect("tools/list response");
+    let actual: std::collections::BTreeSet<String> = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(actual, expected, "MCP and CLI command surfaces drifted");
+
+    let properties = |name: &str| -> &Value {
+        &tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("missing MCP tool {name}"))["inputSchema"]["properties"]
+    };
+    for (tool, flag) in [
+        ("codeq_context", "resolved"),
+        ("codeq_api", "compare_to"),
+        ("codeq_tree", "language"),
+        ("codeq_symbols", "owner"),
+        ("codeq_map", "totals"),
+        ("codeq_clones", "include_tests"),
+        ("codeq_search", "before"),
+        ("codeq_search", "after"),
+        ("codeq_graph", "mermaid"),
+    ] {
+        assert!(
+            properties(tool).get(flag).is_some(),
+            "{tool} does not expose its CLI {flag} flag"
+        );
+    }
+}
+
 /// An MCP caller has no way to say "this value is a literal, not a flag" — so
 /// the server must say it, by putting `--` ahead of every caller-supplied
 /// positional. Without it, searching a codebase for `--json` (an entirely
@@ -3251,6 +3313,43 @@ fn mcp_context_forwards_path_and_no_text_flags() {
     assert!(chunks.iter().any(|c| c["name"] == "target"), "seed missing: {chunks:?}");
     assert!(chunks.iter().all(|c| c.get("text").is_none()),
             "no_text was not forwarded — source text leaked: {chunks:?}");
+}
+
+#[test]
+fn mcp_context_forwards_resolved_expansion() {
+    use std::io::Write;
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    f.write("seed.rs", "mod helper;\nfn seed() { build(); }\n");
+    f.write("helper.rs", "pub fn build() {}\n");
+    f.write("other.rs", "pub fn build() {}\n");
+
+    let mut child = PCommand::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"codeq_context","arguments":{{"symbols":["seed"],"expand":true,"resolved":true,"no_text":true}}}}}}"#).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let text = reply["result"]["content"][0]["text"].as_str().expect("tool text");
+    let data: Value = serde_json::from_str(text).unwrap();
+    let paths: Vec<&str> = data["data"]["chunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|chunk| chunk["path"].as_str())
+        .collect();
+    assert!(paths.contains(&"helper.rs"), "reachable definition missing: {data}");
+    assert!(!paths.contains(&"other.rs"), "resolved was not forwarded: {data}");
 }
 
 // ---------------------------------------------------------------------------
