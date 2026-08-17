@@ -295,6 +295,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
     // is recorded as omitted, and we keep trying smaller later chunks.
     let mut chunks = Vec::new();
     let mut omitted = Vec::new();
+    let mut omitted_truncated = false;
     let mut used: u64 = 0;
     for (i, reason) in candidates {
         let d = &defs[i];
@@ -322,6 +323,8 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
                     est_tokens: est,
                     reason,
                 });
+            } else {
+                omitted_truncated = true;
             }
             continue;
         }
@@ -342,7 +345,6 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         });
     }
 
-    let omitted_truncated = omitted.len() >= MAX_OMITTED;
     let seeds: Vec<String> = {
         let mut s: Vec<String> = defs[..seed_count].iter().map(|d| d.name.clone()).collect();
         s.sort();
@@ -415,6 +417,7 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
     let mut file_cache: HashMap<String, Option<String>> = HashMap::new();
     let mut chunks = Vec::new();
     let mut omitted = Vec::new();
+    let mut omitted_truncated = false;
     let mut used: u64 = 0;
     // Byte ranges already emitted *verbatim*, per file. A later definition whose
     // range sits inside one of these is already on the page — a class's methods,
@@ -440,6 +443,8 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
                     est_tokens: est,
                     reason: role,
                 });
+            } else {
+                omitted_truncated = true;
             }
             continue;
         }
@@ -476,7 +481,6 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
     }
     chunks.sort_by(|a, b| (a.path.as_str(), a.start_line).cmp(&(b.path.as_str(), b.start_line)));
 
-    let omitted_truncated = omitted.len() >= MAX_OMITTED;
     Ok(ContextResult {
         plan: None,
         budget: Budget {

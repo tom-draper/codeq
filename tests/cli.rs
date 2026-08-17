@@ -3434,6 +3434,52 @@ fn context_respects_token_budget() {
 }
 
 #[test]
+fn context_marks_omissions_truncated_only_when_one_is_hidden() {
+    let f = Fixture::new();
+    let source = |count: usize| {
+        let calls = (0..count)
+            .map(|i| format!("n{i}();"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let defs = (0..count)
+            .map(|i| format!("fn n{i}() {{ let _ = {i}; }}\n"))
+            .collect::<String>();
+        format!("fn seed() {{ {calls} }}\n{defs}")
+    };
+
+    // The seed is force-included (and reduced); every referenced neighbour is
+    // over budget. Exactly filling the visible omission list is not truncation.
+    f.write("m.rs", &source(50));
+    let complete = f.run(&[
+        "context",
+        "--symbols",
+        "seed",
+        "--expand",
+        "--no-text",
+        "--max-tokens",
+        "1",
+    ]);
+    assert_eq!(complete["data"]["omitted"].as_array().unwrap().len(), 50, "{complete}");
+    assert!(
+        complete["data"].get("omitted_truncated").is_none(),
+        "a full report was mislabelled as truncated: {complete}"
+    );
+
+    f.write("m.rs", &source(51));
+    let truncated = f.run(&[
+        "context",
+        "--symbols",
+        "seed",
+        "--expand",
+        "--no-text",
+        "--max-tokens",
+        "1",
+    ]);
+    assert_eq!(truncated["data"]["omitted"].as_array().unwrap().len(), 50, "{truncated}");
+    assert_eq!(truncated["data"]["omitted_truncated"], true, "{truncated}");
+}
+
+#[test]
 fn context_changed_mode_seeds_from_git() {
     let f = Fixture::new();
     f.write("a.py", "def old():\n    pass\n");
