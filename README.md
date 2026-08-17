@@ -106,8 +106,9 @@ unsupported language read as evidence of absence.
 
 The honest boundary: codeq's facts are syntactic, not deeply semantic. It knows an
 identifier is a function definition. It does not resolve a call to its definition across
-module aliases, generics, or build systems. The graph commands match by name, with opt-in
-heuristics (`--resolved`, `--calls`, `--on`) to cut false positives. Half-right resolution
+arbitrary module aliases, generics, or build systems. Direct named-import aliases in
+Rust, Python, and JS/TS are recognised; the graph commands otherwise match by name, with
+opt-in heuristics (`--resolved`, `--calls`, `--on`) to cut false positives. Half-right resolution
 would produce the untrustworthy results that send an agent back to grep, so codeq stops at
 facts it can stand behind.
 

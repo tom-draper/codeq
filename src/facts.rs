@@ -2249,8 +2249,22 @@ const RUST_QUERY: &str = r#"
 (field_declaration name: (field_identifier) @name) @field
 (enum_variant name: (identifier) @name) @variant
 
-; Raw syntactic imports: name is the module path as written in source.
-(use_declaration argument: (_) @name) @import
+; Raw syntactic imports: name is the module path as written in source. A direct
+; `use crate::util::make as m` also records `m` as the local binding, so call and
+; context expansion can connect `m()` to `make` in util rather than treating it
+; as an unrelated name. Braced use lists keep the whole declaration as one raw
+; import for now: their per-item prefixes need a separate path reconstruction.
+(use_declaration argument: [
+  (identifier)
+  (scoped_identifier)
+  (scoped_use_list)
+  (use_list)
+  (use_wildcard)
+  (crate)
+  (self)
+  (super)
+] @name) @import
+(use_declaration argument: (use_as_clause path: (_) @name alias: (identifier) @binding)) @import
 ; An external `mod foo;` (no inline body) pulls in another file's module — a
 ; file-level dependency edge, so treat it as an import for reachability. Inline
 ; `mod foo { … }` (has a body) is not a separate file, so exclude it via `!body`.

@@ -2040,6 +2040,41 @@ fn import_aliases_narrow_bare_calls_and_context_expansion() {
 }
 
 #[test]
+fn rust_use_alias_narrows_bare_calls_and_context_expansion() {
+    let f = Fixture::new();
+    f.write("helper.rs", "pub fn make() { }\n");
+    f.write("other.rs", "pub fn make() { }\n");
+    f.write(
+        "app.rs",
+        "use crate::helper::make as m;\npub fn run() { m(); }\n",
+    );
+
+    let imports = f.run(&["imports", "app.rs"]);
+    assert_eq!(imports["data"][0]["module"], "crate::helper::make", "{imports}");
+
+    let paths = field_set(&f.run(&["callees", "run"]), "path");
+    assert_eq!(paths, ["helper.rs"], "Rust alias call was not narrowed: {paths:?}");
+
+    let context = f.run(&["context", "--symbols", "run", "--expand", "--no-text"]);
+    let paths: Vec<&str> = context["data"]["chunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|chunk| chunk["name"] == "make")
+        .filter_map(|chunk| chunk["path"].as_str())
+        .collect();
+    assert_eq!(paths, ["helper.rs"], "Rust alias expansion was not narrowed: {context}");
+
+    let callers = field_set(&f.run(&["callers", "make", "--calls", "--resolved"]), "name");
+    assert_eq!(callers, ["run"], "Rust alias call was not attributed to make: {callers:?}");
+
+    let references = f.run(&["references", "make", "--calls", "--resolved"]);
+    let calls = references["data"]["references"].as_array().unwrap();
+    assert!(calls.iter().any(|row| row["path"] == "app.rs" && row["via"] == "imported"),
+        "Rust alias reference was not attributed to make: {references}");
+}
+
+#[test]
 fn python_from_import_alias_narrows_a_bare_call() {
     let f = Fixture::new();
     f.write("helper.py", "def make():\n    return 1\n");
@@ -6123,8 +6158,8 @@ fn explore_reports_the_focus_files_imports() {
 
 #[test]
 fn context_expand_resolved_drops_unreachable_same_named_definitions() {
-    // Expansion is by name, so a common name pulls in same-named definitions the
-    // seed cannot reach. --resolved prunes those via the import graph.
+    // A direct named import is stronger evidence than a bare name: expansion can
+    // select helper.rs even before --resolved adds its reachability filter.
     let f = Fixture::new();
     f.write("seed.rs", "mod helper;\nuse helper::build;\n\nfn seed() -> u32 {\n    build()\n}\n");
     f.write("helper.rs", "pub fn build() -> u32 { 1 }\n");
@@ -6140,8 +6175,13 @@ fn context_expand_resolved_drops_unreachable_same_named_definitions() {
     };
     let wide = f.run(&["context", "--symbols", "seed", "--expand", "--no-text"]);
     assert!(
-        files(&wide).iter().any(|p| p == "unrelated.rs"),
-        "expected the name-based superset to include unrelated.rs: {:?}",
+        files(&wide).iter().any(|p| p == "helper.rs"),
+        "named import should select helper.rs: {:?}",
+        files(&wide)
+    );
+    assert!(
+        !files(&wide).iter().any(|p| p == "unrelated.rs"),
+        "named import should not include unrelated.rs: {:?}",
         files(&wide)
     );
     let narrow = f.run(&["context", "--symbols", "seed", "--expand", "--resolved", "--no-text"]);

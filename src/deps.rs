@@ -382,6 +382,23 @@ impl Graph {
             .map(String::as_str)
     }
 
+    /// Local aliases that name an imported source symbol. `use crate::util::make
+    /// as m` contributes `(app.rs, m)` for `make`, allowing a query for the
+    /// source name to find syntax that necessarily refers to it.
+    pub fn bindings_for_source(&self, source: &str) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = self
+            .binding_names
+            .iter()
+            .flat_map(|(path, bindings)| {
+                bindings.iter().filter_map(move |(binding, name)| {
+                    (name == source).then(|| (path.clone(), binding.clone()))
+                })
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
     pub fn contains(&self, file: &str) -> bool {
         self.edges.contains_key(file)
     }

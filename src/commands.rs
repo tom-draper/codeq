@@ -1130,11 +1130,12 @@ fn callers_of(
         identifier_boundary: true,
         per_file: None,
     };
-    let hits = match run_search(&s.db.conn, &re, like_of(name).as_deref(), path, None, None, &opts)?
+    let mut hits = match run_search(&s.db.conn, &re, like_of(name).as_deref(), path, None, None, &opts)?
     {
         SearchData::Matches { matches, .. } => matches,
         _ => unreachable!(),
     };
+    hits.extend(alias_hits(s, name, path, None, &opts)?);
 
     // Declaration lines of `name` — a reference on one of these is the def, not a call.
     let defsites = def_sites_of(&s.db.conn, name)?;
@@ -1217,6 +1218,46 @@ fn callers_of(
         });
     }
     Ok(out)
+}
+
+/// Find local aliases of an imported source name. The dependency graph only
+/// records these when the import resolves to an internal target, so `m()` is
+/// included for `use crate::util::make as m` but an unrelated local `m` is not.
+/// This supplements the ordinary source-name scan; it never replaces it.
+fn alias_hits(
+    s: &Session,
+    name: &str,
+    path: Option<&str>,
+    language: Option<&str>,
+    opts: &ScanOpts,
+) -> Result<Vec<Hit>> {
+    // A receiver-qualified request names the syntax the caller wants to see;
+    // a bare alias has no such receiver and must not satisfy it.
+    if opts.qualifier.is_some() {
+        return Ok(Vec::new());
+    }
+    let graph = load_dep_graph(&s.db)?;
+    let mut hits = Vec::new();
+    for (file, binding) in graph.bindings_for_source(name) {
+        if path.is_some_and(|scope| !file.contains(scope)) {
+            continue;
+        }
+        let re = regex::Regex::new(&regex::escape(&binding))?;
+        let like = like_of(&binding);
+        let data = run_search(
+            &s.db.conn,
+            &re,
+            like.as_deref(),
+            Some(&file),
+            language,
+            None,
+            opts,
+        )?;
+        if let SearchData::Matches { matches, .. } = data {
+            hits.extend(matches);
+        }
+    }
+    Ok(hits)
 }
 
 #[derive(Serialize)]
@@ -3625,17 +3666,25 @@ pub fn cmd_references(
         after: 0,
         out: OutMode::Matches,
         in_filter,
-        limit,
+        // Include alias hits below, then apply one global cap to the combined
+        // result. Per-alias caps would make --limit depend on import spelling.
+        limit: 0,
         call_only,
         qualifier: qualifier.map(str::to_string),
         identifier_boundary: true,
         per_file,
     };
-    let (hits, truncated) =
+    let (mut hits, mut truncated) =
         match run_search(&s.db.conn, &re, match_query.as_deref(), path, language, None, &opts)? {
         SearchData::Matches { matches, truncated } => (matches, truncated),
         _ => unreachable!("references always uses Matches mode"),
     };
+    hits.extend(alias_hits(&s, name, path, language, &opts)?);
+    hits.sort_by(|a, b| (a.path.as_str(), a.line, a.col).cmp(&(b.path.as_str(), b.line, b.col)));
+    if limit > 0 && hits.len() > limit {
+        hits.truncate(limit);
+        truncated = true;
+    }
 
     // Definition sites of this exact name: (path, start_line).
     let defsites = def_sites_of(&s.db.conn, name)?;

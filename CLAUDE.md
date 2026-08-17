@@ -185,10 +185,10 @@ benchmarks — not as a step you run before querying.
       definition of NAME through imports; tags the rest `via` same-file /
       imported / ambiguous. Heuristic (best-effort import resolution — a
       stem-matched edge, so Python `from . import x` relative / `import *`
-      wildcard forms stay coarse). Rust `mod x;` and named imports (Python `from
-      pkg import x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a`) all count
-      as edges, so intra-crate, package-submodule, and named-binding reachability
-      work.
+      wildcard forms stay coarse). Rust `mod x;` and direct aliases (`use
+      crate::pkg::make as m`), plus named imports (Python `from pkg import x` →
+      `pkg.x`, JS/TS `import {a} from './x'` → `./x.a`), all count as edges, so
+      intra-crate, package-submodule, and named-binding reachability work.
     - `--calls` — keep only call sites. Answered from the **parse tree**, not the
       surrounding bytes, so a declaration (`fn NAME(`) and a mention in a string or
       comment are all excluded, and formatting never matters.
@@ -368,10 +368,11 @@ benchmarks — not as a step you run before querying.
   import string); `--depth N` walks transitively. `codeq deps --cycles` lists
   every import cycle in the repo. Go imports under the module declared in `go.mod`
   resolve to their package directory exactly (but `replace` directives are not read).
-  Other resolution is heuristic (import segments matched to file stems); named imports are captured qualified — Python `from pkg import
-  x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a` — so the imported symbol
-  resolves like a direct module import; relative (`from . import x`) and wildcard
-  forms stay coarse. Verify via the edge's module string.
+  Other resolution is heuristic (import segments matched to file stems); direct
+  named aliases are retained — Rust `use crate::pkg::make as m`, Python `from pkg
+  import x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a` — so the imported
+  symbol resolves like a direct module import; relative (`from . import x`) and
+  wildcard forms stay coarse. Verify via the edge's module string.
 - **What a type holds:** `codeq members Config` — its fields, enum variants *and*
   methods, **grouped by kind** (methods, then fields), each group in line order.
   So the line numbers restart partway down; that is the grouping, not a sort bug.
