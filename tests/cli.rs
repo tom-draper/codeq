@@ -1210,6 +1210,34 @@ fn deps_resolves_an_import_that_names_a_directory() {
 }
 
 #[test]
+fn go_module_imports_resolve_to_their_package_not_a_matching_file_stem() {
+    // Go import paths are module-relative package directories. A stem matcher
+    // would see only `worker` and connect this import to both files; go.mod lets
+    // the resolver pick the package exactly and reject an external lookalike.
+    let f = Fixture::new();
+    f.write("go.mod", "module example.com/acme/service\n\ngo 1.22\n");
+    f.write(
+        "cmd/app/main.go",
+        "package main\n\nimport \"example.com/acme/service/internal/worker\"\n\nfunc run() { worker.Build() }\n",
+    );
+    f.write("internal/worker/worker.go", "package worker\n\nfunc Build() {}\n");
+    f.write("other/worker.go", "package other\n\nfunc Build() {}\n");
+    f.write("external.go", "package main\n\nimport \"example.net/lib/worker\"\n");
+
+    let deps = field_set(&f.run(&["deps", "cmd/app/main.go"]), "path");
+    assert_eq!(deps, ["internal/worker/worker.go"], "{deps:?}");
+
+    let external = field_set(&f.run(&["deps", "external.go"]), "path");
+    assert!(external.is_empty(), "an external Go module borrowed local code: {external:?}");
+
+    let callers = f.run(&["callers", "Build", "--resolved"]);
+    let row = callers["data"].as_array().unwrap().iter()
+        .find(|row| row["name"] == "run")
+        .expect("the internal Go package call should resolve");
+    assert_eq!(row["via"], "imported", "{callers}");
+}
+
+#[test]
 fn symbols_can_be_filtered_by_the_type_that_owns_them() {
     // Members are only addressable together with their type, so the owner has to
     // be queryable — otherwise "what does this type hold?" means fetching every

@@ -17,7 +17,8 @@ agent that can trust the output has no reason to fall back to ad-hoc shell pipel
 > Elixir, Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, HCL/Terraform, SQL, and
 > Markdown. Other
 > languages are indexed as files and stay fully searchable. `codeq capabilities` is the
-> authoritative list. See [DRAFT.md](./DRAFT.md) for the design rationale.
+> authoritative, version-specific support list. See [DRAFT.md](./DRAFT.md) for the design
+> rationale.
 
 ## Install
 
@@ -94,10 +95,12 @@ and Python's `function_definition` are the same node whether or not they sit in 
 function called as `S::assoc()` stays a `function`. A nested function or closure is
 never a method, however deep the class above it.
 
-Support is uneven across the 29 languages, so `capabilities` reports a
+Support is uneven across languages, so `capabilities` reports a
 `language_support` matrix — which of definitions, imports, members, relations, spans
 and calls each language actually has, derived from the extraction queries rather than
-a hand-kept list. Go and C have no inheritance edges at all; Ruby declares no fields.
+a hand-kept list. Type relations are unavailable for Go, C, and Zig; Go satisfies
+interfaces structurally, so determining implementations would require type checking rather
+than syntax extraction. Ruby declares no fields.
 When a command comes back empty for that reason it says so, rather than letting an
 unsupported language read as evidence of absence.
 
@@ -197,6 +200,8 @@ Imports and dependencies:
 - `codeq imports [path]` and `codeq importers <query>` list import statements, and who
   imports a module.
 - `codeq deps <file>` shows the internal files a file depends on (`--cycles` for import cycles).
+  Go imports under the module declared by `go.mod` resolve to their package directory exactly;
+  other language module resolution remains heuristic.
 
 Search:
 - `codeq search <pattern>` is content search, each match tagged with its enclosing definition.
@@ -204,13 +209,15 @@ Search:
 
 Repo state:
 - `codeq changed --compare-to <ref>` lists files changed vs a git ref (`--symbols` for the
-  definitions touched).
+  definitions touched). The command is `changed`, not `changes`.
 - `codeq affected --compare-to <ref>` takes a diff and reports the definitions it touched,
   their transitive callers (the impacted set), and the test files that exercise any of them,
   so you know what to re-check and re-run.
 - `codeq files`, `codeq symbols`, and `codeq map --totals` list and count.
-- `codeq graph` emits the whole type-relation graph (SQL foreign keys, `implements`/
-  `extends`) as edges, or a Mermaid diagram with `--mermaid`.
+- `codeq graph` emits the whole explicit type-relation graph (SQL foreign keys,
+  `implements`/`extends`) as edges, or a Mermaid diagram with `--mermaid`. It is not a
+  call graph and cannot infer Go interface implementations; use rooted `callers`/
+  `callees` queries for call relationships.
 - `codeq capabilities` self-describes: commands, languages, fact kinds, schema.
 
 Cross-cutting flags: `--path <substr>` scopes a name-based lookup to matching files,
@@ -268,7 +275,8 @@ whole structure (imports, signatures, docstrings) cheaply, then open only what y
 - `codeq read <file> --symbol discover` for one named definition, verbatim.
 - `codeq read <file> --raw --symbol discover` for exact bytes with no line prefixes, ready
   to drop into an edit.
-- `codeq read <file> --full` for the whole file, unfolded.
+- `codeq read <file> --full` for the whole file, unfolded (and still line-numbered).
+- `codeq read <file> --raw` for the whole file as exact source with no line-number overhead.
 
 ## context
 

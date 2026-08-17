@@ -83,6 +83,9 @@ benchmarks — not as a step you run before querying.
   exact, whereas the call graph is name-based and every hop compounds the
   over-match — a whole-repo call graph would be mostly plausible-looking noise.
   Use `callers`/`callees --depth N` there, rooted at a symbol you can check.
+  TypeScript/TSX has explicit `extends`/`implements` syntax, so it contributes edges;
+  Go does not. Go interfaces are structural, and inferring their implementors would
+  require type checking rather than Codeq's syntax extraction.
 - **Orient:** `codeq map` (grouped totals; `--totals` for just the headline
   numbers and the per-language table, which skips the row scans and stays flat as
   the repo grows — and it says so on stderr when most of the repo is assets codeq
@@ -227,13 +230,13 @@ benchmarks — not as a step you run before querying.
     unconnected, or a chain past `--max-depth` (default 8). Reachability *with the route*, vs `callees --depth`
     which only says whether/at what depth.
 - **Who implements / extends a type:** `codeq implementors NAME` — the inheritance
-  edges the call graph misses, across 18 languages (`impl T for X` in Rust,
+  edges the call graph misses, in languages with explicit relation syntax (`impl T for X` in Rust,
   `extends`/`implements` in Java/TS/PHP/C#/C++/Dart, `class X : B` in
   Kotlin/Swift, `extends ... with` in Scala, `contract A is B` in Solidity,
   `class X(Base)` in Python, `class X < Y` in Ruby, `implements` in GraphQL,
   and the `<script>` body of a Svelte/Vue component). `--relation
-  implements|extends` to filter. Go (structural typing), C and Zig have no
-  inheritance at all — `capabilities.language_support` says which, and an empty
+  implements|extends` to filter. Go (structural typing), C and Zig have no relation
+  extraction — `capabilities.language_support` says which, and an empty
   result there says so rather than implying none exist. Name-based.
   - **A namespaced base class is stored dotted, but matched either way.**
     `class Legacy extends React.Component` records the supertype as
@@ -244,7 +247,7 @@ benchmarks — not as a step you run before querying.
     the declaration, not transitively resolved).
 - **Check what codeq supports before trusting an empty answer:** `codeq
   capabilities` includes `language_support`, a per-language matrix of which
-  extractions exist. Go and C have **no** inheritance edges, Ruby declares no
+  extractions exist. Go, C and Zig have **no** relation extraction, Ruby declares no
   fields, Bash/Lua/Zig/Elixir have no imports — for those, "none found" is not
   evidence of absence, and the empty-result note says so.
 - **Public API with no tests:** `codeq untested [<path>]` — `api` composed with
@@ -363,8 +366,9 @@ benchmarks — not as a step you run before querying.
 - **Module-dependency graph:** `codeq deps <file> [--depth N]` — the internal
   files a file depends on, resolved from its imports (each edge shows the raw
   import string); `--depth N` walks transitively. `codeq deps --cycles` lists
-  every import cycle in the repo. Resolution is heuristic (import segments matched
-  to file stems); named imports are captured qualified — Python `from pkg import
+  every import cycle in the repo. Go imports under the module declared in `go.mod`
+  resolve to their package directory exactly (but `replace` directives are not read).
+  Other resolution is heuristic (import segments matched to file stems); named imports are captured qualified — Python `from pkg import
   x` → `pkg.x`, JS/TS `import {a} from './x'` → `./x.a` — so the imported symbol
   resolves like a direct module import; relative (`from . import x`) and wildcard
   forms stay coarse. Verify via the edge's module string.

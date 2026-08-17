@@ -2881,7 +2881,23 @@ pub(crate) fn load_dep_graph(db: &Db) -> Result<deps::Graph> {
         })?;
         rows.collect::<std::result::Result<_, _>>()?
     };
-    Ok(deps::Graph::build(files, imports))
+    // A Go import names a package directory relative to the module path, not a
+    // file stem. Keep this small piece of build metadata separate from the
+    // syntax facts so dependency resolution can use exact internal Go edges
+    // without becoming a general build-system resolver.
+    let go_module: Option<String> = db
+        .dir
+        .parent()
+        .and_then(|root| std::fs::read_to_string(root.join("go.mod")).ok())
+        .and_then(|body| {
+            body.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("module ")
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .map(str::to_string)
+            })
+        });
+    Ok(deps::Graph::build(files, imports, go_module.as_deref()))
 }
 
 /// Import-scoped resolution for the name-based graph commands: attributes a

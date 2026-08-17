@@ -157,10 +157,51 @@ fn exact_module_match(from: &str, path: &str, module: &str) -> bool {
     matches_tail(&module)
 }
 
+/// The `.go` files that form an internal Go package imported by `module`.
+///
+/// Go imports name a package directory relative to the module declared in
+/// `go.mod`, not a source-file stem. Treating `example.com/acme/app/worker` as
+/// a bag of segments can therefore connect it to an unrelated `worker.go` in a
+/// different directory. When the module root is known, map that prefix exactly
+/// and include the package's non-test source files. `Some(empty)` is meaningful:
+/// it is an external Go module and must not fall back to stem matching.
+fn go_package_targets<'a>(
+    paths: &'a [String],
+    from: &str,
+    module: &str,
+    go_module: Option<&str>,
+) -> Option<Vec<&'a str>> {
+    if !from.ends_with(".go") {
+        return None;
+    }
+    let root = go_module?;
+    let package = if module == root {
+        ""
+    } else if let Some(package) = module.strip_prefix(root).and_then(|rest| rest.strip_prefix('/')) {
+        package
+    } else {
+        // This is a Go import, but it belongs to another module. Returning an
+        // empty target set tells the caller to keep it external rather than
+        // falling through to filename-stem guessing.
+        return Some(Vec::new());
+    };
+    Some(
+        paths
+            .iter()
+            .map(String::as_str)
+            .filter(|path| {
+                path.ends_with(".go")
+                    && !path.ends_with("_test.go")
+                    && path.rsplit_once(['/', '\\']).map(|(dir, _)| dir).unwrap_or("") == package
+            })
+            .collect(),
+    )
+}
+
 impl Graph {
     /// Build the internal graph from all repo `files` and all import facts
     /// `(importing_file, raw_module)`.
-    pub fn build<F, I>(files: F, imports: I) -> Graph
+    pub fn build<F, I>(files: F, imports: I, go_module: Option<&str>) -> Graph
     where
         F: IntoIterator<Item = String>,
         I: IntoIterator<Item = (String, String, Option<String>)>,
@@ -194,6 +235,32 @@ impl Graph {
             edges.entry(p.clone()).or_default();
         }
         for (from, module, binding) in imports {
+            // Go's module path is enough to resolve an internal package exactly.
+            // Do this before the cross-language stem heuristic, and do not let an
+            // external module such as `example.net/lib/util` borrow a local
+            // `util.go` merely because their final segment happens to agree.
+            if let Some(targets) = go_package_targets(&paths, &from, &module, go_module) {
+                if targets.is_empty() {
+                    continue;
+                }
+                let bucket = edges.entry(from.clone()).or_default();
+                for cand in targets {
+                    bucket.push(Edge {
+                        to: cand.to_string(),
+                        module: module.clone(),
+                        exact: true,
+                    });
+                    if let Some(binding) = &binding {
+                        bindings
+                            .entry(from.clone())
+                            .or_default()
+                            .entry(binding.clone())
+                            .or_default()
+                            .insert(cand.to_string());
+                    }
+                }
+                continue;
+            }
             let segs = segments(&module);
             if segs.is_empty() {
                 continue;

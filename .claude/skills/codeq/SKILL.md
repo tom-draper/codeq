@@ -30,7 +30,9 @@ refresh the index — every command auto-refreshes changed files first.
   graph as `from -> to` edges (`--mermaid` to render it). Relations only, not calls:
   relation edges come off the parse tree so the graph is exact, while a name-based
   call graph compounds its over-match at every hop — use `callers/callees --depth N`
-  there instead.
+  there instead. TypeScript/TSX contributes explicit `extends`/`implements` edges;
+  Go does not, because its structural interfaces need type checking to determine
+  implementations.
 - `codeq tree [<path>]` — the directory shape with nesting kept, folded at `--depth`
   (default 3); each directory reports the files and symbols of everything below it.
   `--min-symbols 1` jumps straight to where the code is. In a repo full of data,
@@ -39,6 +41,8 @@ refresh the index — every command auto-refreshes changed files first.
 
 **Understand a file without reading all of it**
 - `codeq read <file>` — the file with long function bodies folded to signatures.
+  For every source byte without display prefixes, use `codeq read <file> --raw`;
+  `--full` unfolds but keeps line numbers.
 - `codeq outline <file>` — just the definitions and their nesting.
 
 **Understand or change one symbol (reach for this first)**
