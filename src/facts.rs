@@ -1527,6 +1527,16 @@ pub const RUNTIME_READ_NAMES: &[(&str, &str)] = &[
     ("python", "__getattr__"),
 ];
 
+/// JavaScript-family constructors are invoked as `new TypeName()`, not by the
+/// method name `constructor`. A name-based reference scan therefore cannot
+/// distinguish an instantiated class from one whose constructor is dead; the
+/// class itself remains eligible for `unused`.
+pub const UNREFERENCED_CONSTRUCTORS: &[(&str, &str, &str)] = &[
+    ("javascript", "method", "constructor"),
+    ("typescript", "method", "constructor"),
+    ("tsx", "method", "constructor"),
+];
+
 /// Whether `unused` should stay silent about a definition because nothing in
 /// this repository was ever going to reference it. See [`UNREFERENCED_BY_DESIGN`].
 pub fn unreferenced_by_design(language: Option<&str>, kind: &str, name: &str) -> bool {
@@ -1535,6 +1545,9 @@ pub fn unreferenced_by_design(language: Option<&str>, kind: &str, name: &str) ->
         .iter()
         .any(|(l, k)| *l == lang && k.is_none_or(|k| k == kind))
         || RUNTIME_READ_NAMES.iter().any(|(l, n)| *l == lang && *n == name)
+        || UNREFERENCED_CONSTRUCTORS
+            .iter()
+            .any(|(l, k, n)| *l == lang && *k == kind && *n == name)
 }
 
 /// Languages that can carry a JavaScript framework's file conventions.

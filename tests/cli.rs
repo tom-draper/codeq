@@ -2455,6 +2455,29 @@ fn unused_reports_only_definitions_with_no_use() {
 }
 
 #[test]
+fn unused_excludes_javascript_constructors() {
+    let f = Fixture::new();
+    f.write(
+        "service.js",
+        "class Service {\n  constructor() {}\n  used() {}\n  dead() {}\n}\n\nnew Service().used();\n",
+    );
+
+    let names = field_set(&f.run(&["unused"]), "name");
+    assert!(
+        !names.contains(&"constructor".to_string()),
+        "constructor is invoked through new: {names:?}"
+    );
+    assert!(
+        !names.contains(&"used".to_string()),
+        "called method: {names:?}"
+    );
+    assert!(
+        names.contains(&"dead".to_string()),
+        "ordinary unused method: {names:?}"
+    );
+}
+
+#[test]
 fn unused_is_conservative_about_string_mentions() {
     // `unused` under-reports rather than risk flagging something an agent might
     // delete, so a mention in a *string* counts as a use: it may be reflection,
