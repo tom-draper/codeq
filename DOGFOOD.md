@@ -965,11 +965,11 @@ With no `package.json` declaring a local `express` workspace, codeq reports
 the target and `deps --external` omits `express`; both are wrong for Node's
 module-resolution rules.
 
-The Go equivalent (`import "net/http"` beside two local `http.go` files) now
-behaves correctly, so the regression is specific to bare JS/TS package names.
-The resolver needs to distinguish relative specifiers from package specifiers,
-then add explicit workspace/package-name handling before treating a bare name
-as local.
+The Go equivalent (`import "net/http"` beside two local `http.go` files) already
+behaved correctly. The resolver now applies Node's corresponding default:
+non-relative JS/TS/Svelte/Vue specifiers remain external, while `./` and `../`
+paths retain local resolution. Workspace aliases require configuration codeq
+does not read, so they deliberately remain external rather than being guessed.
 
 ## 2026-08-14 — `deps --cycles` reported cycles that do not exist
 

@@ -5532,6 +5532,8 @@ fn jinja_templates_expose_blocks_macros_and_composition() {
     let outline = field_set(&f.run(&["outline", "templates/page.html"]), "name");
     assert!(outline.iter().any(|name| name == "body"), "block: {outline:?}");
     assert!(outline.iter().any(|name| name == "greeting"), "macro: {outline:?}");
+    let unused = field_set(&f.run(&["unused", "templates", "--kind", "block"]), "name");
+    assert!(!unused.contains(&"body".to_string()), "template blocks are runtime entry points: {unused:?}");
     let imports = field_set(&f.run(&["imports", "templates/page.html"]), "module");
     for target in ["base.html", "macros.j2", "partials/card.html"] {
         assert!(imports.iter().any(|item| item == target), "missing {target}: {imports:?}");
@@ -5563,8 +5565,23 @@ fn extension_bearing_doc_and_template_references_prefer_the_relative_file() {
     f.write("docs/index.rst", ".. image:: _static/flask-name.svg\n");
     let asset = field_set(&f.run(&["deps", "docs/index.rst"]), "path");
     assert_eq!(asset, ["docs/_static/flask-name.svg"], "hyphenated asset stays relative: {asset:?}");
+    f.write("docs/page.rst", "See :doc:`page`.\n");
+    let self_deps = field_set(&f.run(&["deps", "docs/page.rst"]), "path");
+    assert!(self_deps.is_empty(), "an explicit self-link is not a dependency: {self_deps:?}");
     let templates = field_set(&f.run(&["deps", "templates/page.html"]), "path");
     assert_eq!(templates, ["templates/base.html"], "template inheritance stays relative: {templates:?}");
+}
+
+#[test]
+fn bare_node_package_imports_do_not_resolve_local_same_stem_files() {
+    let f = Fixture::new();
+    f.write("app.js", "import express from 'express';\nexport const app = express();\n");
+    f.write("express.js", "import { app } from './app.js';\nexport default app;\n");
+
+    let deps = field_set(&f.run(&["deps", "app.js"]), "path");
+    assert!(deps.is_empty(), "a bare package import is external: {deps:?}");
+    let cycles = f.run(&["deps", "--cycles"])["data"].as_array().unwrap().clone();
+    assert!(cycles.is_empty(), "package name must not manufacture a local cycle: {cycles:?}");
 }
 
 // ---------------------------------------------------------------------------

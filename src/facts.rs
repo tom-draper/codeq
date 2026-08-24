@@ -1759,6 +1759,10 @@ pub fn unreferenced_by_design(language: Option<&str>, kind: &str, name: &str) ->
         .any(|(l, k)| *l == lang && k.is_none_or(|k| k == kind))
         || RUNTIME_READ_NAMES.iter().any(|(l, n)| *l == lang && *n == name)
         || (lang == "python" && PYTHON_RUNTIME_HOOKS.contains(&name))
+        // A Jinja block is filled by template inheritance and dispatched by the
+        // renderer. There is no source-level call site for an override, so it
+        // is an entry point rather than a dead definition.
+        || (lang == "jinja" && kind == "block")
         || UNREFERENCED_CONSTRUCTORS
             .iter()
             .any(|(l, k, n)| *l == lang && *k == kind && *n == name)

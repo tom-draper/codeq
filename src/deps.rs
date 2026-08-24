@@ -40,6 +40,16 @@ fn is_jinja_template(path: &str) -> bool {
     )
 }
 
+/// Node treats every non-relative module specifier as a package (or a built-in).
+/// Project aliases need bundler configuration that codeq deliberately does not
+/// read, so they remain external rather than borrowing a same-named local file.
+fn uses_node_resolution(path: &str) -> bool {
+    matches!(
+        path.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()),
+        Some(ext) if matches!(ext.as_str(), "js" | "cjs" | "mjs" | "jsx" | "ts" | "cts" | "mts" | "tsx" | "svelte" | "vue")
+    )
+}
+
 /// A resolved internal dependency edge.
 pub struct Edge {
     /// The depended-upon file.
@@ -280,6 +290,12 @@ impl Graph {
             edges.entry(p.clone()).or_default();
         }
         for (from, module, binding) in imports {
+            // `import express from "express"` must not resolve a sibling
+            // `express.js`: unlike Python, Node's bare specifiers are packages
+            // or built-ins. Relative paths retain the ordinary file resolver.
+            if uses_node_resolution(&from) && !module.starts_with('.') {
+                continue;
+            }
             // Go's module path is enough to resolve an internal package exactly.
             // Do this before the cross-language stem heuristic, and do not let an
             // external module such as `example.net/lib/util` borrow a local
@@ -314,7 +330,7 @@ impl Graph {
             let exact_files: Vec<&str> = paths
                 .iter()
                 .map(String::as_str)
-                .filter(|path| exact_module_match(&from, path, &module))
+                .filter(|path| *path != from && exact_module_match(&from, path, &module))
                 .collect();
             if !exact_files.is_empty() {
                 let bucket = edges.entry(from.clone()).or_default();
@@ -324,6 +340,12 @@ impl Graph {
                         bindings.entry(from.clone()).or_default().entry(binding.clone()).or_default().insert(cand.to_string());
                     }
                 }
+                continue;
+            }
+            // An explicit file reference that does not exist locally is an
+            // external/broken link, not a license to borrow a same-stem source
+            // file elsewhere in the repository.
+            if is_file_reference(&module) {
                 continue;
             }
             let segs = segments(&module);
