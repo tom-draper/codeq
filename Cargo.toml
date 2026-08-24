@@ -53,8 +53,13 @@ tree-sitter-graphql = "0.1.0"
 tree-sitter-sequel = "0.3.11"
 
 [profile.release]
-lto = "thin"
+# lto = "thin"
+# codegen-units = 1
+# strip = true
+opt-level = "z"
+lto = "fat"
 codegen-units = 1
+panic = "abort"
 strip = true
 
 [dev-dependencies]
