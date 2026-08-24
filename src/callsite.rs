@@ -208,6 +208,14 @@ fn callee_of<'a>(call: Node<'a>, src: &str) -> Option<(Node<'a>, Receiver)> {
         }
     };
 
+    // `wrap(handler)(value)` is two calls: the named inner `wrap(handler)` and
+    // an invocation of its return value. The outer call has no statically known
+    // callee, so attributing it to `wrap` duplicates the same source offset and
+    // overstates callers. Keep the inner call and leave the dynamic one out.
+    if is_call(callee) {
+        return None;
+    }
+
     if is_identifier(callee) {
         // Ruby puts the method in `method` and the receiver on the call node
         // itself, so a bare callee identifier can still be qualified.
@@ -313,4 +321,16 @@ fn text_of(node: Node, src: &str) -> String {
     src.get(node.byte_range())
         .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn curried_calls_keep_only_the_named_inner_callee() {
+        let src = "wrapped(handler)(value)\n";
+        let sites = super::call_sites_in("python", src).unwrap();
+        assert_eq!(sites.len(), 1, "outer call-result invocation has no named callee");
+        assert_eq!(sites[0].name, "wrapped");
+        assert_eq!(sites[0].receiver, None);
+    }
 }

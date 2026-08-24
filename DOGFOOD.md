@@ -894,6 +894,28 @@ row is tagged (honest, but wants a column). Recorded rather than guessed at.
 Worth noting codeq could not have found any of this in its own source: it has no
 curried calls, no trait impls, and no C#.
 
+## 2026-08-24 — FastAPI exposed a curried-call indexing crash
+
+Fresh-indexing the FastAPI checkout failed every command with:
+
+```
+codeq: UNIQUE constraint failed: calls.path, calls.start_byte
+```
+
+The error named neither the source file nor the expression. Narrowing the tree
+found `fastapi/dependencies/utils.py`, which has the normal Python pattern:
+
+```py
+cm = asynccontextmanager(dependant.call)(**sub_values)
+```
+
+Codeq indexed both the named inner call and the outer call-result invocation as
+`asynccontextmanager` at the same byte offset. The latter has no statically
+known callee; attributing it to the inner function was wrong even before it
+violated the call-table key. `call_sites_in` now keeps only the named inner call,
+and the full FastAPI checkout indexes successfully (3,101 files, 24,131
+symbols).
+
 ## 2026-08-24 — Bare JavaScript package imports can manufacture local cycles
 
 `deps` treats a bare JavaScript/TypeScript specifier as a local file when a
