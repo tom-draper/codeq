@@ -894,6 +894,35 @@ row is tagged (honest, but wants a column). Recorded rather than guessed at.
 Worth noting codeq could not have found any of this in its own source: it has no
 curried calls, no trait impls, and no C#.
 
+## 2026-08-24 — Bare JavaScript package imports can manufacture local cycles
+
+`deps` treats a bare JavaScript/TypeScript specifier as a local file when a
+same-stem file exists, even though Node resolves a bare specifier as a package
+(or a built-in), not as a sibling module. That turns an external dependency
+into a false local edge and can make `deps --cycles` report an architectural
+cycle that does not exist.
+
+Minimal repro:
+
+```js
+// app.js
+import express from "express";
+
+// express.js
+import { app } from "./app.js";
+```
+
+With no `package.json` declaring a local `express` workspace, codeq reports
+`app.js -> express.js -> app.js`. `deps app.js` likewise shows `express.js` as
+the target and `deps --external` omits `express`; both are wrong for Node's
+module-resolution rules.
+
+The Go equivalent (`import "net/http"` beside two local `http.go` files) now
+behaves correctly, so the regression is specific to bare JS/TS package names.
+The resolver needs to distinguish relative specifiers from package specifiers,
+then add explicit workspace/package-name handling before treating a bare name
+as local.
+
 ## 2026-08-14 — `deps --cycles` reported cycles that do not exist
 
 In `pldashboard`, `codeq deps --cycles` reported these Python cycles:
