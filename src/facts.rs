@@ -23,6 +23,11 @@ const MAX_DOC: usize = 240;
 /// (which needs the path, known only at store time).
 pub struct Fact {
     pub kind: String,
+    /// A supporting fact synthesized from a source declaration rather than a
+    /// verbatim source-level definition. Qualified named imports use this to
+    /// retain their exported name for resolution without looking like another
+    /// import statement to user-facing queries.
+    pub is_derived: bool,
     pub name: String,
     pub start_byte: usize,
     pub end_byte: usize,
@@ -306,6 +311,7 @@ impl LangSpec {
                             let end = nn.end_position();
                             facts.push(Fact {
                                 kind: "import".to_string(),
+                                is_derived: true,
                                 name: format!("{module}.{local}"),
                                 start_byte: nn.start_byte(),
                                 end_byte: nn.end_byte(),
@@ -464,6 +470,7 @@ impl LangSpec {
                     }
                     facts.push(Fact {
                         kind: kind.to_string(),
+                        is_derived: false,
                         name,
                         start_byte: node.start_byte(),
                         end_byte: node.end_byte(),
@@ -1204,6 +1211,7 @@ fn markdown_facts(src: &[u8]) -> Extraction {
             .map(|t| cap(&collapse_ws(t), MAX_DOC));
         facts.push(Fact {
             kind: "heading".to_string(),
+            is_derived: false,
             name: h.name.clone(),
             start_byte: h.start,
             end_byte: end_byte.max(h.start),
@@ -1268,6 +1276,7 @@ fn collect_md_links(raw: &str, line_start: usize, line_no: usize, facts: &mut Ve
         }
         facts.push(Fact {
             kind: "import".to_string(),
+            is_derived: false,
             name: file.to_string(),
             start_byte: line_start + at,
             end_byte: line_start + at + target.len(),
@@ -1423,6 +1432,7 @@ fn component_fact(path: &str, src: &[u8]) -> Option<Fact> {
     let last_line_start = src.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
     Some(Fact {
         kind: "component".to_string(),
+        is_derived: false,
         name: stem.to_string(),
         start_byte: 0,
         end_byte: src.len(),
@@ -3492,6 +3502,7 @@ fn sql_extras(root: Node, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>) 
                     let end = el.end_position();
                     facts.push(Fact {
                         kind: "variant".to_string(),
+                        is_derived: false,
                         name,
                         start_byte: el.start_byte(),
                         end_byte: el.end_byte(),
@@ -3603,6 +3614,7 @@ fn hcl_fact(kind: &str, name: String, owner: Option<String>, node: Node, src: &[
     let body = node.children(&mut c).find(|n| n.kind() == "body");
     Fact {
         kind: kind.to_string(),
+        is_derived: false,
         name,
         start_byte: node.start_byte(),
         end_byte: node.end_byte(),

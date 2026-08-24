@@ -80,6 +80,8 @@ use rusqlite::Connection;
 // partial syntax extraction instead of treating every index row as equally sound.
 // v35: facts record the trait a definition implements, so `unused` can tell a
 // trait method (never dead — deleting it breaks the build) from dead code.
+// v38: derived import facts are marked so user-facing import listings and
+// counts report source statements while resolution retains named bindings.
 //
 // **This is an extraction version, not just a storage version.** Freshness is
 // content hash plus this number, so changing *how* a fact is extracted — a
@@ -93,7 +95,7 @@ use rusqlite::Connection;
 // hashing the query constants is the obvious form — but it would cover only the
 // query-driven half. A visibility rule or an attribute reader is ordinary Rust
 // and would slip through, while the mechanism looked complete. Not yet solved.
-pub const SCHEMA_VERSION: i64 = 37;
+pub const SCHEMA_VERSION: i64 = 38;
 
 pub struct Db {
     pub conn: Connection,
@@ -188,6 +190,9 @@ impl Db {
             CREATE TABLE IF NOT EXISTS facts (
                 id         TEXT PRIMARY KEY,
                 kind       TEXT NOT NULL,
+                -- Supporting facts used internally but not shown as source
+                -- declarations (currently qualified named imports).
+                is_derived INTEGER NOT NULL DEFAULT 0,
                 name       TEXT,
                 path       TEXT NOT NULL,
                 language   TEXT,
@@ -327,6 +332,10 @@ impl Db {
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN contract TEXT", []);
+        let _ = self.conn.execute(
+            "ALTER TABLE facts ADD COLUMN is_derived INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
 
         // On a schema version change, wipe derived data so the next refresh
         // rebuilds everything (including the FTS index) from scratch.

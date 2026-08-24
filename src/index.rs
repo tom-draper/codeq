@@ -367,11 +367,11 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             let mut del_facts = tx.prepare("DELETE FROM facts WHERE path = ?1")?;
             let mut ins_fact = tx.prepare(
                 "INSERT OR REPLACE INTO facts(
-                    id, kind, name, path, language,
+                    id, kind, is_derived, name, path, language,
                     start_byte, end_byte, start_line, start_col, end_line, end_col,
                     signature, doc, source, confidence, visibility, owner, shape, shape_nodes,
                     is_test, decorator, contract)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
             )?;
             let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
             let mut ins_fts =
@@ -424,10 +424,11 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                 if let Some(lang) = p.language {
                     for f in &p.facts {
                         // `params!` rather than a tuple: rusqlite only implements
-                        // `Params` for tuples up to 16, and this is 17 columns.
+                        // `Params` for tuples up to 16, and this is 22 columns.
                         ins_fact.execute(rusqlite::params![
                             f.id(&p.rel),
                             &f.kind,
+                            f.is_derived,
                             &f.name,
                             &p.rel,
                             lang,

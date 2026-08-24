@@ -2129,16 +2129,28 @@ fn resolved_follows_js_named_imports() {
     f.write("alias.js", "import { make as m } from './util';\nexport function viaAlias() { return m(); }\n");
 
     let mods = field_set(&f.run(&["imports", "user.js"]), "module");
-    assert!(mods.contains(&"./util.make".to_string()), "named import not qualified: {mods:?}");
-    // Aliases record the *source* name (what determines the exporting file).
+    assert_eq!(mods, ["./util"], "imports must show source modules, not internal bindings");
     let amods = field_set(&f.run(&["imports", "alias.js"]), "module");
-    assert!(amods.contains(&"./util.make".to_string()), "alias should record source name: {amods:?}");
+    assert_eq!(amods, ["./util"], "aliases must not add an import row");
 
     // user.js calls make() directly → resolves as imported.
     let res = f.run(&["callers", "make", "--resolved"]);
     let row = res["data"].as_array().unwrap().iter()
         .find(|r| r["name"] == "use").expect("use() should survive resolution");
     assert_eq!(row["via"], "imported", "{res}");
+
+    // Resolution still needs its internal `./util.make` fact, so hiding it from
+    // `imports` must not weaken named-import resolution.
+    let alias = res["data"].as_array().unwrap().iter()
+        .find(|r| r["name"] == "viaAlias").expect("viaAlias() should survive resolution");
+    assert_eq!(alias["via"], "imported", "{res}");
+
+    let map = f.run(&["map"]);
+    assert_eq!(map["data"]["totals"]["imports"], 2, "one row per source import: {map}");
+    let modules = map["data"]["imports_by_module"].as_array().unwrap();
+    assert_eq!(modules.len(), 1, "internal bindings must stay out of the module summary: {map}");
+    assert_eq!(modules[0]["module"], "./util");
+    assert_eq!(modules[0]["importers"], 2);
 }
 
 #[test]

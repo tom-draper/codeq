@@ -2932,7 +2932,7 @@ pub fn cmd_imports(cwd: &Path, path: Option<&str>, limit: usize, out: Out) -> Re
 
     let mut sql = String::from(
         "SELECT path, name, start_line, language
-         FROM facts WHERE kind = 'import'",
+         FROM facts WHERE kind = 'import' AND is_derived = 0",
     );
     let mut args: Vec<String> = Vec::new();
     if let Some(p) = path {
@@ -5646,7 +5646,7 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
             |r| r.get(0),
         )?,
         imports: conn.query_row(
-            "SELECT COUNT(*) FROM facts WHERE kind = 'import'",
+            "SELECT COUNT(*) FROM facts WHERE kind = 'import' AND is_derived = 0",
             [],
             |r| r.get(0),
         )?,
@@ -5759,7 +5759,7 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
     let imports_by_module: Vec<ModuleImports> = {
         let mut st = conn.prepare(
             "SELECT name, COUNT(DISTINCT path) c FROM facts
-             WHERE kind = 'import' AND name IS NOT NULL
+             WHERE kind = 'import' AND is_derived = 0 AND name IS NOT NULL
              GROUP BY name ORDER BY c DESC, name LIMIT ?1",
         )?;
         let rows = st.query_map([cap as i64], |r| {
