@@ -1565,7 +1565,7 @@ fn line_fact(kind: &str, name: &str, start_byte: usize, end_byte: usize, start_l
         kind: kind.to_string(), is_derived: false, name: name.to_string(), start_byte, end_byte,
         start_line, start_col: 0, end_line, end_col: 0, signature, doc: None,
         source: source.to_string(), confidence: 1.0, visibility: None, owner: None,
-        shape: None, shape_nodes: 0, is_test: false, decorator: None,
+        shape: None, shape_nodes: 0, is_test: false, decorator: None, contract: None,
     }
 }
 
@@ -2311,13 +2311,14 @@ fn registering_decorator(node: Node, src: &[u8]) -> Option<String> {
         "functools", "contextlib", "typing", "abc", "dataclasses", "enum", "serde",
     ];
     const INERT: &[&str] = &[
-        "property", "staticmethod", "classmethod", "abstractmethod", "cached_property",
+        "property", "setter", "getter", "deleter", "staticmethod", "classmethod",
+        "abstractmethod", "cached_property",
         "dataclass", "overload", "override", "wraps", "final",
         // Imported bare as often as they are qualified — `from functools import
         // cache` — so the module list alone would miss them.
         "cache", "lru_cache", "singledispatch", "singledispatchmethod",
         "total_ordering", "contextmanager", "asynccontextmanager",
-        "runtime_checkable", "no_type_check", "unique",
+        "runtime_checkable", "no_type_check", "unique", "LocalProxy", "functools",
         "derive", "inline", "repr", "allow", "deny", "warn", "cfg", "must_use",
         "non_exhaustive", "doc", "Serializable", "Override", "Deprecated",
         "NotNull", "Nullable", "SuppressWarnings", "Obsolete",

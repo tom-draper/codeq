@@ -7780,6 +7780,9 @@ fn entrypoints_lists_syntax_registered_routes_and_optional_tests() {
         "@app.get('/health')\ndef health():\n    return {}\n\n\
          def ordinary():\n    return None\n\n\
          class State:\n    def __init__(self):\n        self.status = 'ready'\n\n\
+         class Config:\n    @property\n    def value(self):\n        return 0\n\n    @value.setter\n    def value(self, value):\n        pass\n\n\
+         @contextmanager\ndef transaction():\n    yield\n\n\
+         @cache\ndef cached():\n    return 1\n\n\
          @pytest.mark.unit\ndef test_health():\n    assert health() == {}\n",
     );
 
