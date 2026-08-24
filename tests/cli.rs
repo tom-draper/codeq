@@ -7687,6 +7687,7 @@ fn entrypoints_lists_syntax_registered_routes_and_optional_tests() {
         "app.py",
         "@app.get('/health')\ndef health():\n    return {}\n\n\
          def ordinary():\n    return None\n\n\
+         class State:\n    def __init__(self):\n        self.status = 'ready'\n\n\
          @pytest.mark.unit\ndef test_health():\n    assert health() == {}\n",
     );
 
@@ -7695,6 +7696,10 @@ fn entrypoints_lists_syntax_registered_routes_and_optional_tests() {
     assert_eq!(routes[0]["name"], "health");
     assert!(routes[0]["registration"].as_str().unwrap().starts_with("@app.get"));
     assert!(routes[0]["test"].is_null(), "route is not a test: {routes:?}");
+    assert!(
+        !routes.iter().any(|row| row["name"] == "status"),
+        "ordinary instance fields are not decorator registrations: {routes:?}"
+    );
 
     let all = f.run(&["entrypoints", "--include-tests"])["data"].as_array().unwrap().clone();
     assert!(all.iter().any(|row| row["name"] == "test_health" && row["test"] == true), "{all:?}");
@@ -8252,11 +8257,15 @@ fn python_names_the_interpreter_reads_are_not_api_or_dead_code() {
     let f = Fixture::new();
     f.write(
         "pkg/__init__.py",
-        "__all__ = [\"a\"]\n__version__ = \"1.0\"\n\ndef a():\n    return 1\n",
+        "__all__ = [\"a\"]\n__version__ = \"1.0\"\n\nclass Hooks:\n    def __enter__(self):\n        return self\n\n    def __get__(self, obj, owner):\n        return obj\n\n    def __post_init__(self):\n        pass\n\n    def dead(self):\n        pass\n\ndef a():\n    return 1\n",
     );
 
     let dead = field_set(&f.run(&["unused"]), "name");
     assert!(!dead.contains(&"__all__".to_string()), "{dead:?}");
+    for hook in ["__enter__", "__get__", "__post_init__"] {
+        assert!(!dead.contains(&hook.to_string()), "runtime hook {hook}: {dead:?}");
+    }
+    assert!(dead.contains(&"dead".to_string()), "ordinary method: {dead:?}");
     assert!(dead.contains(&"__version__".to_string()), "not a blanket dunder rule: {dead:?}");
 
     let api = field_set(&f.run(&["api", "pkg/__init__.py"]), "name");

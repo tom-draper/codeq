@@ -894,6 +894,32 @@ row is tagged (honest, but wants a column). Recorded rather than guessed at.
 Worth noting codeq could not have found any of this in its own source: it has no
 curried calls, no trait impls, and no C#.
 
+## 2026-08-24 — `entrypoints` mistook Python instance fields for registrations
+
+Running `entrypoints src/flask` showed ordinary assignments such as
+`self.cli`, `self.debug`, and `self.app` as framework entry points, with the
+assignment target itself shown as the `registration`. The attribute collector
+matched Python's ordinary `attribute` expression node while looking for Java,
+C#, and PHP annotation containers. Restricting it to actual annotation-list
+nodes preserves genuine decorators while keeping instance fields out of the
+entry-point report.
+
+## 2026-08-24 — `unused` mistook Python protocol hooks for dead methods
+
+Flask's `unused src/flask --kind method` reported descriptor, container, and
+context-manager hooks such as `__get__`, `__set__`, `__iter__`, and `__enter__`.
+FastAPI independently exposed async-context, dataclass, and Pydantic hooks:
+`__aenter__`, `__aexit__`, `__post_init__`,
+`__get_pydantic_json_schema__`, and `__get_validators__`. None are normally
+spelled at their call site; Python or the framework invokes them by protocol.
+
+The existing narrow exemption for `__all__` deliberately did not blanket-hide
+dunders — `__version__` must remain a candidate — but it was too narrow for
+methods the interpreter actually dispatches. `unused` now has an explicit list
+of Python protocol/framework hook names. Rechecking both repositories removed
+the noise while leaving ordinary candidates in FastAPI, including `bytes_schema`
+and `build_middleware_stack`.
+
 ## 2026-08-24 — FastAPI exposed a curried-call indexing crash
 
 Fresh-indexing the FastAPI checkout failed every command with:

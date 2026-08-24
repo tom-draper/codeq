@@ -1527,6 +1527,20 @@ pub const RUNTIME_READ_NAMES: &[(&str, &str)] = &[
     ("python", "__getattr__"),
 ];
 
+/// Python protocol and framework hooks that execute through the interpreter,
+/// dataclasses, or Pydantic rather than an ordinary name lookup. Keep this
+/// explicit: `__version__` and arbitrary dunder names remain candidates unless
+/// codeq observes a real use.
+pub const PYTHON_RUNTIME_HOOKS: &[&str] = &[
+    "__aenter__", "__aexit__", "__aiter__", "__anext__", "__await__", "__bool__",
+    "__bytes__", "__call__", "__class_getitem__", "__contains__", "__delattr__",
+    "__delitem__", "__delete__", "__dir__", "__enter__", "__eq__", "__exit__",
+    "__format__", "__get__", "__get_pydantic_json_schema__", "__get_validators__",
+    "__getattribute__", "__getitem__", "__hash__", "__init__", "__init_subclass__",
+    "__iter__", "__len__", "__new__", "__post_init__", "__repr__", "__reversed__",
+    "__set__", "__set_name__", "__setattr__", "__setitem__", "__slots__", "__str__",
+];
+
 /// JavaScript-family constructors are invoked as `new TypeName()`, not by the
 /// method name `constructor`. A name-based reference scan therefore cannot
 /// distinguish an instantiated class from one whose constructor is dead; the
@@ -1545,6 +1559,7 @@ pub fn unreferenced_by_design(language: Option<&str>, kind: &str, name: &str) ->
         .iter()
         .any(|(l, k)| *l == lang && k.is_none_or(|k| k == kind))
         || RUNTIME_READ_NAMES.iter().any(|(l, n)| *l == lang && *n == name)
+        || (lang == "python" && PYTHON_RUNTIME_HOOKS.contains(&name))
         || UNREFERENCED_CONSTRUCTORS
             .iter()
             .any(|(l, k, n)| *l == lang && *k == kind && *n == name)
@@ -2053,7 +2068,8 @@ fn attributes_of(node: Node, src: &[u8]) -> Vec<String> {
                     push(m);
                 }
             }
-        } else if k.contains("annotation")
+        } else if k == "attributes"
+            || k.contains("annotation")
             || k.ends_with("attribute_list")
             || k.ends_with("attribute_group")
         {
