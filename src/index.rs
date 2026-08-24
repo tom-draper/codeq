@@ -691,7 +691,10 @@ pub const NO_EXTRACTION: &[&str] = &["json", "yaml", "toml"];
 /// this is not content sniffing.
 pub fn language_for(path: &str) -> Option<&'static str> {
     let ext = path.rsplit('.').next()?;
-    EXTENSIONS.iter().find(|(e, _)| *e == ext).map(|(_, l)| *l)
+    EXTENSIONS
+        .iter()
+        .find(|(e, _)| e.eq_ignore_ascii_case(ext))
+        .map(|(_, l)| *l)
 }
 
 fn now_ns() -> i64 {
@@ -752,5 +755,11 @@ mod tests {
                 "`capabilities` lists '{lang}' but no extension maps to it"
             );
         }
+    }
+
+    #[test]
+    fn language_detection_accepts_uppercase_extensions() {
+        assert_eq!(language_for("Component.TSX"), Some("tsx"));
+        assert_eq!(language_for("SCRIPT.PY"), Some("python"));
     }
 }

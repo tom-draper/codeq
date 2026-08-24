@@ -5065,6 +5065,18 @@ fn indexing_a_normal_repo_yields_facts() {
     );
 }
 
+#[test]
+fn uppercase_extensions_are_parsed_as_their_language() {
+    let f = Fixture::new();
+    f.write("Component.TSX", "export function Widget() { return <div />; }\n");
+
+    let names = field_set(&f.run(&["symbols", "--language", "tsx"]), "name");
+    assert!(
+        names.contains(&"Widget".to_string()),
+        "uppercase extension was not parsed: {names:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // docs in text output
 // ---------------------------------------------------------------------------
