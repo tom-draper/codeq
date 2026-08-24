@@ -5493,6 +5493,81 @@ fn markdown_setext_headings_and_frontmatter() {
 }
 
 // ---------------------------------------------------------------------------
+// reStructuredText and Jinja templates
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rst_headings_and_local_doc_links_are_indexed() {
+    let f = Fixture::new();
+    f.write(
+        "docs/index.rst",
+        "Guide\n=====\n\nSee :doc:`install` and `API <api.rst>`_.\n\n.. toctree::\n   :maxdepth: 1\n\n   tutorial/index\n\nInstall\n-------\n\n.. image:: images/logo.svg\n",
+    );
+    f.write("docs/install.rst", "Install\n=======\n");
+    f.write("docs/api.rst", "API\n===\n");
+    f.write("docs/tutorial/index.rst", "Tutorial\n========\n");
+
+    assert_eq!(field_set(&f.run(&["outline", "docs/index.rst"]), "name"), ["Guide", "Install"]);
+    let imports = field_set(&f.run(&["imports", "docs/index.rst"]), "module");
+    for target in ["install.rst", "api.rst", "tutorial/index.rst", "images/logo.svg"] {
+        assert!(imports.iter().any(|item| item == target), "missing {target}: {imports:?}");
+    }
+    assert!(
+        field_set(&f.run(&["deps", "docs/index.rst"]), "path").iter().any(|path| path == "docs/install.rst"),
+        "RST doc role resolves as a local dependency"
+    );
+}
+
+#[test]
+fn jinja_templates_expose_blocks_macros_and_composition() {
+    let f = Fixture::new();
+    f.write("templates/base.html", "{% block body %}base{% endblock %}\n");
+    f.write(
+        "templates/page.html",
+        "{% extends 'base.html' %}\n{% import 'macros.j2' as ui %}\n{% block body %}{% include 'partials/card.html' %}{% endblock %}\n{% macro greeting(name) %}Hi {{ name }}{% endmacro %}\n",
+    );
+    f.write("templates/macros.j2", "{% macro button(text) %}{{ text }}{% endmacro %}");
+    f.write("templates/partials/card.html", "<article>card</article>");
+
+    let outline = field_set(&f.run(&["outline", "templates/page.html"]), "name");
+    assert!(outline.iter().any(|name| name == "body"), "block: {outline:?}");
+    assert!(outline.iter().any(|name| name == "greeting"), "macro: {outline:?}");
+    let imports = field_set(&f.run(&["imports", "templates/page.html"]), "module");
+    for target in ["base.html", "macros.j2", "partials/card.html"] {
+        assert!(imports.iter().any(|item| item == target), "missing {target}: {imports:?}");
+    }
+    assert!(
+        field_set(&f.run(&["deps", "templates/page.html"]), "path").iter().any(|path| path == "templates/base.html"),
+        "extends resolves as a local dependency"
+    );
+}
+
+#[test]
+fn extension_bearing_doc_and_template_references_prefer_the_relative_file() {
+    let f = Fixture::new();
+    f.write("docs/index.rst", "See :doc:`guide`.\n");
+    f.write("docs/guide.rst", "Guide\n=====\n");
+    f.write("elsewhere/guide.rst", "Other\n=====\n");
+    f.write("docs/tutorial/index.rst", "Tutorial\n========\n");
+    f.write("elsewhere/tutorial/index.html", "other");
+    f.write("templates/page.html", "{% extends 'base.html' %}\n");
+    f.write("templates/base.html", "base");
+    f.write("elsewhere/base.html", "other");
+    f.write("docs/_static/flask-name.svg", "<svg />");
+
+    let docs = field_set(&f.run(&["deps", "docs/index.rst"]), "path");
+    assert_eq!(docs, ["docs/guide.rst"], "RST file reference stays relative: {docs:?}");
+    f.write("docs/index.rst", "See :doc:`tutorial/index`.\n");
+    let nested = field_set(&f.run(&["deps", "docs/index.rst"]), "path");
+    assert_eq!(nested, ["docs/tutorial/index.rst"], "RST index file stays relative: {nested:?}");
+    f.write("docs/index.rst", ".. image:: _static/flask-name.svg\n");
+    let asset = field_set(&f.run(&["deps", "docs/index.rst"]), "path");
+    assert_eq!(asset, ["docs/_static/flask-name.svg"], "hyphenated asset stays relative: {asset:?}");
+    let templates = field_set(&f.run(&["deps", "templates/page.html"]), "path");
+    assert_eq!(templates, ["templates/base.html"], "template inheritance stays relative: {templates:?}");
+}
+
+// ---------------------------------------------------------------------------
 // comments and strings are not uses
 // ---------------------------------------------------------------------------
 

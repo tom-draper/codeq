@@ -22,6 +22,24 @@ use std::path::Path;
 /// relative markers. Dropped before matching so `crate::db` matches `db`.
 const DROP_SEGMENTS: &[&str] = &["crate", "self", "super", "mod"];
 
+fn is_file_reference(module: &str) -> bool {
+    module.rsplit_once('.').is_some_and(|(_, ext)| {
+        crate::index::EXTENSIONS
+            .iter()
+            .any(|(known, _)| known.eq_ignore_ascii_case(ext))
+            // Documentation commonly links assets which remain intentionally
+            // unparsed, but are still real files in the dependency graph.
+            || matches!(ext.to_ascii_lowercase().as_str(), "svg" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico")
+    })
+}
+
+fn is_jinja_template(path: &str) -> bool {
+    matches!(
+        path.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()),
+        Some(ext) if matches!(ext.as_str(), "html" | "jinja" | "jinja2" | "j2")
+    )
+}
+
 /// A resolved internal dependency edge.
 pub struct Edge {
     /// The depended-upon file.
@@ -120,16 +138,43 @@ fn path_components(path: &str) -> HashSet<&str> {
 /// facts intentionally do not retain enough syntax to distinguish that from an
 /// ordinary dotted module import, so that useful resolution stays heuristic.
 fn exact_module_match(from: &str, path: &str, module: &str) -> bool {
+    // A known file extension makes this a path reference, even when a document
+    // or template writes `guide.rst` / `base.html` instead of `./guide.rst`.
+    // Do not use `Path::extension` alone: Python's `pkg.module` would then look
+    // like a file path. The extension must be one codeq classifies as a file.
+    let file_reference = is_file_reference(module);
     let mut parts: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
     let file = parts.pop().unwrap_or(path);
     let stem = stem(file);
-    if matches!(file, "__init__.py" | "mod.rs") || file.starts_with("index.") {
+    if matches!(file, "__init__.py" | "mod.rs") || (file.starts_with("index.") && !file_reference) {
         // `pkg/__init__.py`, `pkg/index.ts`, and `pkg/mod.rs` are imported as
         // `pkg`, not their conventional entry-file name.
     } else {
         parts.push(stem);
     }
-    if module.starts_with('.') {
+    if module.starts_with('.') || file_reference {
+        // Jinja resolves a bare `base.html` through its template search path.
+        // The practical, repository-local approximation is every ancestor of
+        // the referring template's directory: `templates/blog/post.html` can
+        // extend `templates/base.html`, but must not pick a same-named template
+        // from an unrelated example.
+        if file_reference && is_jinja_template(from) && !module.starts_with('.') {
+            let from_parts: Vec<&str> = from
+                .rsplit_once(['/', '\\'])
+                .map(|(dir, _)| dir.split(['/', '\\']).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default();
+            let module_parts: Vec<&str> = module.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+            for keep in (0..=from_parts.len()).rev() {
+                let mut expected = from_parts[..keep].to_vec();
+                expected.extend(module_parts.iter().copied());
+                if let Some(last) = expected.pop() {
+                    expected.push(Path::new(last).file_stem().and_then(|s| s.to_str()).unwrap_or(last));
+                }
+                if parts == expected {
+                    return true;
+                }
+            }
+        }
         let mut expected: Vec<&str> = from
             .rsplit_once(['/', '\\'])
             .map(|(dir, _)| dir.split(['/', '\\']).filter(|s| !s.is_empty()).collect())
@@ -261,6 +306,26 @@ impl Graph {
                 }
                 continue;
             }
+            // File references are unambiguous relative dependencies. Check them
+            // before stem scoring so `_static/flask-name.svg` cannot borrow a
+            // source file merely because `flask` is one of its hyphen-separated
+            // words. This also lets the Jinja ancestor rule above select its
+            // template-root match.
+            let exact_files: Vec<&str> = paths
+                .iter()
+                .map(String::as_str)
+                .filter(|path| exact_module_match(&from, path, &module))
+                .collect();
+            if !exact_files.is_empty() {
+                let bucket = edges.entry(from.clone()).or_default();
+                for cand in exact_files {
+                    bucket.push(Edge { to: cand.to_string(), module: module.clone(), exact: true });
+                    if let Some(binding) = &binding {
+                        bindings.entry(from.clone()).or_default().entry(binding.clone()).or_default().insert(cand.to_string());
+                    }
+                }
+                continue;
+            }
             let segs = segments(&module);
             if segs.is_empty() {
                 continue;
@@ -287,6 +352,17 @@ impl Graph {
             }
             if best_score == 0 {
                 continue; // external, or only self
+            }
+            // A structural path match is stronger evidence than shared words.
+            // In particular, `templates/index.html` should not also depend on
+            // every unrelated `index.html` merely because their stems tie.
+            let exact: Vec<&str> = best
+                .iter()
+                .copied()
+                .filter(|cand| exact_module_match(&from, cand, &module))
+                .collect();
+            if !exact.is_empty() {
+                best = exact;
             }
             best.sort_unstable();
             best.dedup();
