@@ -415,6 +415,18 @@ impl LangSpec {
                         None
                     } else {
                         let own = visibility_of(self.lang, &name, node, src);
+                        // A variant carries no visibility of its own in any
+                        // language codeq supports — Rust, Java, C# and TS all
+                        // forbid a modifier there, because `E::A` is reachable
+                        // exactly where `E` is. Asking the node made every one
+                        // of them `private`, so `api` reported a public enum's
+                        // surface as the bare enum name and `unused` labelled
+                        // its variants private. Inherit from the declaring type.
+                        let own = if kind == "variant" {
+                            enclosing_type_visibility(self.lang, node, src).or(own)
+                        } else {
+                            own
+                        };
                         // A member of a private type is not public API in any
                         // language codeq supports. Visibility was computed per
                         // definition without consulting the type around it, so
@@ -1717,6 +1729,35 @@ const TYPE_KINDS: &[&str] = &[
     "create_type",
 ];
 
+/// The visibility of the nearest type declaration enclosing `node`.
+///
+/// For members that cannot declare one themselves. Only the *nearest* type is
+/// consulted: an outer private type still demotes the result, but through
+/// `enclosed_by_private_type`, which already walks the whole chain.
+fn enclosing_type_visibility(lang: &str, node: Node, src: &[u8]) -> Option<String> {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if TYPE_KINDS.contains(&n.kind()) {
+            let name = type_name_of(n, src)?;
+            return visibility_of(lang, name, n, src);
+        }
+        cur = n.parent();
+    }
+    None
+}
+
+/// The declared name of a type node, however its grammar spells the field.
+fn type_name_of<'a>(n: Node, src: &'a [u8]) -> Option<&'a str> {
+    let mut c = n.walk();
+    let named = n.children(&mut c).find(|ch| {
+        let k = ch.kind();
+        k.ends_with("identifier") || k == "name" || k.ends_with("_name")
+    });
+    n.child_by_field_name("name")
+        .or(named)
+        .and_then(|c| c.utf8_text(src).ok())
+}
+
 /// Whether any type declaration enclosing `node` is itself private.
 ///
 /// Walks every enclosing type, not just the nearest: a public inner class inside
@@ -1726,16 +1767,7 @@ fn enclosed_by_private_type(lang: &str, node: Node, src: &[u8]) -> bool {
     let mut cur = node.parent();
     while let Some(n) = cur {
         if TYPE_KINDS.contains(&n.kind()) {
-            let mut c = n.walk();
-            let named = n.children(&mut c).find(|ch| {
-                let k = ch.kind();
-                k.ends_with("identifier") || k == "name" || k.ends_with("_name")
-            });
-            let name = n
-                .child_by_field_name("name")
-                .or(named)
-                .and_then(|c| c.utf8_text(src).ok());
-            if let Some(name) = name {
+            if let Some(name) = type_name_of(n, src) {
                 if visibility_of(lang, name, n, src).as_deref() == Some("private") {
                     return true;
                 }

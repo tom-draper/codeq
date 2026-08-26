@@ -4819,6 +4819,25 @@ fn members_extracted_across_languages() {
 
 /// Enum variants, where the language declares them.
 #[test]
+fn a_variant_inherits_the_visibility_of_its_enum() {
+    // No language codeq supports lets a variant declare its own visibility, so
+    // asking the node gave `private` every time: `api` reported a public enum's
+    // surface as the bare enum name, and `unused` called its variants private.
+    let cases: &[(&str, &str)] = &[
+        ("a.rs", "pub enum Pub { A }\nenum Priv { B }\n"),
+        ("a.java", "public enum Pub { A }\nenum Priv { B }\n"),
+        ("a.cs", "public enum Pub { A }\nenum Priv { B }\n"),
+    ];
+    for (file, src) in cases {
+        let f = Fixture::new();
+        f.write(file, src);
+        let api = field_set(&f.run(&["api", file]), "name");
+        assert!(api.contains(&"A".to_string()), "{file}: public variant missing from api: {api:?}");
+        assert!(!api.contains(&"B".to_string()), "{file}: private variant leaked into api: {api:?}");
+    }
+}
+
+#[test]
 fn variants_extracted_across_languages() {
     let cases: &[(&str, &str, &str, &[&str])] = &[
         ("a.rs", "enum E { A, B }", "E", &["A", "B"]),
