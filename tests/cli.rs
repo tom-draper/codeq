@@ -7018,6 +7018,30 @@ fn a_sql_foreign_key_is_an_edge_but_not_an_is_a() {
 }
 
 #[test]
+fn graph_says_which_relation_kinds_exist_when_the_filter_empties_it() {
+    // C# writes `class C : B, I` for both inheritance and implementation, so
+    // codeq can only record `extends` there. `--relation implements` on a C#
+    // repo full of interface implementations used to answer "this repository
+    // genuinely has no inheritance edges to graph" — a claim about the code,
+    // when the true cause was the filter.
+    let f = Fixture::new();
+    f.write("a.cs", "interface I { }\nabstract class B { }\nclass C : B, I { }\n");
+
+    let note = note_of(&f, &["graph", "--relation", "implements"]);
+    assert!(note.contains("extends"), "note should name the kinds present: {note}");
+    assert!(
+        !note.contains("genuinely has no"),
+        "the filter emptied this, not the code: {note}"
+    );
+
+    // With no such filter, and no edges at all, the old wording still applies.
+    let f2 = Fixture::new();
+    f2.write("a.py", "def f():\n    pass\n");
+    let note = note_of(&f2, &["graph", "--relation", "implements"]);
+    assert!(note.contains("genuinely has no"), "{note}");
+}
+
+#[test]
 fn graph_emits_the_whole_relation_graph_not_one_node() {
     // `implementors`/`supertypes` answer about one node; drawing a schema or a
     // hierarchy needs all the edges at once.

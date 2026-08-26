@@ -3808,7 +3808,34 @@ pub fn cmd_graph(
     // exists to prevent, and it was my own note. Answer about *this* repo:
     // separate the languages here that cannot produce edges from the ones that
     // can and did not.
-    let note = if edges.is_empty() {
+    // A `--relation` filter emptying the result is a statement about the
+    // filter, not the repository. C# writes `class C : B, I` for both kinds, so
+    // codeq can only record `extends` there — and `graph --relation implements`
+    // on a C# repo full of interface implementations then read "genuinely has no
+    // inheritance edges to graph". Answer with the kinds that *are* present.
+    let other_kinds: Vec<String> = if edges.is_empty() && relation.is_some() {
+        let unfiltered = Filters::new().like("path", path).eq("language", language);
+        let sql = format!(
+            "SELECT relation, COUNT(*) FROM impls WHERE 1=1{} GROUP BY relation ORDER BY relation",
+            unfiltered.sql(),
+        );
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_with(&[], &unfiltered).as_slice(), |r| {
+            Ok(format!("{} {}", r.get::<_, i64>(1)?, r.get::<_, String>(0)?))
+        })?;
+        rows.filter_map(|r| r.ok()).collect()
+    } else {
+        Vec::new()
+    };
+
+    let note = if !other_kinds.is_empty() {
+        let scope = path.map(|p| format!(" under '{p}'")).unwrap_or_default();
+        Some(format!(
+            "no '{}' relation edges{scope}, but this repository has {} — the filter emptied this, not the code",
+            relation.unwrap_or_default(),
+            other_kinds.join(", "),
+        ))
+    } else if edges.is_empty() {
         let mut stmt = s.db.conn.prepare(
             "SELECT DISTINCT language FROM files WHERE language IS NOT NULL ORDER BY language",
         )?;
