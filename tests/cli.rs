@@ -4987,6 +4987,17 @@ fn empty_results_explain_themselves() {
         "the filter is the reason, not the symbol: {note}"
     );
 
+    // 4. A --path filter that *matched* scopes the note to what it selected.
+    //    Reporting the first definition repo-wide answered about a file the
+    //    caller had ruled out, and read as though the scope had been ignored.
+    let f2 = Fixture::new();
+    f2.write("A.cs", "public class E { }\n");
+    f2.write("z.ts", "export interface E { }\n");
+    let note = note_of(&f2, &["callers", "E", "--path", "z.ts"]);
+    assert!(note.contains("z.ts:1"), "note should name the scoped definition: {note}");
+    assert!(!note.contains("A.cs"), "note names a file the scope excluded: {note}");
+    assert!(!note.contains("more definitions"), "count should be scoped too: {note}");
+
     // A name with no plausible neighbour gets no invented suggestion.
     let note = note_of(&f, &["definitions", "zzzzzzzzzz"]);
     assert!(note.contains("no symbol named"), "{note}");

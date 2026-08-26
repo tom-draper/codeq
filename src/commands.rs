@@ -247,6 +247,30 @@ fn note_if_empty_feat<T>(
         return Ok(None);
     }
     let sites = definition_sites(s, name)?;
+    // `--path` scopes the question, so it has to scope the answer too. Without
+    // this the note reported `sites[0]` repo-wide: asked about `E` in `z.ts` it
+    // answered "'E' is defined at A.cs:1 (+1 more definitions)", naming the one
+    // file the caller had explicitly ruled out — and then picked *that* file's
+    // language for the support check below.
+    let sites = match path {
+        Some(filter) if !sites.is_empty() => {
+            let scoped: Vec<(String, i64)> =
+                sites.iter().filter(|(p, _)| p.contains(filter)).cloned().collect();
+            if scoped.is_empty() {
+                let where_ = sites
+                    .iter()
+                    .map(|(p, l)| format!("{p}:{l}"))
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Ok(Some(format!(
+                    "'{name}' is defined at {where_} but nothing matches --path {filter}"
+                )));
+            }
+            scoped
+        }
+        _ => sites,
+    };
     if let (Some(feature), Some((p, _))) = (feature, sites.first()) {
         if let Some(lang) = language_for(p) {
             let unsupported = crate::facts::support(lang).is_some_and(|sup| match feature {
@@ -295,19 +319,6 @@ fn note_if_empty_feat<T>(
             format!("; closest: {}", near.join(", "))
         };
         return Ok(Some(format!("no symbol named '{name}'{hint}")));
-    }
-    if let Some(filter) = path {
-        if !sites.iter().any(|(p, _)| p.contains(filter)) {
-            let where_ = sites
-                .iter()
-                .map(|(p, l)| format!("{p}:{l}"))
-                .take(3)
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Ok(Some(format!(
-                "'{name}' is defined at {where_} but nothing matches --path {filter}"
-            )));
-        }
     }
     let (p, l) = &sites[0];
     let more = if sites.len() > 1 {
