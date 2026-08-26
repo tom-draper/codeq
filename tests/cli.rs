@@ -2103,6 +2103,27 @@ fn rust_module_alias_narrows_a_qualified_call() {
 }
 
 #[test]
+fn a_curried_call_is_attributed_only_to_its_inner_callee() {
+    // `connect(mapState)(Component)` invokes what the inner call returned, and
+    // the source gives that no name. Attributing the outer invocation to
+    // `connect` as well put two call sites at one byte offset — the offset that
+    // *identifies* a call site — which aborted the whole index build.
+    let f = Fixture::new();
+    f.write("a.js", "const C = connect(mapState)(Component);\n");
+    f.write("b.go", "package p\n\nfunc F() { h := Wrap(\"k\")(3); _ = h }\n");
+    f.write("c.py", "y = outer(1)(2)\n");
+    f.write("d.rs", "fn main() { let _ = outer(1)(2); }\n");
+
+    // The build completes, and each inner call is still found exactly once.
+    for (name, want) in [("connect", "a.js"), ("Wrap", "b.go"), ("outer", "c.py")] {
+        let v = f.run(&["references", name, "--calls", "--path", want]);
+        let refs = v["data"]["references"].as_array().unwrap();
+        assert_eq!(refs.len(), 1, "inner call of a curried call was lost: {refs:?}");
+        assert_eq!(refs[0]["path"].as_str().unwrap(), want, "{refs:?}");
+    }
+}
+
+#[test]
 fn calls_filter_excludes_non_call_references() {
     let f = Fixture::new();
     f.write(

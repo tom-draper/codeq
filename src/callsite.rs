@@ -103,8 +103,7 @@ pub fn call_sites_in(language: &str, src: &str) -> Option<Vec<CallSite>> {
             stack.push(child);
         }
     }
-    sites.sort_by_key(|site| site.start_byte);
-    Some(sites)
+    Some(sort_dedup(sites))
 }
 
 /// Whether a language's parser exposes its ordinary call expressions. Svelte
@@ -132,8 +131,20 @@ fn component_call_sites(language: &str, src: &str) -> Option<Vec<CallSite>> {
         let blanked = std::str::from_utf8(&blanked).ok()?;
         sites.extend(call_sites_in(if is_ts { "typescript" } else { "javascript" }, blanked)?);
     }
+    Some(sort_dedup(sites))
+}
+
+/// Source order, one site per byte offset.
+///
+/// The offset is the identity of a call site — `CallMap` keys on it and the
+/// index stores it as a primary key — so producing two sites at one offset is
+/// not a duplicate row, it is two contradictory answers to "what is called
+/// here". Enforcing that here means an extractor bug degrades one call site
+/// instead of aborting the whole index build with a constraint violation.
+fn sort_dedup(mut sites: Vec<CallSite>) -> Vec<CallSite> {
     sites.sort_by_key(|site| site.start_byte);
-    Some(sites)
+    sites.dedup_by_key(|site| site.start_byte);
+    sites
 }
 
 /// Whether a node invokes something.
@@ -207,6 +218,15 @@ fn callee_of<'a>(call: Node<'a>, src: &str) -> Option<(Node<'a>, Receiver)> {
     // Some grammars wrap the callee in a transparent node (Solidity's
     // `expression`), so step through single-child wrappers to the real one.
     let callee = unwrap_wrapper(callee);
+
+    // A curried call — `connect(mapState)(Component)`, `Wrap(cfg)(next)` — calls
+    // whatever the inner call returned, and the source gives that no name. The
+    // member-access path below would fall through to the inner call's *own*
+    // callee, reporting `connect` as called twice at one offset: wrong on its
+    // face, and two rows for the byte offset that identifies a call site.
+    if is_call(callee) {
+        return None;
+    }
 
     // Unwrapping can land on the identifier itself, when the grammar wraps a bare
     // callee in a reference node — SQL's `count(*)` is
