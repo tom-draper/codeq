@@ -1,0 +1,2288 @@
+{
+  "timestamp": "2026-08-26T09:55:46+00:00",
+  "codeq_commit": "8eb937966e3e",
+  "per_command": {
+    "references": {
+      "pass": 986,
+      "total": 1020,
+      "time_x": 2.018,
+      "bytes_x": 2.075
+    },
+    "explore": {
+      "pass": 510,
+      "total": 510,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "search": {
+      "pass": 1525,
+      "total": 1770,
+      "time_x": 2.879,
+      "bytes_x": 1.641
+    },
+    "read": {
+      "pass": 510,
+      "total": 510,
+      "time_x": 6.655,
+      "bytes_x": 0.057
+    },
+    "empty-note": {
+      "pass": 306,
+      "total": 306,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "callers": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.324,
+      "bytes_x": 1.083
+    },
+    "at": {
+      "pass": 859,
+      "total": 859,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "outline": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.523,
+      "bytes_x": 4.238
+    },
+    "graph": {
+      "pass": 37,
+      "total": 37,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "definitions": {
+      "pass": 510,
+      "total": 510,
+      "time_x": 1.222,
+      "bytes_x": 6.0
+    },
+    "imports": {
+      "pass": 0,
+      "total": 0,
+      "time_x": 2.886,
+      "bytes_x": 5.036
+    },
+    "envelope": {
+      "pass": 51,
+      "total": 51,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "map": {
+      "pass": 34,
+      "total": 34,
+      "time_x": null,
+      "bytes_x": null
+    },
+    "astgrep": {
+      "pass": 498,
+      "total": 498,
+      "time_x": null,
+      "bytes_x": null
+    }
+  },
+  "summary": {
+    "repos": 25,
+    "total_correctness_tests": 6105,
+    "correctness_pass": 5826,
+    "correctness_fail": 279,
+    "search_total": 750,
+    "search_fail": 5,
+    "errors": 240,
+    "invariant_total": 4335,
+    "invariant_fail": 34,
+    "fuzz_total": 1020,
+    "fuzz_fail": 0,
+    "actions_total": 750,
+    "median_codeq_over_rg_time": 2.879,
+    "median_codeq_over_rg_bytes": 1.641
+  },
+  "per_repo": {
+    "flask": {
+      "lang": "python",
+      "index_ms": 1599.26,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "requests": {
+      "lang": "python",
+      "index_ms": 1353.42,
+      "fuzz": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0
+      }
+    },
+    "rich": {
+      "lang": "python",
+      "index_ms": 2471.58,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "httpie": {
+      "lang": "python",
+      "index_ms": 1473.62,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "gin": {
+      "lang": "go",
+      "index_ms": 1534.83,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "cobra": {
+      "lang": "go",
+      "index_ms": 1402.57,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "mux": {
+      "lang": "go",
+      "index_ms": 1510.73,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "express": {
+      "lang": "javascript",
+      "index_ms": 1313.89,
+      "fuzz": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0
+      }
+    },
+    "lodash": {
+      "lang": "javascript",
+      "index_ms": 1785.87,
+      "fuzz": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0
+      }
+    },
+    "zod": {
+      "lang": "typescript",
+      "index_ms": 1848.45,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "dayjs": {
+      "lang": "typescript",
+      "index_ms": 1708.68,
+      "fuzz": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0
+      }
+    },
+    "ripgrep": {
+      "lang": "rust",
+      "index_ms": 1857.57,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "serde": {
+      "lang": "rust",
+      "index_ms": 1673.63,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "clap": {
+      "lang": "rust",
+      "index_ms": 2391.57,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "sinatra": {
+      "lang": "ruby",
+      "index_ms": 1532.15,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "rack": {
+      "lang": "ruby",
+      "index_ms": 1639.2,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "gson": {
+      "lang": "java",
+      "index_ms": 2008.35,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "jq": {
+      "lang": "c",
+      "index_ms": 2503.69,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "redis": {
+      "lang": "c",
+      "index_ms": 3143.36,
+      "fuzz": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0
+      }
+    },
+    "json": {
+      "lang": "cpp",
+      "index_ms": 2340.37,
+      "fuzz": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0
+      }
+    },
+    "fmt": {
+      "lang": "cpp",
+      "index_ms": 2143.6,
+      "fuzz": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0
+      }
+    },
+    "spdlog": {
+      "lang": "cpp",
+      "index_ms": 1573.88,
+      "fuzz": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0
+      }
+    },
+    "newtonsoft": {
+      "lang": "csharp",
+      "index_ms": 6969.11,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "guzzle": {
+      "lang": "php",
+      "index_ms": 1439.69,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    },
+    "monolog": {
+      "lang": "php",
+      "index_ms": 1786.68,
+      "fuzz": {
+        "total": 60,
+        "pass": 60,
+        "fail": 0
+      }
+    }
+  },
+  "failures": [
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "literal-return",
+      "verdict": "ERROR",
+      "missing": 383
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "literal-null",
+      "verdict": "ERROR",
+      "missing": 15
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "ERROR",
+      "missing": 71
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "word-error",
+      "verdict": "ERROR",
+      "missing": 51
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "word-self",
+      "verdict": "ERROR",
+      "missing": 991
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "ci-http",
+      "verdict": "ERROR",
+      "missing": 1271
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "ci-license",
+      "verdict": "ERROR",
+      "missing": 49
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "fixed-arrow",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "fixed-coloncolon",
+      "verdict": "ERROR",
+      "missing": 228
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "fixed-dotdot",
+      "verdict": "ERROR",
+      "missing": 222
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "anchor-import",
+      "verdict": "ERROR",
+      "missing": 89
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "anchor-func",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "anchor-def",
+      "verdict": "ERROR",
+      "missing": 134
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "anchor-class",
+      "verdict": "ERROR",
+      "missing": 70
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "anchor-pub",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "anchor-hash",
+      "verdict": "ERROR",
+      "missing": 287
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "anchor-brace-eol",
+      "verdict": "ERROR",
+      "missing": 93
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "anchor-semi-eol",
+      "verdict": "ERROR",
+      "missing": 100
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "class-error",
+      "verdict": "ERROR",
+      "missing": 345
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "class-hexcolor",
+      "verdict": "ERROR",
+      "missing": 62
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "class-const",
+      "verdict": "ERROR",
+      "missing": 1219
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "semver",
+      "verdict": "ERROR",
+      "missing": 326
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "alt-todo",
+      "verdict": "ERROR",
+      "missing": 8
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "alt-visibility",
+      "verdict": "ERROR",
+      "missing": 25
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "optional",
+      "verdict": "ERROR",
+      "missing": 10
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "group-call",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "word-boundary",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "whitespace",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "digits",
+      "verdict": "ERROR",
+      "missing": 4
+    },
+    {
+      "repo": "requests",
+      "battery": "search",
+      "name": "email-ish",
+      "verdict": "ERROR",
+      "missing": 73
+    },
+    {
+      "repo": "rich",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "console",
+      "path": "benchmarks/benchmarks.py"
+    },
+    {
+      "repo": "httpie",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "source",
+      "path": "extras/scripts/generate_man_pages.py"
+    },
+    {
+      "repo": "cobra",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "Command",
+      "path": "command.go"
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "literal-return",
+      "verdict": "ERROR",
+      "missing": 562
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "literal-null",
+      "verdict": "ERROR",
+      "missing": 103
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "ERROR",
+      "missing": 587
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "word-error",
+      "verdict": "ERROR",
+      "missing": 239
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "word-self",
+      "verdict": "ERROR",
+      "missing": 14
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "ci-http",
+      "verdict": "ERROR",
+      "missing": 314
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "ci-license",
+      "verdict": "ERROR",
+      "missing": 22
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "fixed-arrow",
+      "verdict": "ERROR",
+      "missing": 20
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "fixed-coloncolon",
+      "verdict": "ERROR",
+      "missing": 16
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "fixed-dotdot",
+      "verdict": "ERROR",
+      "missing": 190
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "anchor-import",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "anchor-func",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "anchor-def",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "anchor-class",
+      "verdict": "ERROR",
+      "missing": 1
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "anchor-pub",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "anchor-hash",
+      "verdict": "ERROR",
+      "missing": 95
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "anchor-brace-eol",
+      "verdict": "ERROR",
+      "missing": 3753
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "anchor-semi-eol",
+      "verdict": "ERROR",
+      "missing": 4705
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "class-error",
+      "verdict": "ERROR",
+      "missing": 39
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "class-hexcolor",
+      "verdict": "ERROR",
+      "missing": 2
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "class-const",
+      "verdict": "ERROR",
+      "missing": 318
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "semver",
+      "verdict": "ERROR",
+      "missing": 1400
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "alt-todo",
+      "verdict": "ERROR",
+      "missing": 1
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "alt-visibility",
+      "verdict": "ERROR",
+      "missing": 176
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "optional",
+      "verdict": "ERROR",
+      "missing": 11
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "group-call",
+      "verdict": "ERROR",
+      "missing": 25
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "word-boundary",
+      "verdict": "ERROR",
+      "missing": 2
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "whitespace",
+      "verdict": "ERROR",
+      "missing": 130
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "digits",
+      "verdict": "ERROR",
+      "missing": 21
+    },
+    {
+      "repo": "express",
+      "battery": "search",
+      "name": "email-ish",
+      "verdict": "ERROR",
+      "missing": 17
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "literal-return",
+      "verdict": "ERROR",
+      "missing": 7668
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "literal-null",
+      "verdict": "ERROR",
+      "missing": 1551
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "ERROR",
+      "missing": 2837
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "word-error",
+      "verdict": "ERROR",
+      "missing": 289
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "word-self",
+      "verdict": "ERROR",
+      "missing": 90
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "ci-http",
+      "verdict": "ERROR",
+      "missing": 2111
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "ci-license",
+      "verdict": "ERROR",
+      "missing": 88
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "fixed-arrow",
+      "verdict": "ERROR",
+      "missing": 2165
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "fixed-coloncolon",
+      "verdict": "ERROR",
+      "missing": 2
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "fixed-dotdot",
+      "verdict": "ERROR",
+      "missing": 412
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "anchor-import",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "anchor-func",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "anchor-def",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "anchor-class",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "anchor-pub",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "anchor-hash",
+      "verdict": "ERROR",
+      "missing": 1375
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "anchor-brace-eol",
+      "verdict": "ERROR",
+      "missing": 15503
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "anchor-semi-eol",
+      "verdict": "ERROR",
+      "missing": 42070
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "class-error",
+      "verdict": "ERROR",
+      "missing": 160
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "class-hexcolor",
+      "verdict": "ERROR",
+      "missing": 797
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "class-const",
+      "verdict": "ERROR",
+      "missing": 3055
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "semver",
+      "verdict": "ERROR",
+      "missing": 6038
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "alt-todo",
+      "verdict": "ERROR",
+      "missing": 181
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "alt-visibility",
+      "verdict": "ERROR",
+      "missing": 728
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "optional",
+      "verdict": "ERROR",
+      "missing": 333
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "group-call",
+      "verdict": "ERROR",
+      "missing": 1104
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "word-boundary",
+      "verdict": "ERROR",
+      "missing": 143
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "whitespace",
+      "verdict": "ERROR",
+      "missing": 941
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "digits",
+      "verdict": "ERROR",
+      "missing": 32
+    },
+    {
+      "repo": "lodash",
+      "battery": "search",
+      "name": "email-ish",
+      "verdict": "ERROR",
+      "missing": 1
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "literal-return",
+      "verdict": "ERROR",
+      "missing": 507
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "literal-null",
+      "verdict": "ERROR",
+      "missing": 246
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "ERROR",
+      "missing": 111
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "word-error",
+      "verdict": "ERROR",
+      "missing": 46
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "word-self",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "ci-http",
+      "verdict": "ERROR",
+      "missing": 4104
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "ci-license",
+      "verdict": "ERROR",
+      "missing": 53
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "fixed-arrow",
+      "verdict": "ERROR",
+      "missing": 1256
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "fixed-coloncolon",
+      "verdict": "ERROR",
+      "missing": 1
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "fixed-dotdot",
+      "verdict": "ERROR",
+      "missing": 426
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "anchor-import",
+      "verdict": "ERROR",
+      "missing": 645
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "anchor-func",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "anchor-def",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "anchor-class",
+      "verdict": "ERROR",
+      "missing": 2
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "anchor-pub",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "anchor-hash",
+      "verdict": "ERROR",
+      "missing": 310
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "anchor-brace-eol",
+      "verdict": "ERROR",
+      "missing": 8285
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "anchor-semi-eol",
+      "verdict": "ERROR",
+      "missing": 105
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "class-error",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "class-hexcolor",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "class-const",
+      "verdict": "ERROR",
+      "missing": 3027
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "semver",
+      "verdict": "ERROR",
+      "missing": 12547
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "alt-todo",
+      "verdict": "ERROR",
+      "missing": 5
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "alt-visibility",
+      "verdict": "ERROR",
+      "missing": 37
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "optional",
+      "verdict": "ERROR",
+      "missing": 65
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "group-call",
+      "verdict": "ERROR",
+      "missing": 7
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "word-boundary",
+      "verdict": "ERROR",
+      "missing": 1663
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "whitespace",
+      "verdict": "ERROR",
+      "missing": 86
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "digits",
+      "verdict": "ERROR",
+      "missing": 14
+    },
+    {
+      "repo": "dayjs",
+      "battery": "search",
+      "name": "email-ish",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "ripgrep",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "FAIL",
+      "missing": 2
+    },
+    {
+      "repo": "serde",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "bytes",
+      "path": "serde/src/de/format.rs"
+    },
+    {
+      "repo": "serde",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "expecting",
+      "path": "serde/src/de/impls.rs"
+    },
+    {
+      "repo": "serde",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "deserialize",
+      "path": "serde/src/de/impls.rs"
+    },
+    {
+      "repo": "serde",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "expecting",
+      "path": "serde/src/de/impls.rs"
+    },
+    {
+      "repo": "clap",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "short",
+      "path": "clap_bench/benches/ripgrep.rs"
+    },
+    {
+      "repo": "clap",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "name",
+      "path": "clap_bench/benches/complex.rs"
+    },
+    {
+      "repo": "clap",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "command",
+      "path": "clap_builder/src/builder/mod.rs"
+    },
+    {
+      "repo": "sinatra",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "FAIL",
+      "missing": 3
+    },
+    {
+      "repo": "gson",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "PublicRecord",
+      "path": "graal-native-image-test/src/test/java/com/google/gson/native_test/Java17RecordReflectionTest.java"
+    },
+    {
+      "repo": "gson",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "PrivateRecord",
+      "path": "graal-native-image-test/src/test/java/com/google/gson/native_test/Java17RecordReflectionTest.java"
+    },
+    {
+      "repo": "gson",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "ClassWithoutDefaultConstructor",
+      "path": "graal-native-image-test/src/test/java/com/google/gson/native_test/ReflectionTest.java"
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "literal-return",
+      "verdict": "ERROR",
+      "missing": 16130
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "literal-null",
+      "verdict": "ERROR",
+      "missing": 908
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "ERROR",
+      "missing": 5424
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "word-error",
+      "verdict": "ERROR",
+      "missing": 2139
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "word-self",
+      "verdict": "ERROR",
+      "missing": 424
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "ci-http",
+      "verdict": "ERROR",
+      "missing": 553
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "ci-license",
+      "verdict": "ERROR",
+      "missing": 132
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "fixed-arrow",
+      "verdict": "ERROR",
+      "missing": 136
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "fixed-coloncolon",
+      "verdict": "ERROR",
+      "missing": 1790
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "fixed-dotdot",
+      "verdict": "ERROR",
+      "missing": 1801
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "anchor-import",
+      "verdict": "ERROR",
+      "missing": 24
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "anchor-func",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "anchor-def",
+      "verdict": "ERROR",
+      "missing": 42
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "anchor-class",
+      "verdict": "ERROR",
+      "missing": 11
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "anchor-pub",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "anchor-hash",
+      "verdict": "ERROR",
+      "missing": 19096
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "anchor-brace-eol",
+      "verdict": "ERROR",
+      "missing": 42730
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "anchor-semi-eol",
+      "verdict": "ERROR",
+      "missing": 102559
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "class-error",
+      "verdict": "ERROR",
+      "missing": 1293
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "class-hexcolor",
+      "verdict": "ERROR",
+      "missing": 31
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "class-const",
+      "verdict": "ERROR",
+      "missing": 69724
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "semver",
+      "verdict": "ERROR",
+      "missing": 1721
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "alt-todo",
+      "verdict": "ERROR",
+      "missing": 145
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "alt-visibility",
+      "verdict": "ERROR",
+      "missing": 373
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "optional",
+      "verdict": "ERROR",
+      "missing": 176
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "group-call",
+      "verdict": "ERROR",
+      "missing": 2
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "word-boundary",
+      "verdict": "ERROR",
+      "missing": 4159
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "whitespace",
+      "verdict": "ERROR",
+      "missing": 44
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "digits",
+      "verdict": "ERROR",
+      "missing": 1160
+    },
+    {
+      "repo": "redis",
+      "battery": "search",
+      "name": "email-ish",
+      "verdict": "ERROR",
+      "missing": 71
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "literal-return",
+      "verdict": "ERROR",
+      "missing": 5553
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "literal-null",
+      "verdict": "ERROR",
+      "missing": 2456
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "ERROR",
+      "missing": 530
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "word-error",
+      "verdict": "ERROR",
+      "missing": 1072
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "word-self",
+      "verdict": "ERROR",
+      "missing": 205
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "ci-http",
+      "verdict": "ERROR",
+      "missing": 5314
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "ci-license",
+      "verdict": "ERROR",
+      "missing": 422
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "fixed-arrow",
+      "verdict": "ERROR",
+      "missing": 75
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "fixed-coloncolon",
+      "verdict": "ERROR",
+      "missing": 22362
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "fixed-dotdot",
+      "verdict": "ERROR",
+      "missing": 1967
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "anchor-import",
+      "verdict": "ERROR",
+      "missing": 30
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "anchor-func",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "anchor-def",
+      "verdict": "ERROR",
+      "missing": 13
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "anchor-class",
+      "verdict": "ERROR",
+      "missing": 219
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "anchor-pub",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "anchor-hash",
+      "verdict": "ERROR",
+      "missing": 10376
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "anchor-brace-eol",
+      "verdict": "ERROR",
+      "missing": 13801
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "anchor-semi-eol",
+      "verdict": "ERROR",
+      "missing": 37293
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "class-error",
+      "verdict": "ERROR",
+      "missing": 29
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "class-hexcolor",
+      "verdict": "ERROR",
+      "missing": 180
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "class-const",
+      "verdict": "ERROR",
+      "missing": 31035
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "semver",
+      "verdict": "ERROR",
+      "missing": 1334
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "alt-todo",
+      "verdict": "ERROR",
+      "missing": 34
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "alt-visibility",
+      "verdict": "ERROR",
+      "missing": 658
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "optional",
+      "verdict": "ERROR",
+      "missing": 92
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "group-call",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "word-boundary",
+      "verdict": "ERROR",
+      "missing": 7611
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "whitespace",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "digits",
+      "verdict": "ERROR",
+      "missing": 5244
+    },
+    {
+      "repo": "json",
+      "battery": "search",
+      "name": "email-ish",
+      "verdict": "ERROR",
+      "missing": 20
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "literal-return",
+      "verdict": "ERROR",
+      "missing": 3770
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "literal-null",
+      "verdict": "ERROR",
+      "missing": 559
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "ERROR",
+      "missing": 1200
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "word-error",
+      "verdict": "ERROR",
+      "missing": 283
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "word-self",
+      "verdict": "ERROR",
+      "missing": 111
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "ci-http",
+      "verdict": "ERROR",
+      "missing": 2151
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "ci-license",
+      "verdict": "ERROR",
+      "missing": 144
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "fixed-arrow",
+      "verdict": "ERROR",
+      "missing": 26
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "fixed-coloncolon",
+      "verdict": "ERROR",
+      "missing": 10212
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "fixed-dotdot",
+      "verdict": "ERROR",
+      "missing": 1339
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "anchor-import",
+      "verdict": "ERROR",
+      "missing": 14
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "anchor-func",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "anchor-def",
+      "verdict": "ERROR",
+      "missing": 31
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "anchor-class",
+      "verdict": "ERROR",
+      "missing": 421
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "anchor-pub",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "anchor-hash",
+      "verdict": "ERROR",
+      "missing": 4341
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "anchor-brace-eol",
+      "verdict": "ERROR",
+      "missing": 7295
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "anchor-semi-eol",
+      "verdict": "ERROR",
+      "missing": 20239
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "class-error",
+      "verdict": "ERROR",
+      "missing": 56
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "class-hexcolor",
+      "verdict": "ERROR",
+      "missing": 36
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "class-const",
+      "verdict": "ERROR",
+      "missing": 11749
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "semver",
+      "verdict": "ERROR",
+      "missing": 181
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "alt-todo",
+      "verdict": "ERROR",
+      "missing": 20
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "alt-visibility",
+      "verdict": "ERROR",
+      "missing": 1105
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "optional",
+      "verdict": "ERROR",
+      "missing": 864
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "group-call",
+      "verdict": "ERROR",
+      "missing": 13
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "word-boundary",
+      "verdict": "ERROR",
+      "missing": 4515
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "whitespace",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "digits",
+      "verdict": "ERROR",
+      "missing": 1271
+    },
+    {
+      "repo": "fmt",
+      "battery": "search",
+      "name": "email-ish",
+      "verdict": "ERROR",
+      "missing": 9
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "literal-return",
+      "verdict": "ERROR",
+      "missing": 1574
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "literal-null",
+      "verdict": "ERROR",
+      "missing": 299
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "ERROR",
+      "missing": 60
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "word-error",
+      "verdict": "ERROR",
+      "missing": 112
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "word-self",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "ci-http",
+      "verdict": "ERROR",
+      "missing": 171
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "ci-license",
+      "verdict": "ERROR",
+      "missing": 145
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "fixed-arrow",
+      "verdict": "ERROR",
+      "missing": 35
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "fixed-coloncolon",
+      "verdict": "ERROR",
+      "missing": 5594
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "fixed-dotdot",
+      "verdict": "ERROR",
+      "missing": 611
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "anchor-import",
+      "verdict": "ERROR",
+      "missing": 2
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "anchor-func",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "anchor-def",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "anchor-class",
+      "verdict": "ERROR",
+      "missing": 143
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "anchor-pub",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "anchor-hash",
+      "verdict": "ERROR",
+      "missing": 2237
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "anchor-brace-eol",
+      "verdict": "ERROR",
+      "missing": 3186
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "anchor-semi-eol",
+      "verdict": "ERROR",
+      "missing": 9435
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "class-error",
+      "verdict": "ERROR",
+      "missing": 18
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "class-hexcolor",
+      "verdict": "ERROR",
+      "missing": 8
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "class-const",
+      "verdict": "ERROR",
+      "missing": 3924
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "semver",
+      "verdict": "ERROR",
+      "missing": 14
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "alt-todo",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "alt-visibility",
+      "verdict": "ERROR",
+      "missing": 415
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "optional",
+      "verdict": "ERROR",
+      "missing": 490
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "group-call",
+      "verdict": "ERROR",
+      "missing": 11
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "word-boundary",
+      "verdict": "ERROR",
+      "missing": 1470
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "whitespace",
+      "verdict": "ERROR",
+      "missing": 0
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "digits",
+      "verdict": "ERROR",
+      "missing": 1062
+    },
+    {
+      "repo": "spdlog",
+      "battery": "search",
+      "name": "email-ish",
+      "verdict": "ERROR",
+      "missing": 1
+    },
+    {
+      "repo": "newtonsoft",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "Name",
+      "path": "Src/Newtonsoft.Json.Tests/Converters/XmlNodeConverterTest.cs"
+    },
+    {
+      "repo": "guzzle",
+      "battery": "search",
+      "name": "word-error",
+      "verdict": "FAIL",
+      "missing": 12
+    },
+    {
+      "repo": "guzzle",
+      "battery": "references",
+      "name": "ref-includes-def",
+      "symbol": "truncateAt",
+      "path": "src/BodySummarizer.php"
+    },
+    {
+      "repo": "guzzle",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "truncateAt",
+      "path": "src/BodySummarizer.php"
+    },
+    {
+      "repo": "guzzle",
+      "battery": "references",
+      "name": "ref-includes-def",
+      "symbol": "cookies",
+      "path": "src/Cookie/CookieJar.php"
+    },
+    {
+      "repo": "guzzle",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "cookies",
+      "path": "src/Cookie/CookieJar.php"
+    },
+    {
+      "repo": "guzzle",
+      "battery": "references",
+      "name": "ref-includes-def",
+      "symbol": "filename",
+      "path": "src/Cookie/FileCookieJar.php"
+    },
+    {
+      "repo": "guzzle",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "filename",
+      "path": "src/Cookie/FileCookieJar.php"
+    },
+    {
+      "repo": "guzzle",
+      "battery": "references",
+      "name": "ref-includes-def",
+      "symbol": "sessionKey",
+      "path": "src/Cookie/SessionCookieJar.php"
+    },
+    {
+      "repo": "guzzle",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "sessionKey",
+      "path": "src/Cookie/SessionCookieJar.php"
+    },
+    {
+      "repo": "guzzle",
+      "battery": "references",
+      "name": "ref-includes-def",
+      "symbol": "defaults",
+      "path": "src/Cookie/SetCookie.php"
+    },
+    {
+      "repo": "guzzle",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "defaults",
+      "path": "src/Cookie/SetCookie.php"
+    },
+    {
+      "repo": "monolog",
+      "battery": "search",
+      "name": "word-test",
+      "verdict": "FAIL",
+      "missing": 228
+    },
+    {
+      "repo": "monolog",
+      "battery": "search",
+      "name": "word-error",
+      "verdict": "FAIL",
+      "missing": 5
+    },
+    {
+      "repo": "monolog",
+      "battery": "references",
+      "name": "ref-includes-def",
+      "symbol": "useMicroseconds",
+      "path": "src/Monolog/DateTimeImmutable.php"
+    },
+    {
+      "repo": "monolog",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "useMicroseconds",
+      "path": "src/Monolog/DateTimeImmutable.php"
+    },
+    {
+      "repo": "monolog",
+      "battery": "references",
+      "name": "ref-includes-def",
+      "symbol": "lastFatalData",
+      "path": "src/Monolog/ErrorHandler.php"
+    },
+    {
+      "repo": "monolog",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "lastFatalData",
+      "path": "src/Monolog/ErrorHandler.php"
+    },
+    {
+      "repo": "monolog",
+      "battery": "references",
+      "name": "ref-includes-def",
+      "symbol": "extraPrefix",
+      "path": "src/Monolog/Formatter/GelfMessageFormatter.php"
+    },
+    {
+      "repo": "monolog",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "extraPrefix",
+      "path": "src/Monolog/Formatter/GelfMessageFormatter.php"
+    },
+    {
+      "repo": "monolog",
+      "battery": "references",
+      "name": "ref-includes-def",
+      "symbol": "ignoreEmptyContextAndExtra",
+      "path": "src/Monolog/Formatter/LineFormatter.php"
+    },
+    {
+      "repo": "monolog",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "ignoreEmptyContextAndExtra",
+      "path": "src/Monolog/Formatter/LineFormatter.php"
+    },
+    {
+      "repo": "monolog",
+      "battery": "references",
+      "name": "ref-includes-def",
+      "symbol": "applicationName",
+      "path": "src/Monolog/Formatter/LogstashFormatter.php"
+    },
+    {
+      "repo": "monolog",
+      "battery": "references",
+      "name": "ref-superset-rg",
+      "symbol": "applicationName",
+      "path": "src/Monolog/Formatter/LogstashFormatter.php"
+    }
+  ]
+}

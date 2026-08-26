@@ -4,6 +4,257 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-25 — Six repos in `~/dev`, and the first one crashed the index
+
+First deliberate sweep across other people's repos rather than codeq's own:
+`black-box` (Rust), `api-analytics` (Go/Svelte/Python/TS/PHP), `xlsx-pipeline`
+(C#), plus `seeable`, `nginx-analytics`, `tinyad`, `sono`, `nlmrs`,
+`claude-usage`, `tpub`. Six real defects — plus a test suite and a differential
+harness that were both already red on arrival — and most of them codeq could
+never have found in its own source.
+
+### `connect(mapState)(Component)` aborted the whole index build
+
+```
+$ codeq map --totals
+codeq: UNIQUE constraint failed: calls.path, calls.start_byte: Error code 1555
+```
+
+Exit 1, deterministic, and **every** command hit it, because they all
+auto-refresh. codeq was simply unusable on `api-analytics`. Bisecting 616 tracked
+files down to six lines:
+
+```go
+package p
+func F() { h := Wrap("k")(3); _ = h }
+```
+
+A curried call. `callee_of` takes the outer call's `function` field, finds an
+inner `call_expression`, and — having no member field to read — falls through to
+`last_identifier_child`, landing on **the inner call's own callee**. So `Wrap` was
+recorded as called twice at one byte offset, and `calls` is `PRIMARY KEY(path,
+start_byte)`. Reproduced in Go, JavaScript, TypeScript, Python and Rust; Java and
+Ruby were fine, their grammars putting the method in a field.
+
+Two things worth keeping from this one:
+
+- **The blast radius was absurd relative to the cause.** `connect(x)(C)` is
+  ordinary Redux, `middleware(cfg)(next)` ordinary Express, and one occurrence
+  anywhere in a repo takes down every query in it. A codebase that trips this is
+  not exotic, it is normal.
+- **`calls_in` never had the bug, because a `HashMap` silently swallowed it.**
+  The `--calls`/`--on` path collects into `CallMap` keyed on the offset; the
+  index stores a `Vec` into a table keyed on the offset. Same invariant, enforced
+  in one place and merely assumed in the other. The assumed one is where it broke,
+  and it broke as a raw driver error naming no file — the same "reads like
+  corruption" failure the 2026-08-13 lock entry filed.
+
+Fixed both ends: the outer invocation of a curried call has no name in the source,
+so `callee_of` now returns `None` for it, and `call_sites_in` enforces one site
+per offset the way `calls_in` always did. The second is not belt-and-braces — it
+is the difference between an extraction bug degrading one call site and an
+extraction bug bricking the repo.
+
+### Every enum in every language was missing from `api`
+
+`black-box` is a Rust event collector whose central type is `pub enum Event`.
+
+```
+$ codeq api src | wc -l
+421          # of which enum variants: 0
+```
+
+`visibility_of` asked the node for a `visibility_modifier`. An `enum_variant`
+cannot syntactically carry one — in Rust, Java, C# or TS — so every variant in
+every repo came back `private`. `api` reported a public enum's surface as the bare
+enum name, and `unused` printed `variant FailedAuth visibility=private` for a
+variant of a `pub enum`.
+
+The rule was already half-written: `enclosed_by_private_type` *demotes* a public
+member inside a private type. The missing half is that a member which cannot
+declare visibility **inherits** it. Same walk, opposite direction. `api src` on
+`black-box` went 421 → 496 rows.
+
+### The TS enum test passed because it tested the rarer form
+
+While fixing the above: `outline` on `enum E { A, B }` returned no members at all,
+though `enum F { X = 1 }` worked. `A` with no initialiser parses to a bare
+`property_identifier` under `enum_body`; only `enum_assignment` was queried.
+
+The reason it survived is the part worth recording. `variants_extracted_across_
+languages` covers six languages, and its TypeScript case was
+`("a.ts", "enum E { X = 1 }", …)` — the *initialised* form, which is the less
+common way to write a TS enum. A cross-language test that picks one spelling per
+language will pick the one the implementer had in mind, which is exactly the one
+that already works.
+
+### A `--path` scope that scoped the question but not the answer
+
+```
+$ codeq members E --path z.ts
+# codeq: 'E' is defined at A.cs:1 (+1 more definitions) but has no members
+```
+
+I asked about `z.ts` and was answered about `A.cs` — the one file I had ruled
+out. `note_if_empty_feat` handled the case where `--path` matched *nothing*, then
+reported `sites[0]` repo-wide when it matched something. The same unscoped
+`sites.first()` also picked which language to consult for the "does codeq extract
+members for this language" check, so a scoped query could be told about a
+capability of a language it had excluded.
+
+Fourth entry in this log about a note. The pattern across all four is not that
+notes guess causes — it is narrower than that: **a note is generated from
+different state than the answer it explains.** Here the answer was scoped and the
+note was not.
+
+### `graph --relation implements` on 148 implementations: "genuinely has no"
+
+```
+$ codeq graph --relation implements       # xlsx-pipeline, a C# repo
+# codeq: no 'implements' relation edges — csharp/javascript does produce them,
+#        so this repository genuinely has no inheritance or foreign-key edges
+```
+
+The repo has 148 relation edges. C# writes `class C : B, I` for both inheritance
+and implementation and the grammar does not distinguish them, so codeq records
+every C# edge as `extends` and can never emit `implements` for that language —
+telling the two apart needs to know whether `I` is an interface, which is type
+resolution codeq does not do.
+
+That limitation is fine. The note is not: it converts "codeq cannot produce this
+relation kind here" into a confident claim about the user's code, in the most
+expensive direction available. This note had *already* been corrected once for
+naming Go/C/Zig unconditionally — the comment above it says so. It was fixed for
+the language axis and left wrong on the filter axis, because both times the
+question asked was "which languages are in this repo" rather than "what did the
+filter I applied actually remove". It now reports the kinds that are present:
+`no 'implements' relation edges, but this repository has 148 extends — the filter
+emptied this, not the code`.
+
+### `$` became an identifier byte, and `references` stopped finding PHP fields
+
+Running `bench/differential.py` to check the above turned up something bigger
+than the above. Three runs, same corpus, same harness:
+
+| | pass | fail | errors |
+|---|---|---|---|
+| `af5bf47` (last committed result, 2026-08-13) | 8609 | 0 | 0 |
+| `8eb9379` (HEAD, before this session) | 5826 | 279 | **240** |
+| HEAD + this session's fixes | 8585 | 24 | 0 |
+
+The 240 errors were the curried-call crash: eight of twenty-five repos —
+`express`, `lodash`, `dayjs`, `redis`, `requests`, `fmt`, `json`, `spdlog` —
+could not be indexed at all, so every assertion against them errored. **A third
+of the corpus was unmeasurable and the harness reported it as failures**, which
+is how a crash this loud stayed quiet: nobody had run it since `af5bf47`.
+
+Underneath that, 43 real failures, and `git log -L` puts the largest group on one
+line of `1d2d6eb`:
+
+```rust
+-fn is_ident_byte(b: u8) -> bool { b == b'_' || b.is_ascii_alphanumeric() || b >= 0x80 }
++fn is_ident_byte(b: u8) -> bool { b == b'_' || b == b'$' || b.is_ascii_alphanumeric() || b >= 0x80 }
+```
+
+Deliberate, and right for what it was aimed at: JavaScript's `$ZodError` is one
+symbol, so `references ZodError` should not match inside it. But `$` is a *sigil*
+in PHP, and there codeq contradicted its own index — it records
+`private $truncateAt;` under the name `truncateAt`, then refused to match the
+declaration it had just indexed:
+
+```
+$ codeq definitions truncateAt
+src/BodySummarizer.php:12:4: private $truncateAt;   [BodySummarizer]
+$ codeq references truncateAt
+src/BodySummarizer.php:16:15: $this->truncateAt = $truncateAt;   [__construct]
+                                     ^ the definition site is not in the list
+```
+
+That is not a disagreement with ripgrep about strictness; it is the matcher and
+the extractor disagreeing about what the symbol is called. `$` now binds
+everywhere except `php`, `bash` and `powershell`, which fixed 21 of the 24
+remaining failures.
+
+**The 24 that remain, with causes, unfixed:**
+
+- **`$` as punctuation outside those three languages** (13). Rust macro
+  metavariables (`$bytes:expr` in `serde`, `$name` in `clap`), a JVM binary name
+  in a config file (`Java17RecordReflectionTest$PublicRecord` in `gson`'s
+  `reflect-config.json`), a PowerShell completion script embedded in a Go string
+  (`cobra`), a Makefile's `$(H1)` (`httpie`), and dayjs's `$locale`. In each,
+  codeq is arguably *more* precise than `rg -w` — and in each, the superset
+  guarantee is broken. The choice is real: either `$` binds only where the
+  language actually allows it in a name, or the harness's superset assertion
+  needs an explicit `$` carve-out and the README claim needs the same caveat.
+  Picking silently is how this arrived.
+- **`b >= 0x80` treats all non-ASCII as identifier bytes** (1, and it is the
+  older bug). In `rich`'s `README.zh-tw.md`, `console。` — the CJK full stop is
+  `>= 0x80`, so codeq reads it as a letter and rejects the word boundary, where
+  ripgrep's Unicode word classes call it punctuation.
+- **`search --word` divergences** in `redis`, `ripgrep`, `sinatra`, `lodash`,
+  `guzzle` (5+). Not chased.
+
+The process point is the one to keep: **the last committed differential result was
+from `af5bf47`, ten commits earlier.** `bench/results/` is committed precisely so
+the trend lives in git, and the trend had a ten-commit hole in it during which a
+total-crash regression and a matcher regression both landed. CLAUDE.md says to run
+the harnesses before committing because `cargo test` alone is not enough; that was
+right, and it was also not done.
+
+### `cargo test` was already red at `8eb9379` — twice, and one was the crash
+
+Before changing anything: `meta_flag_returns_full_stable_envelope` asserted
+`v["index"]["schema"] == 30` against a `SCHEMA_VERSION` of 34. So a schema bump
+broke a test about the *envelope*, four versions ago, and the suite has been
+shipping red since. The literal was never the contract — that the `index` block
+reports *the* index schema version is. It now asserts agreement with what
+`capabilities` declares, which cannot go stale on the next bump.
+
+The second red test is the one worth dwelling on. Splitting this session's work
+into commits and checking each one, `commonjs_require_bindings_are_imports_not_
+definitions` failed at every commit before the curried-call fix. Its fixture:
+
+```js
+var deprecate = require('depd')('express');
+```
+
+So **the crash that made a whole repo unindexable was already failing codeq's own
+`cargo test`** — no corpus, no differential harness, no foreign repo needed. It
+did not need finding, it needed *looking at*. Two independent failures is also
+how a suite stops being a signal: the first one that goes unfixed makes the next
+one invisible, because "the suite is red" stops meaning anything specific.
+
+An ordering consequence, recorded because it looks like a mistake and is not:
+the first commit on this branch still reports one failing test. HEAD was red on
+two independent counts, so no ordering makes commit one green — whichever fix
+lands first leaves the other's test failing. Each commit builds, none adds a
+failure, and the count goes 2 → 1 → 0 and stays there.
+
+### Still open: a Rust trait-impl method looks like dead code
+
+```
+$ codeq unused src
+src/webui/auth.rs:70:  method new_transform visibility=private
+src/webui/websocket.rs:122: method handle  visibility=private
+```
+
+Both are `impl Trait for Type` methods — actix's `Transform` and
+`StreamHandler`. They cannot carry `pub`, so they inherit the `private` default
+for the same reason variants did; and they are called through the trait, so they
+have no textual caller. `api src/webui/auth.rs` reports `BasicAuth`'s surface as
+`new()` alone, hiding that the type is middleware.
+
+Unlike a variant, the right answer is not obvious. The method is as reachable as
+the trait, and the trait is usually foreign (`Display`, `Transform`), so
+inheriting its visibility means resolving something outside the repo. Three
+options, none free: relabel as `public` (slightly over-claims for
+`impl PrivateTrait for X`), suppress from `unused` (defensible — deleting a trait
+method is a compile error, so it is never dead), or tag it the way a `decorator=`
+row is tagged (honest, but wants a column). Recorded rather than guessed at.
+
+Worth noting codeq could not have found any of this in its own source: it has no
+curried calls, no trait impls, and no C#.
+
 ## 2026-08-14 — `deps --cycles` reported cycles that do not exist
 
 In `pldashboard`, `codeq deps --cycles` reported these Python cycles:
