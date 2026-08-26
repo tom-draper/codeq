@@ -4,6 +4,153 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-26 — The second pass: what the index says about code it can see
+
+Ten more repos, and a different class of finding from the first pass. That one
+was crashes and misses. This one is codeq answering confidently about code it
+*did* index, and being wrong about what it was looking at.
+
+### It told a Business Central developer their source was data
+
+```
+$ codeq map --totals          # powersearch-business-central
+33 of 36 files (0 MB of 0 MB) are not source codeq indexes — assets, data or
+binaries, counted here but carrying no symbols
+```
+
+31 of those 33 files are `.al` — the entire source of the project. The note was
+written against a repo of 2,106 flag PNGs, where "assets, data or binaries" was
+true, and it generalised a category it had no way to check. The cost is in the
+direction that always hurts most: it tells the author their code is data, and
+implicitly proposes `.codeqignore` for it.
+
+codeq knows the extension. That is a fact and it separates the two cases without
+codeq having to know which it is looking at:
+
+```
+33 of 36 files (243 KB of 314 KB) carry no symbols — codeq has no grammar for .al (31), .xlf (2)
+2108 of 2683 files (54 MB of 57 MB) carry no symbols — codeq has no grammar for .png (2106)
+```
+
+Same sentence, and a reader can tell an unsupported language from a pile of
+images at a glance. `0 MB of 0 MB` was a second, smaller instance of the same
+habit — a sentence with its quantities rounded out of it.
+
+### The blind spot the asset note cannot cover: generated code that *does* parse
+
+`pldashboard` commits three vendor bundles. They are JavaScript, they parse
+cleanly, and they produce symbols — so nothing in codeq's "cannot index this"
+machinery can see them, and the index size and query speed are both fine. What
+they own is every symbol-ranking command:
+
+```
+$ codeq hotspots
+dashboard/src/lib/App.js:1: function t refs=45993 defs=9
+dashboard/src/lib/App.js:1: function e refs=2277 defs=137
+```
+
+The command whose stated purpose is *meeting an unfamiliar codebase* answers
+`t`, `e`, `r`. Three files hold **5,507 of the repo's 7,558 symbols**; 531 of
+`unused`'s 575 rows come from them; every `clones` group is minified. Writing a
+three-line `.codeqignore`:
+
+| | before | after |
+|---|---|---|
+| symbols | 7,558 | **2,051** |
+| `unused` rows | 575 | **404** |
+| `hotspots` top row | `function t refs=45993` | `field data refs=1005` |
+| `clones` top group | minified `sn/on/ln/dn`, 4,955 nodes | `fixtureColor` / `fixtureColorSkewed` |
+
+The last row is the point: with the bundles gone, `clones` immediately found a
+real duplicated pair in the app's own code. It had been there all along, ranked
+below 4,955-node minified blobs.
+
+**The detector needs nothing stored: definitions per *distinct* line.** Hand-written
+code declares about one thing per line — the ratio is bounded above by the
+grammar, not by taste. Measured on this repo:
+
+```
+bundle.js               1152 symbols /    1 line   = 1152
+plotly-latest.min.js    4135 symbols /    9 lines  =  459
+App.js                   220 symbols /    1 line   =  220
+── everything else (166 files) ─────────────────── =  1.0
+```
+
+Two orders of magnitude of empty space, so the cutoff is not a number anybody
+has to tune. `map` now says so, names the files, and says what they distort. It
+under-reports on purpose: a pretty-printed generated file is indistinguishable
+from hand-written source by this test, and missing one is much cheaper than
+calling somebody's code machine output.
+
+### `decorator=self._axes_visible`, and `decorator=public`
+
+From `seeable`:
+
+```
+src/seeable/widgets/heatmap.py:101: field _axes_visible visibility=private decorator=self._axes_visible
+```
+
+Line 101 is `self._axes_visible = True`. In the Python grammar the left side of
+that assignment is a node of kind **`attribute`** — attribute *access* — and the
+branch that reads Java/C#/PHP annotations matched any kind *containing*
+"attribute". Tightening it to the list node each grammar actually wraps
+annotations in (`attribute_list` in C# and PHP, `modifiers` in Java and Kotlin)
+turned up a second one immediately: `modifiers` holds annotations *and* access
+modifiers, so every plain `public class T` came back `decorator=public`.
+
+The `decorator` field exists so a reader can tell a framework entry point from
+dead code. A tag on an ordinary assignment is worse than no tag, because it
+means the tag stops meaning anything where it does appear — which is the same
+argument the inert-decorator list was added for, applied one level down.
+
+### `unused` could not see any annotated declaration, in four languages
+
+Chasing the above turned up the worse bug underneath it:
+
+```php
+class U {
+  #[Route("/a")] public function sameLine() { }   // reported by `unused`
+  #[Route("/b")]
+  public function nextLine() { }                  // silently absent
+}
+```
+
+Identical in C#, Java and Kotlin. In all four, the annotation lives *inside* the
+declaration node, so the fact's line is the annotation's line and the name sits
+a line below. `used_definition_names` decided "is this occurrence the definition
+itself?" by comparing the occurrence's line to the fact's first line — so the
+declaration counted as an external use, and the definition could never be
+reported dead.
+
+That is the conventional formatting. `[Fact]` above the method, `@Bean` above
+the method: **`unused` was blind to essentially every annotated declaration in
+every C#, Java, Kotlin and PHP codebase**, and the `decorator=` tag — added
+precisely so these could be *shown and discounted* rather than hidden — was
+being applied only to the ones written on one line.
+
+The fix is a sentence: the declaration is the *first* occurrence of the name
+inside its own extent, not the occurrence on the extent's first line. Claiming
+each extent once keeps recursion working — a later occurrence in the same extent
+is a real call, and treating the whole extent as "the definition site" would
+have reported every recursive function as dead. `fact`, `walk` and a recursive
+Java method are all still correctly live.
+
+Two smaller pieces of the same bug are left: `references` and `callers` mark
+their `definition` flag on the same first-line comparison, so an annotated
+declaration is not flagged as its own definition there either. Less harmful —
+a missing flag rather than hidden dead code — and not fixed.
+
+### The index does not know when the extractor changed
+
+Worth recording as a hazard for anyone developing codeq. After fixing the
+`decorator=self._axes_visible` extraction, the wrong tag was still there:
+freshness is content hash plus schema version, and neither had moved, so no file
+was reparsed. `SCHEMA_VERSION` is treated as a *storage-format* version, but
+every consumer of it depends on it also being an *extraction* version — the
+facts are as stale after an extractor change as after a column change, and only
+one of those bumps it. `codeq index --rebuild` is the workaround; remembering to
+is the problem.
+
 ## 2026-08-25 — Six repos in `~/dev`, and the first one crashed the index
 
 First deliberate sweep across other people's repos rather than codeq's own:
