@@ -7201,6 +7201,42 @@ fn an_ordinary_attribute_does_not_make_something_a_test() {
 }
 
 #[test]
+fn a_python_attribute_assignment_is_not_a_decorator() {
+    // `self.x = 1` has an `attribute` node on its left, and the branch reading
+    // Java/C#/PHP annotations matched any kind *containing* "attribute" — so an
+    // ordinary assignment came back `decorator=self._hidden`. Java and Kotlin
+    // put annotations and access modifiers in one `modifiers` node, so pushing
+    // it whole reported `decorator=public` on every plain `public class`. Both
+    // make the tag meaningless in the place it is supposed to carry meaning.
+    let f = Fixture::new();
+    f.write("a.py", "class W:\n    def __init__(self):\n        self._hidden = True\n");
+    f.write("C.java", "public class T {\n  public void plain() { }\n}\n");
+    f.write("D.java", "public class S {\n  @Bean public void made() { }\n}\n");
+
+    let rows = f.run(&["unused", "--include-tests"]);
+    let tagged: Vec<(String, String)> = rows["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| {
+            Some((r["name"].as_str()?.to_string(), r["decorator"].as_str()?.to_string()))
+        })
+        .collect();
+    assert!(
+        tagged.iter().all(|(n, _)| n != "_hidden"),
+        "an attribute assignment is not a decorator: {tagged:?}"
+    );
+    assert!(
+        tagged.iter().all(|(_, d)| d != "public"),
+        "an access modifier is not a decorator: {tagged:?}"
+    );
+    assert!(
+        tagged.iter().any(|(n, d)| n == "made" && d.contains("@Bean")),
+        "a real annotation must still be tagged: {tagged:?}"
+    );
+}
+
+#[test]
 fn unused_tags_a_framework_entry_point_instead_of_calling_it_dead() {
     // On a decorator-driven codebase this was 100% of `unused`'s output: a route's
     // only reference is the line directly above it. Tagged, not suppressed —

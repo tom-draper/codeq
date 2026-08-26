@@ -1854,11 +1854,32 @@ fn attributes_of(node: Node, src: &[u8]) -> Vec<String> {
             }
         }
     }
-    // Java / Kotlin / C# / PHP: inside the declaration.
+    // Java / Kotlin / C# / PHP: inside the declaration. Matched on the *list*
+    // node each grammar wraps annotations in (`attribute_list` in C# and PHP,
+    // `modifiers` in Java and Kotlin), never on a bare `attribute` — because in
+    // Python that kind is attribute *access*, so `self._axes_visible = True`
+    // came back tagged `decorator=self._axes_visible`. The `decorator` field
+    // exists so a reader can tell a framework entry point from dead code, and a
+    // tag on an ordinary assignment is worse than no tag: it means the tag no
+    // longer means anything when it appears.
     let mut c = node.walk();
     for ch in node.named_children(&mut c) {
         let k = ch.kind();
-        if k.contains("attribute") || k.contains("annotation") || k == "modifiers" {
+        if k == "modifiers" {
+            // Java and Kotlin put annotations and access modifiers in one node,
+            // so pushing it whole reported `decorator=public` on every plain
+            // `public class` — a tag that says "a framework may be registering
+            // this" on a declaration nothing registers. Take the annotations.
+            let mut mc = ch.walk();
+            for m in ch.named_children(&mut mc) {
+                if m.kind().contains("annotation") {
+                    push(m);
+                }
+            }
+        } else if k.contains("annotation")
+            || k.ends_with("attribute_list")
+            || k.ends_with("attribute_group")
+        {
             push(ch);
         }
     }
