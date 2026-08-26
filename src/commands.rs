@@ -5294,6 +5294,65 @@ struct RepoMap {
 /// `map` — one call that summarises the index for orientation. Deliberately
 /// factual: counts grouped by language, directory, imported module, and file.
 /// `--limit` bounds each list; `--limit 0` returns everything.
+/// Indexed source files whose symbols are stacked on a handful of lines, with a
+/// note naming them — or `None` when there are none, or they are a rounding
+/// error in the total.
+///
+/// Definitions per *distinct* line is the whole test, and it needs nothing
+/// stored: hand-written code declares about one thing per line, so the ratio
+/// sits at 1.0 and is bounded above by the language's grammar. Measured on a
+/// real repo, 166 files sat below 2.0 and the three vendor bundles sat at 220,
+/// 459 and 1152 — two orders of magnitude of empty space, so the cutoff is not
+/// a number anybody has to tune. It under-reports by design: a pretty-printed
+/// generated file is indistinguishable from hand-written source by this test,
+/// and missing one is much cheaper than calling somebody's code machine output.
+fn generated_files(conn: &rusqlite::Connection, total_symbols: i64) -> Result<Option<String>> {
+    /// Definitions per distinct line. Anything hand-written is near 1.
+    const DENSITY: f64 = 20.0;
+    /// Below this a file is too small for the ratio to mean anything — a
+    /// one-line SQL table with a dozen columns is not a bundle.
+    const MIN_SYMBOLS: i64 = 50;
+
+    let mut stmt = conn.prepare(
+        "SELECT path, COUNT(*) AS syms, COUNT(DISTINCT start_line) AS lines
+         FROM facts WHERE kind <> 'import'
+         GROUP BY path
+         HAVING syms >= ?1 AND syms >= ?2 * lines
+         ORDER BY syms DESC",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![MIN_SYMBOLS, DENSITY], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+    })?;
+    let hits: Vec<(String, i64, i64)> = rows.filter_map(|r| r.ok()).collect();
+    if hits.is_empty() {
+        return Ok(None);
+    }
+    let owned: i64 = hits.iter().map(|(_, syms, _)| syms).sum();
+    // If they own a sliver of the repo they are not distorting anything, and a
+    // note about them is the noise these notes exist to avoid.
+    if owned * 4 < total_symbols {
+        return Ok(None);
+    }
+    let listed = hits
+        .iter()
+        .take(3)
+        .map(|(p, syms, lines)| format!("{p} ({syms} on {lines} line(s))"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = if hits.len() > 3 {
+        format!(", +{} more", hits.len() - 3)
+    } else {
+        String::new()
+    };
+    Ok(Some(format!(
+        "{} of {total_symbols} symbols come from {} file(s) whose definitions are stacked on a few \
+         lines, which is what generated or minified source looks like: {listed}{more}. They will \
+         dominate `hotspots`, `unused` and `clones` — `.codeqignore` them if they are vendored",
+        owned,
+        hits.len(),
+    )))
+}
+
 /// The commonest extensions among files codeq assigned no language, most files
 /// first, as `.ext (N)`. Capped at three: the point is to say what the bulk is,
 /// not to enumerate a tail.
@@ -5429,6 +5488,20 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
             human_bytes(totals.bytes),
         ))
     });
+
+    // The `(unknown)` note above cannot see the other way a repo misleads: a
+    // committed vendor bundle *is* source, *is* parsed, and *does* produce
+    // symbols — so it costs nothing in index size and quietly owns every
+    // symbol-ranking command. On one dashboard repo three files held 5,507 of
+    // 7,558 symbols, and `hotspots` — the command for meeting an unfamiliar
+    // codebase — answered `function t refs=45993`.
+    let note = match generated_files(conn, totals.symbols)? {
+        Some(extra) => Some(match note {
+            Some(n) => format!("{n}\n{extra}"),
+            None => extra,
+        }),
+        None => note,
+    };
 
     // Everything above is aggregate queries; everything below scans rows. Stop
     // here when only the totals were asked for.

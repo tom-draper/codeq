@@ -7201,42 +7201,6 @@ fn an_ordinary_attribute_does_not_make_something_a_test() {
 }
 
 #[test]
-fn a_python_attribute_assignment_is_not_a_decorator() {
-    // `self.x = 1` has an `attribute` node on its left, and the branch reading
-    // Java/C#/PHP annotations matched any kind *containing* "attribute" — so an
-    // ordinary assignment came back `decorator=self._hidden`. Java and Kotlin
-    // put annotations and access modifiers in one `modifiers` node, so pushing
-    // it whole reported `decorator=public` on every plain `public class`. Both
-    // make the tag meaningless in the place it is supposed to carry meaning.
-    let f = Fixture::new();
-    f.write("a.py", "class W:\n    def __init__(self):\n        self._hidden = True\n");
-    f.write("C.java", "public class T {\n  public void plain() { }\n}\n");
-    f.write("D.java", "public class S {\n  @Bean public void made() { }\n}\n");
-
-    let rows = f.run(&["unused", "--include-tests"]);
-    let tagged: Vec<(String, String)> = rows["data"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|r| {
-            Some((r["name"].as_str()?.to_string(), r["decorator"].as_str()?.to_string()))
-        })
-        .collect();
-    assert!(
-        tagged.iter().all(|(n, _)| n != "_hidden"),
-        "an attribute assignment is not a decorator: {tagged:?}"
-    );
-    assert!(
-        tagged.iter().all(|(_, d)| d != "public"),
-        "an access modifier is not a decorator: {tagged:?}"
-    );
-    assert!(
-        tagged.iter().any(|(n, d)| n == "made" && d.contains("@Bean")),
-        "a real annotation must still be tagged: {tagged:?}"
-    );
-}
-
-#[test]
 fn unused_sees_a_declaration_written_below_its_annotation() {
     // C#, Java, Kotlin and PHP put the annotation *inside* the declaration node,
     // so the fact starts at `[Fact]` and the name sits a line below. The
@@ -7276,6 +7240,42 @@ fn unused_still_counts_recursion_as_a_use() {
     for dead in ["orphan", "orphan_rs"] {
         assert!(names.iter().any(|x| x == dead), "'{dead}' missing: {names:?}");
     }
+}
+
+#[test]
+fn a_python_attribute_assignment_is_not_a_decorator() {
+    // `self.x = 1` has an `attribute` node on its left, and the branch reading
+    // Java/C#/PHP annotations matched any kind *containing* "attribute" — so an
+    // ordinary assignment came back `decorator=self._hidden`. Java and Kotlin
+    // put annotations and access modifiers in one `modifiers` node, so pushing
+    // it whole reported `decorator=public` on every plain `public class`. Both
+    // make the tag meaningless in the place it is supposed to carry meaning.
+    let f = Fixture::new();
+    f.write("a.py", "class W:\n    def __init__(self):\n        self._hidden = True\n");
+    f.write("C.java", "public class T {\n  public void plain() { }\n}\n");
+    f.write("D.java", "public class S {\n  @Bean public void made() { }\n}\n");
+
+    let rows = f.run(&["unused", "--include-tests"]);
+    let tagged: Vec<(String, String)> = rows["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| {
+            Some((r["name"].as_str()?.to_string(), r["decorator"].as_str()?.to_string()))
+        })
+        .collect();
+    assert!(
+        tagged.iter().all(|(n, _)| n != "_hidden"),
+        "an attribute assignment is not a decorator: {tagged:?}"
+    );
+    assert!(
+        tagged.iter().all(|(_, d)| d != "public"),
+        "an access modifier is not a decorator: {tagged:?}"
+    );
+    assert!(
+        tagged.iter().any(|(n, d)| n == "made" && d.contains("@Bean")),
+        "a real annotation must still be tagged: {tagged:?}"
+    );
 }
 
 #[test]
@@ -7404,6 +7404,35 @@ fn map_says_when_a_repo_is_mostly_things_it_cannot_index() {
     let g = Fixture::new();
     g.write("a.py", "def x():\n    pass\n");
     assert!(!String::from_utf8_lossy(&g.raw(&["map", "--totals"]).stderr).contains("carry no symbols"));
+}
+
+#[test]
+fn map_says_when_generated_source_owns_most_of_the_symbols() {
+    // The unindexable-assets note cannot see this case: a committed vendor
+    // bundle *is* source, *is* parsed, and *does* produce symbols, so it costs
+    // nothing in index size and quietly owns every symbol-ranking command. On a
+    // real dashboard repo three files held 5,507 of 7,558 symbols and
+    // `hotspots` answered `function t refs=45993`.
+    let f = Fixture::new();
+    f.write("src/app.ts", "export function compute() {\n    return 1;\n}\n");
+    // One line, many declarations — what minification produces.
+    let minified: String =
+        (0..80).map(|i| format!("const v{i}=()=>{i};")).collect::<Vec<_>>().join("");
+    f.write("vendor/bundle.min.js", &format!("{minified}\n"));
+
+    let note = String::from_utf8_lossy(&f.raw(&["map", "--totals"]).stderr).to_string();
+    assert!(note.contains("vendor/bundle.min.js"), "should name the file: {note}");
+    assert!(note.contains("stacked on a few lines"), "{note}");
+    assert!(note.contains("hotspots"), "should say what it distorts: {note}");
+
+    // Hand-written code declares about one thing per line, so an ordinary repo
+    // stays silent — the ratio is bounded above by the grammar, not tuned.
+    let g = Fixture::new();
+    g.write("a.ts", "export function a() {}\nexport function b() {}\n");
+    assert!(
+        !String::from_utf8_lossy(&g.raw(&["map", "--totals"]).stderr)
+            .contains("stacked on a few lines")
+    );
 }
 
 #[test]
