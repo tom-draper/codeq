@@ -168,7 +168,12 @@ fn meta_flag_returns_full_stable_envelope() {
     keys.sort();
     assert_eq!(keys, ["data", "index", "repo", "rows", "schema"]);
     assert_eq!(v["schema"], "codeq.result.v2");
-    assert_eq!(v["index"]["schema"], 30);
+    // The number itself is not the contract — that it is *the* index schema
+    // version is. Pinning the literal made every schema bump break this
+    // test instead of the thing it changed, and the suite shipped red.
+    let declared = f.run(&["capabilities"])["data"]["index_schema"].clone();
+    assert!(declared.as_u64().is_some_and(|n| n > 0), "{declared}");
+    assert_eq!(v["index"]["schema"], declared);
     assert_eq!(v["index"]["fresh"], true);
     assert!(v["index"]["elapsed_ms"].is_u64());
     assert!(v["repo"]["root"].is_string());
