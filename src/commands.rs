@@ -418,18 +418,23 @@ fn def_sites_of(conn: &rusqlite::Connection, name: &str) -> Result<HashSet<(Stri
 /// site set. Sharing the query keeps them agreeing on what counts as a definition.
 fn for_each_def_site(
     conn: &rusqlite::Connection,
-    mut f: impl FnMut(String, String, i64),
+    mut f: impl FnMut(String, String, i64, i64),
 ) -> Result<()> {
     let mut stmt = conn.prepare(
-        "SELECT name, path, start_line FROM facts
+        "SELECT name, path, start_line, end_line FROM facts
          WHERE kind <> 'import' AND name IS NOT NULL",
     )?;
     let rows = stmt.query_map([], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?,
+        ))
     })?;
     for row in rows {
-        let (name, path, line) = row?;
-        f(name, path, line);
+        let (name, path, start, end) = row?;
+        f(name, path, start, end);
     }
     Ok(())
 }
@@ -4096,7 +4101,7 @@ pub fn cmd_entrypoints(
 fn used_definition_names(
     s: &Session,
     names: &HashSet<String>,
-    defsites: &HashMap<String, HashSet<(String, i64)>>,
+    defsites: &HashMap<String, HashSet<(String, i64, i64)>>,
 ) -> Result<HashSet<String>> {
     if names.is_empty() {
         return Ok(HashSet::new());
@@ -4118,6 +4123,9 @@ fn used_definition_names(
     let mut body_stmt = s.db.conn.prepare("SELECT path, language, body FROM content_fts")?;
     let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
     let mut used = HashSet::new();
+    // Definition extents already accounted for, so a second occurrence inside
+    // one (recursion, a self-referential default) still counts as a use.
+    let mut claimed: HashSet<(String, String, i64)> = HashSet::new();
     let mut rows = body_stmt.query([])?;
     while let Some(row) = rows.next()? {
         let path = row.get_ref(0)?.as_str()?;
@@ -4151,9 +4159,22 @@ fn used_definition_names(
                 continue;
             }
             let line = line_starts.partition_point(|&start| start <= m.start()) as i64;
-            let is_definition = defsites
-                .get(m.as_str())
-                .is_some_and(|sites| sites.contains(&(path.to_string(), line)));
+            // The declaration is the *first* occurrence of the name inside its
+            // own extent, not the occurrence on the extent's first line. Those
+            // are the same thing only when nothing precedes the name — and an
+            // annotation on its own line, which is how C#, Java, Kotlin and PHP
+            // are conventionally written, is exactly the case where they differ:
+            // the fact starts at `[Fact]` and the name is a line below, so the
+            // declaration read as an external use and the definition could never
+            // be reported dead. Claiming each extent once keeps a recursive call
+            // — a real use, later in the same extent — counted as one.
+            let is_definition = defsites.get(m.as_str()).is_some_and(|sites| {
+                sites.iter().any(|(p, start, end)| {
+                    p == path
+                        && (*start..=*end).contains(&line)
+                        && claimed.insert((m.as_str().to_string(), p.clone(), *start))
+                })
+            });
             if !is_definition {
                 used.insert(m.as_str().to_string());
                 if used.len() == names.len() {
@@ -4175,7 +4196,11 @@ fn name_is_used(
     let names = HashSet::from([name.to_string()]);
     let mut sites = HashMap::new();
     if let Some(defsites) = defsites {
-        sites.insert(name.to_string(), defsites.clone());
+        // A note asks "is this name mentioned anywhere", so the degenerate
+        // single-line extent is the right reading here: it must not start
+        // absorbing uses that happen to sit inside a definition's body.
+        let ranges = defsites.iter().map(|(p, l)| (p.clone(), *l, *l)).collect();
+        sites.insert(name.to_string(), ranges);
     }
     Ok(used_definition_names(s, &names, &sites)?.contains(name))
 }
@@ -4439,7 +4464,7 @@ pub fn cmd_hotspots(
     // silently discarded every such call site.
     let mut defsites: HashSet<(String, String, i64)> = HashSet::new();
     let mut declarations: HashMap<String, i64> = HashMap::new();
-    for_each_def_site(&s.db.conn, |name, path, line| {
+    for_each_def_site(&s.db.conn, |name, path, line, _end| {
         if wanted.contains(name.as_str()) {
             *declarations.entry(name.clone()).or_insert(0) += 1;
             defsites.insert((name, path, line));
@@ -4578,9 +4603,9 @@ pub fn cmd_unused(
 
     // Every definition site keyed by name (repo-wide) so a use can be told from
     // a definition, and a name defined in >1 place is handled.
-    let mut defsites: HashMap<String, HashSet<(String, i64)>> = HashMap::new();
-    for_each_def_site(&s.db.conn, |n, p, l| {
-        defsites.entry(n).or_default().insert((p, l));
+    let mut defsites: HashMap<String, HashSet<(String, i64, i64)>> = HashMap::new();
+    for_each_def_site(&s.db.conn, |n, p, start, end| {
+        defsites.entry(n).or_default().insert((p, start, end));
     })?;
 
     // The definitions eligible to be reported (scoped by path/kind). A markdown
@@ -5350,7 +5375,6 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
             )
         })
     });
-
     // Everything above is aggregate queries; everything below scans rows. Stop
     // here when only the totals were asked for.
     if totals_only {

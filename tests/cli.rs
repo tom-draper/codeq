@@ -7237,6 +7237,48 @@ fn a_python_attribute_assignment_is_not_a_decorator() {
 }
 
 #[test]
+fn unused_sees_a_declaration_written_below_its_annotation() {
+    // C#, Java, Kotlin and PHP put the annotation *inside* the declaration node,
+    // so the fact starts at `[Fact]` and the name sits a line below. The
+    // definition site was matched on that first line alone, so the declaration
+    // itself read as an external use and the method could never be reported
+    // dead — in the conventional formatting, which is nearly all of it.
+    let f = Fixture::new();
+    f.write(
+        "G.cs",
+        "public class U {\n  [Obsolete] public void SameLine() { }\n  [Obsolete]\n  public void NextLine() { }\n}\n",
+    );
+    f.write(
+        "H.java",
+        "public class U {\n  @Bean public void sameLine() { }\n  @Bean\n  public void nextLine() { }\n}\n",
+    );
+
+    let names = field_set(&f.run(&["unused", "--include-tests"]), "name");
+    for n in ["SameLine", "NextLine", "sameLine", "nextLine"] {
+        assert!(names.iter().any(|x| x == n), "'{n}' missing from unused: {names:?}");
+    }
+}
+
+#[test]
+fn unused_still_counts_recursion_as_a_use() {
+    // The declaration is the *first* occurrence of the name inside its own
+    // extent. A later one in the same extent is a real call, and treating the
+    // whole extent as "the definition site" would report every recursive
+    // function as dead code.
+    let f = Fixture::new();
+    f.write("a.py", "def fact(n):\n    return 1 if n < 2 else n * fact(n - 1)\n\ndef orphan():\n    pass\n");
+    f.write("b.rs", "fn walk(n: u32) -> u32 { if n == 0 { 0 } else { walk(n - 1) } }\nfn orphan_rs() {}\n");
+
+    let names = field_set(&f.run(&["unused"]), "name");
+    for live in ["fact", "walk"] {
+        assert!(!names.iter().any(|x| x == live), "recursive '{live}' called dead: {names:?}");
+    }
+    for dead in ["orphan", "orphan_rs"] {
+        assert!(names.iter().any(|x| x == dead), "'{dead}' missing: {names:?}");
+    }
+}
+
+#[test]
 fn unused_tags_a_framework_entry_point_instead_of_calling_it_dead() {
     // On a decorator-driven codebase this was 100% of `unused`'s output: a route's
     // only reference is the line directly above it. Tagged, not suppressed —
