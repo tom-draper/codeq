@@ -5294,6 +5294,47 @@ struct RepoMap {
 /// `map` — one call that summarises the index for orientation. Deliberately
 /// factual: counts grouped by language, directory, imported module, and file.
 /// `--limit` bounds each list; `--limit 0` returns everything.
+/// The commonest extensions among files codeq assigned no language, most files
+/// first, as `.ext (N)`. Capped at three: the point is to say what the bulk is,
+/// not to enumerate a tail.
+fn unindexed_extensions(conn: &rusqlite::Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT path FROM files WHERE language IS NULL",
+    )?;
+    let mut counts: BTreeMap<String, i64> = BTreeMap::new();
+    for path in stmt.query_map([], |r| r.get::<_, String>(0))? {
+        let path = path?;
+        let name = path.rsplit('/').next().unwrap_or(&path);
+        // A dotfile with no suffix (`.gitignore`) has no extension to report.
+        let ext = match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => format!(".{ext}"),
+            _ => "(no extension)".to_string(),
+        };
+        *counts.entry(ext).or_default() += 1;
+    }
+    let mut rows: Vec<(String, i64)> = counts.into_iter().collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    rows.truncate(3);
+    Ok(rows.into_iter().map(|(e, n)| format!("{e} ({n})")).collect())
+}
+
+/// Bytes at a unit that keeps the number meaningful. Fixing this at MB rendered
+/// a 313 KB repo as "0 MB of 0 MB", which is a sentence with its quantities
+/// removed.
+fn human_bytes(n: i64) -> String {
+    const KB: f64 = 1024.0;
+    let b = n as f64;
+    if b >= KB * KB * KB {
+        format!("{:.1} GB", b / (KB * KB * KB))
+    } else if b >= KB * KB {
+        format!("{:.0} MB", b / (KB * KB))
+    } else if b >= KB {
+        format!("{:.0} KB", b / KB)
+    } else {
+        format!("{n} B")
+    }
+}
+
 pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let conn = &s.db.conn;
@@ -5364,17 +5405,31 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
         .map(|l| (l.files, l.bytes));
     let note = unindexed.and_then(|(files, bytes)| {
         let majority = files * 2 > totals.files || bytes * 2 > totals.bytes;
-        majority.then(|| {
-            format!(
-                "{files} of {} files ({:.0} MB of {:.0} MB) are not source codeq indexes \
-                 — assets, data or binaries, counted here but carrying no symbols; \
-                 `--language` on `tree`/`files` scopes to code",
-                totals.files,
-                bytes as f64 / 1_048_576.0,
-                totals.bytes as f64 / 1_048_576.0,
-            )
-        })
+        if !majority {
+            return None;
+        }
+        // Name the extensions rather than the category. "Assets, data or
+        // binaries" was a guess, and on a Business Central repo it was wrong in
+        // the direction that costs most: 31 of the 33 files were `.al`, the
+        // entire source of the project, described to its author as data and
+        // implicitly proposed for `.codeqignore`. The extension is a fact, and
+        // it tells a geospatial dump and an unsupported language apart without
+        // codeq having to know which it is looking at.
+        let exts = unindexed_extensions(conn).unwrap_or_default();
+        let what = if exts.is_empty() {
+            String::new()
+        } else {
+            format!(" — codeq has no grammar for {}", exts.join(", "))
+        };
+        Some(format!(
+            "{files} of {} files ({} of {}) carry no symbols{what}; \
+             `--language` on `tree`/`files` scopes to code",
+            totals.files,
+            human_bytes(bytes),
+            human_bytes(totals.bytes),
+        ))
     });
+
     // Everything above is aggregate queries; everything below scans rows. Stop
     // here when only the totals were asked for.
     if totals_only {

@@ -7392,17 +7392,37 @@ fn map_says_when_a_repo_is_mostly_things_it_cannot_index() {
 
     let out = f.raw(&["map", "--totals"]);
     let note = String::from_utf8_lossy(&out.stderr);
-    assert!(note.contains("not source codeq indexes"), "{note}");
+    assert!(note.contains("carry no symbols"), "{note}");
     assert!(note.contains("of 9 files"), "{note}");
+    // The extension is the fact; the category was a guess.
+    assert!(note.contains(".png (8)"), "note should name what the bulk is: {note}");
+    // Under a megabyte the quantities have to survive the unit.
+    assert!(!note.contains("0 MB"), "sub-MB totals rendered as zero: {note}");
 
     // A repo that is mostly code says nothing — the note is for the case that
     // misleads, not a banner on every call.
     let g = Fixture::new();
     g.write("a.py", "def x():\n    pass\n");
-    assert!(
-        !String::from_utf8_lossy(&g.raw(&["map", "--totals"]).stderr)
-            .contains("not source codeq indexes")
-    );
+    assert!(!String::from_utf8_lossy(&g.raw(&["map", "--totals"]).stderr).contains("carry no symbols"));
+}
+
+#[test]
+fn map_names_an_unsupported_language_rather_than_calling_it_data() {
+    // A Business Central repo is 31 `.al` files — its entire source. Describing
+    // them as "assets, data or binaries" was wrong in the direction that costs
+    // most: it told the author their code was data, and implicitly proposed
+    // `.codeqignore` for it. The extension tells a geospatial dump and an
+    // unsupported language apart without codeq having to know which it sees.
+    let f = Fixture::new();
+    f.write("README.md", "# Docs\n");
+    for i in 0..6 {
+        f.write(&format!("src/Table{i}.al"), "table 50100 Thing\n{\n}\n");
+    }
+
+    let note = String::from_utf8_lossy(&f.raw(&["map", "--totals"]).stderr).to_string();
+    assert!(note.contains("codeq has no grammar for"), "{note}");
+    assert!(note.contains(".al (6)"), "{note}");
+    assert!(!note.contains("assets"), "the category was the guess: {note}");
 }
 
 #[test]
