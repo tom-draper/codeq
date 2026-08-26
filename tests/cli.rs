@@ -4845,7 +4845,12 @@ fn variants_extracted_across_languages() {
         ("a.cs", "enum E { X }", "E", &["X"]),
         ("a.c", "enum E { X, Y };", "E", &["X", "Y"]),
         ("a.php", "<?php enum E { case X; }", "E", &["X"]),
+        // Both TS forms. The initialised one was the only case here, and it
+        // is the rarer one: `enum E { A, B }` parses to bare
+        // `property_identifier`s rather than `enum_assignment`s, so it
+        // yielded no members at all while this test stayed green.
         ("a.ts", "enum E { X = 1 }", "E", &["X"]),
+        ("b.ts", "enum E { A, B }", "E", &["A", "B"]),
     ];
     for (file, src, ty, want) in cases {
         let f = Fixture::new();
