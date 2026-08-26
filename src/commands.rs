@@ -4140,7 +4140,12 @@ fn used_definition_names(
                 .map(|(i, _)| i + 1),
         );
         for m in re.find_iter(body) {
-            if !crate::search::has_identifier_boundaries(bytes, m.start(), m.end())
+            if !crate::search::has_identifier_boundaries(
+                bytes,
+                m.start(),
+                m.end(),
+                crate::index::language_for(path),
+            )
                 || !crate::search::is_not_comment(&spans, m.start())
             {
                 continue;

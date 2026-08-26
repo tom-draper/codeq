@@ -175,13 +175,36 @@ pub(crate) struct ScanOpts {
     pub(crate) per_file: Option<usize>,
 }
 
-fn is_ident_byte(b: u8) -> bool {
-    b == b'_' || b == b'$' || b.is_ascii_alphanumeric() || b >= 0x80
+/// Languages that spell a *variable* `$name`, where `$` is punctuation and the
+/// name is what follows it.
+///
+/// Everywhere else `$` binds into an identifier — JavaScript's `$ZodError` and
+/// `$props` are single symbols, and `references ZodError` must not match inside
+/// one. Applying that rule to PHP made codeq contradict its own index: it
+/// records `private $truncateAt;` under the name `truncateAt`, then refused to
+/// match the declaration it had just indexed, so `references` could not find a
+/// field's own definition site and dropped below `rg -w`.
+const DOLLAR_IS_SIGIL: &[&str] = &["php", "bash", "powershell"];
+
+fn dollar_binds(lang: Option<&str>) -> bool {
+    !lang.is_some_and(|l| DOLLAR_IS_SIGIL.contains(&l))
 }
 
-pub(crate) fn has_identifier_boundaries(bytes: &[u8], start: usize, end: usize) -> bool {
-    !bytes.get(start.wrapping_sub(1)).is_some_and(|b| is_ident_byte(*b))
-        && !bytes.get(end).is_some_and(|b| is_ident_byte(*b))
+fn is_ident_byte(b: u8, dollar_binds: bool) -> bool {
+    b == b'_' || (dollar_binds && b == b'$') || b.is_ascii_alphanumeric() || b >= 0x80
+}
+
+pub(crate) fn has_identifier_boundaries(
+    bytes: &[u8],
+    start: usize,
+    end: usize,
+    lang: Option<&str>,
+) -> bool {
+    let binds = dollar_binds(lang);
+    !bytes
+        .get(start.wrapping_sub(1))
+        .is_some_and(|b| is_ident_byte(*b, binds))
+        && !bytes.get(end).is_some_and(|b| is_ident_byte(*b, binds))
 }
 
 /// Whether an offset is not in a cached comment span. Used by `unused`, whose
@@ -242,7 +265,7 @@ pub(crate) fn is_call_position(bytes: &[u8], start: usize, end: usize) -> bool {
 /// Still textual rather than a parsed receiver expression: `a.b.query()` counts
 /// for `--on b` (the nearest qualifier is what is tested) and a call-valued
 /// receiver like `conn().query()` is not matched at all.
-fn has_qualifier(bytes: &[u8], off: usize, recv: &str) -> bool {
+fn has_qualifier(bytes: &[u8], off: usize, recv: &str, lang: Option<&str>) -> bool {
     let skip_ws_back = |mut i: usize| {
         while i > 0 && bytes[i - 1].is_ascii_whitespace() {
             i -= 1;
@@ -259,7 +282,8 @@ fn has_qualifier(bytes: &[u8], off: usize, recv: &str) -> bool {
         let qend = skip_ws_back(sep_end - sep.len());
         if qend >= q.len()
             && &bytes[qend - q.len()..qend] == q
-            && (qend == q.len() || !is_ident_byte(bytes[qend - q.len() - 1]))
+            && (qend == q.len()
+                || !is_ident_byte(bytes[qend - q.len() - 1], dollar_binds(lang)))
         {
             return true;
         }
@@ -433,6 +457,7 @@ pub(crate) fn run_search(
             |path: &str| load_file_defs(&mut def_stmt, path).unwrap_or_default();
         if scan_doc(
             rel,
+            lang.as_deref(),
             body,
             &spans,
             calls.as_ref(),
@@ -493,6 +518,7 @@ impl ScanAcc {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn scan_doc(
     path: &str,
+    lang: Option<&str>,
     body: &str,
     spans: &[(usize, usize, Span)],
     calls: Option<&CallMap>,
@@ -505,7 +531,8 @@ pub(crate) fn scan_doc(
     let filtering = opts.in_filter != InFilter::Any;
     let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(spans, off));
     let bounded = |m: &regex::Match<'_>| {
-        !opts.identifier_boundary || has_identifier_boundaries(body.as_bytes(), m.start(), m.end())
+        !opts.identifier_boundary
+            || has_identifier_boundaries(body.as_bytes(), m.start(), m.end(), lang)
     };
     // Line starts are only needed once there's a match (Files mode never needs
     // them). Compute lazily, so a non-matching candidate — and every candidate
@@ -592,7 +619,7 @@ pub(crate) fn scan_doc(
                             continue;
                         }
                         if let Some(recv) = &opts.qualifier {
-                            if !has_qualifier(bytes, off, recv) {
+                            if !has_qualifier(bytes, off, recv, lang) {
                                 continue;
                             }
                         }
@@ -725,6 +752,7 @@ pub(crate) fn scan_stdin(
     let mut load_defs = |_: &str| std::mem::take(&mut defs);
     scan_doc(
         label,
+        language,
         &body,
         &spans,
         calls.as_ref(),

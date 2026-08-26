@@ -997,6 +997,27 @@ fn callees_do_not_treat_fields_or_variants_as_callable_definitions() {
 }
 
 #[test]
+fn a_php_sigil_is_not_part_of_the_name_it_prefixes() {
+    // The `$` boundary rule that keeps JavaScript's `$ZodError` whole made codeq
+    // contradict its own index in PHP: it records `private $truncateAt;` under
+    // the name `truncateAt`, then would not match the declaration it had just
+    // indexed — so `references` could not find the field's own definition site.
+    let f = Fixture::new();
+    f.write(
+        "a.php",
+        "<?php\nclass S {\n    private $truncateAt;\n    public function get() { return $this->truncateAt; }\n}\n",
+    );
+
+    let v = f.run(&["references", "truncateAt"]);
+    let rows = v["data"]["references"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "declaration and use: {v}");
+    assert!(
+        rows.iter().any(|r| r["definition"] == true),
+        "references must include the definition it indexed: {v}"
+    );
+}
+
+#[test]
 fn dollar_prefixed_javascript_identifiers_have_exact_boundaries() {
     let f = Fixture::new();
     f.write(
