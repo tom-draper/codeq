@@ -7411,6 +7411,26 @@ fn a_python_attribute_assignment_is_not_a_decorator() {
 }
 
 #[test]
+fn unused_skips_a_method_that_exists_to_satisfy_a_trait() {
+    // A Rust `impl Trait for X` method cannot carry `pub`, is invoked through
+    // the trait rather than by name, and cannot be deleted without breaking the
+    // build. So it is not "looks dead but might not be" — the case the
+    // `decorator=` tag exists for — it is never dead. On an actix service every
+    // `new_transform` and `handle` was reported as dead code.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "struct S;\ntrait T { fn contract_m(&self); }\nimpl T for S { fn contract_m(&self) {} }\nimpl S { fn inherent_dead(&self) {} }\n",
+    );
+
+    let rows = f.run(&["unused"]);
+    let lines: Vec<i64> =
+        rows["data"].as_array().unwrap().iter().filter_map(|r| r["line"].as_i64()).collect();
+    assert!(lines.contains(&4), "an inherent method with no callers is still dead: {rows}");
+    assert!(!lines.contains(&3), "a trait implementation is not dead code: {rows}");
+}
+
+#[test]
 fn unused_tags_a_framework_entry_point_instead_of_calling_it_dead() {
     // On a decorator-driven codebase this was 100% of `unused`'s output: a route's
     // only reference is the line directly above it. Tagged, not suppressed —

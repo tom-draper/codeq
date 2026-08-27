@@ -65,6 +65,14 @@ pub struct Fact {
     /// A decorator that may register this definition with something codeq cannot
     /// see (`@app.get("/x")`, `@click.command()`). See [`registering_decorator`].
     pub decorator: Option<String>,
+    /// The trait this definition exists to satisfy, if any.
+    ///
+    /// A Rust `impl Trait for X` method cannot carry `pub`, is invoked through
+    /// the trait rather than by name, and cannot be deleted without breaking the
+    /// build — so it is never dead code, however unreferenced it looks. Only the
+    /// exact case is recorded: every method in a trait impl block is a trait
+    /// method, which is a fact about the block, not a guess about the method.
+    pub contract: Option<String>,
 }
 
 /// A type relation: `subtype` implements/extends `supertype`. Captures
@@ -315,6 +323,7 @@ impl LangSpec {
                                 shape_nodes: 0,
                                 is_test: false,
             decorator: None,
+            contract: None,
                             });
                         }
                     }
@@ -476,6 +485,7 @@ impl LangSpec {
                         shape_nodes,
                         is_test: test_attributed(self.lang, node, src),
                         decorator: registering_decorator(node, src),
+                        contract: implemented_trait(self.lang, node, src),
                     });
                 }
             }
@@ -1211,6 +1221,7 @@ fn markdown_facts(src: &[u8]) -> Extraction {
             shape_nodes: 0,
             is_test: false,
             decorator: None,
+            contract: None,
         });
     }
 
@@ -1274,6 +1285,7 @@ fn collect_md_links(raw: &str, line_start: usize, line_no: usize, facts: &mut Ve
             shape_nodes: 0,
             is_test: false,
             decorator: None,
+            contract: None,
         });
     };
 
@@ -1430,6 +1442,7 @@ fn component_fact(path: &str, src: &[u8]) -> Option<Fact> {
         shape_nodes: 0,
         is_test: false,
             decorator: None,
+            contract: None,
     })
 }
 
@@ -1728,6 +1741,33 @@ const TYPE_KINDS: &[&str] = &[
     "create_materialized_view",
     "create_type",
 ];
+
+/// The trait a definition exists to satisfy, when the grammar states it outright.
+///
+/// Rust only, and deliberately: `impl Trait for X { … }` says that *every*
+/// method in the block implements `Trait`, which is a fact about the block
+/// rather than a guess about the method. The Java/C#/TypeScript analogue —
+/// a method of a class that `implements I` — is not the same claim, because
+/// only some of those methods come from `I`, and answering which needs the
+/// interface resolved.
+fn implemented_trait(lang: &str, node: Node, src: &[u8]) -> Option<String> {
+    if lang != "rust" {
+        return None;
+    }
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        // A nested function inside a trait method does not implement anything.
+        if n.kind() == "function_item" {
+            return None;
+        }
+        if n.kind() == "impl_item" {
+            let t = n.child_by_field_name("trait")?;
+            return t.utf8_text(src).ok().map(collapse_ws);
+        }
+        cur = n.parent();
+    }
+    None
+}
 
 /// The visibility of the nearest type declaration enclosing `node`.
 ///
@@ -3295,6 +3335,7 @@ fn sql_extras(root: Node, src: &[u8]) -> (Vec<Fact>, Vec<(usize, usize, Span)>) 
                         shape_nodes: 0,
                         is_test: false,
             decorator: None,
+            contract: None,
                     });
                 }
             }
@@ -3405,6 +3446,7 @@ fn hcl_fact(kind: &str, name: String, owner: Option<String>, node: Node, src: &[
         shape_nodes: 0,
         is_test: false,
             decorator: None,
+            contract: None,
     }
 }
 

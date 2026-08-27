@@ -78,7 +78,7 @@ use rusqlite::Connection;
 // file offsets; cached component call rows must be rebuilt.
 // v34: indexed files retain parser recovery diagnostics, so agents can detect
 // partial syntax extraction instead of treating every index row as equally sound.
-pub const SCHEMA_VERSION: i64 = 34;
+pub const SCHEMA_VERSION: i64 = 35;
 
 pub struct Db {
     pub conn: Connection,
@@ -201,6 +201,11 @@ impl Db {
                 -- cannot see (`@app.get("/x")`), so `unused` can tag rather than
                 -- silently report a framework entry point as dead.
                 decorator   TEXT,
+                -- The trait this definition implements, when it exists to
+                -- satisfy one. A Rust `impl Trait for X` method is called
+                -- through the trait and named by nothing, so `unused` reported
+                -- every actix handler and `Display::fmt` as dead code.
+                contract    TEXT,
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
             );
 
@@ -304,6 +309,9 @@ impl Db {
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN decorator TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE facts ADD COLUMN contract TEXT", []);
 
         // On a schema version change, wipe derived data so the next refresh
         // rebuilds everything (including the FTS index) from scratch.

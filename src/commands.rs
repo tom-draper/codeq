@@ -4669,8 +4669,13 @@ pub fn cmd_unused(
     // external contract is added.
     let exclude_headings = if kind == Some("heading") { "" } else { " AND kind <> 'heading'" };
     let sql = format!(
+        // A definition that exists to satisfy a trait is called through the
+        // trait and named by nothing, and deleting it does not remove code — it
+        // breaks the build. That is not "looks dead but might not be", the case
+        // the `decorator=` tag exists for; it is never dead, so it is excluded
+        // rather than tagged.
         "SELECT name, kind, path, start_line, visibility, language, decorator FROM facts
-         WHERE kind <> 'import' AND name IS NOT NULL{exclude_headings}{}
+         WHERE kind <> 'import' AND name IS NOT NULL AND contract IS NULL{exclude_headings}{}
          ORDER BY path, start_line",
         filters.sql(),
     );
