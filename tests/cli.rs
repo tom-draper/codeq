@@ -997,6 +997,55 @@ fn callees_do_not_treat_fields_or_variants_as_callable_definitions() {
 }
 
 #[test]
+fn a_word_boundary_follows_the_language_that_owns_the_bytes() {
+    // `$` binds into an identifier only where a lexer allows it there, and only
+    // where a lexer is running: a Rust macro metavariable, a JVM binary name in
+    // a config file, and a template placeholder inside a string are all `$`
+    // followed by a real occurrence. Treating `$` as an identifier byte
+    // everywhere cost the superset-of-ripgrep guarantee in five languages.
+    let f = Fixture::new();
+    f.write("m.rs", "macro_rules! m { ($bytes:expr) => { $bytes }; }\nfn bytes() {}\n");
+    f.write("cfg.json", "{ \"name\": \"Outer$PrivateRecord\" }\n");
+    f.write("s.java", "class T {\n  String m = \"Outer$PrivateRecord\";\n  int PrivateRecord = 1;\n}\n");
+    // In JavaScript code, though, `$locale` really is one identifier.
+    f.write("a.js", "const $locale = 1;\nconst locale = 2;\n");
+
+    let paths = |name: &str| -> Vec<String> {
+        f.run(&["references", name, "--limit", "0"])["data"]["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["path"].as_str().map(str::to_string))
+            .collect()
+    };
+    assert!(paths("bytes").iter().any(|p| p == "m.rs"), "rust macro metavariable");
+    assert!(paths("PrivateRecord").iter().any(|p| p == "cfg.json"), "unclassified file");
+    assert!(paths("PrivateRecord").iter().any(|p| p == "s.java"), "inside a java string");
+
+    let v = f.run(&["references", "locale", "--limit", "0"]);
+    let lines: Vec<i64> = v["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["line"].as_i64())
+        .collect();
+    assert_eq!(lines, vec![2], "`$locale` is a different JS identifier: {v}");
+}
+
+#[test]
+fn a_word_boundary_reads_unicode_punctuation_as_punctuation() {
+    // The boundary test asked `b >= 0x80`, i.e. "any non-ASCII byte is a
+    // letter". True of a CJK ideograph, false of CJK punctuation, and the two
+    // sit side by side in real prose.
+    let f = Fixture::new();
+    f.write("README.md", "Print it to console。See the example.\n");
+
+    let v = f.run(&["search", "console", "-w"]);
+    let hits = v["data"]["matches"].as_array().unwrap();
+    assert!(!hits.is_empty(), "boundary rejected by a full stop: {v}");
+}
+
+#[test]
 fn a_php_sigil_is_not_part_of_the_name_it_prefixes() {
     // The `$` boundary rule that keeps JavaScript's `$ZodError` whole made codeq
     // contradict its own index in PHP: it records `private $truncateAt;` under

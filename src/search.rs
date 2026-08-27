@@ -175,23 +175,65 @@ pub(crate) struct ScanOpts {
     pub(crate) per_file: Option<usize>,
 }
 
-/// Languages that spell a *variable* `$name`, where `$` is punctuation and the
-/// name is what follows it.
+/// Languages whose lexer allows `$` *inside an identifier*, so `$ZodError` and
+/// `$props` are single names and `references ZodError` must not match within
+/// one.
 ///
-/// Everywhere else `$` binds into an identifier — JavaScript's `$ZodError` and
-/// `$props` are single symbols, and `references ZodError` must not match inside
-/// one. Applying that rule to PHP made codeq contradict its own index: it
-/// records `private $truncateAt;` under the name `truncateAt`, then refused to
-/// match the declaration it had just indexed, so `references` could not find a
-/// field's own definition site and dropped below `rg -w`.
-const DOLLAR_IS_SIGIL: &[&str] = &["php", "bash", "powershell"];
+/// An allowlist, because that is the shape of the fact: this is a property of
+/// each grammar, not a heuristic with exceptions. It started as a denylist —
+/// bind everywhere except PHP, Bash and PowerShell — which quietly asserted
+/// that `$` binds in every language nobody had thought about yet. It does not.
+/// Rust `$bytes` is a macro metavariable, `Outer$Inner` in a JVM config file is
+/// a binary name, `$(H1)` in a Makefile is an expansion, and `$db` in PHP is a
+/// sigil: in every one of those `$` is punctuation and the name beside it is a
+/// real occurrence that `rg -w` finds. Getting the default backwards cost the
+/// superset guarantee in thirteen places across five languages.
+const DOLLAR_BINDS: &[&str] = &[
+    "javascript", "typescript", "tsx", "svelte", "vue", "java", "kotlin", "scala",
+];
 
+/// A file codeq assigned no language is punctuation-agnostic: it has no lexer to
+/// appeal to, so it follows `rg -w` rather than guessing.
 fn dollar_binds(lang: Option<&str>) -> bool {
-    !lang.is_some_and(|l| DOLLAR_IS_SIGIL.contains(&l))
+    lang.is_some_and(|l| DOLLAR_BINDS.contains(&l))
 }
 
-fn is_ident_byte(b: u8, dollar_binds: bool) -> bool {
-    b == b'_' || (dollar_binds && b == b'$') || b.is_ascii_alphanumeric() || b >= 0x80
+/// Whether a char continues an identifier, so a match touching it is not
+/// word-bounded.
+///
+/// Unicode-aware on purpose. This tested `b >= 0x80` — "any non-ASCII byte is a
+/// letter" — which is right for a CJK ideograph and wrong for CJK punctuation,
+/// and the two are neighbours in real prose: `console。` in a Chinese README
+/// made codeq reject a boundary that `rg -w` accepts, because the full stop is
+/// three bytes above 0x7F. `char::is_alphanumeric` is the question actually
+/// being asked.
+fn is_ident_char(c: char, dollar_binds: bool) -> bool {
+    c == '_' || (dollar_binds && c == '$') || c.is_alphanumeric()
+}
+
+/// The char whose encoding starts at `at`.
+fn char_at(bytes: &[u8], at: usize) -> Option<char> {
+    let b = *bytes.get(at)?;
+    let len = match b {
+        0x00..=0x7F => 1,
+        b if b >> 5 == 0b110 => 2,
+        b if b >> 4 == 0b1110 => 3,
+        _ => 4,
+    };
+    std::str::from_utf8(bytes.get(at..at + len)?).ok()?.chars().next()
+}
+
+/// The char ending immediately before `at`. The buffer is always a `&str`'s
+/// bytes, so walking back over continuation bytes lands on a lead byte.
+fn char_before(bytes: &[u8], at: usize) -> Option<char> {
+    if at == 0 || at > bytes.len() {
+        return None;
+    }
+    let mut i = at - 1;
+    while i > 0 && bytes[i] & 0b1100_0000 == 0b1000_0000 {
+        i -= 1;
+    }
+    std::str::from_utf8(bytes.get(i..at)?).ok()?.chars().next()
 }
 
 pub(crate) fn has_identifier_boundaries(
@@ -199,18 +241,29 @@ pub(crate) fn has_identifier_boundaries(
     start: usize,
     end: usize,
     lang: Option<&str>,
+    in_string: bool,
 ) -> bool {
-    let binds = dollar_binds(lang);
-    !bytes
-        .get(start.wrapping_sub(1))
-        .is_some_and(|b| is_ident_byte(*b, binds))
-        && !bytes.get(end).is_some_and(|b| is_ident_byte(*b, binds))
+    // `$` is identifier syntax only where a lexer is lexing identifiers. Inside
+    // a string literal it is almost always something else: a JVM binary name
+    // (`Java17RecordTest$PrivateRecord` in an expected-message string), a
+    // template placeholder (`"$error.message"`), a shell expansion. Treating
+    // those as one identifier lost real occurrences that `rg -w` finds, in
+    // exactly the languages where `$` does bind in code.
+    let binds = dollar_binds(lang) && !in_string;
+    !char_before(bytes, start).is_some_and(|c| is_ident_char(c, binds))
+        && !char_at(bytes, end).is_some_and(|c| is_ident_char(c, binds))
 }
 
 /// Whether an offset is not in a cached comment span. Used by `unused`, whose
 /// conservative rule counts code and strings as uses but never comments.
 pub(crate) fn is_not_comment(spans: &[(usize, usize, Span)], off: usize) -> bool {
     class_at(spans, off) != Some(Span::Comment)
+}
+
+/// Whether an offset sits in a cached string literal. Used to decide whether `$`
+/// is identifier syntax there — see [`has_identifier_boundaries`].
+pub(crate) fn is_in_string(spans: &[(usize, usize, Span)], off: usize) -> bool {
+    class_at(spans, off) == Some(Span::Str)
 }
 
 /// Whether the match is a markup instantiation — `<Name …/>` or `</Name>`.
@@ -283,7 +336,8 @@ fn has_qualifier(bytes: &[u8], off: usize, recv: &str, lang: Option<&str>) -> bo
         if qend >= q.len()
             && &bytes[qend - q.len()..qend] == q
             && (qend == q.len()
-                || !is_ident_byte(bytes[qend - q.len() - 1], dollar_binds(lang)))
+                || !char_before(bytes, qend - q.len())
+                    .is_some_and(|c| is_ident_char(c, dollar_binds(lang))))
         {
             return true;
         }
@@ -427,10 +481,17 @@ pub(crate) fn run_search(
         // Borrow the body from the row — never copied into an owned String.
         let body = row.get_ref(2)?.as_str()?;
 
+        // A `$`-binding language also needs spans, with no `--in` filter in
+        // sight: `$` is identifier syntax in code and something else inside a
+        // string, and only the spans tell the two apart. Narrow on purpose —
+        // word-bounded queries over JavaScript/TypeScript/Java-family files —
+        // so an ordinary search pays nothing for it.
+        let needs_spans_for_dollar =
+            opts.identifier_boundary && dollar_binds(lang.as_deref());
         // Load cached spans if filtering; skip files in a language we can't parse.
-        let spans = if filtering {
+        let spans = if filtering || needs_spans_for_dollar {
             if !has_spans(lang.as_deref().unwrap_or("")) {
-                if opts.in_filter.requires_spans() {
+                if filtering && opts.in_filter.requires_spans() {
                     continue;
                 }
                 // Unclassifiable: treat every position as code rather than drop
@@ -532,7 +593,13 @@ pub(crate) fn scan_doc(
     let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(spans, off));
     let bounded = |m: &regex::Match<'_>| {
         !opts.identifier_boundary
-            || has_identifier_boundaries(body.as_bytes(), m.start(), m.end(), lang)
+            || has_identifier_boundaries(
+                body.as_bytes(),
+                m.start(),
+                m.end(),
+                lang,
+                class_at(spans, m.start()) == Some(Span::Str),
+            )
     };
     // Line starts are only needed once there's a match (Files mode never needs
     // them). Compute lazily, so a non-matching candidate — and every candidate

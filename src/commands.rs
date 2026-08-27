@@ -4208,6 +4208,7 @@ fn used_definition_names(
                 m.start(),
                 m.end(),
                 crate::index::language_for(path),
+                crate::search::is_in_string(&spans, m.start()),
             )
                 || !crate::search::is_not_comment(&spans, m.start())
             {
