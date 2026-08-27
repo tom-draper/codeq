@@ -7411,6 +7411,27 @@ fn a_python_attribute_assignment_is_not_a_decorator() {
 }
 
 #[test]
+fn a_capped_listing_says_it_was_capped() {
+    // `search` and `references` carry `truncated` in the envelope and the
+    // renderer warns. A result whose `data` is a bare array has nowhere to put
+    // that flag, so those commands cut in silence: `imports` defaults to 200 and
+    // a real repo had 1,030, which read exactly like "this repo has 200
+    // imports".
+    let f = Fixture::new();
+    let body: String = (0..12).map(|i| format!("import m{i}\n")).collect();
+    f.write("a.py", &body);
+
+    let out = f.raw(&["imports", "--limit", "5"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("stopped at --limit"), "silent truncation: {err}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).lines().count(), 5, "{out:?}");
+
+    // A result that fits says nothing.
+    let out = f.raw(&["imports", "--limit", "0"]);
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("stopped at --limit"));
+}
+
+#[test]
 fn unused_skips_a_method_that_exists_to_satisfy_a_trait() {
     // A Rust `impl Trait for X` method cannot carry `pub`, is invoked through
     // the trait rather than by name, and cannot be deleted without breaking the

@@ -1160,6 +1160,21 @@ struct Caller {
 ///
 /// Truncation happens after sorting so the rows kept are the first N of the
 /// answer, not the first N found.
+/// A note when `--limit` cut the answer, for results whose data is a bare array.
+///
+/// `search` and `references` carry `truncated` in their envelope and the
+/// renderer turns it into a warning. A result whose `data` is a plain array has
+/// nowhere to put that flag, so those commands cut in silence: `imports` on a
+/// real repo showed 200 of 1,030 and said nothing, which reads exactly like
+/// "this repo has 200 imports".
+fn truncation_note(shown: usize, total: usize) -> Option<String> {
+    (total > shown).then(|| {
+        format!(
+            "showing {shown} of {total} — stopped at --limit; rerun with a higher --limit (or 0) for the rest"
+        )
+    })
+}
+
 fn truncate_rows<T>(rows: &mut Vec<T>, limit: usize) {
     if limit > 0 && rows.len() > limit {
         rows.truncate(limit);
@@ -2897,8 +2912,11 @@ pub fn cmd_imports(cwd: &Path, path: Option<&str>, limit: usize, out: Out) -> Re
         args.push(format!("%{p}%"));
     }
     sql.push_str(" ORDER BY path, start_line");
+    // One past the limit, so a full page can be told from a page that happens to
+    // end exactly on it. `imports` defaults to 200 and a real repo had 1,030;
+    // the answer read like the whole set and said nothing.
     if limit > 0 {
-        sql.push_str(&format!(" LIMIT {limit}"));
+        sql.push_str(&format!(" LIMIT {}", limit + 1));
     }
 
     let mut stmt = s.db.conn.prepare(&sql)?;
@@ -2912,9 +2930,17 @@ pub fn cmd_imports(cwd: &Path, path: Option<&str>, limit: usize, out: Out) -> Re
             language: r.get(3)?,
         })
     })?;
-    let data: Vec<ImportRow> = rows.collect::<std::result::Result<_, _>>()?;
+    let mut data: Vec<ImportRow> = rows.collect::<std::result::Result<_, _>>()?;
+    let more = limit > 0 && data.len() > limit;
+    if more {
+        data.truncate(limit);
+    }
     let note = if data.is_empty() {
         note_if_scope_empty(&s, path, "any import")?
+    } else if more {
+        Some(format!(
+            "showing the first {limit} — stopped at --limit; rerun with a higher --limit (or 0) for the rest"
+        ))
     } else {
         None
     };
@@ -4388,13 +4414,14 @@ pub fn cmd_tree(
     data.extend(file_rows);
     // Path order, so the listing reads as a tree rather than a ranking.
     data.sort_by(|a, b| a.path.cmp(&b.path));
+    let total = data.len();
     if limit > 0 {
         data.truncate(limit);
     }
     let note = if data.is_empty() {
         note_if_scope_empty(&s, path, "any indexed content")?
     } else {
-        None
+        truncation_note(data.len(), total)
     };
     s.emit_noted(data, note)
 }
@@ -5012,6 +5039,7 @@ pub fn cmd_untested(
 
     // One lookup per distinct name, not per definition.
     let scopes = TestScopes::load(&s.db.conn)?;
+    let mut stopped_at_limit = false;
     let mut covered: HashMap<String, bool> = HashMap::new();
     let mut data: Vec<UntestedRow> = Vec::new();
     for cand in candidates {
@@ -5034,15 +5062,28 @@ pub fn cmd_untested(
         if !has_test {
             data.push(cand);
             if limit > 0 && data.len() >= limit {
+                // Stop rather than count the rest: the per-candidate test lookup
+                // is the expensive part, so the exact total is not worth a full
+                // pass. Saying the answer is partial is.
+                stopped_at_limit = true;
                 break;
             }
         }
     }
 
-    let note = data.is_empty().then(|| match path {
-        Some(p) => format!("every public definition in '{p}' is referenced by a test"),
-        None => "every public definition is referenced by a test".to_string(),
-    });
+    let note = if data.is_empty() {
+        match path {
+            Some(p) => Some(format!("every public definition in '{p}' is referenced by a test")),
+            None => Some("every public definition is referenced by a test".to_string()),
+        }
+    } else if stopped_at_limit {
+        Some(format!(
+            "showing the first {} — stopped at --limit; rerun with a higher --limit (or 0) for the rest",
+            data.len()
+        ))
+    } else {
+        None
+    };
     s.emit_noted(data, note)
 }
 
