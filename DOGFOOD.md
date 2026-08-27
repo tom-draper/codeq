@@ -4,6 +4,141 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-27 — Closing the open list, and what `nginx-analytics` said back
+
+Every item this log had left open, then a full pass over `nginx-analytics`
+(Go + TypeScript + TSX, three programs in one repo) with the result.
+
+### The superset guarantee: 24 failures to 2, and the default was backwards
+
+`differential.py` had 24 failures carried from the pulled commits. Thirteen were
+one line, and the line was not wrong so much as **shaped wrong**:
+
+```rust
+const DOLLAR_IS_SIGIL: &[&str] = &["php", "bash", "powershell"];
+```
+
+A denylist quietly asserts that `$` binds into an identifier in every language
+nobody has thought about yet. It does not. Rust `$bytes` is a macro
+metavariable, `Outer$Inner` in a JVM config file is a binary name, `$(H1)` in a
+Makefile is an expansion. Flipping it to an allowlist of the languages whose
+lexer actually allows `$` in a name — JS/TS/TSX, Svelte, Vue, Java, Kotlin,
+Scala — and treating a file codeq assigned no language as punctuation-agnostic
+fixed thirteen of them at once.
+
+A fourteenth was older and the same species: `b >= 0x80`, i.e. "any non-ASCII
+byte is a letter". True of a CJK ideograph, false of CJK punctuation, and the
+two are neighbours in real prose — `console。` in a Chinese README made codeq
+reject a boundary ripgrep accepts. `char::is_alphanumeric` is the question
+actually being asked; the byte test was a stand-in for it.
+
+That left four, and the shape of *those* was informative too. Three were `$`
+inside a **string literal** — `"Java17RecordTest$PrivateRecord"` in an
+expected-error message, `"$error.message"` in a firebug template. `$` is
+identifier syntax where a lexer is lexing identifiers; inside a string it is
+templating, or a binary name, or a shell expansion. codeq already caches string
+spans, so this costs a lookup:
+
+| | fail |
+|---|---|
+| carried from the pull | 24 |
+| `$` allowlist + Unicode boundary | 4 |
+| `$` binds in code, not in strings | **2** |
+
+The last two are dayjs's `this.$locale()` — real JavaScript, where `$locale` is a
+real identifier and `locale` is a different symbol. codeq is right and `rg -w` is
+looser. **That is the whole remaining divergence from the superset claim, and it
+is now one sentence rather than twenty-four scattered rows.** Whether to carve it
+out of the harness or accept two is a judgement about what the claim means, not a
+bug to fix.
+
+### `unused` on Rust: the answer went from noise to seven rows
+
+The trait-impl question this log has carried since 2026-08-25, settled the way it
+was recorded: **suppressed, not tagged.** The `decorator=` tag exists for "looks
+dead, might not be". A Rust `impl Trait for X` method is not that — deleting it
+does not remove code, it breaks the build. It is never dead, so it is not a
+judgement call to hand back to the reader.
+
+That needed one bit codeq did not have (`facts.contract`, schema v35). On
+`black-box`, `unused src` went from a list led by actix's `new_transform` and two
+`handle`s to seven genuinely-unreferenced enum variants. An inherent
+`impl S { fn dead() }` is still reported, which is the line that matters.
+
+### Two commands were quietly answering a smaller question than they were asked
+
+**`untested` was 26% data declarations.** A field, a variant and a constant have
+no behaviour to exercise — they are tested through whatever reads them. On this
+repo they were 52 of 200 rows, crowding out the functions the command exists to
+find. Excluded unless `--kind` asks, on the same argument `clones` uses for
+tests.
+
+**And the 200 was a cap nobody was told about.** `untested` defaults to 200;
+uncapped this repo has 366. `imports` defaults to 200 and the repo has **1,030**.
+Both cut silently. The mechanism is structural, not an oversight: `search` and
+`references` carry `truncated` in the envelope and the renderer warns, but a
+result whose `data` is a bare array has nowhere to put that flag — so every
+command shaped that way cuts in silence. Which also means the field/constant
+noise was not merely noise: it was **displacing 52 real rows past a cap that said
+nothing**.
+
+Fixed for `imports`, `untested` and `tree`. Still silent, and worth a sweep
+rather than another reactive fix: `files`, `symbols` and `members` (all default
+200), which truncate in SQL and would need `LIMIT n+1` to know they had.
+
+### `capabilities` said `relations: true` for a language that has one kind
+
+C# can only ever emit `extends` — `class C : B, I` is one syntax for two
+relationships and the grammar cannot tell them apart. Rust can only ever emit
+`implements`. `relations: true` is true of both and useful for neither, so
+`capabilities` now reports the kinds, read off each query's own capture names
+(the same derivation the rest of the matrix uses, for the reason recorded there:
+a hand-kept list is what drifts).
+
+```
+rust        kinds=['implements']      csharp  kinds=['extends']
+java        kinds=['extends','implements']    go      kinds=[]
+```
+
+### `nginx-analytics`: what the fixed tool found
+
+The point of the pass, and it went well enough to be worth recording as the
+positive case.
+
+- **`clones` found five real duplicate groups** and no noise: three device cards
+  sharing a 435-node component shape, two `RenderContent`s, `sortClients` /
+  `sortVersions`, `getColorForCPUUsage` / `getColorForMemoryUsage`, and a
+  `LoadEnv` copied between `agent` and `tui` — which `pair=agent/internal/env
+  <-> tui/internal/env` names as a cross-program copy without being asked.
+- **`unused` found a genuine dead public function**: `ServeLogSize` in
+  `agent/internal/routes/size.go`. Only `ServeLogSizes` (plural) is called
+  anywhere, and codeq kept the two apart.
+- **`callpath main ParseNginxLogs --path tui`** returned the whole six-hop chain
+  from `main` to the parser, first try.
+- **`astgrep '$X.($T)' --language go`** found the unchecked type assertions.
+
+Two things it got less right, both honest limitations rather than defects:
+
+- **13 of 76 `unused` rows are CSS classes** applied as `'level-' +
+  getSuccessRateLevel(v)`. The name `level-10` genuinely appears nowhere else, so
+  the row is a true statement and a misleading finding. Computed class names are
+  the norm in CSS, and nothing name-based can see through them.
+- **A multi-line `astgrep` match had no `[symbol]`.** The docs promise the
+  enclosing symbol on *every* match — it is the thing grep cannot produce — but a
+  match spanning a line fell into the verbatim-block branch written for `context`
+  chunks and lost it. Whether a pattern happens to span a line is not a reason to
+  answer a different question. Fixed.
+
+### One item left open, and it is a process one
+
+`SCHEMA_VERSION` gates freshness, so changing *how* a fact is extracted without
+bumping it leaves every existing index serving the old answer forever. That cost
+a debugging session yesterday. It is now documented at the constant, which is a
+remembered check where a mechanical one belongs — and the obvious mechanical
+version, hashing the query constants, would cover only the query-driven half
+while looking complete. A visibility rule or an attribute reader is ordinary Rust
+and would slip straight through. Recorded rather than half-built.
+
 ## 2026-08-27 — Following the loose ends, and one careless `git checkout`
 
 Short pass, finishing what the previous entry left open and exercising `explore`
