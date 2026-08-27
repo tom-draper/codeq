@@ -7201,6 +7201,38 @@ fn an_ordinary_attribute_does_not_make_something_a_test() {
 }
 
 #[test]
+fn callers_and_references_see_a_declaration_below_its_annotation() {
+    // The same first-line comparison `unused` used: with the annotation on its
+    // own line the declaration was not recognised as one, so `callers` reported
+    // an annotated method as its own caller and `references` never flagged the
+    // declaration as the definition.
+    let f = Fixture::new();
+    f.write(
+        "G.cs",
+        "public class U {\n  [Obsolete]\n  public void NextLine() { }\n}\n",
+    );
+
+    let callers = field_set(&f.run(&["callers", "NextLine"]), "name");
+    assert!(callers.is_empty(), "a declaration is not a call of itself: {callers:?}");
+
+    let v = f.run(&["references", "NextLine"]);
+    let rows = v["data"]["references"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{v}");
+    assert_eq!(rows[0]["definition"], true, "the declaration was not flagged: {v}");
+}
+
+#[test]
+fn a_recursive_call_is_still_a_caller() {
+    // The declaration is the first occurrence inside its extent; a later one is
+    // a real call. Claiming the whole extent instead would erase recursion.
+    let f = Fixture::new();
+    f.write("a.py", "def fact(n):\n    return 1 if n < 2 else n * fact(n - 1)\n");
+
+    let callers = field_set(&f.run(&["callers", "fact"]), "name");
+    assert_eq!(callers, ["fact".to_string()], "recursion lost: {callers:?}");
+}
+
+#[test]
 fn unused_sees_a_declaration_written_below_its_annotation() {
     // C#, Java, Kotlin and PHP put the annotation *inside* the declaration node,
     // so the fact starts at `[Fact]` and the name sits a line below. The

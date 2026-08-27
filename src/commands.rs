@@ -304,7 +304,7 @@ fn note_if_empty_feat<T>(
         // fix is to stop guessing which: list the possibilities and let the
         // reader pick. A note that states the fact beats a note that picks a
         // cause, and this is the second time that lesson has been filed.
-        if name_is_used(s, name, None)? {
+        if name_is_used(s, name)? {
             let scope = path
                 .map(|f| format!(" and nothing matches --path {f}"))
                 .unwrap_or_default();
@@ -403,11 +403,53 @@ impl Filters {
 /// use of the same name — the one place where two commands genuinely ask the
 /// database the same question, so it is worth one function rather than two
 /// copies that could drift on the `kind <> 'import'` clause.
-fn def_sites_of(conn: &rusqlite::Connection, name: &str) -> Result<HashSet<(String, i64)>> {
-    let mut stmt =
-        conn.prepare("SELECT path, start_line FROM facts WHERE name = ?1 AND kind <> 'import'")?;
-    let rows = stmt.query_map([name], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-    Ok(rows.collect::<std::result::Result<HashSet<_>, _>>()?)
+/// Where one name is declared, and whether a given occurrence *is* the
+/// declaration.
+///
+/// Not "the same line as the fact": a definition's recorded line is its node's
+/// first line, and in C#, Java, Kotlin and PHP the annotation lives inside the
+/// declaration node, so that line holds `[Fact]` and the name sits below it.
+/// Comparing lines therefore missed the declaration in the formatting nearly
+/// everyone writes, and `callers` reported an annotated method as its own
+/// caller.
+///
+/// The declaration is the *first* occurrence of the name inside the definition's
+/// extent. A later occurrence in the same extent is a recursive use and stays
+/// one, so each extent is claimed only once. Callers must feed occurrences in
+/// source order for that to hold.
+struct DeclSites {
+    extents: Vec<(String, i64, i64)>,
+    claimed: HashSet<(String, i64)>,
+}
+
+impl DeclSites {
+    fn load(conn: &rusqlite::Connection, name: &str) -> Result<Self> {
+        let mut stmt = conn.prepare(
+            "SELECT path, start_line, end_line FROM facts
+             WHERE name = ?1 AND kind <> 'import'",
+        )?;
+        let rows = stmt.query_map([name], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        })?;
+        Ok(Self {
+            extents: rows.collect::<std::result::Result<Vec<_>, _>>()?,
+            claimed: HashSet::new(),
+        })
+    }
+
+    fn is_declaration(&mut self, path: &str, line: i64) -> bool {
+        let hit = self
+            .extents
+            .iter()
+            .find(|(p, start, end)| p == path && (*start..=*end).contains(&line));
+        match hit {
+            Some((p, start, _)) => {
+                let key = (p.clone(), *start);
+                self.claimed.insert(key)
+            }
+            None => false,
+        }
+    }
 }
 
 /// Every definition site in the repo, as `(name, path, start_line)`.
@@ -1153,8 +1195,8 @@ fn callers_of(
     };
     hits.extend(alias_hits(s, name, path, None, &opts)?);
 
-    // Declaration lines of `name` — a reference on one of these is the def, not a call.
-    let defsites = def_sites_of(&s.db.conn, name)?;
+    // Where `name` is declared — an occurrence there is the def, not a call.
+    let mut defsites = DeclSites::load(&s.db.conn, name)?;
 
     // Import lines in the files that matched. An import names the symbol without
     // using it, so it is a poor anchor for a caller row — it points at the
@@ -1187,7 +1229,7 @@ fn callers_of(
     let mut pick: HashMap<(String, Option<String>), (Hit, bool)> = HashMap::new();
     let mut order: Vec<(String, Option<String>)> = Vec::new();
     for h in hits {
-        if defsites.contains(&(h.path.clone(), h.line as i64)) {
+        if defsites.is_declaration(&h.path, h.line as i64) {
             continue; // the declaration itself
         }
         let is_import = importsites.contains(&(h.path.clone(), h.line as i64));
@@ -3702,13 +3744,14 @@ pub fn cmd_references(
         truncated = true;
     }
 
-    // Definition sites of this exact name: (path, start_line).
-    let defsites = def_sites_of(&s.db.conn, name)?;
+    // Where this exact name is declared. Hits are sorted above, which is what
+    // `DeclSites` needs to tell a declaration from a recursive use.
+    let mut defsites = DeclSites::load(&s.db.conn, name)?;
 
     let references: Vec<ReferenceRow> = hits
         .into_iter()
         .map(|h| {
-            let definition = defsites.contains(&(h.path.clone(), h.line as i64));
+            let definition = defsites.is_declaration(&h.path, h.line as i64);
             ReferenceRow { hit: h, definition, via: None }
         })
         // A definition is not a call. `fn foo(` and `def foo(` are followed by
@@ -4188,20 +4231,11 @@ fn used_definition_names(
 
 /// Single-name form used only for the explanatory empty-result note. `unused`
 /// itself calls [`used_definition_names`] once for the complete candidate set.
-fn name_is_used(
-    s: &Session,
-    name: &str,
-    defsites: Option<&HashSet<(String, i64)>>,
-) -> Result<bool> {
+fn name_is_used(s: &Session, name: &str) -> Result<bool> {
     let names = HashSet::from([name.to_string()]);
-    let mut sites = HashMap::new();
-    if let Some(defsites) = defsites {
-        // A note asks "is this name mentioned anywhere", so the degenerate
-        // single-line extent is the right reading here: it must not start
-        // absorbing uses that happen to sit inside a definition's body.
-        let ranges = defsites.iter().map(|(p, l)| (p.clone(), *l, *l)).collect();
-        sites.insert(name.to_string(), ranges);
-    }
+    // No declaration sites to exclude: the only caller reaches here when the
+    // name has no definition codeq indexes, so every occurrence is a use.
+    let sites = HashMap::new();
     Ok(used_definition_names(s, &names, &sites)?.contains(name))
 }
 
