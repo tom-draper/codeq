@@ -78,6 +78,21 @@ use rusqlite::Connection;
 // file offsets; cached component call rows must be rebuilt.
 // v34: indexed files retain parser recovery diagnostics, so agents can detect
 // partial syntax extraction instead of treating every index row as equally sound.
+// v35: facts record the trait a definition implements, so `unused` can tell a
+// trait method (never dead — deleting it breaks the build) from dead code.
+//
+// **This is an extraction version, not just a storage version.** Freshness is
+// content hash plus this number, so changing *how* a fact is extracted — a
+// tree-sitter query, a visibility rule, an attribute reader — leaves every
+// existing index serving the old answer indefinitely, with nothing to indicate
+// it. That has already cost one debugging session: a fixed decorator rule
+// appeared to do nothing until `codeq index --rebuild`. Bump this whenever
+// extraction changes, even when no column does.
+//
+// A mechanical version of that check would be better than a remembered one, and
+// hashing the query constants is the obvious form — but it would cover only the
+// query-driven half. A visibility rule or an attribute reader is ordinary Rust
+// and would slip through, while the mechanism looked complete. Not yet solved.
 pub const SCHEMA_VERSION: i64 = 35;
 
 pub struct Db {
