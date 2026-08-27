@@ -97,8 +97,10 @@ never a method, however deep the class above it.
 
 Support is uneven across languages, so `capabilities` reports a
 `language_support` matrix — which of definitions, imports, members, relations, spans
-and calls each language actually has, derived from the extraction queries rather than
-a hand-kept list. Type relations are unavailable for Go, C, and Zig; Go satisfies
+and calls each language actually has, plus the `relation_kinds` it can emit, derived
+from the extraction queries rather than a hand-kept list. The kinds matter: C# writes
+`class C : B, I` for both inheritance and implementation and the grammar cannot tell
+them apart, so C# emits `extends` and never `implements`. Type relations are unavailable for Go, C, and Zig; Go satisfies
 interfaces structurally, so determining implementations would require type checking rather
 than syntax extraction. Ruby declares no fields.
 When a command comes back empty for that reason it says so, rather than letting an

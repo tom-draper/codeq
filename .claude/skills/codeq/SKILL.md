@@ -60,8 +60,12 @@ refresh the index — every command auto-refreshes changed files first.
   verbatim source of that whole neighbourhood, budgeted and grouped by file (each source
   block tagged focus/caller/callee). Use it instead of a `definitions` → `callers` → `read`
   → `read` sequence when you need to understand or edit a function/type. `--max-tokens`
-  caps the source; the definition is always kept, and anything dropped is listed. It
+  caps the source; the definition is always kept and emitted **first**, so
+  `explore … | head -N` samples the definition rather than a neighbour. It
   also returns the focus file's imports — what is in scope where you're about to edit.
+  Add `--resolved` on a polyglot repo: callees are matched by name, so a Go
+  function otherwise pulls in same-named TypeScript and spends the token budget
+  on it (391 lines to 109 on a real repo). `about` takes it too.
 - `codeq explore --at <file>:<line>` — the same, addressed by position instead of name:
   explores whatever definition encloses that line (innermost wins). Use it on a stack
   frame, a diff hunk or a search hit rather than running `at` and then `explore`.
@@ -75,8 +79,9 @@ refresh the index — every command auto-refreshes changed files first.
 **Who uses it / what breaks if I change it**
 - `codeq callers <NAME>` — definitions that call/reference NAME (test sites flagged).
   Add `--examples` to show the actual call expression at each site (how NAME is really
-  invoked, one per caller); `references <NAME> --calls` for every call site.
-- `codeq references <NAME>` — every occurrence, with the enclosing symbol.
+  invoked, one per caller); `references <NAME> --calls` for every call line.
+- `codeq references <NAME>` — every *line* holding an occurrence, with the
+  enclosing symbol (three calls on one line are one row, anchored at the first).
 - `codeq tests <NAME>` — which tests exercise NAME *by name*. A test is recognised
   structurally where a framework marks one — `#[test]`/`#[tokio::test]`,
   `@pytest.mark.…`, `@Test`, `[Fact]` — and otherwise by file path, its own name, or a
@@ -141,7 +146,13 @@ refresh the index — every command auto-refreshes changed files first.
 - `codeq unused [<path>]` — definitions with no references (candidate dead code; empty
   output = none found). Conservative and name-based, so it under-reports. A row tagged
   `decorator=@app.get(...)` is a framework entry point, referenced by its decorator and
-  nothing else — shown rather than hidden, so discount it yourself.
+  nothing else — shown rather than hidden, so discount it yourself. A Rust
+  `impl Trait for X` method is *not* shown: it is called through the trait and
+  deleting it breaks the build, so it is never dead (an inherent `impl X` method
+  with no callers still is).
+- `codeq untested [<path>]` — public definitions no test names. Fields, variants
+  and constants are excluded unless `--kind` asks: none has behaviour to test,
+  and they crowd out the functions that do.
 - `codeq clones [<path>]` — definitions with an identical syntax shape. Tests excluded
   by default. Exact equality, so it finds unedited copy-paste and **not** two
   implementations of one algorithm that differ in their accessor expressions; an empty
@@ -159,8 +170,14 @@ refresh the index — every command auto-refreshes changed files first.
   `-B`/`-A`/`-C`, `--path`, `--language`, `--limit` — and grep's calling
   convention, `codeq search TODO src/a.rs docs`, where each positional path is a
   substring (a directory scopes under it) and several are OR'd. **`--limit` defaults to 100**,
-  and a result that hit it now says `stopped at --limit` on stderr — raise it (or
-  pass 0) for the rest.
+  and a result that hit it says `stopped at --limit` on stderr — raise it (or
+  pass 0) for the rest. Other commands cap too, and the defaults differ:
+  `files`/`symbols`/`members`/`imports`/`untested` at 200, `hotspots` at 30. All
+  of them now say when they cut.
+  `-w` is an *identifier* boundary rather than `\b`: `$` continues a name only in
+  JS/TS-family and Java-family **code** (not inside a string, where it is a
+  template or a JVM binary name), and Unicode punctuation ends a name where a
+  Unicode letter does not.
   `CMD | codeq search PAT --stdin [--language L]` scans piped text instead of the
   index, for grep-in-a-pipeline over output that isn't in the repo.
 - `codeq astgrep '<PATTERN>' --language <lang>` — structural (AST) search, e.g.

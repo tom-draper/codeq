@@ -30,7 +30,15 @@ benchmarks — not as a step you run before querying.
   callee). Replaces the `about` → `read` → `read` sequence; `--max-tokens` caps it (the
   definition is always kept, the rest fill the budget, drops are listed under `omitted`).
   It also reports the focus file's `imports` — what is already in scope at the edit
-  site, so a proposed call isn't to something the file can't see.
+  site, so a proposed call isn't to something the file can't see. The focus block
+  is emitted **first** in the source section, so `explore … | head -N` samples the
+  definition rather than whichever neighbour's path sorted earliest.
+  - **`--resolved` on a polyglot repo.** Callers and callees are matched by name,
+    so in a repo holding two programs a Go function's neighbourhood fills with
+    same-named TypeScript — and here that spends the *token budget*, not just
+    attention. `--resolved` keeps only nodes whose file can reach a definition
+    through imports (`about` takes it too). Measured on a Go/TS repo: 391 lines
+    to 109.
   - **From a position, not a name:** `codeq explore --at <file>:<line>` explores
     whatever definition encloses that line (innermost wins). For turning a stack
     frame, a diff hunk or a search hit straight into its neighbourhood, instead of
@@ -88,8 +96,9 @@ benchmarks — not as a step you run before querying.
   require type checking rather than Codeq's syntax extraction.
 - **Orient:** `codeq map` (grouped totals; `--totals` for just the headline
   numbers and the per-language table, which skips the row scans and stays flat as
-  the repo grows — and it says so on stderr when most of the repo is assets codeq
-  cannot index, so the byte total isn't misread as coverage) · `codeq tree` (directory *shape*, folded
+  the repo grows — and it says so on stderr when most of the repo carries no
+  symbols, naming the extensions rather than guessing a category, so `.al (31)`
+  reads as an unsupported language and `.png (2106)` as assets) · `codeq tree` (directory *shape*, folded
   to `--depth`, each directory carrying the file and symbol counts of everything
   below it). `map` collapses to top-level directories, so on a nested repo it hides
   where the code is; `tree --min-symbols 1` goes straight to the directories that
@@ -174,6 +183,10 @@ benchmarks — not as a step you run before querying.
   is each language's own notion (Rust `pub`, JS/TS `export`, Go capitalization,
   Python non-underscore, a `public` modifier, non-`static` in C/C++); `pub(crate)`
   and `protected` are `restricted`, not public. `--kind function` to narrow.
+  - **An enum's variants are part of its surface.** No language lets a variant
+    declare its own visibility, so asking the node returned `private` and `api`
+    reported a public enum as the bare enum name — on a Rust event collector that
+    was 75 missing rows out of 496.
 - **Who uses it / what breaks:** `codeq callers NAME` · `codeq references NAME`
   - A caller row with **`scope=file`** and no `name` is a reference at module
     scope, with no definition around it — a Python module-level call, a JS
@@ -204,7 +217,7 @@ benchmarks — not as a step you run before querying.
       method and a free function, read `on=` and decide — don't expect codeq to.
     - `--examples` (callers) — surface the actual call expression at each site (one
       representative per caller): the row becomes `path:line:col:` the source line,
-      so one command answers "who calls it *and how*". For every call site rather
+      so one command answers "who calls it *and how*". For every call *line* rather
       than one per caller, use `references NAME --calls`. Composes with the filters.
   - **`callees` is already call-position only** (a bare mention of a name isn't a
     callee, and `helper()` written inside a string or comment isn't either), so it needs no `--calls`; it does take `--resolved`, which keeps only
@@ -250,10 +263,19 @@ benchmarks — not as a step you run before querying.
   extractions exist. Go, C and Zig have **no** relation extraction, Ruby declares no
   fields, Bash/Lua/Zig/Elixir have no imports — for those, "none found" is not
   evidence of absence, and the empty-result note says so.
+  - **`relation_kinds` per language**, because `relations: true` is too coarse to
+    act on: C# writes `class C : B, I` for both inheritance and implementation and
+    the grammar cannot tell them apart, so C# emits `extends` and never
+    `implements`; Rust emits `implements` and never `extends`. Check this before
+    reading an empty `graph --relation X` as a statement about the code (the note
+    says so too).
 - **Public API with no tests:** `codeq untested [<path>]` — `api` composed with
   `tests` in one call instead of one per symbol. Public only; over-reports
-  coverage (a test that never names the symbol is invisible). Test scaffolding is
-  excluded by the same rule `unused` uses — path, name, *or* enclosing test
+  coverage (a test that never names the symbol is invisible). **Fields, variants
+  and constants are excluded** unless `--kind` asks for them: none has behaviour
+  to exercise, and on a Go repo they were 52 of 200 rows, crowding out the
+  functions the command exists to find (and displacing them past the 200 cap).
+  Test scaffolding is excluded by the same rule `unused` uses — path, name, *or* enclosing test
   module — so a `pub fn` helper inside `#[cfg(test)] mod tests` is not "untested
   public API".
 - **Did this change the public surface:** `codeq api <path> --compare-to <ref>` —
@@ -314,6 +336,12 @@ benchmarks — not as a step you run before querying.
   be external API, not dead); tests excluded unless `--include-tests` — recognised
   the same way `codeq tests` does, so a Rust `#[cfg(test)] mod tests` unit test is
   not reported as dead code.
+  - **A trait implementation is never reported.** A Rust `impl Trait for X`
+    method is invoked through the trait, cannot carry `pub`, and cannot be
+    deleted without breaking the build — so it is not "looks dead but might not
+    be", it is never dead. That is why it is suppressed where a decorated
+    definition is only tagged. An inherent `impl X { fn f() }` with no callers is
+    still reported.
   - **A row with `decorator=…` is probably not dead.** A framework entry point —
     `@app.get("/x")`, `@click.command()`, a plugin `@register` — is referenced by
     the decorator above it and by nothing else, so it always looked dead. It is
@@ -457,8 +485,12 @@ substring" needs no gloss.
 
 So read stderr before assuming a command doesn't work or a symbol doesn't exist.
 
-It also says when an answer is **incomplete**: `result stopped at --limit` means
-you are looking at the first `--limit` (default 100) rows of a longer result.
+It also says when an answer is **incomplete**: `stopped at --limit` means you are
+looking at the first `--limit` rows of a longer result. Defaults differ by command
+(`search`/`astgrep`/`references` 100; `files`/`symbols`/`members`/`imports`/
+`untested` 200; `hotspots` 30; most others unlimited), so the cap is easy to walk
+into — `symbols` on a real repo answered with 200 of 1,228. Every capped listing
+now says so; pass `--limit 0` for the rest.
 
 ## Excluding files
 
@@ -487,6 +519,18 @@ instead. Editing it takes effect on the next query — no reindex step.
 - **References/callers are textual (name-based), not type-resolved.** `--resolved`
   narrows them using the import graph (see above), but it's a heuristic filter,
   not real type resolution.
+- **A match row is a *line*, not an occurrence.** `helper(1) + helper(2) +
+  helper(3)` is one `references` row, anchored at the first. `rg -w -c` counts
+  lines the same way, so the superset guarantee holds — but don't read a row
+  count as an occurrence count.
+- **`-w` is an *identifier* boundary, not `\b`.** `_` and a Unicode letter
+  continue a name; Unicode punctuation does not (`console。` in a Chinese README
+  is a match). `$` continues a name only where the language's lexer allows it in
+  one — JS/TS/TSX, Svelte, Vue, Java, Kotlin, Scala — and only in **code**: in a
+  string it is a template placeholder or a JVM binary name, not an identifier. A
+  file codeq assigned no language follows `rg -w`. So `references ZodError` does
+  not match inside JavaScript's `$ZodError`, which is the one place codeq is
+  deliberately narrower than ripgrep.
 
 ## Reading a dependency
 
