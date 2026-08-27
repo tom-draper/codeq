@@ -4982,9 +4982,17 @@ pub fn cmd_untested(
 
     let filters = Filters::new().like("path", path).eq("kind", kind);
     let sql = format!(
+        // Data declarations are excluded unless asked for by `--kind`. A field,
+        // a variant and a constant have no behaviour to exercise — they are
+        // tested through whatever reads them — so "untested" says nothing about
+        // them, while they crowd out the functions it does say something about:
+        // on a Go repo, 52 of 200 rows. Same argument as `clones` excluding
+        // tests by default, and reversible the same way.
         "SELECT name, kind, path, start_line, signature FROM facts
-         WHERE visibility = 'public' AND kind <> 'import' AND kind <> 'heading'{}
+         WHERE visibility = 'public' AND kind <> 'import' AND kind <> 'heading'
+           AND ({} OR kind NOT IN ('field', 'variant', 'constant')){}
          ORDER BY path, start_line",
+        if kind.is_some() { "1=1" } else { "1=0" },
         filters.sql(),
     );
     let candidates: Vec<UntestedRow> = {
