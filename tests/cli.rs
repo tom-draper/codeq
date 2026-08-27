@@ -1089,6 +1089,35 @@ fn explore_bundles_definition_callers_callees_and_source() {
 }
 
 #[test]
+fn explore_resolved_prunes_same_named_code_from_another_program() {
+    // `callers`, `callees` and `context` all had `--resolved`; `explore` did
+    // not, and it is the command that pays most for the name-based over-match,
+    // because unrelated same-named code spends the *token budget* as well as
+    // the reader's attention. On a Go/TypeScript repo, exploring a Go function
+    // pulled in three same-named TypeScript functions from the web app and grew
+    // the answer from 109 lines to 391.
+    let f = Fixture::new();
+    f.write("go/main.go", "package main\n\nfunc parseDate() {}\n\nfunc Parse() { parseDate() }\n");
+    f.write("web/util.ts", "export function parseDate() {}\n");
+
+    let callee_paths = |v: &Value| -> Vec<String> {
+        v["data"]["callees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["path"].as_str().map(str::to_string))
+            .collect()
+    };
+
+    let all = callee_paths(&f.run(&["explore", "Parse"]));
+    assert!(all.iter().any(|p| p == "web/util.ts"), "expected the over-match: {all:?}");
+
+    let kept = callee_paths(&f.run(&["explore", "Parse", "--resolved"]));
+    assert!(kept.iter().any(|p| p == "go/main.go"), "real callee dropped: {kept:?}");
+    assert!(!kept.iter().any(|p| p == "web/util.ts"), "unreachable callee kept: {kept:?}");
+}
+
+#[test]
 fn explore_emits_the_focus_source_before_the_neighbourhood() {
     // Source blocks were sorted purely by path, so the definition you asked
     // about landed wherever its path happened to sort. On a polyglot repo that

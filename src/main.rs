@@ -339,6 +339,10 @@ enum Command {
         /// a common name); callers stay repo-wide.
         #[arg(long)]
         path: Option<String>,
+        /// Drop callers and callees whose file cannot reach a definition of the
+        /// name through imports, and tag the rest `via`.
+        #[arg(long)]
+        resolved: bool,
     },
     /// Symbol dossier WITH source: definition + callers + callees, plus the
     /// verbatim source of that whole neighbourhood, budgeted and grouped by file.
@@ -362,6 +366,15 @@ enum Command {
         /// common name); callers stay repo-wide.
         #[arg(long)]
         path: Option<String>,
+        /// Drop callers and callees whose file cannot reach a definition of the
+        /// name through imports, and tag the rest `via`.
+        ///
+        /// Name matching is textual, so in a polyglot repo a Go function's
+        /// neighbourhood fills with same-named TypeScript from an unrelated
+        /// program — and here that spends the token budget as well as the
+        /// reader's attention.
+        #[arg(long)]
+        resolved: bool,
         /// Approximate token budget for the included source (the definition is
         /// always included; callers and callees fill the rest).
         #[arg(long, default_value_t = 16000)]
@@ -946,14 +959,15 @@ fn main() -> ExitCode {
             max_depth,
             path,
         } => commands::cmd_callpath(&cwd, &from, &to, max_depth, path.as_deref(), out),
-        Command::About { name, path } => {
-            commands::cmd_about(&cwd, &name, path.as_deref(), out)
+        Command::About { name, path, resolved } => {
+            commands::cmd_about(&cwd, &name, path.as_deref(), resolved, out)
         }
-        Command::Explore { name, at, path, max_tokens } => commands::cmd_explore(
+        Command::Explore { name, at, path, resolved, max_tokens } => commands::cmd_explore(
             &cwd,
             name.as_deref(),
             at.as_deref(),
             path.as_deref(),
+            resolved,
             max_tokens,
             out,
         ),

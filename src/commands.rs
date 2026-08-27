@@ -1947,12 +1947,18 @@ struct About {
 /// definition and its callees to the matching file(s), so a common name doesn't
 /// merge unrelated symbols. Callers stay repo-wide (textual references to the
 /// name), which is the useful "who uses this".
-pub fn cmd_about(cwd: &Path, name: &str, path: Option<&str>, out: Out) -> Result<()> {
+pub fn cmd_about(
+    cwd: &Path,
+    name: &str,
+    path: Option<&str>,
+    resolved: bool,
+    out: Out,
+) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     // `members` is theirs, the shared walk is mine: `explore` needs the same
     // three lists, and letting the two commands gather them separately is how
     // they would drift about who is in the neighbourhood.
-    let (definitions, callers, callees) = symbol_graph(&s, name, path)?;
+    let (definitions, callers, callees) = symbol_graph(&s, name, path, resolved)?;
     let data = About {
         definitions,
         members: members_of(&s, name, path, None, 0)?,
@@ -1985,11 +1991,16 @@ fn symbol_graph(
     s: &Session,
     name: &str,
     path: Option<&str>,
+    resolved: bool,
 ) -> Result<(Vec<DefinitionRow>, Vec<Caller>, Vec<Callee>)> {
+    let callers = callers_of(s, name, None, false, None, false)?;
+    let callers = resolve_rows(s, name, resolved, callers, |c| c.path.as_str(), |c, v| {
+        c.via = v;
+    })?;
     Ok((
         definitions_of(s, name, path, 0)?,
-        callers_of(s, name, None, false, None, false)?,
-        callees_of(s, name, path, false, false)?,
+        callers,
+        callees_of(s, name, path, resolved, false)?,
     ))
 }
 
@@ -2039,6 +2050,7 @@ pub fn cmd_explore(
     name: Option<&str>,
     at: Option<&str>,
     path: Option<&str>,
+    resolved: bool,
     max_tokens: u64,
     out: Out,
 ) -> Result<()> {
@@ -2103,7 +2115,7 @@ pub fn cmd_explore(
 
     // The same neighbourhood `about` reports; explore trims the nodes and spends
     // the token budget on verbatim source instead.
-    let (defs, callers, callees) = symbol_graph(&s, name, path)?;
+    let (defs, callers, callees) = symbol_graph(&s, name, path, resolved)?;
 
     let focus: Vec<ExploreNode> = defs
         .iter()
