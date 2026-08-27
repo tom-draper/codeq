@@ -497,6 +497,30 @@ fn limit_clause(limit: usize) -> String {
     }
 }
 
+/// `LIMIT n+1`, so a page that fills exactly can be told from one that was cut.
+///
+/// A listing that truncates in SQL does not otherwise know it truncated, which
+/// is why these commands cut in silence: `symbols` defaults to 200 and a real
+/// repo had 1,228. One extra row is the whole cost of being able to say so.
+fn limit_probe_clause(limit: usize) -> String {
+    if limit > 0 {
+        format!(" LIMIT {}", limit + 1)
+    } else {
+        String::new()
+    }
+}
+
+/// Drop the probe row if it came back, and say the answer is partial.
+fn take_limit<T>(rows: &mut Vec<T>, limit: usize) -> Option<String> {
+    if limit == 0 || rows.len() <= limit {
+        return None;
+    }
+    rows.truncate(limit);
+    Some(format!(
+        "showing the first {limit} — stopped at --limit; rerun with a higher --limit (or 0) for the rest"
+    ))
+}
+
 /// Filter args as `ToSql` refs, appended after any `base` params the query binds
 /// before its optional filters.
 fn params_with<'a>(
@@ -521,7 +545,7 @@ pub fn cmd_files(
     let sql = format!(
         "SELECT path, language, size_bytes, parse_errors, parse_recovered FROM files WHERE 1=1{} ORDER BY path{}",
         filters.sql(),
-        limit_clause(limit),
+        limit_probe_clause(limit),
     );
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
@@ -533,8 +557,9 @@ pub fn cmd_files(
             parse_recovered: r.get(4)?,
         })
     })?;
-    let data: Vec<FileRow> = rows.collect::<std::result::Result<_, _>>()?;
-    s.emit(data)
+    let mut data: Vec<FileRow> = rows.collect::<std::result::Result<_, _>>()?;
+    let note = take_limit(&mut data, limit);
+    s.emit_noted(data, note)
 }
 
 #[derive(Serialize)]
@@ -713,9 +738,7 @@ pub fn cmd_symbols(
     }
     // Deterministic ordering: name, then location.
     sql.push_str(" ORDER BY name, path, start_line");
-    if limit > 0 {
-        sql.push_str(&format!(" LIMIT {limit}"));
-    }
+    sql.push_str(&limit_probe_clause(limit));
 
     let mut stmt = s.db.conn.prepare(&sql)?;
     let param_refs: Vec<&dyn rusqlite::ToSql> =
@@ -737,8 +760,9 @@ pub fn cmd_symbols(
             kind,
         })
     })?;
-    let data: Vec<SymbolRow> = rows.collect::<std::result::Result<_, _>>()?;
-    s.emit(data)
+    let mut data: Vec<SymbolRow> = rows.collect::<std::result::Result<_, _>>()?;
+    let note = take_limit(&mut data, limit);
+    s.emit_noted(data, note)
 }
 
 #[derive(Serialize)]
@@ -2435,12 +2459,16 @@ pub fn cmd_members(
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let data = members_of(&s, name, path, kind, limit)?;
+    let mut data = members_of(&s, name, path, kind, if limit > 0 { limit + 1 } else { 0 })?;
+    let limit_note = take_limit(&mut data, limit);
     let relation = match kind {
         Some(k) => format!("members of kind '{k}'"),
         None => "members (fields, variants or methods)".to_string(),
     };
-    let note = note_if_empty_feat(&s, &data, name, &relation, path, Some("members"))?;
+    let note = match limit_note {
+        Some(n) => Some(n),
+        None => note_if_empty_feat(&s, &data, name, &relation, path, Some("members"))?,
+    };
     s.emit_noted(data, note)
 }
 

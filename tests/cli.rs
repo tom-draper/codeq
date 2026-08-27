@@ -7476,6 +7476,43 @@ fn a_capped_listing_says_it_was_capped() {
 }
 
 #[test]
+fn every_capped_listing_says_so_not_just_the_ones_measured() {
+    // `files`, `symbols` and `members` truncate in SQL, so they did not even
+    // know they had: `symbols` defaults to 200 and a real repo answered with
+    // 200 of 1,228 in silence. `LIMIT n+1` is the whole cost of telling a page
+    // that fills exactly from one that was cut.
+    let f = Fixture::new();
+    let body: String = (0..12).map(|i| format!("def thing{i}():\n    pass\n")).collect();
+    f.write("a.py", &body);
+    f.write("b.py", &body);
+    f.write("c.py", &body);
+
+    for args in [
+        vec!["files", "--limit", "2"],
+        vec!["symbols", "thing", "--limit", "3"],
+    ] {
+        let out = f.raw(&args);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("stopped at --limit"), "{args:?} cut in silence: {err}");
+        let want: usize = args.last().unwrap().parse().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).lines().count(), want, "{args:?}");
+    }
+
+    // `members` reaches its rows a different way; same guarantee.
+    let g = Fixture::new();
+    g.write("t.rs", "struct S { a: u8, b: u8, c: u8 }\n");
+    let out = g.raw(&["members", "S", "--limit", "2"]);
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("stopped at --limit"),
+        "members cut in silence: {out:?}"
+    );
+
+    // And a listing that fits stays quiet.
+    let out = g.raw(&["members", "S", "--limit", "0"]);
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("stopped at --limit"));
+}
+
+#[test]
 fn unused_skips_a_method_that_exists_to_satisfy_a_trait() {
     // A Rust `impl Trait for X` method cannot carry `pub`, is invoked through
     // the trait rather than by name, and cannot be deleted without breaking the
