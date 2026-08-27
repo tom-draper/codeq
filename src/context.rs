@@ -479,7 +479,18 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
             text,
         });
     }
-    chunks.sort_by(|a, b| (a.path.as_str(), a.start_line).cmp(&(b.path.as_str(), b.start_line)));
+    // Focus first, then path order. The budget already guarantees the definition
+    // survives — but the *reading* order is a separate thing, and sorting purely
+    // by path put the thing you asked about wherever its path happened to sort.
+    // On a polyglot repo that is a real cost: `explore ParseNginxLogs` on a Go
+    // function opened with 79 lines of same-named TypeScript from an unrelated
+    // program, so `explore … | head -90` — the obvious way to sample a large
+    // result — showed callees and not the definition. Hoisting one block costs
+    // nothing and makes `head` do the right thing.
+    chunks.sort_by(|a, b| {
+        (a.reason != "focus", a.path.as_str(), a.start_line)
+            .cmp(&(b.reason != "focus", b.path.as_str(), b.start_line))
+    });
 
     Ok(ContextResult {
         plan: None,

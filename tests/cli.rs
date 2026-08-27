@@ -1089,6 +1089,28 @@ fn explore_bundles_definition_callers_callees_and_source() {
 }
 
 #[test]
+fn explore_emits_the_focus_source_before_the_neighbourhood() {
+    // Source blocks were sorted purely by path, so the definition you asked
+    // about landed wherever its path happened to sort. On a polyglot repo that
+    // put unrelated same-named code from another language first, and
+    // `explore … | head -N` — the obvious way to sample a large result — showed
+    // callees instead of the definition.
+    let f = Fixture::new();
+    f.write("zzz/focus.rs", "fn helper() {}\nfn target() { helper(); }\n");
+    f.write("aaa/caller.rs", "fn outer() { target(); }\n");
+
+    // `zzz/` sorts last, so path order alone would bury the definition.
+    let out = f.raw(&["explore", "target"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    let source = text.split("# source").nth(1).expect("no source section");
+    let first = source.lines().find(|l| l.contains(".rs:")).expect("no source block");
+    assert!(
+        first.starts_with("zzz/focus.rs:2"),
+        "the definition asked about should lead the source:\n{text}"
+    );
+}
+
+#[test]
 fn explore_forces_focus_source_under_a_tight_budget() {
     let f = Fixture::new();
     // A big caller body and a small focus, with a budget too small for both.
