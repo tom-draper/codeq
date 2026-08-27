@@ -7411,6 +7411,21 @@ fn a_python_attribute_assignment_is_not_a_decorator() {
 }
 
 #[test]
+fn a_multiline_astgrep_match_keeps_its_enclosing_symbol() {
+    // Every `astgrep` match is documented as carrying the `[symbol]` it sits
+    // inside — that annotation is the thing grep cannot produce. A match that
+    // happened to span a line fell into the verbatim-block branch meant for
+    // `context` chunks and lost it, so whether a pattern spans a line decided
+    // whether the answer named where it was.
+    let f = Fixture::new();
+    f.write("a.go", "package p\n\nfunc handler() {\n\tif err != nil {\n\t\treturn\n\t}\n}\n");
+
+    let out = f.raw(&["astgrep", "if err != nil { return }", "--language", "go"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("[handler]"), "multi-line match lost its symbol:\n{text}");
+}
+
+#[test]
 fn capabilities_says_which_relation_kinds_a_language_emits() {
     // `relations: true` is too coarse to act on. C# writes `class C : B, I` for
     // both inheritance and implementation and the grammar cannot tell them

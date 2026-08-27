@@ -461,7 +461,17 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     if let Some(t) = str_of("text") {
         if t.contains('\n') {
             let reason = str_of("reason").map(|r| format!(" ({r})")).unwrap_or_default();
-            out.push_str(&format!("{pad}{}{reason}\n{t}\n", loc.trim_end_matches([':', ' '])));
+            // The enclosing symbol belongs on the header too. This branch exists
+            // for `context` chunks, where a header plus a verbatim block is the
+            // right shape — but a multi-line `astgrep` match lands here as well,
+            // and silently lost the `[symbol]` the docs promise on *every*
+            // match. Whether a pattern happens to span a line is not a reason to
+            // answer a different question.
+            let enclosing = str_of("symbol").map(|s| format!("  [{s}]")).unwrap_or_default();
+            out.push_str(&format!(
+                "{pad}{}{reason}{enclosing}\n{t}\n",
+                loc.trim_end_matches([':', ' '])
+            ));
             return;
         }
         // codeq's differentiator over grep: annotate the match with the symbol
