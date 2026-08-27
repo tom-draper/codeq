@@ -1548,6 +1548,16 @@ pub struct Support {
     pub members: bool,
     /// Inheritance edges, for `implementors`/`supertypes`.
     pub relations: bool,
+    /// Which relation kinds this language's query can actually produce.
+    ///
+    /// `relations: true` is too coarse to act on. C# writes `class C : B, I`
+    /// for both inheritance and implementation and the grammar does not
+    /// distinguish them, so codeq can only ever emit `extends` there — and
+    /// `graph --relation implements` on a C# repo full of interface
+    /// implementations comes back empty for a reason that has nothing to do
+    /// with the code. Derived from the query's own capture names, like every
+    /// other capability here, because the hand-kept list is what drifts.
+    pub relation_kinds: Vec<String>,
     /// Comment/string spans, for `search --in`.
     pub spans: bool,
     /// Call sites, for the `--calls`/`--on` precision filters.
@@ -1595,13 +1605,16 @@ pub fn support(language: &str) -> Option<Support> {
     // there is no query text to derive their capabilities from. Describe them
     // directly — the alternative (falling through to `queries_for` and getting
     // `None`) is what made them look unsupported.
-    let hand = |definitions, imports, members, relations, calls| {
+    let hand = |definitions, imports, members, relations: bool, calls| {
         Some(Support {
             language: language.to_string(),
             definitions,
             imports,
             members,
             relations,
+            // A component's relations come from its embedded `<script>`, so its
+            // kinds are TypeScript's.
+            relation_kinds: if relations { relation_kinds_of(TS_REL) } else { Vec::new() },
             spans: has_spans(language),
             calls,
         })
@@ -1628,9 +1641,21 @@ pub fn support(language: &str) -> Option<Support> {
         imports: query.contains("@import"),
         members: query.contains("@field") || query.contains("@variant"),
         relations: !rel.trim().is_empty(),
+        relation_kinds: relation_kinds_of(&rel),
         spans: has_spans(language),
         calls: crate::astgrep::ts_language(language).is_some(),
     })
+}
+
+/// The relation kinds a relation query can emit, read off its capture names.
+fn relation_kinds_of(rel: &str) -> Vec<String> {
+    let mut kinds: Vec<String> = ["implements", "extends", "references"]
+        .iter()
+        .filter(|k| rel.contains(&format!("@{k}")))
+        .map(|k| k.to_string())
+        .collect();
+    kinds.sort();
+    kinds
 }
 
 /// Whether codeq can classify comment/string spans for this language (i.e. it

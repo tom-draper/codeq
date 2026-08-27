@@ -7411,6 +7411,35 @@ fn a_python_attribute_assignment_is_not_a_decorator() {
 }
 
 #[test]
+fn capabilities_says_which_relation_kinds_a_language_emits() {
+    // `relations: true` is too coarse to act on. C# writes `class C : B, I` for
+    // both inheritance and implementation and the grammar cannot tell them
+    // apart, so codeq only ever emits `extends` there; Rust only ever emits
+    // `implements`. Without this, an empty `--relation` result looks like a
+    // statement about the code.
+    let f = Fixture::new();
+    f.write("a.rs", "struct S;\n");
+
+    let v = f.run(&["capabilities"]);
+    let langs = v["data"]["language_support"].as_array().unwrap();
+    let kinds = |lang: &str| -> Vec<String> {
+        langs
+            .iter()
+            .find(|r| r["language"] == lang)
+            .unwrap_or_else(|| panic!("no support row for {lang}"))["relation_kinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k.as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(kinds("csharp"), ["extends"], "C# cannot distinguish the two");
+    assert_eq!(kinds("rust"), ["implements"], "Rust has no `extends`");
+    assert_eq!(kinds("java"), ["extends", "implements"], "Java has separate syntax");
+    assert!(kinds("go").is_empty(), "Go has no relation extraction");
+}
+
+#[test]
 fn a_capped_listing_says_it_was_capped() {
     // `search` and `references` carry `truncated` in the envelope and the
     // renderer warns. A result whose `data` is a bare array has nowhere to put
