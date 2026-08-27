@@ -4,6 +4,96 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-27 — Following the loose ends, and one careless `git checkout`
+
+Short pass, finishing what the previous entry left open and exercising `explore`
+properly for the first time.
+
+### `callers NextLine` answered: `NextLine`
+
+The previous entry fixed `unused` and recorded the same bug in `callers` and
+`references` as "less harmful — a missing flag rather than hidden dead code".
+That was wrong, and one command would have shown it:
+
+```
+$ codeq callers NextLine        # [Obsolete] on the line above the method
+G.cs:5: method NextLine
+$ codeq callers SameLine        # [Obsolete] on the same line
+# codeq: 'SameLine' is defined at G.cs:3 but has no callers
+```
+
+Not a missing flag — **a wrong answer to the question codeq is asked most
+often.** The declaration, not being recognised as one, was counted as a call,
+so an annotated method is its own caller in C#, Java, Kotlin and PHP. I had the
+reproduction in hand and filed it from the shape of the code rather than from
+running it. The rule is now one `DeclSites` type shared by all three commands:
+the declaration is the first occurrence of the name inside the definition's
+extent, and each extent is claimed once so recursion stays a real call.
+
+Chasing it turned up an adjacent limitation, pre-existing and *not* a bug:
+`references` emits one row per **line**, so `helper(1) + helper(2) + helper(3)`
+is one row, not three. `rg -w -c` counts lines too, so the superset guarantee
+holds — but the docs say `references` gives "every occurrence" and
+`references --calls` "every call site", and both mean every *line* holding one.
+
+### `explore` on a Go function opened with 79 lines of TypeScript
+
+First real use of `explore` on a polyglot repo (`nginx-analytics`, Go + TS +
+TSX). Exploring the Go `ParseNginxLogs`:
+
+```
+ 27: dashboard/lib/parse.ts:123 (callee)     <- TypeScript, different program
+ 38: dashboard/lib/parse.ts:144 (callee)
+ 62: tui/internal/logs/parse.go:195 (callee)
+ 80: tui/internal/logs/parse.go:217 (focus)  <- the thing I asked about
+```
+
+The 2026-08-13 entry filed exactly this ("emitting the focus block first would
+cost nothing and make `head` do the right thing") and it was still true two
+weeks later, so: source chunks now sort focus-first, then by path. The focus
+block moved from line 80 to line 27.
+
+That fixes the reading order and not the cause. The cause is that `callees` is
+name-based, and `dashboard/lib/parse.ts` happens to define `getCompiledFormat`
+and `parseDate` too — a *different program in a different language* in the same
+repo. `callers`, `callees` and `context` all have `--resolved` for this.
+`explore` did not, which is backwards: it is the command where the over-match
+costs most, because unrelated code spends the **token budget** and not just the
+reader's attention. Adding it (and to `about`, which shares the walk):
+
+```
+$ codeq explore ParseNginxLogs              391 lines
+$ codeq explore ParseNginxLogs --resolved   109 lines
+```
+
+72% of that answer was another program.
+
+### The mistake: `git checkout --` on a file holding uncommitted work
+
+A `python` patch script failed its assertion partway through a multi-file edit,
+and I ran `git checkout -- src/commands.rs` to clear it. That file also held the
+`DeclSites` work from earlier in the session, uncommitted. Gone — recovered only
+because the change was recent enough to reconstruct exactly, and its tests were
+in a different file and survived to prove the reconstruction.
+
+The habit that caused it is worth naming: I reached for the *broadest* undo
+available (revert the file) for the *narrowest* problem (an edit that had not
+been written yet — the assertion fired before the write, so there was nothing to
+undo at all). The fix is not "be careful with checkout", it is: **commit each
+verified piece before starting the next one.** Everything after this point in
+the session was committed as soon as it was green, which is also why the branch
+reads as a sequence of small commits rather than one.
+
+### Still open
+
+- `capabilities` reports `relations: true` for C#, but C# can only ever produce
+  `extends` — the same "which relation kinds does this language emit" gap the
+  `graph` note now covers, one level up in the capability matrix.
+- `untested` on a Go repo returned 200 rows, of which 52 were `field` and
+  `constant`. Neither is a thing anyone writes a test for, and they bury the 130
+  functions that are. The `clones`-excludes-tests argument applies unchanged:
+  true positives that drown the finding worth having.
+
 ## 2026-08-26 — The second pass: what the index says about code it can see
 
 Ten more repos, and a different class of finding from the first pass. That one
