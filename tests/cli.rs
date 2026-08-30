@@ -7831,6 +7831,32 @@ fn map_says_when_a_repo_is_mostly_things_it_cannot_index() {
 }
 
 #[test]
+fn map_says_when_a_committed_data_tree_owns_the_index() {
+    // The `(unknown)` note warns about the *free* case: a .png has no grammar,
+    // so it is never content-indexed. A .json data tree is text, goes into the
+    // trigram index whole, and is what actually blows the index up — 14.5 MB of
+    // backups turned a 700 KB codebase into a 129 MB index.db, silently.
+    let f = Fixture::new();
+    f.write("src/lib.py", "def compute():\n    return 1\n");
+    let blob = format!("[{}]", vec!["{\"team\":\"x\",\"score\":1}"; 30_000].join(","));
+    f.write("updater/backups/general_2024.json", &blob);
+    f.write("updater/backups/general_2025.json", &blob);
+
+    let note = String::from_utf8_lossy(&f.raw(&["map", "--totals"]).stderr).to_string();
+    assert!(note.contains("json that defines nothing"), "{note}");
+    // Actionable only if it says where to look and what to do.
+    assert!(note.contains("updater/backups/ (2 files)"), "{note}");
+    assert!(note.contains(".codeqignore"), "{note}");
+
+    // A repo whose data is a rounding error says nothing.
+    let g = Fixture::new();
+    g.write("a.py", "def x():\n    pass\n");
+    g.write("package.json", "{\"name\":\"x\"}\n");
+    let quiet = String::from_utf8_lossy(&g.raw(&["map", "--totals"]).stderr).to_string();
+    assert!(!quiet.contains("defines nothing"), "{quiet}");
+}
+
+#[test]
 fn map_says_when_generated_source_owns_most_of_the_symbols() {
     // The unindexable-assets note cannot see this case: a committed vendor
     // bundle *is* source, *is* parsed, and *does* produce symbols, so it costs

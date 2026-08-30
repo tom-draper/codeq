@@ -5524,6 +5524,74 @@ fn generated_files(conn: &rusqlite::Connection, total_symbols: i64) -> Result<Op
 /// The commonest extensions among files codeq assigned no language, most files
 /// first, as `.ext (N)`. Capped at three: the point is to say what the bulk is,
 /// not to enumerate a tail.
+/// A committed data tree: a language codeq *does* parse, holding a large share
+/// of the indexed bytes and producing no symbols.
+///
+/// This is the expensive case, and it was the silent one. A `.png` has no
+/// grammar, so it is never content-indexed and costs nothing but a line in the
+/// language table — and that is the case the `(unknown)` note above warns about.
+/// A tree of `.json` backups *is* text: it goes into the trigram index whole. On
+/// one dashboard repo, 14.5 MB of `updater/backups/*.json` against 700 KB of
+/// actual code produced a **129 MB** `index.db`, and `map` said nothing at all.
+/// The advice is the same either way (`.codeqignore`), so the warning should be
+/// too.
+///
+/// Thresholds are deliberately blunt — no symbols at all, a fifth of the bytes,
+/// and at least a megabyte — because the note exists to catch the case that is
+/// off by an order of magnitude, not to grade a repo's data-to-code ratio.
+fn committed_data(
+    conn: &rusqlite::Connection,
+    languages: &[MapLang],
+    totals: &MapTotals,
+) -> Result<Option<String>> {
+    let mut worst: Option<&MapLang> = None;
+    for l in languages {
+        if l.language == "(unknown)" || l.symbols > 0 {
+            continue;
+        }
+        if l.bytes * 5 < totals.bytes || l.bytes < 1 << 20 {
+            continue;
+        }
+        if worst.is_none_or(|w| l.bytes > w.bytes) {
+            worst = Some(l);
+        }
+    }
+    let Some(l) = worst else { return Ok(None) };
+
+    // Name where it lives, because the note is only actionable if the reader
+    // knows what to write in `.codeqignore`.
+    let mut stmt =
+        conn.prepare("SELECT path, size_bytes FROM files WHERE language = ?1")?;
+    let mut by_dir: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+    for row in stmt.query_map([&l.language], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        let (path, bytes) = row?;
+        let dir = path.rsplit_once('/').map_or(String::new(), |(d, _)| d.to_string());
+        let e = by_dir.entry(dir).or_default();
+        e.0 += bytes;
+        e.1 += 1;
+    }
+    let where_ = by_dir
+        .iter()
+        .max_by_key(|(_, (bytes, _))| *bytes)
+        .filter(|(dir, _)| !dir.is_empty())
+        .map(|(dir, (bytes, files))| {
+            let s = if *files == 1 { "" } else { "s" };
+            format!(" — {} in {dir}/ ({files} file{s})", human_bytes(*bytes))
+        })
+        .unwrap_or_default();
+
+    Ok(Some(format!(
+        "{} of {} is {} that defines nothing{where_}; unlike a binary it is \
+         indexed for search, so it dominates the index — `.codeqignore` it if \
+         it is data rather than code",
+        human_bytes(l.bytes),
+        human_bytes(totals.bytes),
+        l.language,
+    )))
+}
+
 fn unindexed_extensions(conn: &rusqlite::Connection) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT path FROM files WHERE language IS NULL",
@@ -5618,6 +5686,7 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
         })
         .collect();
     languages.sort_by(|a, b| b.files.cmp(&a.files).then(a.language.cmp(&b.language)));
+    let data_note = committed_data(conn, &languages, &totals)?;
     languages.truncate(cap);
 
     // A repo can be mostly things codeq cannot index — 2,108 flag PNGs against 12
@@ -5664,6 +5733,13 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
     // 7,558 symbols, and `hotspots` — the command for meeting an unfamiliar
     // codebase — answered `function t refs=45993`.
     let note = match generated_files(conn, totals.symbols)? {
+        Some(extra) => Some(match note {
+            Some(n) => format!("{n}\n{extra}"),
+            None => extra,
+        }),
+        None => note,
+    };
+    let note = match data_note {
         Some(extra) => Some(match note {
             Some(n) => format!("{n}\n{extra}"),
             None => extra,
