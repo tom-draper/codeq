@@ -144,12 +144,16 @@ refresh the index — every command auto-refreshes changed files first.
   separate `impl`, so a Rust struct returns fields only. Prefer this over
   `symbols --owner NAME`, which only sees fields/variants — never methods.
 - `codeq unused [<path>]` — definitions with no references (candidate dead code; empty
-  output = none found). Conservative and name-based, so it under-reports. A row tagged
-  `decorator=@app.get(...)` is a framework entry point, referenced by its decorator and
-  nothing else — shown rather than hidden, so discount it yourself. A Rust
-  `impl Trait for X` method is *not* shown: it is called through the trait and
-  deleting it breaks the build, so it is never dead (an inherent `impl X` method
-  with no callers still is).
+  output = none found). Conservative and name-based, so it under-reports. Two tags mark
+  a row a framework reaches without naming it — shown rather than hidden, so discount
+  them yourself: `decorator=@app.get(...)` is registration codeq can see, and
+  `entrypoint=next/page` is a file convention it can't (Next.js App Router and Pages
+  Router exports, `react/lifecycle` methods). A Rust `impl Trait for X` method is
+  *not* shown: it is called through the trait and deleting it breaks the build, so it
+  is never dead (an inherent `impl X` method with no callers still is).
+- `codeq entrypoints [<path>]` — the definitions those two tags identify, on their own:
+  what calls into this repo from outside it. `--include-tests` adds test-runner entry
+  points.
 - `codeq untested [<path>]` — public definitions no test names. Fields, variants
   and constants are excluded unless `--kind` asks: none has behaviour to test,
   and they crowd out the functions that do.
@@ -232,8 +236,15 @@ refresh the index — every command auto-refreshes changed files first.
 - **JS/TS: a module-scope `const` is a definition**, whatever it's bound to. That's
   how React components are usually written — `memo(…)`, `forwardRef(…)`,
   `styled.div\`…\``, `createContext(…)` — so `symbols`/`outline`/`api` find them, and
-  they show up as kind `constant`, not `function`. Locals aren't definitions, and
-  a CommonJS `var x = require('y')` is an import — find it with `imports`/`deps`.
+  they show up as kind `constant`, not `function`. A CommonJS
+  `var x = require('y')` is an import — find it with `imports`/`deps`.
+- **A `const` bound to an arrow function is a `function`, at any nesting.** A
+  component's local handlers are definitions of their own, indented under it in
+  `outline`, so `explore handleClick` works — a local `const` bound to anything
+  else is not. They read as signatures (`withCDN(path: string)`,
+  `async load(u: string): Promise<void>`), not as the assignment they're written
+  as, and the single-parameter form gets its parentheses back (`x => x` is
+  `bare(x)`).
 - **A namespaced base class is stored dotted** (`extends React.Component` →
   `React.Component`), but `implementors` matches the last segment too, so
   `implementors Component` finds it.

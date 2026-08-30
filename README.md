@@ -188,6 +188,10 @@ Trace relationships (matched by name):
   type, and what it derives from.
 - `codeq tests <name>` finds the tests that exercise a symbol.
 - `codeq unused [path]` lists definitions with no reference anywhere (candidate dead code).
+  A row a framework reaches without naming it is tagged, not hidden — `decorator=` where
+  the registration is visible syntax, `entrypoint=` where it is a file convention
+  (a Next.js route, a React lifecycle method). `codeq entrypoints [path]` lists those on
+  their own.
 - `codeq tree [path]` shows the directory shape, folded to `--depth`, with each
   directory's file and symbol counts aggregated from everything below it.
 - `codeq hotspots [path]` is its inverse: definitions ranked by how often they are

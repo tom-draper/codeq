@@ -349,6 +349,16 @@ benchmarks — not as a step you run before querying.
     real dead code, which is the one thing `unused` must not do. Inert decorators
     (`@property`, `@staticmethod`, `#[derive]`, `#[inline]`) are not tagged, so
     the tag means something when it appears.
+  - **A row with `entrypoint=…` is the same claim with different evidence.** Some
+    frameworks register by file convention, leaving no syntax to read: Next.js
+    loads the default export of `app/**/page.tsx` because of the path, and React
+    calls `componentDidCatch` because of the name. Nothing imports either, so an
+    App Router repo reported every route as dead and `entrypoints` reported none
+    at all. Tagged for the same reason — deleting a route still compiles, it just
+    404s — where a trait implementation, which cannot be deleted at all, is
+    suppressed. codeq does not record which export was `default`, so a convention
+    file's whole public surface carries the tag; that surface is the framework's
+    contract anyway (`metadata` and `viewport` beside the component).
 - **What's load-bearing here?** `codeq hotspots [<path>]` — definitions ranked by
   how often their name is referenced in code; the inverse of `unused`, for meeting
   an unfamiliar file. One row per *name* (the count is a property of the name),
