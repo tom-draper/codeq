@@ -4,6 +4,70 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-30 — A decorator list that never matched, a 129 MB index, and an installer that would have edited the checkout
+
+### The inert list had the right name in the wrong place
+
+`entrypoints` reported `@functools.cache` and `@contextlib.contextmanager` as
+framework registrations, contradicting the rule CLAUDE.md states. `functools`
+**was** on the INERT list. The check never saw it: for `@functools.cache` the
+head is `functools.cache` and the last segment is `cache`, so the entry only
+ever caught a bare `@functools`, which nobody writes.
+
+A dotted decorator now gets judged by its parts, module included, so whole
+namespaces answer for themselves (`functools`, `contextlib`, `typing`, `abc`,
+`dataclasses`, `enum`) plus the names people import bare. `persona` drops from 8
+rows to its 5 real FastAPI routes; every genuine registration survives. A list
+whose entries cannot match anything is worse than a short list — it reads as
+covered.
+
+### `map` warned about the free case and stayed silent on the expensive one
+
+First pass on `pldashboard`: a **129 MB** `index.db` for ~700 KB of code, and
+`map` said nothing at all.
+
+The `(unknown)` note only covers `language IS NULL` — files with no grammar. Those
+are exactly the files codeq never content-indexes, so they cost nothing but a
+row in the language table. Meanwhile 14.5 MB of `updater/backups/*.json` — a
+language codeq parses, producing zero symbols — goes into the trigram index
+whole. The warning was pointed at the harmless case.
+
+| | before | after `.codeqignore` |
+|---|---|---|
+| index.db | 129 MB | **7.3 MB** |
+| symbols | 1696 | 1696 |
+| imports | 1380 | 1380 |
+
+17.6x smaller, nothing lost — measured rather than asserted, because a note that
+recommends an action should have had that action tried once. Fires on this repo
+and none of the other eight indexed.
+
+### The installer would have edited the checkout it was installed from
+
+`codeq install` registered the MCP server for four agents and did nothing about
+the skill — the thing that actually teaches an agent to reach for `explore`
+instead of reading a file whole. Registering the server without it hands over the
+tool and not the habit. It now installs both, with the skill text `include_str!`'d
+into the binary: after a session spent finding docs that described behaviour the
+binary no longer had, "the installed guide matches the installed codeq" is worth
+making true by construction rather than by discipline.
+
+The first dry run against this machine said `already-current`, and it was right
+by accident. The developer setup here symlinks `skills/codeq` at the
+**directory**, so a check on the final `SKILL.md` follows the link and sees an
+ordinary file; it only matched because the content was identical. Against a
+modified checkout, `install` would have written *through* the link into the
+repository, and `--uninstall` would have deleted the repository's file.
+
+Every path component up to `$HOME` is now tested, and `--uninstall` refuses on a
+link rather than deleting through it — codeq did not create that link and will
+not undo it. **The test was run against the unfixed code before being believed**,
+same as the cycles one: `install wrote through the symlink into the checkout`.
+
+Worth recording *why* this was invisible: a clean machine has no symlink, so
+every test I would have written from scratch passes. The awkward case was the
+machine I was already on.
+
 ## 2026-08-30 — Carving out the `$` divergence, and the vacuum I found while doing it
 
 The harness's last two failures, closed the way they were always going to be:
