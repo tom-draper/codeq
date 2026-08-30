@@ -4,6 +4,73 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-30 — The three findings from the Next.js pass, and one that was wider than reported
+
+### `entrypoints` answered "none" on an App Router app
+
+Not "noisy `unused`" — the command that exists to answer this question returned
+nothing at all, on a repo with four routes, a layout, a sitemap and a robots
+handler. `facts.decorator` records registration codeq can *see*; Next.js
+registers by where the file sits, and there is no syntax to read.
+
+Settled the way the trait-impl question was, and it landed on the other side:
+**tagged, not suppressed.** Deleting a `page.tsx` export still compiles — the
+route 404s — so it is the "looks dead, might not be" case the `decorator=` tag
+exists for, unlike an `impl Trait` method that cannot be deleted at all. The two
+tags now sit side by side and mean the same thing with different evidence.
+
+The implementation is a query-time policy function next to
+`unreferenced_by_design`, **not a column**. Nothing about a path needs
+extracting, and the alternative would have been a schema bump plus a migration
+to store what `path` already says.
+
+| | before | after |
+|---|---|---|
+| `entrypoints` on `uk-data-atlas` | 0 rows | 16 |
+| `unused` rows discountable there | 0 of 24 | 7 |
+| `nginx-analytics` | 0 | 12 of 76 |
+
+Two more repos in `~/dev` turned out to be Next.js. No `next/*` tag fired on any
+Rust or Python repo, and the only `react/lifecycle` rows anywhere were the three
+methods of a real `ErrorBoundary` — including `render`, the name most likely to
+collide, which never matched anything else.
+
+### The arrow-function finding was wider than I filed it
+
+I recorded it as *nested* arrows rendering badly, because that is where I saw it
+— indented under a React component, next to clean signatures. It is every arrow
+bound to a name, module scope included:
+
+```
+before   withCDN = (path: string) =>
+after    withCDN(path: string)
+```
+
+The definition node is the declarator, so the source up to the body is an
+assignment fragment; nesting had nothing to do with it. **Reporting the instance
+rather than the class understated it by however many arrow functions a JS repo
+has**, which is most of its functions. Worth noticing that the fix is the same
+either way and the report still would have been wrong.
+
+Composed from the parameter and return-type fields instead of sliced out of the
+source, which also restores the parentheses source omits on `x => x`, and keeps
+`async` and type parameters. That is extraction, so `SCHEMA_VERSION` went 35 →
+36 — the check this log flagged in August as remembered where a mechanical one
+belongs, and it was remembered.
+
+### And the doc claim that was simply false
+
+SKILL.md said "Locals aren't definitions." A local `const` bound to an arrow
+function is one, deliberately — a component's handlers are units of code worth
+exploring. `entrypoints` was not documented anywhere at all.
+
+### Noticed, not acted on
+
+`entrypoints` reports `@functools.cache` and `@contextlib.contextmanager` as
+registrations. CLAUDE.md says inert decorators are not tagged, and those two
+wrap rather than register, so the rule and the behaviour disagree. Pre-existing
+and outside what this pass was for.
+
 ## 2026-08-30 — `deps --cycles` was enumerating paths, and a test that proved nothing
 
 First pass on `uk-data-atlas` (Next.js, TypeScript, ~200 files). Every command
