@@ -2356,12 +2356,54 @@ fn wrapper_head(val: Node) -> Option<Node> {
 }
 
 fn signature_of(src: &[u8], def: Node, body: Option<Node>) -> String {
+    if let Some(sig) = arrow_signature(src, def) {
+        return cap(&sig, MAX_SIG);
+    }
     let end = match body {
         Some(b) => b.start_byte(),
         None => def.end_byte(),
     };
     let raw = &src[def.start_byte()..end.min(src.len())];
     cap(&collapse_ws(&String::from_utf8_lossy(raw)), MAX_SIG)
+}
+
+/// The callable signature of an arrow function bound to a name, or `None` when
+/// `def` is not one.
+///
+/// The definition node for `const withCDN = (path: string) => {…}` is the
+/// declarator, so taking the source up to the body yields `withCDN = (path:
+/// string) =>` — an assignment fragment ending in a dangling arrow, where every
+/// other definition in the same outline reads as a signature. Arrow functions
+/// are how most JS/TS code declares a function, so this was the common case
+/// rendering worse than the rare one. Composed from the parameter and
+/// return-type fields instead, which also puts the parentheses back on the
+/// unparenthesized single-parameter form (`const f = x => x`).
+fn arrow_signature(src: &[u8], def: Node) -> Option<String> {
+    let (name, value) = match def.kind() {
+        "variable_declarator" => ("name", "value"),
+        "assignment_expression" => ("left", "right"),
+        _ => return None,
+    };
+    let arrow = def.child_by_field_name(value)?;
+    if arrow.kind() != "arrow_function" {
+        return None;
+    }
+    let text = |n: Node| collapse_ws(&String::from_utf8_lossy(&src[n.start_byte()..n.end_byte()]));
+    let params = match arrow.child_by_field_name("parameters") {
+        Some(p) => text(p),
+        // A lone parameter needs no parentheses in source; a signature does.
+        None => format!("({})", text(arrow.child_by_field_name("parameter")?)),
+    };
+    // `async` is a bare token with no field, and it changes what the caller gets
+    // back, so it belongs in the signature.
+    let asynchronous = arrow.children(&mut arrow.walk()).any(|c| c.kind() == "async");
+    let generics = arrow.child_by_field_name("type_parameters").map(text).unwrap_or_default();
+    let returns = arrow.child_by_field_name("return_type").map(text).unwrap_or_default();
+    Some(format!(
+        "{}{}{generics}{params}{returns}",
+        if asynchronous { "async " } else { "" },
+        text(def.child_by_field_name(name)?),
+    ))
 }
 
 fn doc_of(src: &[u8], lang: &str, def: Node, body: Option<Node>) -> Option<String> {

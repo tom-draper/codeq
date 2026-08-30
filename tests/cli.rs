@@ -7705,6 +7705,33 @@ fn entrypoints_recognises_a_file_convention_with_no_decorator_to_read() {
 }
 
 #[test]
+fn arrow_functions_read_as_signatures_not_assignments() {
+    // The definition node is the declarator, so the source up to the body is
+    // `name = (args) =>` — an assignment fragment with a dangling arrow, on the
+    // form most JS/TS functions are actually written in.
+    let f = Fixture::new();
+    f.write(
+        "a.ts",
+        "export const bare = x => x + 1;\n\
+         export const typed = (n: number): string => String(n);\n\
+         export const waits = async (u: string): Promise<void> => { await go(u); };\n\
+         export const notAFn = { a: 1 };\n",
+    );
+
+    let sigs: std::collections::HashMap<String, String> = f.run(&["outline", "a.ts"])["data"]
+        .as_array().unwrap().iter()
+        .map(|r| (r["name"].as_str().unwrap().to_string(),
+                  r["signature"].as_str().unwrap_or_default().to_string()))
+        .collect();
+    // Parentheses come back on the single-parameter form, which source omits.
+    assert_eq!(sigs["bare"], "bare(x)", "{sigs:?}");
+    assert_eq!(sigs["typed"], "typed(n: number): string", "{sigs:?}");
+    assert_eq!(sigs["waits"], "async waits(u: string): Promise<void>", "{sigs:?}");
+    // A const bound to something that is not a function is untouched.
+    assert!(sigs["notAFn"].starts_with("const notAFn"), "{sigs:?}");
+}
+
+#[test]
 fn clones_excludes_tests_and_takes_a_positional_path() {
     // Two assertions in sequence share a shape however different the assertions
     // are, so a test suite is a field of true positives nobody wants — measured
