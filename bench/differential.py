@@ -129,6 +129,48 @@ def rg_lines(out):
     return lines
 
 
+# The one place codeq is deliberately NARROWER than `rg -w`.
+#
+# `rg -w` anchors on \b, where `$` is a non-word character, so `-w locale`
+# matches inside `this.$locale()`. codeq treats `$` as identifier syntax in the
+# languages whose lexer does, so `$locale` is a different identifier and codeq
+# does not answer for `locale` there. dayjs writes `this.$locale()` beside a real
+# `locale` export, so both spellings are live in one file and the difference is
+# the whole point — a decision about what `-w` means, not a miss.
+#
+# Carved out by the rule and not by name: these extensions only, and only when
+# EVERY occurrence on the line is sigil-bound. One free-standing hit and the line
+# still has to be answered. The exemptions are counted into the summary so a
+# silent exemption cannot grow into a silent hole.
+SIGIL_BINDS_EXT = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx",
+                   ".svelte", ".vue", ".java", ".kt", ".kts", ".scala", ".sc")
+
+
+def sigil_bound_lines(out, needle):
+    """(path, line) where `rg -w` only matched inside a `$`-bound identifier."""
+    if not needle or not needle.isidentifier():
+        return set()
+    bound = set()
+    for raw in out.decode("utf-8", "replace").splitlines():
+        parts = raw.split(":", 2)
+        if len(parts) < 3 or not parts[1].isdigit():
+            continue
+        path, text = parts[0], parts[2]
+        if not path.endswith(SIGIL_BINDS_EXT):
+            continue
+        hits, at = [], text.find(needle)
+        while at != -1:
+            hits.append(at)
+            at = text.find(needle, at + 1)
+        if hits and all(
+            (i > 0 and text[i - 1] == "$")
+            or (i + len(needle) < len(text) and text[i + len(needle)] == "$")
+            for i in hits
+        ):
+            bound.add((path, int(parts[1])))
+    return bound
+
+
 # ---------------------------------------------------------------- SEARCH
 def search_battery(path):
     out = []
@@ -138,6 +180,10 @@ def search_battery(path):
         cq, cq_ok = codeq_lines(cq_out)
         rg = rg_lines(rg_out)
         missing = rg - cq
+        # Same `-w` rule as the references invariant, applied wherever `-w` is
+        # the query, so one future `$`-bound hit doesn't read as a regression.
+        exempt = missing & sigil_bound_lines(rg_out, rargs[-1]) if "-w" in rargs else set()
+        missing -= exempt
         if not cq_ok or cq_rc != 0 or rg_rc > 1:
             verdict = "ERROR"
         elif missing:
@@ -148,6 +194,7 @@ def search_battery(path):
             "kind": "search", "command": "search", "name": aname, "verdict": verdict,
             "codeq_n": len(cq), "rg_n": len(rg),
             "missing": len(missing), "extra": len(cq - rg),
+            "sigil_exempt": len(exempt),
             "missing_sample": sorted(missing)[:5],
             "codeq_ms": round(cq_ms, 2), "base_ms": round(rg_ms, 2),
             "codeq_bytes": len(cq_out), "base_bytes": len(rg_out),
@@ -248,9 +295,12 @@ def invariant_battery(path):
     for sym in sample_symbols(path):
         S, F, L0, L1 = sym["name"], sym["path"], sym["line"], sym["end_line"]
 
-        def rec(command, name, ok):
-            recs.append({"kind": "invariant", "command": command, "name": name,
-                         "verdict": "PASS" if ok else "FAIL", "symbol": S, "path": F})
+        def rec(command, name, ok, exempt=0):
+            r = {"kind": "invariant", "command": command, "name": name,
+                 "verdict": "PASS" if ok else "FAIL", "symbol": S, "path": F}
+            if exempt:
+                r["sigil_exempt"] = exempt
+            recs.append(r)
 
         # definitions agrees with the symbol table
         defs, _ = _cq([CODEQ, "--json", "definitions", S], path)
@@ -266,7 +316,9 @@ def invariant_battery(path):
         rec("references", "ref-includes-def",
             any(p == F and L0 <= ln <= L1 for (p, ln) in refset))
         rg_out = _run(["rg", "-nw", "--no-heading", "--no-messages", S], path)
-        rec("references", "ref-superset-rg", not (rg_lines(rg_out) - refset))
+        missing = rg_lines(rg_out) - refset
+        exempt = missing & sigil_bound_lines(rg_out, S)
+        rec("references", "ref-superset-rg", not (missing - exempt), len(exempt))
 
         # `at` the def line resolves back to the symbol
         at0, _ = _cq([CODEQ, "--json", "at", f"{F}:{L0}"], path)
@@ -507,11 +559,38 @@ def summarize(repos, pc):
         "errors": sum(a["verdict"] == "ERROR" for a in search),
         "invariant_total": len(inv),
         "invariant_fail": sum(i["verdict"] == "FAIL" for i in inv),
+        # Lines `rg -w` matched inside a `$`-bound identifier, which codeq
+        # deliberately does not answer for. Reported so the exemption stays
+        # something you can watch rather than something that hides.
+        "sigil_exempt": (sum(i.get("sigil_exempt", 0) for i in inv)
+                         + sum(a.get("sigil_exempt", 0) for a in search)),
         "fuzz_total": fuzz_total, "fuzz_fail": fuzz_total - fuzz_pass,
         "actions_total": len(search),   # trend.py back-compat
         "median_codeq_over_rg_time": pc.get("search", {}).get("time_x"),
         "median_codeq_over_rg_bytes": pc.get("search", {}).get("bytes_x"),
     }
+
+
+def assert_rg_searches_the_filesystem(path):
+    """Fail loudly if `rg` is reading stdin instead of the repo.
+
+    Every superset assertion here is `rg_lines(...) - codeq_lines(...)`, so an
+    `rg` that returns nothing makes all of them pass — silently, and with a
+    perfect score. That is exactly what happens when stdin is not a TTY: given
+    no path argument, ripgrep searches stdin instead of the working directory,
+    which is the normal condition under CI, a pipe, or a heredoc. The commands
+    below deliberately pass no path, because adding one prefixes every result
+    with `./` and would change what the byte-ratio metrics mean.
+
+    So probe for it rather than defend against it: a repo with source in it must
+    match `[a-z]` on at least one line.
+    """
+    if not rg_lines(_run(["rg", "-n", "--no-heading", "--no-messages", "[a-z]"], path)):
+        sys.exit(
+            "rg matched nothing in a non-empty repo — it is reading stdin, not the\n"
+            "repository, so every superset assertion would pass vacuously.\n"
+            "Run with a terminal on stdin (or `< /dev/tty`)."
+        )
 
 
 def main():
@@ -522,6 +601,8 @@ def main():
     for name, lang, path in corpus.repo_paths():
         if want and name not in want:
             continue
+        if not repos:
+            assert_rg_searches_the_filesystem(path)
         print(f"  {name} ({lang}) ...", flush=True)
         repos[name] = run_repo(name, lang, path)
 
@@ -564,6 +645,9 @@ def main():
           f"  fuzz {s['fuzz_total'] - s['fuzz_fail']}/{s['fuzz_total']}"
           f"  invariant {s['invariant_total'] - s['invariant_fail']}/{s['invariant_total']}"
           f"  ({s['errors']} ERROR)")
+    if s.get("sigil_exempt"):
+        print(f"    {s['sigil_exempt']} `rg -w` line(s) exempt: matched only inside a "
+              f"$-bound identifier, which codeq answers as a different name")
     print(f"\n  per-command  (correctness | codeq/alt time | codeq/alt bytes; <1 = codeq wins)")
     print(f"  {'command':13} {'correct':>10} {'time x':>9} {'bytes x':>9}")
     for c in sorted(pc):
