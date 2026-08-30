@@ -23,12 +23,19 @@ agent that can trust the output has no reason to fall back to ad-hoc shell pipel
 ## Install
 
 ```bash
-cargo build --release
-# binary at ./target/release/codeq
+cargo build --release          # binary at ./target/release/codeq
+cargo install --path .         # or put it on PATH yourself
+
+codeq install                  # wire it into the agents on this machine
 ```
 
 You need a Rust toolchain and `git` on PATH. The index lives at `.codeq/index.db` under the
 repo root. It is git-ignored and safe to delete.
+
+`codeq install` is the whole of the per-machine setup: it registers the MCP server with
+every detected agent and installs the codeq skill for those that read one. `--dry-run`
+shows what it would touch without writing anything. See [MCP server](#mcp-server) for the
+details and for registering by hand.
 
 ## Why not grep and find?
 
@@ -313,6 +320,16 @@ each tool call to the CLI in its working directory.
 Cursor, Windsurf, Gemini) and adds the codeq server to each one's MCP config, merging into
 whatever is already there. Use `--dry-run` to preview, `--uninstall` to remove, and
 `--agent <name>` to target one specifically.
+
+It installs the **skill** at the same time, for agents that read one — today that is Claude
+Code, at `~/.claude/skills/codeq/SKILL.md`. The skill is what tells an agent to reach for
+`explore`/`api` instead of reading whole files, so registering the server without it gets
+you the tool and not the habit. `--no-skill` opts out.
+
+The skill text is compiled into the binary, so the installed guide always describes the
+installed codeq rather than whatever a checkout happens to say. If the destination is a
+symlink — how you'd wire up a checkout you're editing — `install` reports it and leaves it
+alone, and `--uninstall` refuses to delete through it.
 
 Or register it by hand:
 
