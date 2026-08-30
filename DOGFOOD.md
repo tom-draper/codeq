@@ -4,6 +4,81 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-30 — `deps --cycles` was enumerating paths, and a test that proved nothing
+
+First pass on `uk-data-atlas` (Next.js, TypeScript, ~200 files). Every command
+answered in under 100ms except one:
+
+| | |
+|---|---|
+| `deps lib/types/index.ts --depth 99` | 0.01s |
+| `deps --cycles` | **61.6s** (11 cycles) |
+
+Same graph, same loader, so the cost was all inside `cycles()`. It was a DFS
+that walks every simple **path** and reports a back-edge into the current one.
+A dependency graph has exponentially more paths than cycles, so the cost had
+nothing to do with the size of the answer. Johnson's algorithm is the fix, and
+the part that matters is blocking: a node is unblocked only once it is *known*
+to lie on a cycle, so a subtree that cannot reach the start is explored once
+instead of once per path leading into it. 61.6s → 0.014s, output byte-identical
+on all seven repos I had indexed.
+
+### The test I wrote first was worthless
+
+I wrote the regression test from the synthetic repro — layers of two files each
+importing both files of the next, no cycles, exponentially many paths — but
+translated it to Python imports because the fixtures nearby were Python. It
+passed on the unfixed code in 1.4s.
+
+The shape was right and the language was not. A TypeScript named import records
+**two** exact edges to the same file:
+
+```
+src/m0_0.ts:1: ./m1_0          the module
+src/m0_0.ts:1: ./m1_0.f1_0     the module plus the binding
+```
+
+`deps` dedupes by target so it shows one; `cycles()` walked both, doubling the
+branching factor at every hop — 4^13 paths through a graph that has 2^13.
+Python's `import m` has no binding fact, so the fixture had a quarter of the
+branching and finished instantly. Same picture, a quarter of the exponent, and
+the test would have sat there green forever.
+
+**A performance regression test that has never been observed to fail is a
+decoration.** Running it against the old binary is the only thing that
+distinguishes it from one, and it cost one command: 24.7s against a 5s bound on
+the old code, 0.006s on the new. Deduplicating successors is now part of the fix
+too — the second doubling changed no answer either.
+
+### And the correctness check that was also wrong
+
+I cross-checked the new enumeration against a brute-force one on 60 random
+graphs. The first run reported mismatches on nearly every graph — `(0, 2, 5)`
+expected, `(0, 2, 5, 0)` produced. That was my parser: the text output repeats
+the opening file to close the loop, and I had read it as a member. Fixing the
+harness, not the code: 60/60, 8405 cycles. Worth the ten seconds it took to
+check whether the *test* was wrong before touching what it was testing — the
+mismatch was uniform and structural, which is what a harness bug looks like and
+not what a lost cycle looks like.
+
+### Also seen on this repo, not yet acted on
+
+- **`entrypoints` reports "no registered entry points"** on a Next.js app with
+  four routes, a layout, a sitemap and a robots handler. Next registers by file
+  convention, not by decorator, and `facts.decorator` is the only bit codeq has.
+  The fallout lands in `unused`: 7 of 24 rows are framework-called code (5 App
+  Router conventions, plus `getDerivedStateFromError` and `componentDidCatch`,
+  which React calls and nothing else will). The other 17 rows are correct — I
+  checked the 12 flagged type aliases with `rg` and they are genuinely dead. On
+  the rule this log already uses, this is a **tag, not a suppression**: deleting
+  a `page.tsx` export compiles fine, it just 404s.
+- **Nested arrow functions render as an assignment fragment.** codeq indexes
+  component-local arrows as definitions, which is right, but they print as
+  `getSearchParam = (key: string) =>` — no kind, dangling arrow — where every
+  other row carries a clean signature. Visible in `outline`, `definitions`,
+  `untested`.
+- **SKILL.md says "Locals aren't definitions."** Nested arrows are, deliberately.
+
 ## 2026-08-27 — Closing the open list, and what `nginx-analytics` said back
 
 Every item this log had left open, then a full pass over `nginx-analytics`
