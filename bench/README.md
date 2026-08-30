@@ -66,7 +66,16 @@ checking the property codeq actually promises:
 > codeq's matches must be a **superset** of ripgrep's — never fewer.
 
 Any line rg finds that codeq misses is a **FAIL**; a codeq crash or bad flag is an
-**ERROR** (kept distinct from a miss). This is the check that would have caught
+**ERROR** (kept distinct from a miss).
+
+One exemption, and it is stated as a rule rather than a repo name. `rg -w` anchors on
+`\b`, where `$` is a non-word character, so `rg -w locale` matches inside
+`this.$locale()`; codeq treats `$` as identifier syntax where the lexer does, so
+`$locale` is a different name. A `-w` line is exempt only when **every** occurrence on
+it is `$`-adjacent, and only in the extensions that bind `$` — one free-standing hit and
+the line still has to be answered. Exempt lines are counted into `sigil_exempt` in the
+summary and printed on every run, so the exemption can be watched rather than trusted.
+Today it is 22 lines, all of them dayjs's `$locale`. This is the check that would have caught
 the `^`/`$` anchor regression and the trigram-`MATCH` substring drops — both of
 which passed the unit suite.
 

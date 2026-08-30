@@ -51,11 +51,19 @@ buys a few things a byte scan cannot:
   mostly stable tree, which is the agent workload. For a single one-off text search a cold
   `rg` will often win, and that is fine: codeq is not trying to replace it there.
 
-search itself is a strict superset of grep. It uses the same regex engine as ripgrep (the
+search itself is a superset of grep. It uses the same regex engine as ripgrep (the
 Rust `regex` crate), adds the flags you would reach for `rg` to get (`-A`/`-B`/`-C`, `-l`,
 `-c`, `-w`, `-g`), and does one thing grep cannot: `--in code|comments|strings` restricts
 matches by syntactic class, so you can find a TODO only in comments, or a literal only in
 real code.
+
+There is one deliberate exception, and it is in `-w`. `rg -w` anchors on `\b`, where `$`
+is a non-word character, so `rg -w locale` matches inside `this.$locale()`. codeq treats
+`$` as identifier syntax in the languages whose lexer does — JS/TS/TSX, Svelte, Vue, Java,
+Kotlin, Scala — and in code rather than in strings, so `$locale` is a different name and
+codeq does not answer for `locale` there. That is narrower than `rg -w` on purpose. The
+differential harness exempts exactly those lines and counts them (`sigil_exempt`), so the
+exception stays measured rather than assumed.
 
 That extends to a pipeline. `--stdin` scans text piped in instead of the index, so codeq
 also stands in for grep where there is no repository to index:
