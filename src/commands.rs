@@ -4140,11 +4140,17 @@ struct UnusedRow {
     /// instead would hide the real thing `unused` is for.
     #[serde(skip_serializing_if = "Option::is_none")]
     decorator: Option<String>,
+    /// The framework that reaches this definition by file convention rather
+    /// than by any call — `next/page`, `react/lifecycle`. Same purpose as
+    /// `decorator`, different evidence: the path and the name, not a line of
+    /// syntax above the definition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entrypoint: Option<&'static str>,
 }
 
 /// A definition invoked by a framework or test runner rather than by an
-/// ordinary source-level call. The `registration` field is the exact decorator
-/// syntax CodeQ observed; it is evidence, not a framework guess.
+/// ordinary source-level call. `registration` is the evidence: the exact
+/// decorator syntax codeq observed, or the file convention that loads it.
 #[derive(Serialize)]
 struct EntrypointRow {
     name: String,
@@ -4169,34 +4175,56 @@ pub fn cmd_entrypoints(
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
+    // A file convention is not a column, so registration is decided in Rust and
+    // the limit has to be applied after that rather than in SQL.
     let mut sql = String::from(
-        "SELECT name, kind, path, start_line, decorator, is_test FROM facts
-         WHERE kind <> 'import' AND (decorator IS NOT NULL",
+        "SELECT name, kind, path, start_line, decorator, is_test, language, visibility
+         FROM facts WHERE kind <> 'import'",
     );
-    if include_tests {
-        sql.push_str(" OR is_test = 1");
-    }
-    sql.push(')');
     if !include_tests {
         sql.push_str(" AND is_test = 0");
     }
     let like = path.map(|path| format!("%{path}%"));
     sql.push_str(" AND (?1 IS NULL OR path LIKE ?1)");
     sql.push_str(" ORDER BY path, start_line");
-    if limit > 0 {
-        sql.push_str(&format!(" LIMIT {limit}"));
-    }
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map([&like], |r| {
+        let name: String = r.get(0)?;
+        let kind: String = r.get(1)?;
+        let path: String = r.get(2)?;
+        let language: Option<String> = r.get(6)?;
+        let visibility: Option<String> = r.get(7)?;
+        let registration: Option<String> = r.get(4)?;
+        let registration = registration.or_else(|| {
+            crate::facts::framework_registration(
+                language.as_deref(),
+                &kind,
+                &name,
+                &path,
+                visibility.as_deref(),
+            )
+            .map(str::to_string)
+        });
         Ok(EntrypointRow {
-            name: r.get(0)?, kind: r.get(1)?, path: r.get(2)?, line: r.get(3)?,
-            registration: r.get(4)?, test: r.get::<_, bool>(5)?,
+            name,
+            kind,
+            path,
+            line: r.get(3)?,
+            registration,
+            test: r.get::<_, bool>(5)?,
         })
     })?;
-    let data: Vec<EntrypointRow> = rows.collect::<std::result::Result<_, _>>()?;
-    let note = data.is_empty().then(|| match path {
-        Some(path) => format!("no registered entry points in '{path}'"),
-        None => "no registered entry points".to_string(),
+    let mut data: Vec<EntrypointRow> = rows
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|r| r.registration.is_some() || (include_tests && r.test))
+        .collect();
+    let truncated = take_limit(&mut data, limit);
+    let note = truncated.or_else(|| {
+        data.is_empty().then(|| match path {
+            Some(path) => format!("no registered entry points in '{path}'"),
+            None => "no registered entry points".to_string(),
+        })
     });
     s.emit_noted(data, note)
 }
@@ -4739,13 +4767,24 @@ pub fn cmd_unused(
         let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
             let kind: String = r.get(1)?;
             let language: Option<String> = r.get(5)?;
+            let name: String = r.get(0)?;
+            let path: String = r.get(2)?;
+            let visibility: Option<String> = r.get(4)?;
+            let entrypoint = crate::facts::framework_registration(
+                language.as_deref(),
+                &kind,
+                &name,
+                &path,
+                visibility.as_deref(),
+            );
             Ok((
                 UnusedRow {
-                    name: r.get(0)?,
-                    path: r.get(2)?,
+                    name,
+                    path,
                     line: r.get(3)?,
-                    visibility: r.get(4)?,
+                    visibility,
                     decorator: r.get(6)?,
+                    entrypoint,
                     kind,
                 },
                 language,

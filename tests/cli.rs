@@ -7654,6 +7654,57 @@ fn entrypoints_lists_syntax_registered_routes_and_optional_tests() {
 }
 
 #[test]
+fn entrypoints_recognises_a_file_convention_with_no_decorator_to_read() {
+    // Next.js loads `app/**/page.tsx` because of where the file sits, not
+    // because anything imports or decorates it. `entrypoints` reported "none" on
+    // a whole App Router app, and every route read as dead code.
+    let f = Fixture::new();
+    f.write(
+        "app/about/page.tsx",
+        "export const metadata = { title: \"About\" };\n\
+         export default function AboutPage() { return null; }\n",
+    )
+    .write(
+        "app/layout.tsx",
+        "export default function RootLayout({ children }) { return children; }\n",
+    )
+    .write(
+        "components/ErrorBoundary.tsx",
+        "export class ErrorBoundary extends React.Component {\n\
+        \x20 componentDidCatch(e) { console.log(e); }\n\
+        \x20 helper() { return 1; }\n}\n",
+    )
+    .write("components/Unused.tsx", "export function Orphan() { return null; }\n");
+
+    let by_name: std::collections::HashMap<String, String> = f.run(&["entrypoints"])["data"]
+        .as_array().unwrap().iter()
+        .map(|r| (r["name"].as_str().unwrap().to_string(),
+                  r["registration"].as_str().unwrap_or_default().to_string()))
+        .collect();
+    assert_eq!(by_name.get("AboutPage").map(String::as_str), Some("next/page"), "{by_name:?}");
+    assert_eq!(by_name.get("metadata").map(String::as_str), Some("next/page"), "{by_name:?}");
+    assert_eq!(by_name.get("RootLayout").map(String::as_str), Some("next/layout"), "{by_name:?}");
+    assert_eq!(
+        by_name.get("componentDidCatch").map(String::as_str),
+        Some("react/lifecycle"),
+        "React calls it and nothing else does: {by_name:?}"
+    );
+    // An ordinary component and an ordinary method are not entry points.
+    assert!(!by_name.contains_key("Orphan"), "{by_name:?}");
+    assert!(!by_name.contains_key("helper"), "{by_name:?}");
+
+    // Tagged in `unused`, not suppressed: deleting a route still compiles, so
+    // it stays a judgement for the reader.
+    let unused: std::collections::HashMap<String, Value> = f.run(&["unused"])["data"]
+        .as_array().unwrap().iter()
+        .map(|r| (r["name"].as_str().unwrap().to_string(), r.clone()))
+        .collect();
+    assert_eq!(unused["AboutPage"]["entrypoint"], "next/page", "{unused:?}");
+    assert!(unused.contains_key("Orphan"), "real dead code still reported: {unused:?}");
+    assert!(unused["Orphan"]["entrypoint"].is_null(), "{unused:?}");
+}
+
+#[test]
 fn clones_excludes_tests_and_takes_a_positional_path() {
     // Two assertions in sequence share a shape however different the assertions
     // are, so a test suite is a field of true positives nobody wants — measured

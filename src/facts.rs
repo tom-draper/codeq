@@ -1527,6 +1527,95 @@ pub fn unreferenced_by_design(language: Option<&str>, kind: &str, name: &str) ->
         || RUNTIME_READ_NAMES.iter().any(|(l, n)| *l == lang && *n == name)
 }
 
+/// Languages that can carry a JavaScript framework's file conventions.
+const WEB_LANGUAGES: &[&str] = &["javascript", "typescript", "tsx", "jsx"];
+
+/// React class-component methods the runtime calls. The class names them in no
+/// other place, and unlike a route there is no decorator to notice.
+const REACT_LIFECYCLE: &[&str] = &[
+    "render",
+    "componentDidMount",
+    "componentDidUpdate",
+    "componentWillUnmount",
+    "shouldComponentUpdate",
+    "getSnapshotBeforeUpdate",
+    "componentDidCatch",
+    "getDerivedStateFromError",
+    "getDerivedStateFromProps",
+];
+
+/// The framework that reaches this definition without any call naming it, or
+/// `None`.
+///
+/// [`Fact::decorator`] covers registration codeq can *see* — `@app.get("/x")`
+/// sits on the line above. A file convention leaves no such mark: Next.js loads
+/// the default export of `app/**/page.tsx` because of where the file sits and
+/// what it is called, so on an App Router repo every route, layout and metadata
+/// export read as dead code and `entrypoints` reported none at all.
+///
+/// Tag, not suppress. Deleting a `page.tsx` export still compiles — the route
+/// 404s — so this is the "looks dead, might not be" case the `decorator=` tag
+/// exists for, and not the never-dead case of a trait implementation.
+///
+/// A convention file's whole public surface is the framework's contract
+/// (`metadata` and `viewport` beside the component), and codeq does not record
+/// which export was `default`, so the public surface is what gets tagged.
+pub fn framework_registration(
+    language: Option<&str>,
+    kind: &str,
+    name: &str,
+    path: &str,
+    visibility: Option<&str>,
+) -> Option<&'static str> {
+    if !language.is_some_and(|l| WEB_LANGUAGES.contains(&l)) {
+        return None;
+    }
+    if kind == "method" && REACT_LIFECYCLE.contains(&name) {
+        return Some("react/lifecycle");
+    }
+    // Everything below is a module-level export the framework loads by path.
+    if visibility != Some("public") {
+        return None;
+    }
+    let mut segments: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+    let file = segments.pop()?;
+    let stem = file.rsplit_once('.').map_or(file, |(s, _)| s);
+    let dirs = segments;
+
+    // `middleware.ts` and `instrumentation.ts` are only conventional at the
+    // project root, where `src/` is the one directory Next.js also allows.
+    if dirs.is_empty() || dirs == ["src"] {
+        match stem {
+            "middleware" => return Some("next/middleware"),
+            "instrumentation" => return Some("next/instrumentation"),
+            _ => {}
+        }
+    }
+    // The Pages Router routes *every* file under `pages/`, so the file name
+    // carries no further information.
+    if dirs.contains(&"pages") {
+        return Some("next/pages-router");
+    }
+    if !dirs.contains(&"app") {
+        return None;
+    }
+    Some(match stem {
+        "page" => "next/page",
+        "layout" => "next/layout",
+        "route" => "next/route",
+        "template" => "next/template",
+        "loading" => "next/loading",
+        "error" | "global-error" => "next/error",
+        "not-found" => "next/not-found",
+        "default" => "next/default",
+        "sitemap" => "next/sitemap",
+        "robots" => "next/robots",
+        "manifest" => "next/manifest",
+        "icon" | "apple-icon" | "opengraph-image" | "twitter-image" => "next/metadata-image",
+        _ => return None,
+    })
+}
+
 /// What codeq can extract for one language.
 ///
 /// Support is uneven and always has been — Go has no inheritance edges, Ruby
