@@ -796,20 +796,25 @@ enum Command {
     },
     /// Run as an MCP server over stdio (for agent hosts to call codeq natively).
     Mcp,
-    /// Register codeq's MCP server with detected AI coding agents (Claude Code,
-    /// Cursor, Windsurf, Gemini), writing to each agent's own config. Only touches
-    /// detected agents unless `--agent` names one.
+    /// Set codeq up for detected AI coding agents (Claude Code, Cursor, Windsurf,
+    /// Gemini): register its MCP server in each agent's own config, and install
+    /// the codeq skill for agents that read one. Only touches detected agents
+    /// unless `--agent` names one.
     Install {
         /// Show what would change without writing anything.
         #[arg(long)]
         dry_run: bool,
-        /// Remove codeq from each agent's config instead of adding it.
+        /// Remove codeq from each agent's config and delete the skill, instead of
+        /// adding them.
         #[arg(long)]
         uninstall: bool,
         /// Target just this agent (and create its config if absent): claude-code,
         /// cursor, windsurf, or gemini.
         #[arg(long)]
         agent: Option<String>,
+        /// Register the MCP server only, leaving the skill alone.
+        #[arg(long)]
+        no_skill: bool,
     },
 }
 
@@ -1211,7 +1216,8 @@ fn main() -> ExitCode {
             dry_run,
             uninstall,
             agent,
-        } => commands::cmd_install(dry_run, uninstall, agent.as_deref(), out),
+            no_skill,
+        } => commands::cmd_install(dry_run, uninstall, agent.as_deref(), no_skill, out),
     };
 
     match result {

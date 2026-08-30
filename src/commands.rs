@@ -5334,6 +5334,7 @@ pub fn cmd_install(
     dry_run: bool,
     uninstall: bool,
     agent: Option<&str>,
+    no_skill: bool,
     out: Out,
 ) -> Result<()> {
     let home = crate::install::home_dir()?;
@@ -5346,6 +5347,7 @@ pub fn cmd_install(
         uninstall,
         only: agent.map(String::from),
         bin,
+        no_skill,
     };
     let actions = crate::install::apply(&home, &opts)?;
 
@@ -5367,7 +5369,7 @@ pub fn cmd_install(
                 .as_deref()
                 .map(|n| format!("  ({n})"))
                 .unwrap_or_default();
-            println!("{:<12}  {:<15}  {}{}", a.agent, a.action, a.config, note);
+            println!("{:<12}  {:<6}  {:<15}  {}{}", a.agent, a.what, a.action, a.config, note);
         }
         let touched = actions
             .iter()
@@ -5380,7 +5382,7 @@ pub fn cmd_install(
                  windsurf, gemini)."
             );
         } else if !dry_run && !uninstall && touched > 0 {
-            println!("\nRestart the agent(s) above to pick up the codeq MCP server.");
+            println!("\nRestart the agent(s) above to pick up the codeq MCP server and skill.");
         }
     }
     Ok(())
