@@ -4,6 +4,67 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-08-30 — Carving out the `$` divergence, and the vacuum I found while doing it
+
+The harness's last two failures, closed the way they were always going to be:
+by deciding what the superset claim means and writing it down.
+
+`rg -w` anchors on `\b`, where `$` is a non-word character, so `rg -w locale`
+matches inside `this.$locale()`. codeq treats `$` as identifier syntax in the
+languages whose lexer does, so `$locale` is a different name. codeq is right and
+`rg -w` is looser, and dayjs writes both spellings in one file.
+
+Exempted **by the rule, not by the repo name**: those extensions only, and only
+when *every* occurrence on the line is `$`-adjacent. One free-standing hit and
+the line still has to be answered. Checked against the real data before running
+anything:
+
+```
+missing 11 -> exempt 11 -> real 0
+total lines rg matched: 1166 | classified sigil-bound: 11
+```
+
+Eleven divergent lines explained, and nothing else out of 1166 swept up with
+them. **The exemptions are counted, not deleted** — `sigil_exempt` goes in the
+summary and prints on every run. An exemption you cannot see is indistinguishable
+from a hole, and this harness exists precisely to not have holes. 8607/8609 → 
+**8609/8609, 0 failures, sigil_exempt=22**, all 22 from the one symbol.
+
+The same rule now applies to the `-w` search actions. They are green today, but
+they are the same comparison, and a future `$` hit would have read as a
+regression there.
+
+### And the thing I found by accident, which is worse than the thing I fixed
+
+Probing the divergence from a `python3 - <<EOF` heredoc, rg returned **zero**
+lines in a repo with 1166 matches. Given no path argument, ripgrep searches
+*stdin* when stdin is a pipe — and every assertion in this file is
+`rg_lines(...) - codeq_lines(...)`:
+
+> an rg that returns nothing makes every superset assertion pass, silently, with
+> a perfect score.
+
+That is the worst failure mode a verification harness has. It does not go red, it
+goes vacuously green, and the number it prints is the number you wanted.
+
+The harness omits the path deliberately — adding `.` prefixes every result with
+`./` and would change what the byte-ratio metrics mean — so this is probed for
+rather than defended against: one `rg [a-z]` against the first repo, which must
+match something. Fires on a pipe, silent on a TTY and on `< /dev/null`, which rg
+treats differently.
+
+```
+$ echo "" | python3 bench/differential.py dayjs
+rg matched nothing in a non-empty repo — it is reading stdin, not the
+repository, so every superset assertion would pass vacuously.   (exit 1)
+```
+
+The committed runs were never affected — they found the dayjs failures, which
+requires rg to have been reading the filesystem. This was a hole CI would have
+walked into, not a retraction. But it is worth noticing *why* it stayed hidden:
+the harness has been run one way, by hand, every time, and the failure mode is
+invisible in exactly the mode nobody used yet.
+
 ## 2026-08-30 — The three findings from the Next.js pass, and one that was wider than reported
 
 ### `entrypoints` answered "none" on an App Router app
