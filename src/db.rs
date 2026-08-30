@@ -93,7 +93,7 @@ use rusqlite::Connection;
 // hashing the query constants is the obvious form — but it would cover only the
 // query-driven half. A visibility rule or an attribute reader is ordinary Rust
 // and would slip through, while the mechanism looked complete. Not yet solved.
-pub const SCHEMA_VERSION: i64 = 36;
+pub const SCHEMA_VERSION: i64 = 37;
 
 pub struct Db {
     pub conn: Connection,

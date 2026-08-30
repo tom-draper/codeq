@@ -2058,11 +2058,22 @@ fn attributes_of(node: Node, src: &[u8]) -> Vec<String> {
 /// behaves; they do not hand it to anything. Tagging those would put a
 /// meaningless annotation on most rows and cost the signal this adds.
 fn registering_decorator(node: Node, src: &[u8]) -> Option<String> {
+    // Whole namespaces that only ever change how a definition behaves. Nothing
+    // in `functools`, `contextlib`, `typing`, `abc`, `dataclasses` or `enum`
+    // hands a definition to a framework, so the module answers for all of them.
+    const INERT_MODULES: &[&str] = &[
+        "functools", "contextlib", "typing", "abc", "dataclasses", "enum", "serde",
+    ];
     const INERT: &[&str] = &[
         "property", "staticmethod", "classmethod", "abstractmethod", "cached_property",
-        "dataclass", "overload", "override", "functools", "wraps", "final",
+        "dataclass", "overload", "override", "wraps", "final",
+        // Imported bare as often as they are qualified — `from functools import
+        // cache` — so the module list alone would miss them.
+        "cache", "lru_cache", "singledispatch", "singledispatchmethod",
+        "total_ordering", "contextmanager", "asynccontextmanager",
+        "runtime_checkable", "no_type_check", "unique",
         "derive", "inline", "repr", "allow", "deny", "warn", "cfg", "must_use",
-        "non_exhaustive", "serde", "doc", "Serializable", "Override", "Deprecated",
+        "non_exhaustive", "doc", "Serializable", "Override", "Deprecated",
         "NotNull", "Nullable", "SuppressWarnings", "Obsolete",
     ];
     attributes_of(node, src).into_iter().find(|a| {
@@ -2073,8 +2084,15 @@ fn registering_decorator(node: Node, src: &[u8]) -> Option<String> {
             .split(['(', '[', ' ', '=', ':'])
             .next()
             .unwrap_or("");
+        // `@functools.cache` is neither `functools` nor `cache` as written, so
+        // the dotted name has to be judged by its parts: the module it came
+        // from and the name it binds.
+        let module = head.split('.').next().unwrap_or(head);
         let last = head.rsplit('.').next().unwrap_or(head);
-        !head.is_empty() && !INERT.contains(&head) && !INERT.contains(&last)
+        !head.is_empty()
+            && !INERT.contains(&head)
+            && !INERT.contains(&last)
+            && !INERT_MODULES.contains(&module)
     })
 }
 

@@ -7654,6 +7654,33 @@ fn entrypoints_lists_syntax_registered_routes_and_optional_tests() {
 }
 
 #[test]
+fn a_qualified_stdlib_decorator_is_inert_however_it_is_imported() {
+    // `functools` was on the inert list, but the check compared the whole dotted
+    // head (`functools.cache`) and its last segment (`cache`) — never the module
+    // — so every `@functools.cache` read as a framework registration.
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "import functools\nfrom contextlib import contextmanager\n\n\
+         @functools.cache\ndef memoized():\n    return 1\n\n\
+         @contextmanager\ndef scoped():\n    yield\n\n\
+         @app.get(\"/x\")\ndef route():\n    return {}\n",
+    );
+
+    let by_name: std::collections::HashMap<String, String> = f.run(&["entrypoints"])["data"]
+        .as_array().unwrap().iter()
+        .map(|r| (r["name"].as_str().unwrap().to_string(),
+                  r["registration"].as_str().unwrap_or_default().to_string()))
+        .collect();
+    assert!(!by_name.contains_key("memoized"), "caching is behaviour: {by_name:?}");
+    assert!(!by_name.contains_key("scoped"), "a context manager registers nothing: {by_name:?}");
+    assert!(
+        by_name.get("route").is_some_and(|r| r.starts_with("@app.get")),
+        "a real registration must survive the exclusion: {by_name:?}"
+    );
+}
+
+#[test]
 fn entrypoints_recognises_a_file_convention_with_no_decorator_to_read() {
     // Next.js loads `app/**/page.tsx` because of where the file sits, not
     // because anything imports or decorates it. `entrypoints` reported "none" on
