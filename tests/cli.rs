@@ -4539,6 +4539,71 @@ fn deps_cycles_reports_import_cycle() {
 }
 
 #[test]
+fn deps_cycles_reports_overlapping_cycles_through_a_shared_file() {
+    // Three cycles sharing files. Pruning the walk must not lose a cycle whose
+    // nodes were already explored as part of another one.
+    let f = Fixture::new();
+    f.write("a.py", "import b\nimport c\n")
+        .write("b.py", "import a\nimport c\n")
+        .write("c.py", "import b\n");
+
+    let v = f.run(&["deps", "--cycles"]);
+    let cycles: Vec<Vec<&str>> = v["data"].as_array().unwrap().iter()
+        .map(|r| r["cycle"].as_array().unwrap().iter()
+            .map(|v| v.as_str().unwrap()).collect())
+        .collect();
+    assert_eq!(
+        cycles,
+        vec![
+            vec!["a.py", "b.py"],
+            vec!["a.py", "c.py", "b.py"],
+            vec!["b.py", "c.py"],
+        ],
+        "every cycle, each canonicalized to its least member: {cycles:?}"
+    );
+}
+
+#[test]
+fn deps_cycles_stays_fast_on_a_wide_acyclic_graph() {
+    // Two files per layer, each importing both files of the next: 28 files, no
+    // cycles at all, and 2^13 paths. Must be TypeScript named imports, because
+    // each one yields two exact edges to the same file (the module `./m1_0` and
+    // the binding `./m1_0.f1_0`), which doubles the branching factor again.
+    // Walking paths instead of cycles took 20s on this fixture and grew ~4x per
+    // added layer. The answer is empty either way, so a pass that costs the
+    // whole exponential looks exactly like a correct one until it is timed.
+    let f = Fixture::new();
+    const LAYERS: usize = 14;
+    for l in 0..LAYERS {
+        for w in 0..2 {
+            let mut src = String::new();
+            if l + 1 < LAYERS {
+                for k in 0..2 {
+                    src.push_str(&format!(
+                        "import {{ f{}_{} }} from \"./m{}_{}\";\n",
+                        l + 1,
+                        k,
+                        l + 1,
+                        k
+                    ));
+                }
+            }
+            src.push_str(&format!("export function f{l}_{w}() {{ return {l}; }}\n"));
+            f.write(&format!("src/m{l}_{w}.ts"), &src);
+        }
+    }
+
+    let started = std::time::Instant::now();
+    let v = f.run(&["deps", "--cycles"]);
+    let elapsed = started.elapsed();
+    assert!(v["data"].as_array().unwrap().is_empty(), "a DAG has no cycles: {v}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "cycle search cost scaled with paths, not cycles: took {elapsed:?}"
+    );
+}
+
+#[test]
 fn deps_cycles_ignores_segment_overlap_that_is_not_an_import_target() {
     // `teams` imports a symbol from `dataframes`, whose module path happens to
     // share `updater.data` with `data.py`. The old best-segment heuristic turned

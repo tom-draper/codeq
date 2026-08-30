@@ -460,55 +460,122 @@ impl Graph {
     /// depends back on the first). Deterministic: nodes visited in sorted order,
     /// each cycle reported once, canonicalized to start at its lexically-least
     /// member.
+    ///
+    /// Johnson's algorithm. The obvious version of this — walk every path and
+    /// report a back-edge into it — costs one visit per simple *path*, and a
+    /// dependency graph has exponentially more paths than cycles: 28 files in
+    /// fourteen layers of two, with no cycles at all, took 20s to answer
+    /// "none", and a real 200-file TypeScript app took 61s to find 11. Blocking
+    /// is what makes the walk cost scale with the answer instead: a node is
+    /// unblocked only when it is found to lie on a cycle, so a subtree that
+    /// cannot reach `start` is explored once rather than once per path into it.
+    ///
+    /// Deduplicating successors matters for the same reason. A named import
+    /// records both the module and the binding (`./m` and `./m.f`), so every
+    /// TypeScript import is two exact edges to one file — a second doubling of
+    /// the branching factor that changes no answer.
     pub fn cycles(&self) -> Vec<Vec<String>> {
-        let mut nodes: Vec<&str> = self.edges.keys().map(|s| s.as_str()).collect();
+        // Index every file that has, or is, an exact edge. Sorted order makes
+        // "index >= start" the same restriction the canonical form wants: a
+        // cycle is enumerated once, from its lexically-least member.
+        let mut nodes: Vec<&str> = Vec::new();
+        for (from, bucket) in &self.edges {
+            nodes.push(from.as_str());
+            nodes.extend(bucket.iter().filter(|e| e.exact).map(|e| e.to.as_str()));
+        }
         nodes.sort_unstable();
+        nodes.dedup();
+        let index: HashMap<&str, usize> =
+            nodes.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+
+        let n = nodes.len();
+        let mut succ: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (from, bucket) in &self.edges {
+            let f = index[from.as_str()];
+            for e in bucket.iter().filter(|e| e.exact) {
+                succ[f].push(index[e.to.as_str()]);
+            }
+        }
+        for s in succ.iter_mut() {
+            s.sort_unstable();
+            s.dedup();
+        }
 
         let mut found: HashSet<Vec<String>> = HashSet::new();
         let mut result: Vec<Vec<String>> = Vec::new();
-        // Iterative DFS tracking the current path; a back-edge into the path is a cycle.
-        for &start in &nodes {
-            let mut stack: Vec<(&str, usize)> = vec![(start, 0)];
-            let mut path: Vec<&str> = Vec::new();
-            let mut on_path: HashSet<&str> = HashSet::new();
-            while let Some(&mut (node, ref mut idx)) = stack.last_mut() {
-                if *idx == 0 {
-                    path.push(node);
-                    on_path.insert(node);
-                }
-                let targets = self.edges.get(node);
-                let deg = targets
-                    .map(|v| v.iter().filter(|e| e.exact).count())
-                    .unwrap_or(0);
-                if *idx < deg {
-                    let to = targets
-                        .unwrap()
-                        .iter()
-                        .filter(|e| e.exact)
-                        .nth(*idx)
-                        .unwrap()
-                        .to
-                        .as_str();
-                    *idx += 1;
-                    // Only explore forward from `start` to avoid re-finding cycles
-                    // rooted at already-processed nodes.
-                    if to < start {
+        let mut blocked: Vec<bool> = vec![false; n];
+        // `b_list[w]` holds the nodes to unblock when `w` unblocks — those that
+        // failed to reach `start` only because `w` was blocked at the time.
+        let mut b_list: Vec<Vec<usize>> = vec![Vec::new(); n];
+        // Which nodes this round dirtied, so the reset is proportional to the
+        // work done and not to the size of the repo.
+        let mut dirty: Vec<usize> = Vec::new();
+
+        for start in 0..n {
+            for &v in &dirty {
+                blocked[v] = false;
+                b_list[v].clear();
+            }
+            dirty.clear();
+
+            // Frames are (node, next successor to try, found a cycle through it).
+            let mut stack: Vec<(usize, usize, bool)> = vec![(start, 0, false)];
+            let mut path: Vec<usize> = vec![start];
+            blocked[start] = true;
+            dirty.push(start);
+
+            while let Some(&(v, i, _)) = stack.last() {
+                if i < succ[v].len() {
+                    stack.last_mut().unwrap().1 += 1;
+                    let w = succ[v][i];
+                    // Cycles rooted below `start` were reported on an earlier round.
+                    if w < start {
                         continue;
                     }
-                    if let Some(pos) = path.iter().position(|&p| p == to) {
-                        let cyc: Vec<String> = path[pos..].iter().map(|s| s.to_string()).collect();
+                    if w == start {
+                        // `path` opens at `start`, and every other node on it is
+                        // greater, so it is already in canonical form.
+                        let cyc: Vec<String> =
+                            path.iter().map(|&x| nodes[x].to_string()).collect();
                         if let Some(c) = canonical_cycle(cyc) {
                             if found.insert(c.clone()) {
                                 result.push(c);
                             }
                         }
-                    } else if !on_path.contains(to) {
-                        stack.push((to, 0));
+                        stack.last_mut().unwrap().2 = true;
+                    } else if !blocked[w] {
+                        blocked[w] = true;
+                        dirty.push(w);
+                        path.push(w);
+                        stack.push((w, 0, false));
                     }
                 } else {
-                    on_path.remove(node);
+                    let (v, _, on_cycle) = stack.pop().unwrap();
                     path.pop();
-                    stack.pop();
+                    if on_cycle {
+                        // Unblock `v` and everything that was waiting on it.
+                        let mut work = vec![v];
+                        while let Some(u) = work.pop() {
+                            blocked[u] = false;
+                            for w in std::mem::take(&mut b_list[u]) {
+                                if blocked[w] {
+                                    work.push(w);
+                                }
+                            }
+                        }
+                        if let Some(parent) = stack.last_mut() {
+                            parent.2 = true;
+                        }
+                    } else {
+                        // `v` reaches no cycle while its successors stay blocked;
+                        // record it so unblocking one of them reconsiders `v`.
+                        for &w in &succ[v] {
+                            if w >= start && !b_list[w].contains(&v) {
+                                b_list[w].push(v);
+                                dirty.push(w);
+                            }
+                        }
+                    }
                 }
             }
         }
