@@ -596,7 +596,16 @@ def assert_rg_searches_the_filesystem(path):
 def main():
     if not os.path.exists(CODEQ):
         sys.exit(f"build release binary first: cargo build --release  (missing {CODEQ})")
-    want = set(sys.argv[1:])
+    args = sys.argv[1:]
+    if any(arg in ("-h", "--help") for arg in args):
+        print(__doc__.strip())
+        return
+    known = {name for name, *_ in corpus.REPOS}
+    unknown = sorted(set(args) - known)
+    if unknown:
+        choices = ", ".join(sorted(known))
+        sys.exit(f"unknown corpus repo(s): {', '.join(unknown)}\nchoices: {choices}")
+    want = set(args)
     repos = {}
     for name, lang, path in corpus.repo_paths():
         if want and name not in want:

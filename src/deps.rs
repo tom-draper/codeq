@@ -173,12 +173,20 @@ fn exact_module_match(from: &str, path: &str, module: &str) -> bool {
                 .rsplit_once(['/', '\\'])
                 .map(|(dir, _)| dir.split(['/', '\\']).filter(|s| !s.is_empty()).collect())
                 .unwrap_or_default();
-            let module_parts: Vec<&str> = module.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+            let module_parts: Vec<&str> = module
+                .split(['/', '\\'])
+                .filter(|s| !s.is_empty())
+                .collect();
             for keep in (0..=from_parts.len()).rev() {
                 let mut expected = from_parts[..keep].to_vec();
                 expected.extend(module_parts.iter().copied());
                 if let Some(last) = expected.pop() {
-                    expected.push(Path::new(last).file_stem().and_then(|s| s.to_str()).unwrap_or(last));
+                    expected.push(
+                        Path::new(last)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(last),
+                    );
                 }
                 if parts == expected {
                     return true;
@@ -199,7 +207,12 @@ fn exact_module_match(from: &str, path: &str, module: &str) -> bool {
             }
         }
         if let Some(last) = expected.pop() {
-            expected.push(Path::new(last).file_stem().and_then(|s| s.to_str()).unwrap_or(last));
+            expected.push(
+                Path::new(last)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(last),
+            );
         }
         return parts == expected;
     }
@@ -232,7 +245,10 @@ fn go_package_targets<'a>(
     let root = go_module?;
     let package = if module == root {
         ""
-    } else if let Some(package) = module.strip_prefix(root).and_then(|rest| rest.strip_prefix('/')) {
+    } else if let Some(package) = module
+        .strip_prefix(root)
+        .and_then(|rest| rest.strip_prefix('/'))
+    {
         package
     } else {
         // This is a Go import, but it belongs to another module. Returning an
@@ -247,7 +263,11 @@ fn go_package_targets<'a>(
             .filter(|path| {
                 path.ends_with(".go")
                     && !path.ends_with("_test.go")
-                    && path.rsplit_once(['/', '\\']).map(|(dir, _)| dir).unwrap_or("") == package
+                    && path
+                        .rsplit_once(['/', '\\'])
+                        .map(|(dir, _)| dir)
+                        .unwrap_or("")
+                        == package
             })
             .collect(),
     )
@@ -278,8 +298,10 @@ impl Graph {
             }
         }
         // Precompute each path's component set for scoring.
-        let comps: HashMap<&str, HashSet<&str>> =
-            paths.iter().map(|p| (p.as_str(), path_components(p))).collect();
+        let comps: HashMap<&str, HashSet<&str>> = paths
+            .iter()
+            .map(|p| (p.as_str(), path_components(p)))
+            .collect();
 
         let mut edges: HashMap<String, Vec<Edge>> = HashMap::new();
         let mut bindings: HashMap<String, HashMap<String, HashSet<String>>> = HashMap::new();
@@ -335,9 +357,18 @@ impl Graph {
             if !exact_files.is_empty() {
                 let bucket = edges.entry(from.clone()).or_default();
                 for cand in exact_files {
-                    bucket.push(Edge { to: cand.to_string(), module: module.clone(), exact: true });
+                    bucket.push(Edge {
+                        to: cand.to_string(),
+                        module: module.clone(),
+                        exact: true,
+                    });
                     if let Some(binding) = &binding {
-                        bindings.entry(from.clone()).or_default().entry(binding.clone()).or_default().insert(cand.to_string());
+                        bindings
+                            .entry(from.clone())
+                            .or_default()
+                            .entry(binding.clone())
+                            .or_default()
+                            .insert(cand.to_string());
                     }
                 }
                 continue;
@@ -416,7 +447,11 @@ impl Graph {
             bucket.sort_by(|a, b| a.to.cmp(&b.to).then(a.module.cmp(&b.module)));
             bucket.dedup_by(|a, b| a.to == b.to && a.module == b.module);
         }
-        Graph { edges, bindings, binding_names }
+        Graph {
+            edges,
+            bindings,
+            binding_names,
+        }
     }
 
     /// Whether `file` is a known node in the graph.
@@ -539,7 +574,11 @@ impl Graph {
                 if let Some(bucket) = self.edges.get(*f) {
                     for e in bucket {
                         if seen.insert(e.to.as_str()) {
-                            out.push(DepHop { path: e.to.clone(), module: e.module.clone(), depth: d });
+                            out.push(DepHop {
+                                path: e.to.clone(),
+                                module: e.module.clone(),
+                                depth: d,
+                            });
                             next.push(e.to.as_str());
                         }
                     }
@@ -583,8 +622,7 @@ impl Graph {
         }
         nodes.sort_unstable();
         nodes.dedup();
-        let index: HashMap<&str, usize> =
-            nodes.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+        let index: HashMap<&str, usize> = nodes.iter().enumerate().map(|(i, &n)| (n, i)).collect();
 
         let n = nodes.len();
         let mut succ: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -598,6 +636,7 @@ impl Graph {
             s.sort_unstable();
             s.dedup();
         }
+        let (component, component_sizes) = strongly_connected_components(&succ);
 
         let mut found: HashSet<Vec<String>> = HashSet::new();
         let mut result: Vec<Vec<String>> = Vec::new();
@@ -610,6 +649,15 @@ impl Graph {
         let mut dirty: Vec<usize> = Vec::new();
 
         for start in 0..n {
+            // A singleton is cyclic only when it imports itself. More
+            // importantly, a cycle cannot cross an SCC boundary, so starting a
+            // Johnson walk at every node in a large DAG repeats the same dead
+            // traversal once per node. Redis's mostly-acyclic import graph made
+            // `deps --cycles` take minutes for exactly that reason.
+            let start_component = component[start];
+            if component_sizes[start_component] == 1 && !succ[start].contains(&start) {
+                continue;
+            }
             for &v in &dirty {
                 blocked[v] = false;
                 b_list[v].clear();
@@ -627,14 +675,13 @@ impl Graph {
                     stack.last_mut().unwrap().1 += 1;
                     let w = succ[v][i];
                     // Cycles rooted below `start` were reported on an earlier round.
-                    if w < start {
+                    if w < start || component[w] != start_component {
                         continue;
                     }
                     if w == start {
                         // `path` opens at `start`, and every other node on it is
                         // greater, so it is already in canonical form.
-                        let cyc: Vec<String> =
-                            path.iter().map(|&x| nodes[x].to_string()).collect();
+                        let cyc: Vec<String> = path.iter().map(|&x| nodes[x].to_string()).collect();
                         if let Some(c) = canonical_cycle(cyc) {
                             if found.insert(c.clone()) {
                                 result.push(c);
@@ -682,13 +729,78 @@ impl Graph {
     }
 }
 
+/// Component id and size for every node, using iterative Kosaraju passes.
+///
+/// Keeping it iterative matters for dependency graphs: a generated project can
+/// contain an import chain thousands of files deep, where recursive DFS would
+/// trade a slow cycle query for a stack overflow.
+fn strongly_connected_components(succ: &[Vec<usize>]) -> (Vec<usize>, Vec<usize>) {
+    let n = succ.len();
+    let mut reverse = vec![Vec::new(); n];
+    for (from, targets) in succ.iter().enumerate() {
+        for &to in targets {
+            reverse[to].push(from);
+        }
+    }
+
+    let mut seen = vec![false; n];
+    let mut finish = Vec::with_capacity(n);
+    for root in 0..n {
+        if seen[root] {
+            continue;
+        }
+        seen[root] = true;
+        let mut stack = vec![(root, 0usize)];
+        while let Some(&(node, next)) = stack.last() {
+            if next < succ[node].len() {
+                stack.last_mut().unwrap().1 += 1;
+                let to = succ[node][next];
+                if !seen[to] {
+                    seen[to] = true;
+                    stack.push((to, 0));
+                }
+            } else {
+                finish.push(node);
+                stack.pop();
+            }
+        }
+    }
+
+    let mut component = vec![usize::MAX; n];
+    let mut sizes = Vec::new();
+    for &root in finish.iter().rev() {
+        if component[root] != usize::MAX {
+            continue;
+        }
+        let id = sizes.len();
+        let mut size = 0;
+        let mut stack = vec![root];
+        component[root] = id;
+        while let Some(node) = stack.pop() {
+            size += 1;
+            for &from in &reverse[node] {
+                if component[from] == usize::MAX {
+                    component[from] = id;
+                    stack.push(from);
+                }
+            }
+        }
+        sizes.push(size);
+    }
+    (component, sizes)
+}
+
 /// Rotate a cycle to start at its lexically-least member so the same cycle
 /// discovered from different entry points collapses to one representation.
 fn canonical_cycle(cyc: Vec<String>) -> Option<Vec<String>> {
     if cyc.is_empty() {
         return None;
     }
-    let min = cyc.iter().enumerate().min_by(|a, b| a.1.cmp(b.1)).map(|(i, _)| i)?;
+    let min = cyc
+        .iter()
+        .enumerate()
+        .min_by(|a, b| a.1.cmp(b.1))
+        .map(|(i, _)| i)?;
     let mut out = Vec::with_capacity(cyc.len());
     out.extend_from_slice(&cyc[min..]);
     out.extend_from_slice(&cyc[..min]);

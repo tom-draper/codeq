@@ -33,15 +33,27 @@ impl Repo {
                 .canonicalize()
                 .map_err(|e| anyhow!("cannot resolve {}: {e}", start.display()))?;
             let is_git = git_toplevel(&root).is_some_and(|t| t == root);
-            return Ok(Repo { root, is_git, pinned: true });
+            return Ok(Repo {
+                root,
+                is_git,
+                pinned: true,
+            });
         }
         if let Some(root) = git_toplevel(start) {
-            return Ok(Repo { root, is_git: true, pinned: false });
+            return Ok(Repo {
+                root,
+                is_git: true,
+                pinned: false,
+            });
         }
         let root = start
             .canonicalize()
             .map_err(|e| anyhow!("cannot resolve {}: {e}", start.display()))?;
-        Ok(Repo { root, is_git: false, pinned: false })
+        Ok(Repo {
+            root,
+            is_git: false,
+            pinned: false,
+        })
     }
 
     pub fn vcs(&self) -> &'static str {
@@ -116,10 +128,7 @@ impl Repo {
             }
         }
         // Untracked files aren't in the diff; include them so agents see new files.
-        let untracked = git(
-            &self.root,
-            &["ls-files", "--others", "--exclude-standard"],
-        )?;
+        let untracked = git(&self.root, &["ls-files", "--others", "--exclude-standard"])?;
         for line in untracked.lines() {
             let p = line.trim();
             if !p.is_empty() {

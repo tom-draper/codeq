@@ -127,8 +127,7 @@ fn significant(root: Node) -> Node {
             return n;
         }
         let k = n.kind();
-        let transparent =
-            n.id() == root.id() || k == "expression_statement" || k == "ERROR";
+        let transparent = n.id() == root.id() || k == "expression_statement" || k == "ERROR";
         if transparent {
             n = named[0];
         } else {
@@ -142,7 +141,9 @@ fn metavar_name<'a>(pat: Node, psrc: &'a [u8]) -> Option<&'a str> {
     if pat.named_child_count() != 0 {
         return None; // metavars are leaf identifiers, never an ancestor
     }
-    pat.utf8_text(psrc).ok().and_then(|t| t.strip_prefix(SENTINEL))
+    pat.utf8_text(psrc)
+        .ok()
+        .and_then(|t| t.strip_prefix(SENTINEL))
 }
 
 /// If `pat` is a variadic metavariable — a `$$$` leaf, or one wrapped in a
@@ -153,7 +154,12 @@ fn variadic_name<'a>(pat: Node, psrc: &'a [u8]) -> Option<&'a str> {
     let mut n = pat;
     loop {
         match n.named_child_count() {
-            0 => return n.utf8_text(psrc).ok().and_then(|t| t.strip_prefix(VARIADIC)),
+            0 => {
+                return n
+                    .utf8_text(psrc)
+                    .ok()
+                    .and_then(|t| t.strip_prefix(VARIADIC))
+            }
             1 => n = n.named_child(0).unwrap(),
             _ => return None,
         }
@@ -310,15 +316,17 @@ where
     // exit 0, which reads as "no such code exists" rather than "your pattern is
     // wrong". Requiring the chosen node to span the whole pattern separates the
     // two, since recovery is exactly what drops part of the input.
-    let covered = std::str::from_utf8(&psrc[pat_node.start_byte()..pat_node.end_byte()])
-        .unwrap_or_default();
+    let covered =
+        std::str::from_utf8(&psrc[pat_node.start_byte()..pat_node.end_byte()]).unwrap_or_default();
     if covered.trim() != substituted.trim() {
         return Err(anyhow!(
             "pattern did not parse as valid {lang_name}; write it as a complete construct"
         ));
     }
     if metavar_name(pat_node, psrc).is_some() || variadic_name(pat_node, psrc).is_some() {
-        return Err(anyhow!("pattern is a bare metavariable — it would match everything"));
+        return Err(anyhow!(
+            "pattern is a bare metavariable — it would match everything"
+        ));
     }
     let pat_kind = pat_node.kind_id();
 
@@ -395,8 +403,8 @@ pub struct TreeNode {
 /// nodes, and `$$$` covers the rest, so listing every `(` and `,` would bury the
 /// kinds a pattern is actually written from.
 pub fn explain(language: &str, src: &str, line: usize) -> Result<Vec<TreeNode>> {
-    let lang = ts_language(language)
-        .ok_or_else(|| anyhow!("no grammar for language '{language}'"))?;
+    let lang =
+        ts_language(language).ok_or_else(|| anyhow!("no grammar for language '{language}'"))?;
     let mut parser = Parser::new();
     parser.set_language(&lang)?;
     let tree = parser

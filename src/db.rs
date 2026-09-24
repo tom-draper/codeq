@@ -108,8 +108,7 @@ impl Db {
     /// Open (creating if needed) the index for `repo_root`.
     pub fn open(repo_root: &Path) -> Result<Db> {
         let dir = repo_root.join(".codeq");
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("creating {}", dir.display()))?;
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         // Make git ignore our whole index dir, so it never shows up as untracked
         // (which would also destabilise the freshness token).
         let gitignore = dir.join(".gitignore");
@@ -117,8 +116,8 @@ impl Db {
             let _ = std::fs::write(&gitignore, "*\n");
         }
         let path = dir.join("index.db");
-        let conn = Connection::open(&path)
-            .with_context(|| format!("opening {}", path.display()))?;
+        let conn =
+            Connection::open(&path).with_context(|| format!("opening {}", path.display()))?;
 
         // Must come first: without it SQLite gives up the instant it meets a
         // lock, and every pragma below can contend. Agents run codeq
@@ -301,7 +300,9 @@ impl Db {
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN signature TEXT", []);
-        let _ = self.conn.execute("ALTER TABLE facts ADD COLUMN doc TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE facts ADD COLUMN doc TEXT", []);
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN visibility TEXT", []);
@@ -318,7 +319,9 @@ impl Db {
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN owner TEXT", []);
-        let _ = self.conn.execute("ALTER TABLE facts ADD COLUMN shape TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE facts ADD COLUMN shape TEXT", []);
         let _ = self
             .conn
             .execute("ALTER TABLE facts ADD COLUMN shape_nodes INTEGER", []);

@@ -57,9 +57,18 @@ pub(crate) struct FileCount {
 #[derive(Serialize)]
 #[serde(untagged)]
 pub(crate) enum SearchData {
-    Matches { matches: Vec<Hit>, truncated: bool },
-    Files { files: Vec<String>, truncated: bool },
-    Counts { counts: Vec<FileCount>, truncated: bool },
+    Matches {
+        matches: Vec<Hit>,
+        truncated: bool,
+    },
+    Files {
+        files: Vec<String>,
+        truncated: bool,
+    },
+    Counts {
+        counts: Vec<FileCount>,
+        truncated: bool,
+    },
 }
 
 impl SearchData {
@@ -116,7 +125,10 @@ impl InFilter {
     /// True for the `--in` filters, which are positive claims about syntax that
     /// cannot be made without cached spans.
     fn requires_spans(self) -> bool {
-        matches!(self, InFilter::Code | InFilter::Comments | InFilter::Strings)
+        matches!(
+            self,
+            InFilter::Code | InFilter::Comments | InFilter::Strings
+        )
     }
 }
 
@@ -189,7 +201,14 @@ pub(crate) struct ScanOpts {
 /// real occurrence that `rg -w` finds. Getting the default backwards cost the
 /// superset guarantee in thirteen places across five languages.
 const DOLLAR_BINDS: &[&str] = &[
-    "javascript", "typescript", "tsx", "svelte", "vue", "java", "kotlin", "scala",
+    "javascript",
+    "typescript",
+    "tsx",
+    "svelte",
+    "vue",
+    "java",
+    "kotlin",
+    "scala",
 ];
 
 /// A file codeq assigned no language is punctuation-agnostic: it has no lexer to
@@ -220,7 +239,10 @@ fn char_at(bytes: &[u8], at: usize) -> Option<char> {
         b if b >> 4 == 0b1110 => 3,
         _ => 4,
     };
-    std::str::from_utf8(bytes.get(at..at + len)?).ok()?.chars().next()
+    std::str::from_utf8(bytes.get(at..at + len)?)
+        .ok()?
+        .chars()
+        .next()
 }
 
 /// The char ending immediately before `at`. The buffer is always a `&str`'s
@@ -366,26 +388,22 @@ fn line_starts_of(text: &str) -> Vec<usize> {
 /// The text of line `idx` (0-based), trailing whitespace trimmed and capped.
 fn line_text(text: &str, line_starts: &[usize], idx: usize) -> String {
     let start = line_starts[idx];
-    let end = line_starts.get(idx + 1).map(|&s| s - 1).unwrap_or(text.len());
+    let end = line_starts
+        .get(idx + 1)
+        .map(|&s| s - 1)
+        .unwrap_or(text.len());
     cap_str(text[start..end.min(text.len())].trim_end(), MAX_LINE)
 }
 
 /// Context lines for the indices in `range` that exist.
-fn context_lines(
-    text: &str,
-    line_starts: &[usize],
-    range: std::ops::Range<usize>,
-) -> Vec<String> {
+fn context_lines(text: &str, line_starts: &[usize], range: std::ops::Range<usize>) -> Vec<String> {
     range
         .filter(|&i| i < line_starts.len())
         .map(|i| line_text(text, line_starts, i))
         .collect()
 }
 
-pub(crate) fn load_file_defs(
-    stmt: &mut rusqlite::Statement,
-    path: &str,
-) -> Result<Vec<FileDef>> {
+pub(crate) fn load_file_defs(stmt: &mut rusqlite::Statement, path: &str) -> Result<Vec<FileDef>> {
     let defs = stmt
         .query_map([path], |r| {
             Ok(FileDef {
@@ -431,7 +449,11 @@ pub(crate) fn run_search(
     path_accept: Option<&dyn Fn(&str) -> bool>,
     opts: &ScanOpts,
 ) -> Result<SearchData> {
-    let cap = if opts.limit == 0 { usize::MAX } else { opts.limit };
+    let cap = if opts.limit == 0 {
+        usize::MAX
+    } else {
+        opts.limit
+    };
     let filtering = opts.in_filter != InFilter::Any;
 
     let patterns = like.filter(|l| !l.is_empty());
@@ -486,8 +508,7 @@ pub(crate) fn run_search(
         // string, and only the spans tell the two apart. Narrow on purpose —
         // word-bounded queries over JavaScript/TypeScript/Java-family files —
         // so an ordinary search pays nothing for it.
-        let needs_spans_for_dollar =
-            opts.identifier_boundary && dollar_binds(lang.as_deref());
+        let needs_spans_for_dollar = opts.identifier_boundary && dollar_binds(lang.as_deref());
         // Load cached spans if filtering; skip files in a language we can't parse.
         let spans = if filtering || needs_spans_for_dollar {
             if !has_spans(lang.as_deref().unwrap_or("")) {
@@ -514,8 +535,7 @@ pub(crate) fn run_search(
         } else {
             None
         };
-        let mut load_defs =
-            |path: &str| load_file_defs(&mut def_stmt, path).unwrap_or_default();
+        let mut load_defs = |path: &str| load_file_defs(&mut def_stmt, path).unwrap_or_default();
         if scan_doc(
             rel,
             lang.as_deref(),
@@ -809,7 +829,11 @@ pub(crate) fn scan_stdin(
         }
     };
 
-    let cap = if opts.limit == 0 { usize::MAX } else { opts.limit };
+    let cap = if opts.limit == 0 {
+        usize::MAX
+    } else {
+        opts.limit
+    };
     let calls = if opts.call_only || opts.qualifier.is_some() {
         language.and_then(|l| calls_in(l, &body))
     } else {

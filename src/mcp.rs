@@ -77,7 +77,10 @@ fn initialize_result(params: Option<&Value>) -> Value {
 fn call_tool(params: Option<&Value>, exe: &Path, cwd: &Path) -> Value {
     let params = params.cloned().unwrap_or_else(|| json!({}));
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
 
     let cli_args = match build_args(name, &args) {
         Some(a) => a,
@@ -86,7 +89,12 @@ fn call_tool(params: Option<&Value>, exe: &Path, cwd: &Path) -> Value {
 
     // MCP is a programmatic consumer, so request structured JSON (the CLI now
     // defaults to compact text for direct/agent use).
-    match Command::new(exe).arg("--json").args(&cli_args).current_dir(cwd).output() {
+    match Command::new(exe)
+        .arg("--json")
+        .args(&cli_args)
+        .current_dir(cwd)
+        .output()
+    {
         Ok(o) if o.status.success() => {
             json!({ "content": [{ "type": "text", "text": String::from_utf8_lossy(&o.stdout) }] })
         }

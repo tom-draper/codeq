@@ -183,19 +183,36 @@ fn apply_skill(agent: &'static str, home: &Path, dest: &Path, opts: &Options) ->
     }
 
     if linked {
-        return done("already-current", Some("symlinked to a checkout — left alone".into()));
+        return done(
+            "already-current",
+            Some("symlinked to a checkout — left alone".into()),
+        );
     }
     let current = std::fs::read_to_string(dest).ok();
     if current.as_deref() == Some(SKILL) {
         return done("already-current", None);
     }
-    let action = if current.is_some() { "updated" } else { "installed" };
+    let action = if current.is_some() {
+        "updated"
+    } else {
+        "installed"
+    };
     if opts.dry_run {
-        return done(if current.is_some() { "would-update" } else { "would-install" }, None);
+        return done(
+            if current.is_some() {
+                "would-update"
+            } else {
+                "would-install"
+            },
+            None,
+        );
     }
     if let Some(dir) = dest.parent() {
         if let Err(e) = std::fs::create_dir_all(dir) {
-            return done("skipped", Some(format!("cannot create {}: {e}", dir.display())));
+            return done(
+                "skipped",
+                Some(format!("cannot create {}: {e}", dir.display())),
+            );
         }
     }
     match std::fs::write(dest, SKILL) {
@@ -232,9 +249,7 @@ fn apply_one(agent: &Agent, opts: &Options) -> Action {
     let Some(obj) = root.as_object_mut() else {
         return done("skipped", Some("config root is not a JSON object".into()));
     };
-    let servers = obj
-        .entry("mcpServers")
-        .or_insert_with(|| json!({}));
+    let servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
     let Some(servers) = servers.as_object_mut() else {
         return done("skipped", Some("`mcpServers` is not a JSON object".into()));
     };
@@ -261,7 +276,14 @@ fn apply_one(agent: &Agent, opts: &Options) -> Action {
     }
     let action = if present { "updated" } else { "installed" };
     if opts.dry_run {
-        return done(if present { "would-update" } else { "would-install" }, None);
+        return done(
+            if present {
+                "would-update"
+            } else {
+                "would-install"
+            },
+            None,
+        );
     }
     servers.insert("codeq".into(), entry);
     match write_json(&agent.config, &root) {
@@ -330,7 +352,10 @@ mod tests {
 
         // Re-running is idempotent.
         let acts = apply(&home, &opts("/usr/bin/codeq")).unwrap();
-        assert_eq!(acts.iter().find(|a| a.agent == "cursor").unwrap().action, "already-current");
+        assert_eq!(
+            acts.iter().find(|a| a.agent == "cursor").unwrap().action,
+            "already-current"
+        );
 
         std::fs::remove_dir_all(&home).ok();
     }
@@ -341,7 +366,10 @@ mod tests {
         // Nothing installed: every agent is skipped, nothing is written.
         let acts = apply(&home, &opts("/usr/bin/codeq")).unwrap();
         assert!(acts.iter().all(|a| a.action == "skipped"), "{acts:?}");
-        assert!(!home.join(".cursor/mcp.json").exists(), "must not create config for undetected agent");
+        assert!(
+            !home.join(".cursor/mcp.json").exists(),
+            "must not create config for undetected agent"
+        );
 
         // Target claude-code explicitly (creates its config), then uninstall.
         std::fs::write(home.join(".claude.json"), "{}").unwrap();
@@ -349,15 +377,20 @@ mod tests {
         o.only = Some("claude-code".into());
         apply(&home, &o).unwrap();
         let cfg: Value =
-            serde_json::from_str(&std::fs::read_to_string(home.join(".claude.json")).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(home.join(".claude.json")).unwrap())
+                .unwrap();
         assert_eq!(cfg["mcpServers"]["codeq"]["command"], "/usr/bin/codeq");
 
         o.uninstall = true;
         let acts = apply(&home, &o).unwrap();
         assert_eq!(acts[0].action, "removed");
         let cfg: Value =
-            serde_json::from_str(&std::fs::read_to_string(home.join(".claude.json")).unwrap()).unwrap();
-        assert!(cfg["mcpServers"].get("codeq").is_none(), "codeq should be gone");
+            serde_json::from_str(&std::fs::read_to_string(home.join(".claude.json")).unwrap())
+                .unwrap();
+        assert!(
+            cfg["mcpServers"].get("codeq").is_none(),
+            "codeq should be gone"
+        );
 
         std::fs::remove_dir_all(&home).ok();
     }
@@ -377,12 +410,18 @@ mod tests {
 
         // Re-running changes nothing.
         let acts = apply(&home, &o).unwrap();
-        assert_eq!(acts.iter().find(|a| a.what == "skill").unwrap().action, "already-current");
+        assert_eq!(
+            acts.iter().find(|a| a.what == "skill").unwrap().action,
+            "already-current"
+        );
 
         // An out-of-date copy is refreshed, so the guide tracks the binary.
         std::fs::write(&dest, "stale").unwrap();
         let acts = apply(&home, &o).unwrap();
-        assert_eq!(acts.iter().find(|a| a.what == "skill").unwrap().action, "updated");
+        assert_eq!(
+            acts.iter().find(|a| a.what == "skill").unwrap().action,
+            "updated"
+        );
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), SKILL);
 
         // --no-skill leaves it out of the run entirely.
@@ -411,7 +450,10 @@ mod tests {
         let acts = apply(&home, &o).unwrap();
         let skill = acts.iter().find(|a| a.what == "skill").unwrap();
         assert_eq!(skill.action, "already-current", "{skill:?}");
-        assert!(skill.note.as_deref().is_some_and(|n| n.contains("symlink")), "{skill:?}");
+        assert!(
+            skill.note.as_deref().is_some_and(|n| n.contains("symlink")),
+            "{skill:?}"
+        );
         assert_eq!(
             std::fs::read_to_string(checkout.join("SKILL.md")).unwrap(),
             "my working copy",
@@ -420,7 +462,10 @@ mod tests {
 
         o.uninstall = true;
         let acts = apply(&home, &o).unwrap();
-        assert_eq!(acts.iter().find(|a| a.what == "skill").unwrap().action, "skipped");
+        assert_eq!(
+            acts.iter().find(|a| a.what == "skill").unwrap().action,
+            "skipped"
+        );
         assert!(
             checkout.join("SKILL.md").exists(),
             "uninstall deleted the checkout's file through the symlink"
@@ -438,10 +483,14 @@ mod tests {
         let mut o = opts("/usr/bin/codeq");
         o.dry_run = true;
         let acts = apply(&home, &o).unwrap();
-        assert_eq!(acts.iter().find(|a| a.agent == "gemini").unwrap().action, "would-install");
-        let cfg: Value =
-            serde_json::from_str(&std::fs::read_to_string(home.join(".gemini/settings.json")).unwrap())
-                .unwrap();
+        assert_eq!(
+            acts.iter().find(|a| a.agent == "gemini").unwrap().action,
+            "would-install"
+        );
+        let cfg: Value = serde_json::from_str(
+            &std::fs::read_to_string(home.join(".gemini/settings.json")).unwrap(),
+        )
+        .unwrap();
         assert!(cfg.get("mcpServers").is_none(), "dry-run must not write");
 
         std::fs::remove_dir_all(&home).ok();

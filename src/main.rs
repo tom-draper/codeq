@@ -792,8 +792,7 @@ enum Command {
         totals: bool,
     },
     /// Describe what codeq can do: commands, languages, fact kinds, schema.
-    Capabilities {
-    },
+    Capabilities {},
     /// Run as an MCP server over stdio (for agent hosts to call codeq natively).
     Mcp,
     /// Set codeq up for detected AI coding agents (Claude Code, Cursor, Windsurf,
@@ -839,7 +838,11 @@ fn main() -> ExitCode {
     let cwd = match &cli.root {
         Some(r) => {
             commands::pin_root();
-            if r.is_absolute() { r.clone() } else { cwd.join(r) }
+            if r.is_absolute() {
+                r.clone()
+            } else {
+                cwd.join(r)
+            }
         }
         None => cwd,
     };
@@ -859,13 +862,7 @@ fn main() -> ExitCode {
             pattern,
             language,
             limit,
-        } => commands::cmd_files(
-            &cwd,
-            pattern.as_deref(),
-            language.as_deref(),
-            limit,
-            out,
-        ),
+        } => commands::cmd_files(&cwd, pattern.as_deref(), language.as_deref(), limit, out),
         Command::Changed {
             compare_to,
             symbols,
@@ -910,10 +907,7 @@ fn main() -> ExitCode {
             limit,
             out,
         ),
-        Command::Outline {
-            file,
-            docs,
-        } => commands::cmd_outline(&cwd, &file, docs, out),
+        Command::Outline { file, docs } => commands::cmd_outline(&cwd, &file, docs, out),
         Command::Definitions {
             symbol,
             path,
@@ -924,16 +918,14 @@ fn main() -> ExitCode {
             kind,
             compare_to,
             limit,
-        } => {
-            commands::cmd_api(
-                &cwd,
-                path.as_deref(),
-                kind.as_deref(),
-                compare_to.as_deref(),
-                limit,
-                out,
-            )
-        }
+        } => commands::cmd_api(
+            &cwd,
+            path.as_deref(),
+            kind.as_deref(),
+            compare_to.as_deref(),
+            limit,
+            out,
+        ),
         Command::Callers {
             name,
             path,
@@ -955,19 +947,41 @@ fn main() -> ExitCode {
             limit,
             out,
         ),
-        Command::Callees { name, path, depth, resolved, examples, limit } => {
-            commands::cmd_callees(&cwd, &name, path.as_deref(), depth, resolved, examples, limit, out)
-        }
+        Command::Callees {
+            name,
+            path,
+            depth,
+            resolved,
+            examples,
+            limit,
+        } => commands::cmd_callees(
+            &cwd,
+            &name,
+            path.as_deref(),
+            depth,
+            resolved,
+            examples,
+            limit,
+            out,
+        ),
         Command::Callpath {
             from,
             to,
             max_depth,
             path,
         } => commands::cmd_callpath(&cwd, &from, &to, max_depth, path.as_deref(), out),
-        Command::About { name, path, resolved } => {
-            commands::cmd_about(&cwd, &name, path.as_deref(), resolved, out)
-        }
-        Command::Explore { name, at, path, resolved, max_tokens } => commands::cmd_explore(
+        Command::About {
+            name,
+            path,
+            resolved,
+        } => commands::cmd_about(&cwd, &name, path.as_deref(), resolved, out),
+        Command::Explore {
+            name,
+            at,
+            path,
+            resolved,
+            max_tokens,
+        } => commands::cmd_explore(
             &cwd,
             name.as_deref(),
             at.as_deref(),
@@ -1034,13 +1048,11 @@ fn main() -> ExitCode {
             limit,
             out,
         ),
-        Command::Entrypoints { path, include_tests, limit } => commands::cmd_entrypoints(
-            &cwd,
-            path.as_deref(),
+        Command::Entrypoints {
+            path,
             include_tests,
             limit,
-            out,
-        ),
+        } => commands::cmd_entrypoints(&cwd, path.as_deref(), include_tests, limit, out),
         Command::Tree {
             path,
             language,
@@ -1075,11 +1087,9 @@ fn main() -> ExitCode {
             limit,
             out,
         ),
-        Command::Tests {
-            name,
-            path,
-            limit,
-        } => commands::cmd_tests(&cwd, &name, path.as_deref(), limit, out),
+        Command::Tests { name, path, limit } => {
+            commands::cmd_tests(&cwd, &name, path.as_deref(), limit, out)
+        }
         Command::At { location } => commands::cmd_at(&cwd, &location, out),
         Command::Read {
             file,
@@ -1087,15 +1097,19 @@ fn main() -> ExitCode {
             symbol,
             full,
             raw,
-        } => commands::cmd_read(&cwd, &file, lines.as_deref(), symbol.as_deref(), full, raw, out),
-        Command::Imports {
-            path,
-            limit,
-        } => commands::cmd_imports(&cwd, path.as_deref(), limit, out),
-        Command::Importers {
-            query,
-            limit,
-        } => commands::cmd_importers(&cwd, &query, limit, out),
+        } => commands::cmd_read(
+            &cwd,
+            &file,
+            lines.as_deref(),
+            symbol.as_deref(),
+            full,
+            raw,
+            out,
+        ),
+        Command::Imports { path, limit } => {
+            commands::cmd_imports(&cwd, path.as_deref(), limit, out)
+        }
+        Command::Importers { query, limit } => commands::cmd_importers(&cwd, &query, limit, out),
         Command::Deps {
             file,
             depth,
@@ -1192,7 +1206,13 @@ fn main() -> ExitCode {
         Command::Untested { path, kind, limit } => {
             commands::cmd_untested(&cwd, path.as_deref(), kind.as_deref(), limit, out)
         }
-        Command::Graph { relation, path, language, mermaid, limit } => commands::cmd_graph(
+        Command::Graph {
+            relation,
+            path,
+            language,
+            mermaid,
+            limit,
+        } => commands::cmd_graph(
             &cwd,
             relation.as_deref(),
             path.as_deref(),
@@ -1206,8 +1226,11 @@ fn main() -> ExitCode {
             // Ask clap what subcommands exist instead of keeping a second list in
             // sync by hand — the hand-written one had silently gone stale.
             let cmd = <Cli as clap::CommandFactory>::command();
-            let mut names: Vec<&str> =
-                cmd.get_subcommands().map(|c| c.get_name()).filter(|n| *n != "help").collect();
+            let mut names: Vec<&str> = cmd
+                .get_subcommands()
+                .map(|c| c.get_name())
+                .filter(|n| *n != "help")
+                .collect();
             names.sort_unstable();
             commands::cmd_capabilities(&names, out)
         }

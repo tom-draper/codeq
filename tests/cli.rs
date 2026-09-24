@@ -154,7 +154,11 @@ fn default_output_is_lean_when_nothing_noteworthy() {
     // `rows` is contract, not noise: it names where the row array lives, which is
     // the alternative to a consumer knowing thirty commands' shapes in advance.
     // What "lean" pins is the absence of the repo/index meta blocks.
-    assert_eq!(keys, ["data", "rows", "schema"], "clean call should carry no meta");
+    assert_eq!(
+        keys,
+        ["data", "rows", "schema"],
+        "clean call should carry no meta"
+    );
     assert_eq!(v["schema"], "codeq.result.v2");
 }
 
@@ -196,9 +200,18 @@ fn fields_projection_keeps_only_requested_columns() {
     f.write("a.rs", "fn one() {}\nfn two() {}\n");
     let v = f.run(&["symbols", "--fields", "name,path"]);
     for row in v["data"].as_array().unwrap() {
-        let mut keys: Vec<&str> = row.as_object().unwrap().keys().map(|s| s.as_str()).collect();
+        let mut keys: Vec<&str> = row
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
         keys.sort();
-        assert_eq!(keys, ["name", "path"], "projection should drop other fields");
+        assert_eq!(
+            keys,
+            ["name", "path"],
+            "projection should drop other fields"
+        );
     }
 }
 
@@ -234,8 +247,14 @@ fn capabilities_describes_the_tool() {
 
     // Default output is text like every other command, not a raw JSON dump.
     let text = String::from_utf8_lossy(&f.raw(&["capabilities"]).stdout).into_owned();
-    assert!(!text.contains("\"schema\""), "capabilities text mode dumped JSON: {text}");
-    assert!(text.contains("# commands"), "capabilities text missing sections: {text}");
+    assert!(
+        !text.contains("\"schema\""),
+        "capabilities text mode dumped JSON: {text}"
+    );
+    assert!(
+        text.contains("# commands"),
+        "capabilities text missing sections: {text}"
+    );
 }
 
 #[test]
@@ -262,11 +281,21 @@ fn capabilities_lists_every_command_the_cli_accepts() {
         .map(str::to_string)
         .collect();
 
-    assert!(accepted.len() > 20, "help parsing found too few commands: {accepted:?}");
+    assert!(
+        accepted.len() > 20,
+        "help parsing found too few commands: {accepted:?}"
+    );
     for name in &accepted {
-        assert!(listed.contains(name), "capabilities omits `{name}`: {listed:?}");
+        assert!(
+            listed.contains(name),
+            "capabilities omits `{name}`: {listed:?}"
+        );
     }
-    assert_eq!(listed.len(), accepted.len(), "capabilities lists commands the CLI rejects");
+    assert_eq!(
+        listed.len(),
+        accepted.len(),
+        "capabilities lists commands the CLI rejects"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +440,13 @@ fn reindex_counts_only_content_changes() {
 fn deleting_a_file_cascades_to_its_facts() {
     let f = Fixture::new();
     f.write("a.rs", "fn alpha() {}\n");
-    assert_eq!(f.run(&["definitions", "alpha"])["data"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        f.run(&["definitions", "alpha"])["data"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 
     f.remove("a.rs");
     let defs = f.run(&["definitions", "alpha"]);
@@ -447,7 +482,11 @@ fn extracts_rust_symbols_and_imports() {
     // module string is `crate::db::Store`, never the path, so `importers`
     // reduces `src/db.rs` to its stem `db` and still matches.
     let by_path = field_set(&f.run(&["importers", "src/db.rs"]), "path");
-    assert_eq!(by_path, vec!["lib.rs".to_string()], "path query should resolve via stem");
+    assert_eq!(
+        by_path,
+        vec!["lib.rs".to_string()],
+        "path query should resolve via stem"
+    );
 }
 
 #[test]
@@ -469,11 +508,26 @@ fn rust_parser_recovery_keeps_definitions_after_a_valid_trailing_closure_comma()
          pub fn after() {}\n",
     );
     let names = field_set(&f.run(&["definitions", "after"]), "name");
-    assert_eq!(names, ["after"], "valid Rust after parser recovery disappeared: {names:?}");
+    assert_eq!(
+        names,
+        ["after"],
+        "valid Rust after parser recovery disappeared: {names:?}"
+    );
     let files = f.run(&["files"]);
-    let row = files["data"].as_array().unwrap().iter().find(|r| r["path"] == "lib.rs").unwrap();
-    assert_eq!(row["parse_errors"], 0, "repaired parse still looks broken: {row}");
-    assert_eq!(row["parse_recovered"], true, "recovery was not surfaced: {row}");
+    let row = files["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "lib.rs")
+        .unwrap();
+    assert_eq!(
+        row["parse_errors"], 0,
+        "repaired parse still looks broken: {row}"
+    );
+    assert_eq!(
+        row["parse_recovered"], true,
+        "recovery was not surfaced: {row}"
+    );
 }
 
 #[test]
@@ -489,8 +543,10 @@ fn ruby_require_is_an_import() {
     let mods = field_set(&f.run(&["imports"]), "module");
     assert!(mods.contains(&"set".to_string()), "{mods:?}");
     assert!(mods.contains(&"./foo".to_string()), "{mods:?}");
-    assert!(!mods.iter().any(|m| m == "nope" || m == "no"),
-            "a non-require string leaked as an import: {mods:?}");
+    assert!(
+        !mods.iter().any(|m| m == "nope" || m == "no"),
+        "a non-require string leaked as an import: {mods:?}"
+    );
     // Definitions must still be extracted alongside imports.
     assert!(field_set(&f.run(&["symbols"]), "name").contains(&"m".to_string()));
 }
@@ -498,7 +554,10 @@ fn ruby_require_is_an_import() {
 #[test]
 fn definitions_returns_precise_ranges() {
     let f = Fixture::new();
-    f.write("m.py", "def first():\n    pass\n\ndef target():\n    return 1\n");
+    f.write(
+        "m.py",
+        "def first():\n    pass\n\ndef target():\n    return 1\n",
+    );
     let v = f.run(&["definitions", "target"]);
     let rows = v["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
@@ -524,7 +583,10 @@ fn changed_reports_modified_and_untracked() {
     let paths = field_set(&f.run(&["changed", "--compare-to", "HEAD"]), "path");
     assert!(paths.contains(&"a.rs".to_string()), "{paths:?}");
     assert!(paths.contains(&"c.rs".to_string()), "{paths:?}");
-    assert!(!paths.contains(&"b.rs".to_string()), "unchanged b leaked: {paths:?}");
+    assert!(
+        !paths.contains(&"b.rs".to_string()),
+        "unchanged b leaked: {paths:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -547,7 +609,9 @@ fn typescript_symbols_and_imports() {
     let syms = f.run(&["symbols"]);
     let by_kind = |k: &str| -> Vec<String> {
         syms["data"]
-            .as_array().unwrap().iter()
+            .as_array()
+            .unwrap()
+            .iter()
             .filter(|r| r["kind"] == k)
             .map(|r| r["name"].as_str().unwrap().to_string())
             .collect()
@@ -556,11 +620,20 @@ fn typescript_symbols_and_imports() {
     assert!(by_kind("type").contains(&"UserId".to_string()));
     assert!(by_kind("enum").contains(&"Role".to_string()));
     assert!(by_kind("class").contains(&"Service".to_string()));
-    assert!(by_kind("method").contains(&"find".to_string()), "method under class");
-    assert!(by_kind("function").contains(&"auth".to_string()), "arrow-const fn");
+    assert!(
+        by_kind("method").contains(&"find".to_string()),
+        "method under class"
+    );
+    assert!(
+        by_kind("function").contains(&"auth".to_string()),
+        "arrow-const fn"
+    );
 
     let mods = field_set(&f.run(&["imports"]), "module");
-    assert!(mods.contains(&"./client".to_string()), "quotes stripped: {mods:?}");
+    assert!(
+        mods.contains(&"./client".to_string()),
+        "quotes stripped: {mods:?}"
+    );
 }
 
 #[test]
@@ -577,7 +650,9 @@ fn javascript_symbols_and_in_filter() {
     // 'process' appears in a comment and a string, never as code.
     let count = |kind: &str| -> i64 {
         f.run(&["search", "process", "--in", kind, "-c"])["data"]["counts"]
-            .as_array().unwrap().iter()
+            .as_array()
+            .unwrap()
+            .iter()
             .map(|c| c["count"].as_i64().unwrap())
             .sum()
     };
@@ -601,7 +676,9 @@ fn go_symbols_and_imports() {
     let syms = f.run(&["symbols"]);
     let by_kind = |k: &str| -> Vec<String> {
         syms["data"]
-            .as_array().unwrap().iter()
+            .as_array()
+            .unwrap()
+            .iter()
             .filter(|r| r["kind"] == k)
             .map(|r| r["name"].as_str().unwrap().to_string())
             .collect()
@@ -612,7 +689,10 @@ fn go_symbols_and_imports() {
     assert!(by_kind("method").contains(&"Start".to_string()));
 
     let mods = field_set(&f.run(&["imports"]), "module");
-    assert!(mods.contains(&"fmt".to_string()), "go import quotes stripped: {mods:?}");
+    assert!(
+        mods.contains(&"fmt".to_string()),
+        "go import quotes stripped: {mods:?}"
+    );
 }
 
 #[test]
@@ -627,9 +707,13 @@ fn java_symbols_and_imports() {
     );
     let syms = f.run(&["symbols"]);
     let by_kind = |k: &str| -> Vec<String> {
-        syms["data"].as_array().unwrap().iter()
+        syms["data"]
+            .as_array()
+            .unwrap()
+            .iter()
             .filter(|r| r["kind"] == k)
-            .map(|r| r["name"].as_str().unwrap().to_string()).collect()
+            .map(|r| r["name"].as_str().unwrap().to_string())
+            .collect()
     };
     assert!(by_kind("interface").contains(&"H".to_string()));
     assert!(by_kind("class").contains(&"S".to_string()));
@@ -640,14 +724,22 @@ fn java_symbols_and_imports() {
 #[test]
 fn ruby_symbols_and_nesting() {
     let f = Fixture::new();
-    f.write("s.rb", "module A\n  class B\n    def m\n    end\n  end\nend\n\ndef top\nend\n");
+    f.write(
+        "s.rb",
+        "module A\n  class B\n    def m\n    end\n  end\nend\n\ndef top\nend\n",
+    );
     let syms = field_set(&f.run(&["symbols"]), "name");
     for want in ["A", "B", "m", "top"] {
         assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
     }
     // Method m nests under class B under module A.
     let out = f.run(&["outline", "s.rb"]);
-    let m = out["data"].as_array().unwrap().iter().find(|r| r["name"] == "m").unwrap();
+    let m = out["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "m")
+        .unwrap();
     assert_eq!(m["depth"], 2);
 }
 
@@ -661,10 +753,19 @@ fn c_symbols_and_includes() {
     let syms = f.run(&["symbols"]);
     let names = field_set(&syms, "name");
     assert!(names.contains(&"S".to_string()) && names.contains(&"f".to_string()));
-    assert!(names.contains(&"g".to_string()), "pointer-returning fn: {names:?}");
+    assert!(
+        names.contains(&"g".to_string()),
+        "pointer-returning fn: {names:?}"
+    );
     let mods = field_set(&f.run(&["imports"]), "module");
-    assert!(mods.contains(&"stdio.h".to_string()), "angle include stripped: {mods:?}");
-    assert!(mods.contains(&"local.h".to_string()), "quoted include stripped: {mods:?}");
+    assert!(
+        mods.contains(&"stdio.h".to_string()),
+        "angle include stripped: {mods:?}"
+    );
+    assert!(
+        mods.contains(&"local.h".to_string()),
+        "quoted include stripped: {mods:?}"
+    );
 }
 
 #[test]
@@ -676,7 +777,10 @@ fn cpp_symbols_and_includes() {
     );
     let names = field_set(&f.run(&["symbols"]), "name");
     for want in ["Widget", "app", "helper", "Widget::render"] {
-        assert!(names.contains(&want.to_string()), "missing {want}: {names:?}");
+        assert!(
+            names.contains(&want.to_string()),
+            "missing {want}: {names:?}"
+        );
     }
     assert!(field_set(&f.run(&["imports"]), "module").contains(&"vector".to_string()));
 }
@@ -690,9 +794,13 @@ fn csharp_symbols_and_usings() {
     );
     let syms = f.run(&["symbols"]);
     let by_kind = |k: &str| -> Vec<String> {
-        syms["data"].as_array().unwrap().iter()
+        syms["data"]
+            .as_array()
+            .unwrap()
+            .iter()
             .filter(|r| r["kind"] == k)
-            .map(|r| r["name"].as_str().unwrap().to_string()).collect()
+            .map(|r| r["name"].as_str().unwrap().to_string())
+            .collect()
     };
     assert!(by_kind("interface").contains(&"IH".to_string()));
     assert!(by_kind("class").contains(&"S".to_string()));
@@ -709,7 +817,10 @@ fn php_symbols_and_uses() {
     );
     let names = field_set(&f.run(&["symbols"]), "name");
     for want in ["H", "S", "h", "top"] {
-        assert!(names.contains(&want.to_string()), "missing {want}: {names:?}");
+        assert!(
+            names.contains(&want.to_string()),
+            "missing {want}: {names:?}"
+        );
     }
     assert!(field_set(&f.run(&["imports"]), "module").contains(&"App\\Models\\User".to_string()));
 }
@@ -734,7 +845,10 @@ fn definitions_include_signature_and_rust_doc() {
 #[test]
 fn python_docstring_and_signature_extracted() {
     let f = Fixture::new();
-    f.write("m.py", "def greet():\n    \"\"\"Say hi.\"\"\"\n    return 1\n");
+    f.write(
+        "m.py",
+        "def greet():\n    \"\"\"Say hi.\"\"\"\n    return 1\n",
+    );
     let v = f.run(&["definitions", "greet"]);
     let r = &v["data"][0];
     assert_eq!(r["signature"], "def greet():");
@@ -752,32 +866,58 @@ fn api_lists_only_public_definitions_rust() {
          pub struct Public;\n",
     );
     let names = field_set(&f.run(&["api", "a.rs"]), "name");
-    assert!(names.contains(&"exported".to_string()), "pub fn missing: {names:?}");
-    assert!(names.contains(&"Public".to_string()), "pub struct missing: {names:?}");
-    assert!(!names.contains(&"internal".to_string()), "private fn leaked: {names:?}");
-    assert!(!names.contains(&"crate_only".to_string()),
-            "pub(crate) is restricted, not public: {names:?}");
+    assert!(
+        names.contains(&"exported".to_string()),
+        "pub fn missing: {names:?}"
+    );
+    assert!(
+        names.contains(&"Public".to_string()),
+        "pub struct missing: {names:?}"
+    );
+    assert!(
+        !names.contains(&"internal".to_string()),
+        "private fn leaked: {names:?}"
+    );
+    assert!(
+        !names.contains(&"crate_only".to_string()),
+        "pub(crate) is restricted, not public: {names:?}"
+    );
 }
 
 #[test]
 fn api_visibility_rules_per_language() {
     // Go: exported by capitalization.
     let g = Fixture::new();
-    g.write("m.go", "package m\nfunc Exported() {}\nfunc unexported() {}\n");
+    g.write(
+        "m.go",
+        "package m\nfunc Exported() {}\nfunc unexported() {}\n",
+    );
     let gn = field_set(&g.run(&["api", "m.go"]), "name");
-    assert!(gn.contains(&"Exported".to_string()) && !gn.contains(&"unexported".to_string()), "{gn:?}");
+    assert!(
+        gn.contains(&"Exported".to_string()) && !gn.contains(&"unexported".to_string()),
+        "{gn:?}"
+    );
 
     // Python: public unless leading underscore.
     let p = Fixture::new();
-    p.write("m.py", "def public():\n    pass\ndef _private():\n    pass\n");
+    p.write(
+        "m.py",
+        "def public():\n    pass\ndef _private():\n    pass\n",
+    );
     let pn = field_set(&p.run(&["api", "m.py"]), "name");
-    assert!(pn.contains(&"public".to_string()) && !pn.contains(&"_private".to_string()), "{pn:?}");
+    assert!(
+        pn.contains(&"public".to_string()) && !pn.contains(&"_private".to_string()),
+        "{pn:?}"
+    );
 
     // JS: exported iff `export`.
     let j = Fixture::new();
     j.write("m.js", "export function shown() {}\nfunction hidden() {}\n");
     let jn = field_set(&j.run(&["api", "m.js"]), "name");
-    assert!(jn.contains(&"shown".to_string()) && !jn.contains(&"hidden".to_string()), "{jn:?}");
+    assert!(
+        jn.contains(&"shown".to_string()) && !jn.contains(&"hidden".to_string()),
+        "{jn:?}"
+    );
 }
 
 #[test]
@@ -787,9 +927,16 @@ fn api_kind_filter_and_signature() {
     // --kind narrows to one kind.
     let v = f.run(&["api", "a.rs", "--kind", "function"]);
     let rows = v["data"].as_array().unwrap();
-    assert_eq!(rows.len(), 1, "kind filter should return only the function: {rows:?}");
+    assert_eq!(
+        rows.len(),
+        1,
+        "kind filter should return only the function: {rows:?}"
+    );
     assert_eq!(rows[0]["name"], "func");
-    assert_eq!(rows[0]["signature"], "pub fn func()", "signature is carried");
+    assert_eq!(
+        rows[0]["signature"], "pub fn func()",
+        "signature is carried"
+    );
 }
 
 #[test]
@@ -798,7 +945,10 @@ fn symbols_signature_is_opt_in() {
     f.write("a.rs", "fn solo() {}\n");
 
     let plain = f.run(&["symbols"]);
-    assert!(plain["data"][0].get("signature").is_none(), "should be off by default");
+    assert!(
+        plain["data"][0].get("signature").is_none(),
+        "should be off by default"
+    );
 
     let with = f.run(&["symbols", "--signatures"]);
     assert_eq!(with["data"][0]["signature"], "fn solo()");
@@ -817,9 +967,7 @@ fn outline_orders_by_position_and_nests() {
     assert_eq!(names, ["C", "m", "f"], "source order");
 
     let depth = |name: &str| {
-        rows.iter()
-            .find(|r| r["name"] == name)
-            .unwrap()["depth"]
+        rows.iter().find(|r| r["name"] == name).unwrap()["depth"]
             .as_u64()
             .unwrap()
     };
@@ -846,7 +994,10 @@ fn references_flags_definition_vs_use_with_enclosing_symbol() {
     assert_eq!(def["definition"], true, "line 1 is the definition site");
 
     let use_site = refs.iter().find(|r| r["line"] == 5).unwrap();
-    assert!(use_site.get("definition").is_none(), "use site is not a definition");
+    assert!(
+        use_site.get("definition").is_none(),
+        "use site is not a definition"
+    );
     assert_eq!(use_site["symbol"], "caller", "use is inside caller");
 }
 
@@ -863,12 +1014,26 @@ fn callers_callees_and_about() {
 
     // callers = distinct code callers, excluding the definition and comments.
     let callers = f.run(&["callers", "helper"]);
-    let syms: Vec<String> = callers["data"].as_array().unwrap().iter()
-        .filter_map(|r| r["name"].as_str().map(String::from)).collect();
-    assert!(syms.contains(&"caller".to_string()) && syms.contains(&"other".to_string()), "{syms:?}");
-    assert!(!syms.contains(&"helper".to_string()), "own definition is not a caller");
+    let syms: Vec<String> = callers["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(String::from))
+        .collect();
+    assert!(
+        syms.contains(&"caller".to_string()) && syms.contains(&"other".to_string()),
+        "{syms:?}"
+    );
+    assert!(
+        !syms.contains(&"helper".to_string()),
+        "own definition is not a caller"
+    );
     // The comment mention must not appear (code-only).
-    assert_eq!(callers["data"].as_array().unwrap().len(), 2, "comment mention leaked");
+    assert_eq!(
+        callers["data"].as_array().unwrap().len(),
+        2,
+        "comment mention leaked"
+    );
 
     // callees = definitions referenced inside the body.
     let callees = field_set(&f.run(&["callees", "caller"]), "name");
@@ -898,7 +1063,10 @@ fn callers_prefer_a_usage_site_over_an_import_as_the_anchor() {
     let rows = v["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0]["path"], "Page.svelte");
-    assert_eq!(rows[0]["line"], 6, "anchor must be <Card />, not the import");
+    assert_eq!(
+        rows[0]["line"], 6,
+        "anchor must be <Card />, not the import"
+    );
 
     // But an import is still a valid last-resort anchor: the default `callers`
     // is a textual superset (`--calls` is the way to narrow it), so a file that
@@ -908,38 +1076,63 @@ fn callers_prefer_a_usage_site_over_an_import_as_the_anchor() {
         "app.js",
         "import { helper } from './lib';\n\nfunction run() {\n  return helper();\n}\n",
     );
-    f.write("shelf.js", "import { helper } from './lib';\nexport const x = 1;\n");
+    f.write(
+        "shelf.js",
+        "import { helper } from './lib';\nexport const x = 1;\n",
+    );
 
     let v = f.run(&["callers", "helper"]);
     let rows = v["data"].as_array().unwrap();
     let paths: Vec<&str> = rows.iter().map(|r| r["path"].as_str().unwrap()).collect();
-    assert!(paths.contains(&"shelf.js"), "superset default lost a row: {paths:?}");
-    let run_row = rows.iter().find(|r| r["name"] == "run").expect("run caller");
+    assert!(
+        paths.contains(&"shelf.js"),
+        "superset default lost a row: {paths:?}"
+    );
+    let run_row = rows
+        .iter()
+        .find(|r| r["name"] == "run")
+        .expect("run caller");
     assert_eq!(run_row["line"], 4);
 }
 
 #[test]
 fn callers_resolved_prunes_unreachable_and_tags_via() {
     let f = Fixture::new();
-    f.write("def.rs", "pub fn target() {}\nfn self_caller() { target(); }\n");
-    f.write("user.rs", "use crate::def::target;\nfn user() { target(); }\n");
-    f.write("stranger.rs", "fn stranger() { let target = 1; let _ = target; }\n");
+    f.write(
+        "def.rs",
+        "pub fn target() {}\nfn self_caller() { target(); }\n",
+    );
+    f.write(
+        "user.rs",
+        "use crate::def::target;\nfn user() { target(); }\n",
+    );
+    f.write(
+        "stranger.rs",
+        "fn stranger() { let target = 1; let _ = target; }\n",
+    );
 
     // Default (name-based) includes the unrelated `target` in stranger.rs.
     let all = field_set(&f.run(&["callers", "target"]), "path");
-    assert!(all.contains(&"stranger.rs".to_string()), "default should include stranger: {all:?}");
+    assert!(
+        all.contains(&"stranger.rs".to_string()),
+        "default should include stranger: {all:?}"
+    );
 
     // --resolved drops the reference that can't reach a definition, and tags the
     // rest by how they connect.
     let res = f.run(&["callers", "target", "--resolved"]);
     let rows = res["data"].as_array().unwrap();
-    let via = |sym: &str| rows.iter()
-        .find(|r| r["name"] == sym)
-        .map(|r| r["via"].as_str().unwrap().to_string());
+    let via = |sym: &str| {
+        rows.iter()
+            .find(|r| r["name"] == sym)
+            .map(|r| r["via"].as_str().unwrap().to_string())
+    };
     assert_eq!(via("self_caller"), Some("same-file".into()), "{rows:?}");
     assert_eq!(via("user"), Some("imported".into()), "{rows:?}");
-    assert!(!rows.iter().any(|r| r["path"] == "stranger.rs"),
-            "unreachable reference should be pruned: {rows:?}");
+    assert!(
+        !rows.iter().any(|r| r["path"] == "stranger.rs"),
+        "unreachable reference should be pruned: {rows:?}"
+    );
 }
 
 #[test]
@@ -953,16 +1146,24 @@ fn callees_resolved_prunes_unreachable_same_named_defs() {
     // Default (name-based) over-matches: both `work` definitions show up.
     let all = field_set(&f.run(&["callees", "run"]), "path");
     assert!(all.contains(&"core.rs".to_string()), "{all:?}");
-    assert!(all.contains(&"orphan.rs".to_string()),
-            "default should over-match the unrelated same-named def: {all:?}");
+    assert!(
+        all.contains(&"orphan.rs".to_string()),
+        "default should over-match the unrelated same-named def: {all:?}"
+    );
 
     // --resolved keeps only the reachable (same-file) callee, tags it via, and
     // prunes the unrelated same-named def in the unreachable file.
     let res = f.run(&["callees", "run", "--resolved"]);
     let rows = res["data"].as_array().unwrap();
-    assert!(rows.iter().any(|r| r["path"] == "core.rs" && r["via"] == "same-file"), "{rows:?}");
-    assert!(!rows.iter().any(|r| r["path"] == "orphan.rs"),
-            "unreachable same-named callee should be pruned: {rows:?}");
+    assert!(
+        rows.iter()
+            .any(|r| r["path"] == "core.rs" && r["via"] == "same-file"),
+        "{rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|r| r["path"] == "orphan.rs"),
+        "unreachable same-named callee should be pruned: {rows:?}"
+    );
 }
 
 #[test]
@@ -976,7 +1177,11 @@ fn callees_use_an_imported_module_receiver_to_narrow_same_named_defs() {
     );
 
     let paths = field_set(&f.run(&["callees", "run"]), "path");
-    assert_eq!(paths, ["context.rs"], "module-qualified call was not narrowed: {paths:?}");
+    assert_eq!(
+        paths,
+        ["context.rs"],
+        "module-qualified call was not narrowed: {paths:?}"
+    );
 }
 
 #[test]
@@ -990,9 +1195,16 @@ fn callees_do_not_treat_fields_or_variants_as_callable_definitions() {
          fn caller() { run(); }\n",
     );
 
-    let rows = f.run(&["callees", "caller"])["data"].as_array().unwrap().clone();
+    let rows = f.run(&["callees", "caller"])["data"]
+        .as_array()
+        .unwrap()
+        .clone();
     let runs: Vec<&Value> = rows.iter().filter(|r| r["name"] == "run").collect();
-    assert_eq!(runs.len(), 1, "a call should resolve only to callable definitions: {rows:?}");
+    assert_eq!(
+        runs.len(),
+        1,
+        "a call should resolve only to callable definitions: {rows:?}"
+    );
     assert_eq!(runs[0]["kind"], "function");
 }
 
@@ -1004,9 +1216,15 @@ fn a_word_boundary_follows_the_language_that_owns_the_bytes() {
     // followed by a real occurrence. Treating `$` as an identifier byte
     // everywhere cost the superset-of-ripgrep guarantee in five languages.
     let f = Fixture::new();
-    f.write("m.rs", "macro_rules! m { ($bytes:expr) => { $bytes }; }\nfn bytes() {}\n");
+    f.write(
+        "m.rs",
+        "macro_rules! m { ($bytes:expr) => { $bytes }; }\nfn bytes() {}\n",
+    );
     f.write("cfg.json", "{ \"name\": \"Outer$PrivateRecord\" }\n");
-    f.write("s.java", "class T {\n  String m = \"Outer$PrivateRecord\";\n  int PrivateRecord = 1;\n}\n");
+    f.write(
+        "s.java",
+        "class T {\n  String m = \"Outer$PrivateRecord\";\n  int PrivateRecord = 1;\n}\n",
+    );
     // In JavaScript code, though, `$locale` really is one identifier.
     f.write("a.js", "const $locale = 1;\nconst locale = 2;\n");
 
@@ -1018,9 +1236,18 @@ fn a_word_boundary_follows_the_language_that_owns_the_bytes() {
             .filter_map(|r| r["path"].as_str().map(str::to_string))
             .collect()
     };
-    assert!(paths("bytes").iter().any(|p| p == "m.rs"), "rust macro metavariable");
-    assert!(paths("PrivateRecord").iter().any(|p| p == "cfg.json"), "unclassified file");
-    assert!(paths("PrivateRecord").iter().any(|p| p == "s.java"), "inside a java string");
+    assert!(
+        paths("bytes").iter().any(|p| p == "m.rs"),
+        "rust macro metavariable"
+    );
+    assert!(
+        paths("PrivateRecord").iter().any(|p| p == "cfg.json"),
+        "unclassified file"
+    );
+    assert!(
+        paths("PrivateRecord").iter().any(|p| p == "s.java"),
+        "inside a java string"
+    );
 
     let v = f.run(&["references", "locale", "--limit", "0"]);
     let lines: Vec<i64> = v["data"]["references"]
@@ -1029,7 +1256,11 @@ fn a_word_boundary_follows_the_language_that_owns_the_bytes() {
         .iter()
         .filter_map(|r| r["line"].as_i64())
         .collect();
-    assert_eq!(lines, vec![2], "`$locale` is a different JS identifier: {v}");
+    assert_eq!(
+        lines,
+        vec![2],
+        "`$locale` is a different JS identifier: {v}"
+    );
 }
 
 #[test]
@@ -1082,30 +1313,49 @@ fn dollar_prefixed_javascript_identifiers_have_exact_boundaries() {
     assert!(rows.iter().any(|r| r["definition"] == true));
 
     let callers = f.run(&["callers", "$ZodError", "--calls"]);
-    assert_eq!(field_set(&callers, "name"), vec!["caller".to_string()], "{callers}");
+    assert_eq!(
+        field_set(&callers, "name"),
+        vec!["caller".to_string()],
+        "{callers}"
+    );
 
     let word = f.run(&["search", "$ZodError", "--fixed", "--word"]);
-    assert_eq!(word["data"]["matches"].as_array().unwrap().len(), 2, "{word}");
+    assert_eq!(
+        word["data"]["matches"].as_array().unwrap().len(),
+        2,
+        "{word}"
+    );
 }
 
 #[test]
 fn callers_examples_surface_the_call_expression() {
     let f = Fixture::new();
-    f.write("a.rs", "fn target(x: i32) {}\nfn caller() { target(41); }\n");
+    f.write(
+        "a.rs",
+        "fn target(x: i32) {}\nfn caller() { target(41); }\n",
+    );
 
     // Plain callers: the enclosing definition, no source text.
     let plain = f.run(&["callers", "target"]);
     let row = &plain["data"].as_array().unwrap()[0];
     assert_eq!(row["name"], "caller");
-    assert!(row.get("text").is_none(), "plain callers should carry no source text: {row:?}");
+    assert!(
+        row.get("text").is_none(),
+        "plain callers should carry no source text: {row:?}"
+    );
 
     // --examples: the row becomes a usage example with the actual call line + column.
     let ex = f.run(&["callers", "target", "--examples"]);
     let row = &ex["data"].as_array().unwrap()[0];
     assert_eq!(row["name"], "caller");
-    assert!(row["text"].as_str().unwrap().contains("target(41)"),
-            "example should show the call expression: {row:?}");
-    assert!(row["col"].as_i64().is_some(), "example row should carry a column: {row:?}");
+    assert!(
+        row["text"].as_str().unwrap().contains("target(41)"),
+        "example should show the call expression: {row:?}"
+    );
+    assert!(
+        row["col"].as_i64().is_some(),
+        "example row should carry a column: {row:?}"
+    );
 }
 
 #[test]
@@ -1122,19 +1372,38 @@ fn explore_bundles_definition_callers_callees_and_source() {
 
     // focus = the definition, carrying its signature.
     assert_eq!(d["focus"][0]["name"], "helper");
-    assert!(d["focus"][0]["signature"].as_str().unwrap().contains("helper"), "{d}");
+    assert!(
+        d["focus"][0]["signature"]
+            .as_str()
+            .unwrap()
+            .contains("helper"),
+        "{d}"
+    );
 
     // callers include the enclosing caller definition.
-    let callers: Vec<&str> = d["callers"].as_array().unwrap().iter()
-        .filter_map(|c| c["name"].as_str()).collect();
+    let callers: Vec<&str> = d["callers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["name"].as_str())
+        .collect();
     assert!(callers.contains(&"caller"), "{callers:?}");
 
     // source carries verbatim bodies, each tagged by role; the focus body is present.
     let src = d["source"].as_array().unwrap();
-    let focus_chunk = src.iter().find(|c| c["reason"] == "focus").expect("focus source chunk");
-    assert!(focus_chunk["text"].as_str().unwrap().contains("x + 1"), "{focus_chunk}");
-    assert!(src.iter().any(|c| c["reason"] == "caller" && c["name"] == "caller"),
-            "caller source missing: {src:?}");
+    let focus_chunk = src
+        .iter()
+        .find(|c| c["reason"] == "focus")
+        .expect("focus source chunk");
+    assert!(
+        focus_chunk["text"].as_str().unwrap().contains("x + 1"),
+        "{focus_chunk}"
+    );
+    assert!(
+        src.iter()
+            .any(|c| c["reason"] == "caller" && c["name"] == "caller"),
+        "caller source missing: {src:?}"
+    );
 }
 
 #[test]
@@ -1146,7 +1415,10 @@ fn explore_resolved_prunes_same_named_code_from_another_program() {
     // pulled in three same-named TypeScript functions from the web app and grew
     // the answer from 109 lines to 391.
     let f = Fixture::new();
-    f.write("go/main.go", "package main\n\nfunc parseDate() {}\n\nfunc Parse() { parseDate() }\n");
+    f.write(
+        "go/main.go",
+        "package main\n\nfunc parseDate() {}\n\nfunc Parse() { parseDate() }\n",
+    );
     f.write("web/util.ts", "export function parseDate() {}\n");
 
     let callee_paths = |v: &Value| -> Vec<String> {
@@ -1159,11 +1431,20 @@ fn explore_resolved_prunes_same_named_code_from_another_program() {
     };
 
     let all = callee_paths(&f.run(&["explore", "Parse"]));
-    assert!(all.iter().any(|p| p == "web/util.ts"), "expected the over-match: {all:?}");
+    assert!(
+        all.iter().any(|p| p == "web/util.ts"),
+        "expected the over-match: {all:?}"
+    );
 
     let kept = callee_paths(&f.run(&["explore", "Parse", "--resolved"]));
-    assert!(kept.iter().any(|p| p == "go/main.go"), "real callee dropped: {kept:?}");
-    assert!(!kept.iter().any(|p| p == "web/util.ts"), "unreachable callee kept: {kept:?}");
+    assert!(
+        kept.iter().any(|p| p == "go/main.go"),
+        "real callee dropped: {kept:?}"
+    );
+    assert!(
+        !kept.iter().any(|p| p == "web/util.ts"),
+        "unreachable callee kept: {kept:?}"
+    );
 }
 
 #[test]
@@ -1174,14 +1455,20 @@ fn explore_emits_the_focus_source_before_the_neighbourhood() {
     // `explore … | head -N` — the obvious way to sample a large result — showed
     // callees instead of the definition.
     let f = Fixture::new();
-    f.write("zzz/focus.rs", "fn helper() {}\nfn target() { helper(); }\n");
+    f.write(
+        "zzz/focus.rs",
+        "fn helper() {}\nfn target() { helper(); }\n",
+    );
     f.write("aaa/caller.rs", "fn outer() { target(); }\n");
 
     // `zzz/` sorts last, so path order alone would bury the definition.
     let out = f.raw(&["explore", "target"]);
     let text = String::from_utf8_lossy(&out.stdout);
     let source = text.split("# source").nth(1).expect("no source section");
-    let first = source.lines().find(|l| l.contains(".rs:")).expect("no source block");
+    let first = source
+        .lines()
+        .find(|l| l.contains(".rs:"))
+        .expect("no source block");
     assert!(
         first.starts_with("zzz/focus.rs:2"),
         "the definition asked about should lead the source:\n{text}"
@@ -1198,10 +1485,20 @@ fn explore_forces_focus_source_under_a_tight_budget() {
     let d = f.run(&["explore", "focus", "--max-tokens", "5"]);
     let src = d["data"]["source"].as_array().unwrap();
     // The focus is forced in even over budget; the oversized caller is omitted.
-    assert!(src.iter().any(|c| c["reason"] == "focus"), "focus must survive the budget: {src:?}");
-    let omitted: Vec<&str> = d["data"]["omitted"].as_array().unwrap().iter()
-        .filter_map(|o| o["name"].as_str()).collect();
-    assert!(omitted.contains(&"caller"), "oversized caller should be reported omitted: {omitted:?}");
+    assert!(
+        src.iter().any(|c| c["reason"] == "focus"),
+        "focus must survive the budget: {src:?}"
+    );
+    let omitted: Vec<&str> = d["data"]["omitted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|o| o["name"].as_str())
+        .collect();
+    assert!(
+        omitted.contains(&"caller"),
+        "oversized caller should be reported omitted: {omitted:?}"
+    );
 }
 
 #[test]
@@ -1209,20 +1506,32 @@ fn members_are_definitions_and_name_the_type_that_declares_them() {
     // A member name alone identifies nothing — `id`, `name` and `retries` recur
     // across unrelated types — so a field fact is only useful with its owner.
     let f = Fixture::new();
-    f.write("a.rs", "pub struct Config { pub retries: u32, name: String }\npub enum Mode { Fast, Slow }\n");
+    f.write(
+        "a.rs",
+        "pub struct Config { pub retries: u32, name: String }\npub enum Mode { Fast, Slow }\n",
+    );
     f.write("g.go", "type Server struct { Host string }\n");
-    f.write("t.ts", "export class Widget { public width: number = 1; private secret: string = \"s\"; }\n");
+    f.write(
+        "t.ts",
+        "export class Widget { public width: number = 1; private secret: string = \"s\"; }\n",
+    );
     // `public` on the class matters now: a member of a non-public type is not
     // public API either (covered by `a_member_of_a_private_type_is_not_public_api`).
     // This test is about the member's *own* modifier, so the class is public.
-    f.write("J.java", "public class Account { private int balance; public String holder; }\n");
+    f.write(
+        "J.java",
+        "public class Account { private int balance; public String holder; }\n",
+    );
 
     // The case that used to return nothing at all.
     let v = f.run(&["definitions", "retries"]);
     let rows = v["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{v}");
     assert_eq!(rows[0]["kind"], "field");
-    assert_eq!(rows[0]["owner"], "Config", "a field must name its type: {v}");
+    assert_eq!(
+        rows[0]["owner"], "Config",
+        "a field must name its type: {v}"
+    );
 
     // Enum variants likewise.
     let v = f.run(&["definitions", "Fast"]);
@@ -1231,7 +1540,11 @@ fn members_are_definitions_and_name_the_type_that_declares_them() {
 
     // Extraction reaches the other grammars, and each owner is the *nearest*
     // type rather than whatever else encloses it.
-    for (name, owner) in [("Host", "Server"), ("width", "Widget"), ("balance", "Account")] {
+    for (name, owner) in [
+        ("Host", "Server"),
+        ("width", "Widget"),
+        ("balance", "Account"),
+    ] {
         let v = f.run(&["definitions", name]);
         assert_eq!(v["data"][0]["owner"], owner, "{name}: {v}");
     }
@@ -1240,9 +1553,15 @@ fn members_are_definitions_and_name_the_type_that_declares_them() {
     // an *exported* class inherited the class's visibility and showed up as API.
     let api: Vec<String> = field_set(&f.run(&["api", "t.ts"]), "name");
     assert!(api.contains(&"width".to_string()), "{api:?}");
-    assert!(!api.contains(&"secret".to_string()), "private field leaked into api: {api:?}");
+    assert!(
+        !api.contains(&"secret".to_string()),
+        "private field leaked into api: {api:?}"
+    );
     let api: Vec<String> = field_set(&f.run(&["api", "J.java"]), "name");
-    assert!(api.contains(&"holder".to_string()) && !api.contains(&"balance".to_string()), "{api:?}");
+    assert!(
+        api.contains(&"holder".to_string()) && !api.contains(&"balance".to_string()),
+        "{api:?}"
+    );
 
     // Non-members must not sprout an owner.
     let v = f.run(&["definitions", "Config"]);
@@ -1268,7 +1587,10 @@ fn clones_are_exact_structural_matches_not_a_similarity_score() {
     let rows = v["data"].as_array().unwrap();
     let names: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"total") && names.contains(&"weight"), "{v}");
-    assert!(!names.contains(&"other"), "a different shape is not a clone: {v}");
+    assert!(
+        !names.contains(&"other"),
+        "a different shape is not a clone: {v}"
+    );
     // Every row in a group carries the same shape and the group size.
     assert_eq!(rows[0]["shape"], rows[1]["shape"]);
     assert_eq!(rows[0]["group"], 2);
@@ -1281,9 +1603,16 @@ fn clones_are_exact_structural_matches_not_a_similarity_score() {
     // none at all and can never form a group.
     f.write("c.rs", "pub fn a() {}\npub fn b() {}\n");
     let v = f.run(&["clones", "--min-nodes", "1"]);
-    let names: Vec<&str> = v["data"].as_array().unwrap().iter()
-        .map(|r| r["name"].as_str().unwrap()).collect();
-    assert!(!names.contains(&"a"), "empty fns must not be reported: {names:?}");
+    let names: Vec<&str> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        !names.contains(&"a"),
+        "empty fns must not be reported: {names:?}"
+    );
 }
 
 #[test]
@@ -1294,13 +1623,25 @@ fn members_extract_for_zig_solidity_dart_and_scala() {
     // field was ownerless, and therefore dropped, until the owner lookup
     // followed that binding.
     f.write("z.zig", "const Point = struct { x: i32, y: i32 };\n");
-    f.write("W.sol", "contract Wallet {\n  uint256 public balance;\n  enum State { Open, Closed }\n}\n");
-    f.write("d.dart", "class Widget {\n  int size = 1;\n}\nenum Mode { fast, slow }\n");
-    f.write("s.scala", "class Server {\n  val port: Int = 80\n  var live: Boolean = true\n}\n");
+    f.write(
+        "W.sol",
+        "contract Wallet {\n  uint256 public balance;\n  enum State { Open, Closed }\n}\n",
+    );
+    f.write(
+        "d.dart",
+        "class Widget {\n  int size = 1;\n}\nenum Mode { fast, slow }\n",
+    );
+    f.write(
+        "s.scala",
+        "class Server {\n  val port: Int = 80\n  var live: Boolean = true\n}\n",
+    );
 
     for (name, owner) in [
-        ("x", "Point"), ("balance", "Wallet"), ("size", "Widget"),
-        ("port", "Server"), ("live", "Server"),
+        ("x", "Point"),
+        ("balance", "Wallet"),
+        ("size", "Widget"),
+        ("port", "Server"),
+        ("live", "Server"),
     ] {
         let v = f.run(&["definitions", name]);
         assert_eq!(v["data"][0]["owner"], owner, "{name}: {v}");
@@ -1319,7 +1660,10 @@ fn deps_resolves_an_import_that_names_a_directory() {
     // matching alone never resolved any of them, so the dependency graph silently
     // missed the dominant idiom in its two largest ecosystems.
     let f = Fixture::new();
-    f.write("app.js", "import { helper } from './utils';\nexport function run() { return helper(); }\n");
+    f.write(
+        "app.js",
+        "import { helper } from './utils';\nexport function run() { return helper(); }\n",
+    );
     f.write("utils/index.js", "export function helper() { return 1 }\n");
     f.write("main.py", "from pkg import thing\n");
     f.write("pkg/__init__.py", "def thing(): pass\n");
@@ -1332,7 +1676,10 @@ fn deps_resolves_an_import_that_names_a_directory() {
     let deps = field_set(&f.run(&["deps", "main.py"]), "path");
     assert!(deps.contains(&"pkg/__init__.py".to_string()), "{deps:?}");
     let deps = field_set(&f.run(&["deps", "b.js"]), "path");
-    assert!(deps.contains(&"plain.js".to_string()), "direct file import broke: {deps:?}");
+    assert!(
+        deps.contains(&"plain.js".to_string()),
+        "direct file import broke: {deps:?}"
+    );
 }
 
 #[test]
@@ -1346,18 +1693,30 @@ fn go_module_imports_resolve_to_their_package_not_a_matching_file_stem() {
         "cmd/app/main.go",
         "package main\n\nimport \"example.com/acme/service/internal/worker\"\n\nfunc run() { worker.Build() }\n",
     );
-    f.write("internal/worker/worker.go", "package worker\n\nfunc Build() {}\n");
+    f.write(
+        "internal/worker/worker.go",
+        "package worker\n\nfunc Build() {}\n",
+    );
     f.write("other/worker.go", "package other\n\nfunc Build() {}\n");
-    f.write("external.go", "package main\n\nimport \"example.net/lib/worker\"\n");
+    f.write(
+        "external.go",
+        "package main\n\nimport \"example.net/lib/worker\"\n",
+    );
 
     let deps = field_set(&f.run(&["deps", "cmd/app/main.go"]), "path");
     assert_eq!(deps, ["internal/worker/worker.go"], "{deps:?}");
 
     let external = field_set(&f.run(&["deps", "external.go"]), "path");
-    assert!(external.is_empty(), "an external Go module borrowed local code: {external:?}");
+    assert!(
+        external.is_empty(),
+        "an external Go module borrowed local code: {external:?}"
+    );
 
     let callers = f.run(&["callers", "Build", "--resolved"]);
-    let row = callers["data"].as_array().unwrap().iter()
+    let row = callers["data"]
+        .as_array()
+        .unwrap()
+        .iter()
         .find(|row| row["name"] == "run")
         .expect("the internal Go package call should resolve");
     assert_eq!(row["via"], "imported", "{callers}");
@@ -1371,9 +1730,15 @@ fn symbols_can_be_filtered_by_the_type_that_owns_them() {
     let f = Fixture::new();
     f.write("a.rs", "pub struct Config { pub retries: u32, pub name: String }\npub struct Other { pub retries: u32 }\n");
 
-    let mine = field_set(&f.run(&["symbols", "--owner", "Config", "--limit", "0"]), "name");
+    let mine = field_set(
+        &f.run(&["symbols", "--owner", "Config", "--limit", "0"]),
+        "name",
+    );
     assert_eq!(mine.len(), 2, "{mine:?}");
-    assert!(mine.contains(&"retries".to_string()) && mine.contains(&"name".to_string()), "{mine:?}");
+    assert!(
+        mine.contains(&"retries".to_string()) && mine.contains(&"name".to_string()),
+        "{mine:?}"
+    );
 
     // The same name under a different type is a different member.
     let v = f.run(&["symbols", "--owner", "Other", "--limit", "0"]);
@@ -1393,9 +1758,16 @@ fn graphql_implements_is_a_type_relation() {
          type User implements A & B & C { id: ID! }\ntype Post implements A { id: ID! }\n",
     );
     let supers = field_set(&f.run(&["supertypes", "User"]), "name");
-    assert_eq!(supers, vec!["A", "B", "C"], "every interface, not just the last: {supers:?}");
+    assert_eq!(
+        supers,
+        vec!["A", "B", "C"],
+        "every interface, not just the last: {supers:?}"
+    );
     let impls = field_set(&f.run(&["implementors", "A"]), "name");
-    assert!(impls.contains(&"User".to_string()) && impls.contains(&"Post".to_string()), "{impls:?}");
+    assert!(
+        impls.contains(&"User".to_string()) && impls.contains(&"Post".to_string()),
+        "{impls:?}"
+    );
 }
 
 #[test]
@@ -1403,7 +1775,10 @@ fn calls_filter_recognises_markup_instantiation() {
     // `--calls` tested for `Name(`, which a component is never spelled with — so
     // it returned nothing for a component that is plainly used.
     let f = Fixture::new();
-    f.write("Btn.svelte", "<script>export let label = 'x'</script>\n<button>{label}</button>\n");
+    f.write(
+        "Btn.svelte",
+        "<script>export let label = 'x'</script>\n<button>{label}</button>\n",
+    );
     f.write(
         "Page.svelte",
         "<script>\n  import Btn from './Btn.svelte';\n  // Btn is mentioned here\n  const x = Btn;\n</script>\n<Btn />\n",
@@ -1413,7 +1788,13 @@ fn calls_filter_recognises_markup_instantiation() {
     assert_eq!(refs.len(), 1, "only the instantiation counts: {v}");
     assert_eq!(refs[0]["line"], 6, "{v}");
     // The import, the comment and the assignment are all mentions, not uses.
-    assert!(f.run(&["callers", "Btn", "--calls"])["data"].as_array().unwrap().len() == 1);
+    assert!(
+        f.run(&["callers", "Btn", "--calls"])["data"]
+            .as_array()
+            .unwrap()
+            .len()
+            == 1
+    );
 }
 
 #[test]
@@ -1423,20 +1804,38 @@ fn unused_ignores_definitions_that_exist_to_be_consumed_elsewhere() {
     // them buries the real hits.
     let f = Fixture::new();
     f.write("s.graphql", "type User { id: ID! }\n");
-    f.write("u.proto", "syntax = \"proto3\";\nmessage Order { string id = 1; }\n");
-    f.write("main.tf", "variable \"region\" { default = \"eu\" }\n\
+    f.write(
+        "u.proto",
+        "syntax = \"proto3\";\nmessage Order { string id = 1; }\n",
+    );
+    f.write(
+        "main.tf",
+        "variable \"region\" { default = \"eu\" }\n\
                         output \"url\" { value = var.region }\n\
-                        variable \"unused_var\" {}\n");
-    f.write("a.css", ".primary { color: red }\n.orphan { color: blue }\n");
+                        variable \"unused_var\" {}\n",
+    );
+    f.write(
+        "a.css",
+        ".primary { color: red }\n.orphan { color: blue }\n",
+    );
     f.write("page.html", "<div class=\"primary\">x</div>\n");
 
     let dead = field_set(&f.run(&["unused"]), "name");
     // Real dead code survives: nothing references these.
-    assert!(dead.contains(&"orphan".to_string()), "dead CSS class: {dead:?}");
-    assert!(dead.contains(&"unused_var".to_string()), "dead variable: {dead:?}");
+    assert!(
+        dead.contains(&"orphan".to_string()),
+        "dead CSS class: {dead:?}"
+    );
+    assert!(
+        dead.contains(&"unused_var".to_string()),
+        "dead variable: {dead:?}"
+    );
     // Contracts and externally-read values do not.
     for quiet in ["User", "Order", "url", "primary", "region"] {
-        assert!(!dead.contains(&quiet.to_string()), "{quiet} should not be reported: {dead:?}");
+        assert!(
+            !dead.contains(&quiet.to_string()),
+            "{quiet} should not be reported: {dead:?}"
+        );
     }
 }
 
@@ -1468,7 +1867,10 @@ fn hcl_blocks_are_named_by_their_last_label_and_owned_by_their_type() {
     // Two labels: the *last* names it, the first is its type.
     let logs = by_name("logs");
     assert_eq!(logs["kind"], "resource");
-    assert_eq!(logs["owner"], "aws_s3_bucket", "named by last label, owned by type: {logs}");
+    assert_eq!(
+        logs["owner"], "aws_s3_bucket",
+        "named by last label, owned by type: {logs}"
+    );
     assert_eq!(by_name("ubuntu")["owner"], "aws_ami");
     // `locals` declares one name per attribute, referenced as `local.x`.
     assert_eq!(by_name("bucket_prefix")["owner"], "local");
@@ -1481,7 +1883,11 @@ fn hcl_blocks_are_named_by_their_last_label_and_owned_by_their_type() {
 
     // A module's `source` is an import, so `importers` finds it.
     let imports = field_set(&f.run(&["imports", "main.tf"]), "module");
-    assert_eq!(imports, vec!["./modules/vpc".to_string()], "only the source: {imports:?}");
+    assert_eq!(
+        imports,
+        vec!["./modules/vpc".to_string()],
+        "only the source: {imports:?}"
+    );
 
     // The naming rule exists so that reference sites resolve: Terraform writes
     // `aws_s3_bucket.logs.arn`, and naming the block `logs` is what makes that
@@ -1490,30 +1896,53 @@ fn hcl_blocks_are_named_by_their_last_label_and_owned_by_their_type() {
     let refs = v["data"]["references"].as_array().unwrap();
     let use_site = refs
         .iter()
-        .find(|r| r["text"].as_str().unwrap_or_default().contains("aws_s3_bucket.logs.arn"))
+        .find(|r| {
+            r["text"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("aws_s3_bucket.logs.arn")
+        })
         .unwrap_or_else(|| panic!("no use site for the resource: {v}"));
-    assert_eq!(use_site["symbol"], "arn", "attributed to the enclosing output: {v}");
-    assert!(use_site["definition"].is_null(), "a use is not the declaration: {v}");
+    assert_eq!(
+        use_site["symbol"], "arn",
+        "attributed to the enclosing output: {v}"
+    );
+    assert!(
+        use_site["definition"].is_null(),
+        "a use is not the declaration: {v}"
+    );
 }
 
 #[test]
 fn extracts_css_powershell_protobuf_and_graphql() {
     let f = Fixture::new();
     f.write("a.css", "/* theme */\n.primary { color: red }\n#hero { top: 0 }\n@keyframes fade { from { opacity: 0 } }\n");
-    f.write("s.ps1", "function Get-Thing {\n  return 1\n}\nclass Widget { [int] $Size }\n");
+    f.write(
+        "s.ps1",
+        "function Get-Thing {\n  return 1\n}\nclass Widget { [int] $Size }\n",
+    );
     f.write(
         "u.proto",
         "syntax = \"proto3\";\nimport \"other.proto\";\nmessage User { string email = 1; }\n\
          enum Role { ADMIN = 0; }\nservice Users { rpc GetUser (User) returns (User); }\n",
     );
-    f.write("s.graphql", "type User { id: ID!\n  email: String }\nenum Role { ADMIN }\ninterface Node { id: ID! }\n");
+    f.write(
+        "s.graphql",
+        "type User { id: ID!\n  email: String }\nenum Role { ADMIN }\ninterface Node { id: ID! }\n",
+    );
 
     let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
     for want in [
-        "primary", "hero", "fade",           // css selectors and keyframes
-        "Get-Thing", "Widget",               // powershell
-        "User", "Role", "Users", "GetUser",  // protobuf message/enum/service/rpc
-        "Node",                              // graphql interface
+        "primary",
+        "hero",
+        "fade", // css selectors and keyframes
+        "Get-Thing",
+        "Widget", // powershell
+        "User",
+        "Role",
+        "Users",
+        "GetUser", // protobuf message/enum/service/rpc
+        "Node",    // graphql interface
     ] {
         assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
     }
@@ -1521,9 +1950,17 @@ fn extracts_css_powershell_protobuf_and_graphql() {
     // Members of a protobuf message and a GraphQL type carry their owner, so the
     // grammars that spell the name out per construct (`message_name`) resolve too.
     let v = f.run(&["definitions", "email"]);
-    let owners: Vec<&str> = v["data"].as_array().unwrap().iter()
-        .filter_map(|r| r["owner"].as_str()).collect();
-    assert_eq!(owners, ["User", "User"], "proto and graphql fields need owners: {v}");
+    let owners: Vec<&str> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["owner"].as_str())
+        .collect();
+    assert_eq!(
+        owners,
+        ["User", "User"],
+        "proto and graphql fields need owners: {v}"
+    );
 
     // A protobuf import is a module string like any other.
     let imports = field_set(&f.run(&["imports", "u.proto"]), "module");
@@ -1533,7 +1970,11 @@ fn extracts_css_powershell_protobuf_and_graphql() {
     // in Svelte and Vue components.
     let count = |needle: &str, kind: &str| -> i64 {
         f.run(&["search", needle, "--in", kind, "-c"])["data"]["counts"]
-            .as_array().unwrap().iter().map(|c| c["count"].as_i64().unwrap()).sum()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["count"].as_i64().unwrap())
+            .sum()
     };
     assert_eq!(count("theme", "comments"), 1);
     assert_eq!(count("theme", "code"), 0);
@@ -1554,9 +1995,15 @@ fn python_attributes_are_members_despite_having_no_declaration_site() {
          \ndef helper(other):\n    other.retries = 99\n",
     );
 
-    let members = field_set(&f.run(&["symbols", "--kind", "field", "--limit", "0"]), "name");
+    let members = field_set(
+        &f.run(&["symbols", "--kind", "field", "--limit", "0"]),
+        "name",
+    );
     for want in ["DEFAULT", "timeout", "retries"] {
-        assert!(members.contains(&want.to_string()), "missing {want}: {members:?}");
+        assert!(
+            members.contains(&want.to_string()),
+            "missing {want}: {members:?}"
+        );
     }
 
     // Assigned in two methods, but it is one member — reported at the earliest.
@@ -1587,12 +2034,22 @@ fn an_unresolvable_compare_to_ref_says_so_plainly() {
     let out = f.raw(&["changed", "--compare-to", "definitely-not-a-ref"]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("no such git ref: 'definitely-not-a-ref'"), "{err}");
-    assert!(!err.contains("separate paths from revisions"), "git's misleading advice leaked: {err}");
+    assert!(
+        err.contains("no such git ref: 'definitely-not-a-ref'"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("separate paths from revisions"),
+        "git's misleading advice leaked: {err}"
+    );
 
     // A ref that exists still works.
     let ok = f.raw(&["changed", "--compare-to", "HEAD"]);
-    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
 }
 
 #[test]
@@ -1604,7 +2061,10 @@ fn concurrent_invocations_all_succeed() {
 
     let f = Fixture::new();
     for i in 0..12 {
-        f.write(&format!("src/m{i}.rs"), &format!("pub fn f{i}() {{ let v = {i}; }}\n"));
+        f.write(
+            &format!("src/m{i}.rs"),
+            &format!("pub fn f{i}() {{ let v = {i}; }}\n"),
+        );
     }
 
     // Cold: no index yet, so all twelve want to build one at the same time.
@@ -1647,7 +2107,11 @@ fn concurrent_invocations_all_succeed() {
     f.write("src/extra.rs", "pub fn extra() {}\n");
     for body in spawn_all(&f) {
         let v: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["data"].as_array().unwrap().len(), 13, "after edit: {body}");
+        assert_eq!(
+            v["data"].as_array().unwrap().len(),
+            13,
+            "after edit: {body}"
+        );
     }
 }
 
@@ -1665,16 +2129,26 @@ fn fields_reports_names_that_matched_no_row() {
     let v = f.run(&["definitions", "target", "--fields", "path,lineno"]);
     let notes = &v["notes"];
     assert_eq!(notes["unmatched_fields"][0], "lineno", "{v}");
-    let avail: Vec<&str> = notes["available_fields"].as_array().unwrap().iter()
-        .map(|s| s.as_str().unwrap()).collect();
-    assert!(avail.contains(&"line"), "must name the real field: {avail:?}");
+    let avail: Vec<&str> = notes["available_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap())
+        .collect();
+    assert!(
+        avail.contains(&"line"),
+        "must name the real field: {avail:?}"
+    );
     // The projection still happens — this is a note, not a failure.
     assert_eq!(v["data"][0]["path"], "a.rs");
 
     // A field that exists produces no note at all -- and `line` is now that
     // field on every command, which is the point of the rule.
     let ok = f.run(&["definitions", "target", "--fields", "path,line"]);
-    assert!(ok["notes"].is_null(), "clean projection must not be annotated: {ok}");
+    assert!(
+        ok["notes"].is_null(),
+        "clean projection must not be annotated: {ok}"
+    );
 }
 
 #[test]
@@ -1696,10 +2170,15 @@ fn astgrep_rejects_a_pattern_it_could_only_partly_parse() {
     }
     // Patterns that legitimately rely on error recovery still work: a bare
     // expression is not a valid top-level item in Rust.
-    for (pat, want) in [("$X.unwrap()", 0usize), ("one($$$)", 1), ("fn $N($$$) { $$$ }", 2)] {
+    for (pat, want) in [
+        ("$X.unwrap()", 0usize),
+        ("one($$$)", 1),
+        ("fn $N($$$) { $$$ }", 2),
+    ] {
         let v = f.run(&["astgrep", pat, "--language", "rust"]);
         assert_eq!(
-            v["data"]["matches"].as_array().unwrap().len(), want,
+            v["data"]["matches"].as_array().unwrap().len(),
+            want,
             "pattern {pat:?}: {v}"
         );
     }
@@ -1725,7 +2204,10 @@ fn offsets_stay_aligned_when_a_file_is_not_valid_utf8() {
     let callers = f.run(&["callers", "helper"]);
     let rows = callers["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{rows:?}");
-    assert_eq!(rows[0]["name"], "alpha", "wrong enclosing definition: {rows:?}");
+    assert_eq!(
+        rows[0]["name"], "alpha",
+        "wrong enclosing definition: {rows:?}"
+    );
 
     // `search` and `at` must agree about which definition line 2 belongs to.
     let v = f.run(&["search", "helper"]);
@@ -1754,8 +2236,15 @@ fn chunk_text_slices_the_same_text_the_offsets_were_measured_in() {
         "fn alpha() { helper(); }",
         "BOM-shifted chunk: {focus}"
     );
-    let callee = src.iter().find(|c| c["reason"] == "callee").expect("callee");
-    assert_eq!(callee["text"].as_str().unwrap(), "fn helper() {}", "{callee}");
+    let callee = src
+        .iter()
+        .find(|c| c["reason"] == "callee")
+        .expect("callee");
+    assert_eq!(
+        callee["text"].as_str().unwrap(),
+        "fn helper() {}",
+        "{callee}"
+    );
 }
 
 #[test]
@@ -1793,7 +2282,10 @@ fn refresh_sees_an_edit_that_preserves_size_and_mtime() {
         syms.contains(&"bbbb".to_string()),
         "stale index: mtime-preserving edit went unnoticed, got {syms:?}"
     );
-    assert!(!syms.contains(&"aaaa".to_string()), "old symbol lingered: {syms:?}");
+    assert!(
+        !syms.contains(&"aaaa".to_string()),
+        "old symbol lingered: {syms:?}"
+    );
 }
 
 #[test]
@@ -1802,7 +2294,9 @@ fn explore_reduces_an_oversized_focus_instead_of_overrunning_the_budget() {
     // A focus far bigger than any budget we'll ask for. Its body is one long
     // run of statements, so folding alone can't shrink it enough and the clip
     // path has to engage.
-    let body = (0..400).map(|i| format!("    let v{i} = {i};\n")).collect::<String>();
+    let body = (0..400)
+        .map(|i| format!("    let v{i} = {i};\n"))
+        .collect::<String>();
     f.write("a.rs", &format!("fn focus() {{\n{body}}}\n"));
 
     for max in [20u64, 100, 400] {
@@ -1816,8 +2310,14 @@ fn explore_reduces_an_oversized_focus_instead_of_overrunning_the_budget() {
         // Reduced, not dropped: the focus is still there, tagged so a reader
         // knows it is not the whole definition.
         let src = d["data"]["source"].as_array().unwrap();
-        let focus = src.iter().find(|c| c["reason"] == "focus").expect("focus kept");
-        assert!(focus["reduced"].is_string(), "reduction must be declared: {focus}");
+        let focus = src
+            .iter()
+            .find(|c| c["reason"] == "focus")
+            .expect("focus kept");
+        assert!(
+            focus["reduced"].is_string(),
+            "reduction must be declared: {focus}"
+        );
         assert!(
             focus["text"].as_str().unwrap().contains('⋮'),
             "hidden lines must be marked: {focus}"
@@ -1829,7 +2329,10 @@ fn explore_reduces_an_oversized_focus_instead_of_overrunning_the_budget() {
     let d = f.run(&["explore", "small", "--max-tokens", "2000"]);
     let src = d["data"]["source"].as_array().unwrap();
     let focus = src.iter().find(|c| c["reason"] == "focus").unwrap();
-    assert!(focus["reduced"].is_null(), "a fitting focus must stay verbatim: {focus}");
+    assert!(
+        focus["reduced"].is_null(),
+        "a fitting focus must stay verbatim: {focus}"
+    );
 }
 
 #[test]
@@ -1855,7 +2358,8 @@ fn explore_does_not_emit_source_already_inside_another_chunk() {
             assert!(
                 !(os <= bs && be <= oe && (oe - os) > (be - bs)),
                 "{} is already inside {}, emitting both wastes budget",
-                b["name"], o["name"]
+                b["name"],
+                o["name"]
             );
         }
     }
@@ -1875,36 +2379,62 @@ fn affected_reports_changed_blast_radius_and_test_files() {
     let d = &d["data"];
 
     // changed = the touched definition.
-    let changed: Vec<&str> = d["changed"].as_array().unwrap().iter()
-        .filter_map(|c| c["name"].as_str()).collect();
+    let changed: Vec<&str> = d["changed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["name"].as_str())
+        .collect();
     assert!(changed.contains(&"core"), "{changed:?}");
 
     // blast radius includes the direct caller (transitively, the test too).
-    let impacted: Vec<&str> = d["impacted"].as_array().unwrap().iter()
-        .filter_map(|c| c["name"].as_str()).collect();
-    assert!(impacted.contains(&"mid"), "blast radius missing caller: {impacted:?}");
+    let impacted: Vec<&str> = d["impacted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["name"].as_str())
+        .collect();
+    assert!(
+        impacted.contains(&"mid"),
+        "blast radius missing caller: {impacted:?}"
+    );
 
     // the test that exercises the change only via mid is reported, at file level.
-    let test_files: Vec<&str> = d["tests"].as_array().unwrap().iter()
-        .filter_map(|t| t["path"].as_str()).collect();
-    assert!(test_files.contains(&"t.rs"),
-            "transitively-affected test file missing: {test_files:?}");
+    let test_files: Vec<&str> = d["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["path"].as_str())
+        .collect();
+    assert!(
+        test_files.contains(&"t.rs"),
+        "transitively-affected test file missing: {test_files:?}"
+    );
 }
 
 #[test]
 fn extracts_definitions_for_added_languages() {
     let f = Fixture::new();
     f.write("s.sh", "greet() { echo hi; }\nfunction bye { echo bye; }\n");
-    f.write("m.lua", "local function helper(x) return x end\nfunction process(n) return helper(n) end\n");
-    f.write("a.scala", "class Foo { def bar(): Int = 1 }\ntrait Greeter { def greet(): String }\n");
-    f.write("K.kt", "package p\nclass Widget {\n    fun render(): String = \"w\"\n}\nfun topLevel(): Int = 1\n");
+    f.write(
+        "m.lua",
+        "local function helper(x) return x end\nfunction process(n) return helper(n) end\n",
+    );
+    f.write(
+        "a.scala",
+        "class Foo { def bar(): Int = 1 }\ntrait Greeter { def greet(): String }\n",
+    );
+    f.write(
+        "K.kt",
+        "package p\nclass Widget {\n    fun render(): String = \"w\"\n}\nfun topLevel(): Int = 1\n",
+    );
     f.write("V.swift", "class Vehicle { func drive() -> String { return \"v\" } }\nprotocol Named { func name() -> String }\n");
 
     // Each new language's definitions land in the symbol table.
     let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
     for want in [
-        "greet", "bye", "helper", "process", "Foo", "bar", "Greeter",
-        "Widget", "render", "topLevel", "Vehicle", "drive", "Named",
+        "greet", "bye", "helper", "process", "Foo", "bar", "Greeter", "Widget", "render",
+        "topLevel", "Vehicle", "drive", "Named",
     ] {
         assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
     }
@@ -1922,15 +2452,24 @@ fn extracts_definitions_for_added_languages() {
 #[test]
 fn extracts_definitions_for_dart_zig_elixir_solidity() {
     let f = Fixture::new();
-    f.write("w.dart", "class Widget {\n  int render(String s) => s.length;\n}\nint topLevel(int n) => n * 2;\n");
-    f.write("m.zig", "pub fn compute(a: i32, b: i32) i32 { return a + b; }\nconst Point = struct { x: i32 };\n");
+    f.write(
+        "w.dart",
+        "class Widget {\n  int render(String s) => s.length;\n}\nint topLevel(int n) => n * 2;\n",
+    );
+    f.write(
+        "m.zig",
+        "pub fn compute(a: i32, b: i32) i32 { return a + b; }\nconst Point = struct { x: i32 };\n",
+    );
     f.write("app.ex", "defmodule Math do\n  def run(a, b) do\n    helper(a) + b\n  end\n  defp helper(x), do: x\nend\n");
-    f.write("W.sol", "contract Wallet {\n  function deposit(uint amt) public {}\n}\n");
+    f.write(
+        "W.sol",
+        "contract Wallet {\n  function deposit(uint amt) public {}\n}\n",
+    );
 
     let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
     for want in [
-        "Widget", "render", "topLevel", "compute", "Point",
-        "Math", "run", "helper", "Wallet", "deposit",
+        "Widget", "render", "topLevel", "compute", "Point", "Math", "run", "helper", "Wallet",
+        "deposit",
     ] {
         assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
     }
@@ -1961,7 +2500,10 @@ fn extracts_svelte_components_scripts_and_snippets() {
          {#snippet badge(count)}\n  <span>{count}</span>\n{/snippet}\n\n\
          <style>\n  .primary { color: red; }\n</style>\n",
     );
-    f.write("src/labels.js", "export function formatLabel(s) {\n  return s;\n}\n");
+    f.write(
+        "src/labels.js",
+        "export function formatLabel(s) {\n  return s;\n}\n",
+    );
     // A SvelteKit route: convention-loaded, so it gets no component fact — but
     // its script is still extracted.
     f.write(
@@ -1973,7 +2515,14 @@ fn extracts_svelte_components_scripts_and_snippets() {
     let syms = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
     // The file itself is the component; `lang=\"ts\"` routes the script to the
     // TypeScript grammar (hence `interface`); snippets come from the markup.
-    for want in ["Button", "handleClick", "pretty", "Payload", "badge", "bump"] {
+    for want in [
+        "Button",
+        "handleClick",
+        "pretty",
+        "Payload",
+        "badge",
+        "bump",
+    ] {
         assert!(syms.contains(&want.to_string()), "missing {want}: {syms:?}");
     }
     assert!(!syms.contains(&"+page".to_string()), "route file: {syms:?}");
@@ -1985,11 +2534,21 @@ fn extracts_svelte_components_scripts_and_snippets() {
 
     // The call graph crosses the component boundary in both directions.
     let callees = field_set(&f.run(&["callees", "pretty"]), "path");
-    assert!(callees.contains(&"src/labels.js".to_string()), "{callees:?}");
+    assert!(
+        callees.contains(&"src/labels.js".to_string()),
+        "{callees:?}"
+    );
     let structural = f.run(&["callees", "pretty", "--examples"]);
-    let fmt = structural["data"].as_array().unwrap().iter()
-        .find(|row| row["name"] == "formatLabel").expect("formatLabel call");
-    assert_eq!(fmt["call"], "formatLabel", "script call lost its syntax evidence: {structural}");
+    let fmt = structural["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "formatLabel")
+        .expect("formatLabel call");
+    assert_eq!(
+        fmt["call"], "formatLabel",
+        "script call lost its syntax evidence: {structural}"
+    );
     let v = f.run(&["references", "Button"]);
     let refs = v["data"]["references"].as_array().unwrap();
     // Both the import and the `<Button …/>` markup usage.
@@ -2009,7 +2568,9 @@ fn extracts_svelte_components_scripts_and_snippets() {
     // literal attribute value counts as a string.
     let count = |needle: &str, kind: &str| -> i64 {
         f.run(&["search", needle, "--in", kind, "-c"])["data"]["counts"]
-            .as_array().unwrap().iter()
+            .as_array()
+            .unwrap()
+            .iter()
             .map(|c| c["count"].as_i64().unwrap())
             .sum()
     };
@@ -2022,7 +2583,10 @@ fn extracts_svelte_components_scripts_and_snippets() {
 #[test]
 fn extracts_vue_single_file_components() {
     let f = Fixture::new();
-    f.write("lib/labels.ts", "export function fmt(s: string) {\n  return s\n}\n");
+    f.write(
+        "lib/labels.ts",
+        "export function fmt(s: string) {\n  return s\n}\n",
+    );
     // `<script setup lang="ts">` plus a template that binds a handler.
     f.write(
         "Button.vue",
@@ -2062,12 +2626,22 @@ fn extracts_vue_single_file_components() {
     // A plain attribute value stays a string, though.
     let count = |needle: &str, kind: &str| -> i64 {
         f.run(&["search", needle, "--in", kind, "-c"])["data"]["counts"]
-            .as_array().unwrap().iter()
+            .as_array()
+            .unwrap()
+            .iter()
             .map(|c| c["count"].as_i64().unwrap())
             .sum()
     };
-    assert_eq!(count("primary", "strings"), 1, "class=\"primary\" is a string");
-    assert_eq!(count("handleClick", "strings"), 0, "directive value is not a string");
+    assert_eq!(
+        count("primary", "strings"),
+        1,
+        "class=\"primary\" is a string"
+    );
+    assert_eq!(
+        count("handleClick", "strings"),
+        0,
+        "directive value is not a string"
+    );
     assert_eq!(count("markup note", "comments"), 1);
     assert_eq!(count("bump it", "comments"), 1); // from the nested TS pass
 
@@ -2075,15 +2649,28 @@ fn extracts_vue_single_file_components() {
     let v = f.run(&["callers", "Button"]);
     let rows = v["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{rows:?}");
-    assert_eq!(rows[0]["line"], 11, "anchor must be <Button />, not the import");
+    assert_eq!(
+        rows[0]["line"], 11,
+        "anchor must be <Button />, not the import"
+    );
 
     // Cross-file graph and dependency resolution both work through the SFC.
     let callees = field_set(&f.run(&["callees", "handleClick"]), "path");
-    assert!(callees.contains(&"lib/labels.ts".to_string()), "{callees:?}");
+    assert!(
+        callees.contains(&"lib/labels.ts".to_string()),
+        "{callees:?}"
+    );
     let structural = f.run(&["callees", "handleClick", "--examples"]);
-    let fmt = structural["data"].as_array().unwrap().iter()
-        .find(|row| row["name"] == "fmt").expect("fmt call");
-    assert_eq!(fmt["call"], "fmt", "script call lost its syntax evidence: {structural}");
+    let fmt = structural["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "fmt")
+        .expect("fmt call");
+    assert_eq!(
+        fmt["call"], "fmt",
+        "script call lost its syntax evidence: {structural}"
+    );
     let deps = field_set(&f.run(&["deps", "App.vue"]), "path");
     assert!(deps.contains(&"Button.vue".to_string()), "{deps:?}");
 }
@@ -2097,9 +2684,16 @@ fn resolved_follows_rust_mod_declarations_as_edges() {
     f.write("thing.rs", "pub fn make() {}\n");
 
     let res = f.run(&["callers", "make", "--resolved"]);
-    let row = res["data"].as_array().unwrap().iter()
-        .find(|r| r["name"] == "root").expect("root should survive resolution");
-    assert_eq!(row["via"], "imported", "mod-declared dependency should resolve: {res}");
+    let row = res["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "root")
+        .expect("root should survive resolution");
+    assert_eq!(
+        row["via"], "imported",
+        "mod-declared dependency should resolve: {res}"
+    );
 }
 
 #[test]
@@ -2111,12 +2705,22 @@ fn resolved_follows_python_from_import_of_a_submodule() {
     let f = Fixture::new();
     f.write("pkg/__init__.py", "\n");
     f.write("pkg/target.py", "def make():\n    return 1\n");
-    f.write("user.py", "from pkg import target\ndef use():\n    return target.make()\n");
+    f.write(
+        "user.py",
+        "from pkg import target\ndef use():\n    return target.make()\n",
+    );
 
     let res = f.run(&["callers", "make", "--resolved"]);
-    let row = res["data"].as_array().unwrap().iter()
-        .find(|r| r["name"] == "use").expect("use() should survive resolution");
-    assert_eq!(row["via"], "imported", "from-import of a submodule should resolve: {res}");
+    let row = res["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "use")
+        .expect("use() should survive resolution");
+    assert_eq!(
+        row["via"], "imported",
+        "from-import of a submodule should resolve: {res}"
+    );
 }
 
 #[test]
@@ -2125,30 +2729,55 @@ fn resolved_follows_js_named_imports() {
     // (./util.make) so the importer resolves to the file exporting it.
     let f = Fixture::new();
     f.write("util.js", "export function make() { return 1; }\n");
-    f.write("user.js", "import { make } from './util';\nexport function use() { return make(); }\n");
-    f.write("alias.js", "import { make as m } from './util';\nexport function viaAlias() { return m(); }\n");
+    f.write(
+        "user.js",
+        "import { make } from './util';\nexport function use() { return make(); }\n",
+    );
+    f.write(
+        "alias.js",
+        "import { make as m } from './util';\nexport function viaAlias() { return m(); }\n",
+    );
 
     let mods = field_set(&f.run(&["imports", "user.js"]), "module");
-    assert_eq!(mods, ["./util"], "imports must show source modules, not internal bindings");
+    assert_eq!(
+        mods,
+        ["./util"],
+        "imports must show source modules, not internal bindings"
+    );
     let amods = field_set(&f.run(&["imports", "alias.js"]), "module");
     assert_eq!(amods, ["./util"], "aliases must not add an import row");
 
     // user.js calls make() directly → resolves as imported.
     let res = f.run(&["callers", "make", "--resolved"]);
-    let row = res["data"].as_array().unwrap().iter()
-        .find(|r| r["name"] == "use").expect("use() should survive resolution");
+    let row = res["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "use")
+        .expect("use() should survive resolution");
     assert_eq!(row["via"], "imported", "{res}");
 
     // Resolution still needs its internal `./util.make` fact, so hiding it from
     // `imports` must not weaken named-import resolution.
-    let alias = res["data"].as_array().unwrap().iter()
-        .find(|r| r["name"] == "viaAlias").expect("viaAlias() should survive resolution");
+    let alias = res["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "viaAlias")
+        .expect("viaAlias() should survive resolution");
     assert_eq!(alias["via"], "imported", "{res}");
 
     let map = f.run(&["map"]);
-    assert_eq!(map["data"]["totals"]["imports"], 2, "one row per source import: {map}");
+    assert_eq!(
+        map["data"]["totals"]["imports"], 2,
+        "one row per source import: {map}"
+    );
     let modules = map["data"]["imports_by_module"].as_array().unwrap();
-    assert_eq!(modules.len(), 1, "internal bindings must stay out of the module summary: {map}");
+    assert_eq!(
+        modules.len(),
+        1,
+        "internal bindings must stay out of the module summary: {map}"
+    );
     assert_eq!(modules[0]["module"], "./util");
     assert_eq!(modules[0]["importers"], 2);
 }
@@ -2164,7 +2793,11 @@ fn import_aliases_narrow_bare_calls_and_context_expansion() {
     );
 
     let paths = field_set(&f.run(&["callees", "run"]), "path");
-    assert_eq!(paths, ["util.js"], "bare alias call was not narrowed: {paths:?}");
+    assert_eq!(
+        paths,
+        ["util.js"],
+        "bare alias call was not narrowed: {paths:?}"
+    );
 
     let context = f.run(&["context", "--symbols", "run", "--expand", "--no-text"]);
     let paths: Vec<&str> = context["data"]["chunks"]
@@ -2174,7 +2807,11 @@ fn import_aliases_narrow_bare_calls_and_context_expansion() {
         .filter(|chunk| chunk["name"] == "make")
         .filter_map(|chunk| chunk["path"].as_str())
         .collect();
-    assert_eq!(paths, ["util.js"], "alias expansion was not narrowed: {context}");
+    assert_eq!(
+        paths,
+        ["util.js"],
+        "alias expansion was not narrowed: {context}"
+    );
 }
 
 #[test]
@@ -2188,10 +2825,17 @@ fn rust_use_alias_narrows_bare_calls_and_context_expansion() {
     );
 
     let imports = f.run(&["imports", "app.rs"]);
-    assert_eq!(imports["data"][0]["module"], "crate::helper::make", "{imports}");
+    assert_eq!(
+        imports["data"][0]["module"], "crate::helper::make",
+        "{imports}"
+    );
 
     let paths = field_set(&f.run(&["callees", "run"]), "path");
-    assert_eq!(paths, ["helper.rs"], "Rust alias call was not narrowed: {paths:?}");
+    assert_eq!(
+        paths,
+        ["helper.rs"],
+        "Rust alias call was not narrowed: {paths:?}"
+    );
 
     let context = f.run(&["context", "--symbols", "run", "--expand", "--no-text"]);
     let paths: Vec<&str> = context["data"]["chunks"]
@@ -2201,15 +2845,30 @@ fn rust_use_alias_narrows_bare_calls_and_context_expansion() {
         .filter(|chunk| chunk["name"] == "make")
         .filter_map(|chunk| chunk["path"].as_str())
         .collect();
-    assert_eq!(paths, ["helper.rs"], "Rust alias expansion was not narrowed: {context}");
+    assert_eq!(
+        paths,
+        ["helper.rs"],
+        "Rust alias expansion was not narrowed: {context}"
+    );
 
-    let callers = field_set(&f.run(&["callers", "make", "--calls", "--resolved"]), "name");
-    assert_eq!(callers, ["run"], "Rust alias call was not attributed to make: {callers:?}");
+    let callers = field_set(
+        &f.run(&["callers", "make", "--calls", "--resolved"]),
+        "name",
+    );
+    assert_eq!(
+        callers,
+        ["run"],
+        "Rust alias call was not attributed to make: {callers:?}"
+    );
 
     let references = f.run(&["references", "make", "--calls", "--resolved"]);
     let calls = references["data"]["references"].as_array().unwrap();
-    assert!(calls.iter().any(|row| row["path"] == "app.rs" && row["via"] == "imported"),
-        "Rust alias reference was not attributed to make: {references}");
+    assert!(
+        calls
+            .iter()
+            .any(|row| row["path"] == "app.rs" && row["via"] == "imported"),
+        "Rust alias reference was not attributed to make: {references}"
+    );
 }
 
 #[test]
@@ -2223,7 +2882,11 @@ fn python_from_import_alias_narrows_a_bare_call() {
     );
 
     let paths = field_set(&f.run(&["callees", "run"]), "path");
-    assert_eq!(paths, ["helper.py"], "Python alias call was not narrowed: {paths:?}");
+    assert_eq!(
+        paths,
+        ["helper.py"],
+        "Python alias call was not narrowed: {paths:?}"
+    );
 }
 
 #[test]
@@ -2237,7 +2900,11 @@ fn rust_module_alias_narrows_a_qualified_call() {
     );
 
     let paths = field_set(&f.run(&["callees", "run"]), "path");
-    assert_eq!(paths, ["helper.rs"], "Rust module alias was not narrowed: {paths:?}");
+    assert_eq!(
+        paths,
+        ["helper.rs"],
+        "Rust module alias was not narrowed: {paths:?}"
+    );
 }
 
 #[test]
@@ -2248,7 +2915,10 @@ fn a_curried_call_is_attributed_only_to_its_inner_callee() {
     // *identifies* a call site — which aborted the whole index build.
     let f = Fixture::new();
     f.write("a.js", "const C = connect(mapState)(Component);\n");
-    f.write("b.go", "package p\n\nfunc F() { h := Wrap(\"k\")(3); _ = h }\n");
+    f.write(
+        "b.go",
+        "package p\n\nfunc F() { h := Wrap(\"k\")(3); _ = h }\n",
+    );
     f.write("c.py", "y = outer(1)(2)\n");
     f.write("d.rs", "fn main() { let _ = outer(1)(2); }\n");
 
@@ -2256,7 +2926,11 @@ fn a_curried_call_is_attributed_only_to_its_inner_callee() {
     for (name, want) in [("connect", "a.js"), ("Wrap", "b.go"), ("outer", "c.py")] {
         let v = f.run(&["references", name, "--calls", "--path", want]);
         let refs = v["data"]["references"].as_array().unwrap();
-        assert_eq!(refs.len(), 1, "inner call of a curried call was lost: {refs:?}");
+        assert_eq!(
+            refs.len(),
+            1,
+            "inner call of a curried call was lost: {refs:?}"
+        );
         assert_eq!(refs[0]["path"].as_str().unwrap(), want, "{refs:?}");
     }
 }
@@ -2272,12 +2946,21 @@ fn calls_filter_excludes_non_call_references() {
     );
     // Default (name-based) counts the unrelated local `make` in mentioner.
     let all = field_set(&f.run(&["callers", "make"]), "name");
-    assert!(all.contains(&"mentioner".to_string()), "default should include the mention: {all:?}");
+    assert!(
+        all.contains(&"mentioner".to_string()),
+        "default should include the mention: {all:?}"
+    );
 
     // --calls keeps only the real call site.
     let calls = field_set(&f.run(&["callers", "make", "--calls"]), "name");
-    assert!(calls.contains(&"caller".to_string()), "real caller dropped: {calls:?}");
-    assert!(!calls.contains(&"mentioner".to_string()), "bare mention not excluded: {calls:?}");
+    assert!(
+        calls.contains(&"caller".to_string()),
+        "real caller dropped: {calls:?}"
+    );
+    assert!(
+        !calls.contains(&"mentioner".to_string()),
+        "bare mention not excluded: {calls:?}"
+    );
 }
 
 #[test]
@@ -2289,7 +2972,11 @@ fn on_filter_disambiguates_by_receiver() {
     );
     let lines = |recv: &str| -> Vec<i64> {
         f.run(&["references", "make", "--on", recv])["data"]["references"]
-            .as_array().unwrap().iter().map(|r| r["line"].as_i64().unwrap()).collect()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["line"].as_i64().unwrap())
+            .collect()
     };
     assert_eq!(lines("Foo"), [2], "only Foo::make()");
     assert_eq!(lines("Bar"), [3], "only Bar::make()");
@@ -2301,7 +2988,10 @@ fn resolved_is_a_noop_without_a_definition_to_anchor() {
     // A name with no definition in the repo (an external symbol) can't be
     // resolved against anything, so --resolved must not silently empty the result.
     let f = Fixture::new();
-    f.write("a.rs", "fn c1() { external_thing(); }\nfn c2() { external_thing(); }\n");
+    f.write(
+        "a.rs",
+        "fn c1() { external_thing(); }\nfn c2() { external_thing(); }\n",
+    );
     let plain = f.run(&["callers", "external_thing"]);
     let resolved = f.run(&["callers", "external_thing", "--resolved"]);
     assert_eq!(
@@ -2310,7 +3000,11 @@ fn resolved_is_a_noop_without_a_definition_to_anchor() {
         "no definition to anchor → --resolved should leave the result unchanged",
     );
     // And it must not have tagged anything.
-    assert!(resolved["data"].as_array().unwrap().iter().all(|r| r.get("via").is_none()));
+    assert!(resolved["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r.get("via").is_none()));
 }
 
 #[test]
@@ -2319,8 +3013,14 @@ fn callers_default_has_no_via_field() {
     let f = Fixture::new();
     f.write("a.rs", "fn helper() {}\nfn caller() { helper(); }\n");
     let v = f.run(&["callers", "helper"]);
-    assert!(v["data"].as_array().unwrap().iter().all(|r| r.get("via").is_none()),
-            "default callers must not carry a via field");
+    assert!(
+        v["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r.get("via").is_none()),
+        "default callers must not carry a via field"
+    );
 }
 
 #[test]
@@ -2336,15 +3036,22 @@ fn callers_depth_walks_transitively() {
 
     // depth 1: only direct callers of leaf.
     let d1 = f.run(&["callers", "leaf"]);
-    let syms1: Vec<String> = d1["data"].as_array().unwrap().iter()
-        .filter_map(|r| r["name"].as_str().map(String::from)).collect();
+    let syms1: Vec<String> = d1["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(String::from))
+        .collect();
     assert_eq!(syms1, ["mid"], "depth 1 is direct only: {syms1:?}");
 
     // depth 2: reaches top through mid, each tagged with its hop distance.
     let d2 = f.run(&["callers", "leaf", "--depth", "2"]);
     let rows = d2["data"].as_array().unwrap();
-    let depth_of = |sym: &str| rows.iter()
-        .find(|r| r["name"] == sym).unwrap()["depth"].as_u64().unwrap();
+    let depth_of = |sym: &str| {
+        rows.iter().find(|r| r["name"] == sym).unwrap()["depth"]
+            .as_u64()
+            .unwrap()
+    };
     assert_eq!(depth_of("mid"), 1, "direct caller is hop 1");
     assert_eq!(depth_of("top"), 2, "transitive caller is hop 2");
 }
@@ -2364,7 +3071,10 @@ fn implementors_finds_rust_trait_impls() {
     let v = f.run(&["implementors", "Shape"]);
     let rows = v["data"].as_array().unwrap();
     let subs: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
-    assert!(subs.contains(&"Circle") && subs.contains(&"Square"), "{subs:?}");
+    assert!(
+        subs.contains(&"Circle") && subs.contains(&"Square"),
+        "{subs:?}"
+    );
     // The inherent `impl Circle {}` is not a relation to Shape.
     assert_eq!(rows.len(), 2, "inherent impl leaked: {rows:?}");
     assert_eq!(rows[0]["relation"], "implements");
@@ -2390,8 +3100,11 @@ fn implementors_distinguishes_extends_from_implements() {
 
     // --relation filters.
     let only_ext = f.run(&["implementors", "Animal", "--relation", "implements"]);
-    assert_eq!(only_ext["data"].as_array().unwrap().len(), 0,
-               "Animal is extended, not implemented");
+    assert_eq!(
+        only_ext["data"].as_array().unwrap().len(),
+        0,
+        "Animal is extended, not implemented"
+    );
 }
 
 #[test]
@@ -2406,7 +3119,8 @@ fn supertypes_is_the_inverse_of_implementors() {
     // supertypes Dog = what Dog derives from, with each relation.
     let sup = f.run(&["supertypes", "Dog"]);
     let rows = sup["data"].as_array().unwrap();
-    let by: std::collections::HashMap<&str, &str> = rows.iter()
+    let by: std::collections::HashMap<&str, &str> = rows
+        .iter()
         .map(|r| (r["name"].as_str().unwrap(), r["relation"].as_str().unwrap()))
         .collect();
     assert_eq!(by.get("Animal"), Some(&"extends"), "{by:?}");
@@ -2415,21 +3129,31 @@ fn supertypes_is_the_inverse_of_implementors() {
     // Inverse: Dog appears in implementors of each of its supertypes.
     for (sup_name, rel) in [("Animal", "extends"), ("Runner", "implements")] {
         let imp = f.run(&["implementors", sup_name]);
-        let row = imp["data"].as_array().unwrap().iter()
-            .find(|r| r["name"] == "Dog").expect("Dog missing from implementors");
+        let row = imp["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == "Dog")
+            .expect("Dog missing from implementors");
         assert_eq!(row["relation"], rel);
     }
 
     // --relation filters supertypes too.
     let ext = f.run(&["supertypes", "Dog", "--relation", "extends"]);
     let names = field_set(&ext, "name");
-    assert!(names.contains(&"Animal".to_string()) && !names.contains(&"Runner".to_string()), "{names:?}");
+    assert!(
+        names.contains(&"Animal".to_string()) && !names.contains(&"Runner".to_string()),
+        "{names:?}"
+    );
 }
 
 #[test]
 fn implementors_covers_python_and_ruby_inheritance() {
     let f = Fixture::new();
-    f.write("m.py", "class Animal:\n    pass\nclass Dog(Animal):\n    pass\n");
+    f.write(
+        "m.py",
+        "class Animal:\n    pass\nclass Dog(Animal):\n    pass\n",
+    );
     f.write("m.rb", "class Base\nend\nclass Sub < Base\nend\n");
 
     let py = f.run(&["implementors", "Animal"]);
@@ -2448,8 +3172,14 @@ fn unused_reports_only_definitions_with_no_use() {
          fn caller() { used(); }\n",
     );
     let names = field_set(&f.run(&["unused"]), "name");
-    assert!(names.contains(&"dead".to_string()), "dead fn not reported: {names:?}");
-    assert!(!names.contains(&"used".to_string()), "used fn wrongly reported: {names:?}");
+    assert!(
+        names.contains(&"dead".to_string()),
+        "dead fn not reported: {names:?}"
+    );
+    assert!(
+        !names.contains(&"used".to_string()),
+        "used fn wrongly reported: {names:?}"
+    );
     // `caller` references `used` but nothing references `caller` → also unused.
     assert!(names.contains(&"caller".to_string()), "{names:?}");
 }
@@ -2484,10 +3214,15 @@ fn unused_is_conservative_about_string_mentions() {
     // a serde rename, a config key or a SQL identifier. (A mention in a comment
     // does not count — see `a_comment_mention_no_longer_masks_dead_code`.)
     let f = Fixture::new();
-    f.write("a.rs", "fn ghost() {}\nfn main() { log(\"ghost is named here\"); }\nfn log(_: &str) {}\n");
+    f.write(
+        "a.rs",
+        "fn ghost() {}\nfn main() { log(\"ghost is named here\"); }\nfn log(_: &str) {}\n",
+    );
     let names = field_set(&f.run(&["unused"]), "name");
-    assert!(!names.contains(&"ghost".to_string()),
-            "a string mention should count as a use: {names:?}");
+    assert!(
+        !names.contains(&"ghost".to_string()),
+        "a string mention should count as a use: {names:?}"
+    );
 }
 
 #[test]
@@ -2498,9 +3233,14 @@ fn unused_excludes_test_files_by_default() {
 
     // Default: the test-file definition is not reported.
     let def = field_set(&f.run(&["unused"]), "name");
-    assert!(def.contains(&"dead".to_string()), "real dead code missing: {def:?}");
-    assert!(!def.contains(&"a_test_case".to_string()),
-            "test-file def leaked by default: {def:?}");
+    assert!(
+        def.contains(&"dead".to_string()),
+        "real dead code missing: {def:?}"
+    );
+    assert!(
+        !def.contains(&"a_test_case".to_string()),
+        "test-file def leaked by default: {def:?}"
+    );
 
     // --include-tests brings it in.
     let inc = field_set(&f.run(&["unused", "--include-tests"]), "name");
@@ -2517,7 +3257,10 @@ fn tree_reports_shape_with_counts_aggregated_from_below() {
 
     let rows = f.run(&["tree"])["data"].as_array().unwrap().clone();
     let row = |p: &str| {
-        rows.iter().find(|r| r["path"] == p).unwrap_or_else(|| panic!("no {p}: {rows:?}")).clone()
+        rows.iter()
+            .find(|r| r["path"] == p)
+            .unwrap_or_else(|| panic!("no {p}: {rows:?}"))
+            .clone()
     };
 
     // A parent counts everything beneath it, not just its own children.
@@ -2525,21 +3268,45 @@ fn tree_reports_shape_with_counts_aggregated_from_below() {
     assert_eq!(row("src")["symbols"].as_i64(), Some(3), "{rows:?}");
     assert_eq!(row("src")["depth"].as_i64(), Some(0));
     assert_eq!(row("src/app")["depth"].as_i64(), Some(1));
-    assert_eq!(row("src/app")["dirs"].as_i64(), Some(1), "immediate subdirs");
-    assert_eq!(row("data")["symbols"].as_i64(), Some(0), "json holds no definitions");
+    assert_eq!(
+        row("src/app")["dirs"].as_i64(),
+        Some(1),
+        "immediate subdirs"
+    );
+    assert_eq!(
+        row("data")["symbols"].as_i64(),
+        Some(0),
+        "json holds no definitions"
+    );
 
     // --min-symbols skips the data tree entirely.
     let coded = field_set(&f.run(&["tree", "--min-symbols", "1"]), "path");
     assert!(coded.contains(&"src".to_string()), "{coded:?}");
-    assert!(!coded.contains(&"data".to_string()), "data should be hidden: {coded:?}");
+    assert!(
+        !coded.contains(&"data".to_string()),
+        "data should be hidden: {coded:?}"
+    );
 
     // Folding summarises rather than truncates: `src` still reports all 3 symbols.
-    let shallow = f.run(&["tree", "--depth", "1"])["data"].as_array().unwrap().clone();
-    let paths: Vec<&str> = shallow.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    let shallow = f.run(&["tree", "--depth", "1"])["data"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let paths: Vec<&str> = shallow
+        .iter()
+        .map(|r| r["path"].as_str().unwrap())
+        .collect();
     assert!(paths.contains(&"src"), "{paths:?}");
-    assert!(!paths.contains(&"src/app"), "should be folded away: {paths:?}");
+    assert!(
+        !paths.contains(&"src/app"),
+        "should be folded away: {paths:?}"
+    );
     let src = shallow.iter().find(|r| r["path"] == "src").unwrap();
-    assert_eq!(src["symbols"].as_i64(), Some(3), "folded row must keep the total");
+    assert_eq!(
+        src["symbols"].as_i64(),
+        Some(3),
+        "folded row must keep the total"
+    );
 }
 
 #[test]
@@ -2555,14 +3322,37 @@ fn callees_examples_show_the_qualified_call_expression() {
         "import subprocess\ndef go():\n    subprocess.run(['ls'])\n",
     );
 
-    let plain = f.run(&["callees", "go"])["data"].as_array().unwrap().clone();
-    let run_row = plain.iter().find(|r| r["name"] == "run").expect("run is a callee");
-    assert!(run_row.get("call").is_none(), "call must be opt-in: {run_row:?}");
+    let plain = f.run(&["callees", "go"])["data"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let run_row = plain
+        .iter()
+        .find(|r| r["name"] == "run")
+        .expect("run is a callee");
+    assert!(
+        run_row.get("call").is_none(),
+        "call must be opt-in: {run_row:?}"
+    );
 
-    let ex = f.run(&["callees", "go", "--examples"])["data"].as_array().unwrap().clone();
-    let run_row = ex.iter().find(|r| r["name"] == "run").expect("run is a callee");
-    assert_eq!(run_row["call"].as_str(), Some("subprocess.run"), "{run_row:?}");
-    assert_eq!(run_row["call_line"].as_i64(), Some(3), "line in the caller's file");
+    let ex = f.run(&["callees", "go", "--examples"])["data"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let run_row = ex
+        .iter()
+        .find(|r| r["name"] == "run")
+        .expect("run is a callee");
+    assert_eq!(
+        run_row["call"].as_str(),
+        Some("subprocess.run"),
+        "{run_row:?}"
+    );
+    assert_eq!(
+        run_row["call_line"].as_i64(),
+        Some(3),
+        "line in the caller's file"
+    );
 }
 
 #[test]
@@ -2577,15 +3367,24 @@ fn codeqignore_excludes_committed_trees_gitignore_cannot() {
 
     f.write(".codeqignore", "data/\n");
     let after = field_set(&f.run(&["files"]), "path");
-    assert!(after.contains(&"src.rs".to_string()), "code must survive: {after:?}");
-    assert!(!after.iter().any(|p| p.starts_with("data/")), "data not excluded: {after:?}");
+    assert!(
+        after.contains(&"src.rs".to_string()),
+        "code must survive: {after:?}"
+    );
+    assert!(
+        !after.iter().any(|p| p.starts_with("data/")),
+        "data not excluded: {after:?}"
+    );
 
     // Negation works against a file pattern. It does NOT resurrect a file whose
     // parent directory was excluded (`data/`) — the walker never descends, exactly
     // as git behaves — so the pattern has to exclude files, not the directory.
     f.write(".codeqignore", "data/*.json\n!data/b.json\n");
     let back = field_set(&f.run(&["files"]), "path");
-    assert!(back.contains(&"data/b.json".to_string()), "negation ignored: {back:?}");
+    assert!(
+        back.contains(&"data/b.json".to_string()),
+        "negation ignored: {back:?}"
+    );
     assert!(!back.contains(&"data/a.json".to_string()), "{back:?}");
 }
 
@@ -2601,16 +3400,28 @@ fn hotspots_ranks_by_reference_count_and_is_one_row_per_name() {
     let rows = f.run(&["hotspots"])["data"].as_array().unwrap().clone();
     let by: std::collections::HashMap<String, i64> = rows
         .iter()
-        .map(|r| (r["name"].as_str().unwrap().to_string(), r["refs"].as_i64().unwrap()))
+        .map(|r| {
+            (
+                r["name"].as_str().unwrap().to_string(),
+                r["refs"].as_i64().unwrap(),
+            )
+        })
         .collect();
 
     assert_eq!(by.get("hot"), Some(&3), "three call sites: {by:?}");
     assert_eq!(by.get("cold"), Some(&1), "{by:?}");
     // The declaration is not a use of itself, so a never-used fn drops out at the
     // default --min-refs 1.
-    assert!(!by.contains_key("unref"), "unreferenced fn should not rank: {by:?}");
+    assert!(
+        !by.contains_key("unref"),
+        "unreferenced fn should not rank: {by:?}"
+    );
     // Most-referenced first.
-    assert_eq!(rows[0]["name"].as_str().unwrap(), "hot", "not sorted by refs: {rows:?}");
+    assert_eq!(
+        rows[0]["name"].as_str().unwrap(),
+        "hot",
+        "not sorted by refs: {rows:?}"
+    );
 }
 
 #[test]
@@ -2624,8 +3435,16 @@ fn hotspots_collapses_same_named_definitions_into_one_row() {
     let rows = f.run(&["hotspots"])["data"].as_array().unwrap().clone();
     let shared: Vec<_> = rows.iter().filter(|r| r["name"] == "shared").collect();
     assert_eq!(shared.len(), 1, "one row per name expected: {rows:?}");
-    assert_eq!(shared[0]["defs"].as_i64(), Some(2), "defs should report the collapse");
-    assert_eq!(shared[0]["refs"].as_i64(), Some(2), "both call sites counted");
+    assert_eq!(
+        shared[0]["defs"].as_i64(),
+        Some(2),
+        "defs should report the collapse"
+    );
+    assert_eq!(
+        shared[0]["refs"].as_i64(),
+        Some(2),
+        "both call sites counted"
+    );
 }
 
 #[test]
@@ -2649,7 +3468,11 @@ fn hotspots_calls_mode_excludes_bare_mentions_and_declarations() {
             .map(|r| r["refs"].as_i64().unwrap())
             .unwrap_or(0)
     };
-    assert_eq!(refs(&["hotspots"]), 2, "call site + bare mention, not comment/string");
+    assert_eq!(
+        refs(&["hotspots"]),
+        2,
+        "call site + bare mention, not comment/string"
+    );
     assert_eq!(refs(&["hotspots", "--calls"]), 1, "only the call site");
 }
 
@@ -2661,7 +3484,10 @@ fn callpath_is_the_only_name_for_it() {
     // `codeq path src/db.rs` -- the natural thing to type -- failed with
     // "required argument <TO>", diagnosing a typo as a missing symbol.
     let f = Fixture::new();
-    f.write("a.rs", "fn top() { mid(); }\nfn mid() { bottom(); }\nfn bottom() {}\n");
+    f.write(
+        "a.rs",
+        "fn top() { mid(); }\nfn mid() { bottom(); }\nfn bottom() {}\n",
+    );
 
     let steps = f.run(&["callpath", "top", "bottom"]);
     let steps = steps["data"].as_array().unwrap();
@@ -2669,9 +3495,15 @@ fn callpath_is_the_only_name_for_it() {
     assert_eq!(names, ["top", "mid", "bottom"], "{steps:?}");
 
     let out = f.raw(&["path", "top", "bottom"]);
-    assert!(!out.status.success(), "`path` must not resolve to a command");
+    assert!(
+        !out.status.success(),
+        "`path` must not resolve to a command"
+    );
     let err = String::from_utf8(out.stderr).unwrap();
-    assert!(err.contains("unrecognized subcommand"), "should read as a typo, not a bad call: {err}");
+    assert!(
+        err.contains("unrecognized subcommand"),
+        "should read as a typo, not a bad call: {err}"
+    );
 }
 
 #[test]
@@ -2687,8 +3519,14 @@ fn unused_excludes_rust_unit_tests_in_a_cfg_test_module() {
     );
 
     let def = field_set(&f.run(&["unused"]), "name");
-    assert!(def.contains(&"dead".to_string()), "real dead code missing: {def:?}");
-    assert!(!def.contains(&"returns_one".to_string()), "unit test reported as dead: {def:?}");
+    assert!(
+        def.contains(&"dead".to_string()),
+        "real dead code missing: {def:?}"
+    );
+    assert!(
+        !def.contains(&"returns_one".to_string()),
+        "unit test reported as dead: {def:?}"
+    );
 
     // Still reachable when you ask for tests explicitly.
     let inc = field_set(&f.run(&["unused", "--include-tests"]), "name");
@@ -2706,12 +3544,20 @@ fn path_finds_shortest_call_chain() {
          fn other() {}\n",
     );
     let v = f.run(&["callpath", "top", "leaf"]);
-    let steps: Vec<&str> = v["data"].as_array().unwrap().iter()
-        .map(|r| r["name"].as_str().unwrap()).collect();
+    let steps: Vec<&str> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
     assert_eq!(steps, ["top", "mid", "leaf"], "chain wrong: {steps:?}");
     // Depth indexes the position in the chain.
-    let depths: Vec<u64> = v["data"].as_array().unwrap().iter()
-        .map(|r| r["depth"].as_u64().unwrap()).collect();
+    let depths: Vec<u64> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["depth"].as_u64().unwrap())
+        .collect();
     assert_eq!(depths, [0, 1, 2]);
 }
 
@@ -2724,13 +3570,20 @@ fn path_scopes_the_start_symbol_by_path() {
 
     // Scoped to b.rs, `entry` can't reach leaf.
     let none = f.run(&["callpath", "entry", "leaf", "--path", "b.rs"]);
-    assert_eq!(none["data"].as_array().unwrap().len(), 0, "b.rs entry shouldn't reach leaf");
+    assert_eq!(
+        none["data"].as_array().unwrap().len(),
+        0,
+        "b.rs entry shouldn't reach leaf"
+    );
 
     // Scoped to a.rs, it does — and starts from the a.rs definition.
     let hit = f.run(&["callpath", "entry", "leaf", "--path", "a.rs"]);
     let rows = hit["data"].as_array().unwrap();
     assert_eq!(rows[0]["name"], "entry");
-    assert_eq!(rows[0]["path"], "a.rs", "start location should be the scoped def");
+    assert_eq!(
+        rows[0]["path"], "a.rs",
+        "start location should be the scoped def"
+    );
     let syms: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
     assert_eq!(syms, ["entry", "leaf"]);
 }
@@ -2742,7 +3595,11 @@ fn path_empty_when_unreachable_and_single_when_self() {
 
     // leaf does not reach top.
     let none = f.run(&["callpath", "leaf", "top"]);
-    assert_eq!(none["data"].as_array().unwrap().len(), 0, "should be unreachable");
+    assert_eq!(
+        none["data"].as_array().unwrap().len(),
+        0,
+        "should be unreachable"
+    );
 
     // a symbol reaches itself in zero hops.
     let self_path = f.run(&["callpath", "top", "top"]);
@@ -2761,10 +3618,18 @@ fn path_respects_max_depth() {
     );
     // a1 -> b2 -> c3 -> d4 is 3 hops; a max-depth of 2 can't reach d4.
     let shallow = f.run(&["callpath", "a1", "d4", "--max-depth", "2"]);
-    assert_eq!(shallow["data"].as_array().unwrap().len(), 0, "3-hop chain found at depth 2");
+    assert_eq!(
+        shallow["data"].as_array().unwrap().len(),
+        0,
+        "3-hop chain found at depth 2"
+    );
     let deep = f.run(&["callpath", "a1", "d4", "--max-depth", "3"]);
-    let steps: Vec<&str> = deep["data"].as_array().unwrap().iter()
-        .map(|r| r["name"].as_str().unwrap()).collect();
+    let steps: Vec<&str> = deep["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
     assert_eq!(steps, ["a1", "b2", "c3", "d4"]);
 }
 
@@ -2780,14 +3645,23 @@ fn callees_depth_walks_transitively() {
 
     let d1 = field_set(&f.run(&["callees", "top"]), "name");
     assert!(d1.contains(&"mid".to_string()), "{d1:?}");
-    assert!(!d1.contains(&"leaf".to_string()), "leaf is two hops down: {d1:?}");
+    assert!(
+        !d1.contains(&"leaf".to_string()),
+        "leaf is two hops down: {d1:?}"
+    );
 
     let d2 = f.run(&["callees", "top", "--depth", "2"]);
     let rows = d2["data"].as_array().unwrap();
     let names: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
-    assert!(names.contains(&"mid") && names.contains(&"leaf"), "{names:?}");
-    let depth_of = |n: &str| rows.iter()
-        .find(|r| r["name"] == n).unwrap()["depth"].as_u64().unwrap();
+    assert!(
+        names.contains(&"mid") && names.contains(&"leaf"),
+        "{names:?}"
+    );
+    let depth_of = |n: &str| {
+        rows.iter().find(|r| r["name"] == n).unwrap()["depth"]
+            .as_u64()
+            .unwrap()
+    };
     assert_eq!(depth_of("mid"), 1);
     assert_eq!(depth_of("leaf"), 2);
 }
@@ -2800,15 +3674,26 @@ fn about_path_scopes_to_one_definition() {
     f.write("b.rs", "fn thing() { helper_b(); }\nfn helper_b() {}\n");
 
     let all = f.run(&["about", "thing"]);
-    assert_eq!(all["data"]["definitions"].as_array().unwrap().len(), 2, "unscoped sees both");
+    assert_eq!(
+        all["data"]["definitions"].as_array().unwrap().len(),
+        2,
+        "unscoped sees both"
+    );
 
     let scoped = f.run(&["about", "thing", "--path", "a.rs"]);
     let d = &scoped["data"];
     assert_eq!(d["definitions"].as_array().unwrap().len(), 1);
-    let callees: Vec<&str> = d["callees"].as_array().unwrap().iter()
-        .map(|c| c["name"].as_str().unwrap()).collect();
+    let callees: Vec<&str> = d["callees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
     assert!(callees.contains(&"helper_a"), "{callees:?}");
-    assert!(!callees.contains(&"helper_b"), "scoped callees leaked the other def: {callees:?}");
+    assert!(
+        !callees.contains(&"helper_b"),
+        "scoped callees leaked the other def: {callees:?}"
+    );
 }
 
 #[test]
@@ -2844,21 +3729,33 @@ fn at_rejects_bad_location() {
     let f = Fixture::new();
     f.write("m.py", "def x():\n    pass\n");
     assert!(!f.raw(&["at", "m.py"]).status.success(), "missing :line");
-    assert!(!f.raw(&["at", "m.py:abc"]).status.success(), "non-numeric line");
+    assert!(
+        !f.raw(&["at", "m.py:abc"]).status.success(),
+        "non-numeric line"
+    );
 }
 
 #[test]
 fn changed_symbols_reports_only_touched_definitions() {
     let f = Fixture::new();
-    f.write("a.rs", "fn keep() {\n    1;\n}\n\nfn change() {\n    1;\n}\n");
+    f.write(
+        "a.rs",
+        "fn keep() {\n    1;\n}\n\nfn change() {\n    1;\n}\n",
+    );
     f.git_init_commit();
     // Edit only change()'s body.
-    f.write("a.rs", "fn keep() {\n    1;\n}\n\nfn change() {\n    2;\n}\n");
+    f.write(
+        "a.rs",
+        "fn keep() {\n    1;\n}\n\nfn change() {\n    2;\n}\n",
+    );
 
     let v = f.run(&["changed", "--symbols", "--compare-to", "HEAD"]);
     let names = field_set(&v, "name");
     assert!(names.contains(&"change".to_string()), "{names:?}");
-    assert!(!names.contains(&"keep".to_string()), "untouched fn leaked: {names:?}");
+    assert!(
+        !names.contains(&"keep".to_string()),
+        "untouched fn leaked: {names:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2889,7 +3786,10 @@ fn search_top_level_match_has_no_symbol() {
     let v = f.run(&["search", "TODO"]);
     let row = &v["data"]["matches"][0];
     assert_eq!(row["line"], 1);
-    assert!(row.get("symbol").is_none(), "comment is inside no definition");
+    assert!(
+        row.get("symbol").is_none(),
+        "comment is inside no definition"
+    );
 }
 
 #[test]
@@ -2933,12 +3833,18 @@ fn search_reflects_deleted_files() {
     let f = Fixture::new();
     f.write("a.rs", "fn zzunique() {}\n");
     assert_eq!(
-        f.run(&["search", "zzunique"])["data"]["matches"].as_array().unwrap().len(),
+        f.run(&["search", "zzunique"])["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
         1
     );
     f.remove("a.rs");
     assert_eq!(
-        f.run(&["search", "zzunique"])["data"]["matches"].as_array().unwrap().len(),
+        f.run(&["search", "zzunique"])["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
         0,
         "deleted file still searchable — FTS not pruned"
     );
@@ -2957,10 +3863,20 @@ fn search_context_lines() {
 
     // Text mode must render the context lines too (grep-style `path-line-`), not
     // silently drop the -C flag. Match on line 2, context on 1 and 3.
-    let text = String::from_utf8_lossy(&f.raw(&["search", "target", "-C", "1"]).stdout).into_owned();
-    assert!(text.contains("a.rs-1- fn a() {}"), "before-context line missing: {text}");
-    assert!(text.contains("a.rs:2:") && text.contains("let target = 1;"), "match line missing: {text}");
-    assert!(text.contains("a.rs-3- fn b() {}"), "after-context line missing: {text}");
+    let text =
+        String::from_utf8_lossy(&f.raw(&["search", "target", "-C", "1"]).stdout).into_owned();
+    assert!(
+        text.contains("a.rs-1- fn a() {}"),
+        "before-context line missing: {text}"
+    );
+    assert!(
+        text.contains("a.rs:2:") && text.contains("let target = 1;"),
+        "match line missing: {text}"
+    );
+    assert!(
+        text.contains("a.rs-3- fn b() {}"),
+        "after-context line missing: {text}"
+    );
 }
 
 #[test]
@@ -2971,7 +3887,10 @@ fn search_files_with_matches() {
     let v = f.run(&["search", "needle", "-l"]);
     let files = field_names(&v["data"]["files"]);
     assert_eq!(files, vec!["a.rs".to_string()]);
-    assert!(v["data"].get("matches").is_none(), "-l returns paths, not matches");
+    assert!(
+        v["data"].get("matches").is_none(),
+        "-l returns paths, not matches"
+    );
 }
 
 #[test]
@@ -3027,28 +3946,39 @@ fn search_reports_one_row_per_line_and_in_partitions_it() {
     let code = matches(&f.run(&["search", "value", "--in", "code"]));
     assert_eq!(code.len(), 1);
     assert_eq!(code[0]["line"], 1);
-    assert_eq!(code[0]["col"].as_u64().unwrap(), any_col, "unfiltered col == first (code) hit");
+    assert_eq!(
+        code[0]["col"].as_u64().unwrap(),
+        any_col,
+        "unfiltered col == first (code) hit"
+    );
 
     let com = matches(&f.run(&["search", "value", "--in", "comments"]));
     assert_eq!(com.len(), 1);
     assert_eq!(com[0]["line"], 1);
-    assert!(com[0]["col"].as_u64().unwrap() > any_col, "comment hit is later on the line");
+    assert!(
+        com[0]["col"].as_u64().unwrap() > any_col,
+        "comment hit is later on the line"
+    );
 }
 
 #[test]
 fn search_in_excludes_unparseable_languages() {
     let f = Fixture::new();
     f.write("notes.md", "needle in markdown\n"); // markdown: no parser
-    // Without --in it's found; with --in we can't classify, so it's excluded
-    // (never guessed) rather than returned as code.
+                                                 // Without --in it's found; with --in we can't classify, so it's excluded
+                                                 // (never guessed) rather than returned as code.
     assert_eq!(
         f.run(&["search", "needle", "--path", "notes.md"])["data"]["matches"]
-            .as_array().unwrap().len(),
+            .as_array()
+            .unwrap()
+            .len(),
         1
     );
     assert_eq!(
         f.run(&["search", "needle", "--path", "notes.md", "--in", "code"])["data"]["matches"]
-            .as_array().unwrap().len(),
+            .as_array()
+            .unwrap()
+            .len(),
         0,
         "unparseable file must be excluded from --in, not guessed"
     );
@@ -3068,7 +3998,10 @@ fn search_regex_prefilter_never_drops_matches() {
          fn handle_needle_case() {}\n",
     );
     let count = |pat: &str| -> usize {
-        f.run(&["search", pat])["data"]["matches"].as_array().unwrap().len()
+        f.run(&["search", pat])["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .len()
     };
 
     // Literal is mid-token ("authenticate" inside "reauthenticate").
@@ -3105,7 +4038,12 @@ fn search_finds_mid_token_and_underscore_substrings() {
     // `decode` contains it). The LIKE prefilter must find them.
     let f = Fixture::new();
     f.write("a.rs", "fn decode() {}\nlet my_var = 1;\n");
-    let count = |pat: &str| f.run(&["search", pat])["data"]["matches"].as_array().unwrap().len();
+    let count = |pat: &str| {
+        f.run(&["search", pat])["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
     assert_eq!(count("ode"), 1, "mid-token substring of decode");
     assert_eq!(count("cod"), 1, "3-char mid-token substring");
     assert_eq!(count("y_va"), 1, "underscore substring of my_var");
@@ -3122,7 +4060,10 @@ fn search_glob_include_and_exclude() {
     let rs = f.run(&["search", "hit", "-g", "*.rs", "-l"]);
     let mut files = field_names(&rs["data"]["files"]);
     files.sort();
-    assert_eq!(files, vec!["src/a.rs".to_string(), "tests/c.rs".to_string()]);
+    assert_eq!(
+        files,
+        vec!["src/a.rs".to_string(), "tests/c.rs".to_string()]
+    );
 
     // Exclude a subtree.
     let no_tests = f.run(&["search", "hit", "-g", "!tests/", "-l"]);
@@ -3137,7 +4078,10 @@ fn search_word_matches_whole_words_only() {
     f.write("a.rs", "let count = 1;\nlet counter = 2;\n");
     // Plain matches both lines (substring); -w only the exact word.
     assert_eq!(
-        f.run(&["search", "count"])["data"]["matches"].as_array().unwrap().len(),
+        f.run(&["search", "count"])["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
         2
     );
     let w = f.run(&["search", "count", "-w"]);
@@ -3163,7 +4107,11 @@ fn search_anchors_are_line_oriented_like_grep() {
     // End anchor is line-oriented too.
     let end = f.run(&["search", "x;$"]);
     let em = end["data"]["matches"].as_array().unwrap();
-    assert_eq!(em.len(), 2, "x;$ should match `mod x;` and `use crate::x;`: {em:?}");
+    assert_eq!(
+        em.len(),
+        2,
+        "x;$ should match `mod x;` and `use crate::x;`: {em:?}"
+    );
 }
 
 #[test]
@@ -3175,11 +4123,21 @@ fn search_strips_leading_utf8_bom() {
 
     let hits = f.run(&["search", "^#"]);
     let m = hits["data"]["matches"].as_array().unwrap();
-    assert_eq!(m.len(), 2, "both #region (line 1) and #endregion must match: {m:?}");
-    assert_eq!(m[0]["line"], 1, "line-1 #region must be found despite the BOM");
+    assert_eq!(
+        m.len(),
+        2,
+        "both #region (line 1) and #endregion must match: {m:?}"
+    );
+    assert_eq!(
+        m[0]["line"], 1,
+        "line-1 #region must be found despite the BOM"
+    );
     // The BOM must not leak into the matched line text either.
-    assert!(m[0]["text"].as_str().unwrap().starts_with("#region"),
-            "BOM leaked into text: {:?}", m[0]["text"]);
+    assert!(
+        m[0]["text"].as_str().unwrap().starts_with("#region"),
+        "BOM leaked into text: {:?}",
+        m[0]["text"]
+    );
 }
 
 #[test]
@@ -3191,22 +4149,40 @@ fn text_is_the_default_output_json_is_opt_in() {
     let out = f.raw(&["symbols"]);
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(!text.contains("\"schema\""), "default output must not be JSON: {text}");
-    assert!(text.contains("a.rs:1: function alpha"), "grep-style row missing: {text}");
-    assert!(text.contains("a.rs:2: function beta"), "grep-style row missing: {text}");
+    assert!(
+        !text.contains("\"schema\""),
+        "default output must not be JSON: {text}"
+    );
+    assert!(
+        text.contains("a.rs:1: function alpha"),
+        "grep-style row missing: {text}"
+    );
+    assert!(
+        text.contains("a.rs:2: function beta"),
+        "grep-style row missing: {text}"
+    );
 
     // Search text is `path:line:col: text`, like ripgrep, plus codeq's
     // differentiator: the enclosing symbol annotated as `[name]`.
     let so = f.raw(&["search", "beta"]);
     let s = String::from_utf8_lossy(&so.stdout);
     assert!(s.contains("a.rs:2:"), "search text row missing: {s}");
-    assert!(s.contains("fn beta() {}"), "search text payload missing: {s}");
-    assert!(s.trim_end().ends_with("[beta]"), "enclosing symbol annotation missing: {s}");
+    assert!(
+        s.contains("fn beta() {}"),
+        "search text payload missing: {s}"
+    );
+    assert!(
+        s.trim_end().ends_with("[beta]"),
+        "enclosing symbol annotation missing: {s}"
+    );
 
     // --json restores the structured envelope.
     let jo = f.raw(&["--json", "symbols"]);
     let j = String::from_utf8_lossy(&jo.stdout);
-    assert!(j.contains("\"schema\""), "--json must emit the envelope: {j}");
+    assert!(
+        j.contains("\"schema\""),
+        "--json must emit the envelope: {j}"
+    );
 }
 
 #[test]
@@ -3244,7 +4220,10 @@ fn read_folds_bodies_and_expands_verbatim() {
     // --symbol: the definition's real body.
     let sym = String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "big"]).stdout).unwrap();
     assert!(sym.contains("let v5"), "symbol body verbatim: {sym}");
-    assert!(sym.contains("2  fn big()"), "line-numbered from the def start: {sym}");
+    assert!(
+        sym.contains("2  fn big()"),
+        "line-numbered from the def start: {sym}"
+    );
 }
 
 /// The text output contract (README "Output contract"): plain ASCII rows, no
@@ -3361,15 +4340,14 @@ fn mcp_exposes_every_agent_query_command_and_its_schema_flags() {
     use std::process::{Command as PCommand, Stdio};
 
     let f = Fixture::new();
-    let expected: std::collections::BTreeSet<String> = field_names(
-        &f.run(&["capabilities"])["data"]["commands"],
-    )
-    .into_iter()
-    // These commands manage Codeq itself or start the MCP server; they are not
-    // repository-query tools an MCP client should recursively expose.
-    .filter(|name| !matches!(name.as_str(), "index" | "install" | "mcp"))
-    .map(|name| format!("codeq_{name}"))
-    .collect();
+    let expected: std::collections::BTreeSet<String> =
+        field_names(&f.run(&["capabilities"])["data"]["commands"])
+            .into_iter()
+            // These commands manage Codeq itself or start the MCP server; they are not
+            // repository-query tools an MCP client should recursively expose.
+            .filter(|name| !matches!(name.as_str(), "index" | "install" | "mcp"))
+            .map(|name| format!("codeq_{name}"))
+            .collect();
 
     let mut child = PCommand::cargo_bin("codeq")
         .unwrap()
@@ -3386,7 +4364,9 @@ fn mcp_exposes_every_agent_query_command_and_its_schema_flags() {
     }
     let out = child.wait_with_output().unwrap();
     let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
-    let tools = reply["result"]["tools"].as_array().expect("tools/list response");
+    let tools = reply["result"]["tools"]
+        .as_array()
+        .expect("tools/list response");
     let actual: std::collections::BTreeSet<String> = tools
         .iter()
         .filter_map(|tool| tool["name"].as_str().map(str::to_string))
@@ -3463,20 +4443,33 @@ fn mcp_treats_flag_like_arguments_as_literals() {
 
     // `--json` is searched for literally, and finds the comment.
     let r = &msgs[1]["result"];
-    assert!(r["isError"].as_bool() != Some(true), "search treated --json as a flag: {r}");
+    assert!(
+        r["isError"].as_bool() != Some(true),
+        "search treated --json as a flag: {r}"
+    );
     let data: Value = serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
-    assert_eq!(data["data"]["matches"].as_array().unwrap().len(), 1, "{data}");
+    assert_eq!(
+        data["data"]["matches"].as_array().unwrap().len(),
+        1,
+        "{data}"
+    );
 
     // `--help` is a symbol name with no definition, not a request for help.
     let r = &msgs[2]["result"];
     let text = r["content"][0]["text"].as_str().unwrap();
-    assert!(!text.contains("Usage:"), "help text returned as a result: {text}");
+    assert!(
+        !text.contains("Usage:"),
+        "help text returned as a result: {text}"
+    );
     let data: Value = serde_json::from_str(text).unwrap();
     assert!(data["data"].as_array().unwrap().is_empty(), "{data}");
 
     // astgrep still works: its `language` is a flag value, not a positional.
     let r = &msgs[3]["result"];
-    assert!(r["isError"].as_bool() != Some(true), "astgrep language broke: {r}");
+    assert!(
+        r["isError"].as_bool() != Some(true),
+        "astgrep language broke: {r}"
+    );
 }
 
 /// Guards CLI↔MCP flag parity: `codeq_context` must forward the `path` and
@@ -3520,16 +4513,31 @@ fn mcp_context_forwards_path_and_no_text_flags() {
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
 
-    let call = msgs.iter().find(|m| m["id"] == 2).expect("tool result for id 2");
-    assert!(call["error"].is_null(), "unexpected JSON-RPC error: {call:?}");
-    assert_ne!(call["result"]["isError"].as_bool(), Some(true), "tool errored: {call:?}");
+    let call = msgs
+        .iter()
+        .find(|m| m["id"] == 2)
+        .expect("tool result for id 2");
+    assert!(
+        call["error"].is_null(),
+        "unexpected JSON-RPC error: {call:?}"
+    );
+    assert_ne!(
+        call["result"]["isError"].as_bool(),
+        Some(true),
+        "tool errored: {call:?}"
+    );
     let text = call["result"]["content"][0]["text"].as_str().unwrap();
     let data: Value = serde_json::from_str(text).unwrap();
     let chunks = data["data"]["chunks"].as_array().expect("chunks array");
     // --path a.rs kept the seed; --no-text dropped its source text.
-    assert!(chunks.iter().any(|c| c["name"] == "target"), "seed missing: {chunks:?}");
-    assert!(chunks.iter().all(|c| c.get("text").is_none()),
-            "no_text was not forwarded — source text leaked: {chunks:?}");
+    assert!(
+        chunks.iter().any(|c| c["name"] == "target"),
+        "seed missing: {chunks:?}"
+    );
+    assert!(
+        chunks.iter().all(|c| c.get("text").is_none()),
+        "no_text was not forwarded — source text leaked: {chunks:?}"
+    );
 }
 
 #[test]
@@ -3557,7 +4565,9 @@ fn mcp_context_forwards_resolved_expansion() {
     }
     let out = child.wait_with_output().unwrap();
     let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
-    let text = reply["result"]["content"][0]["text"].as_str().expect("tool text");
+    let text = reply["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool text");
     let data: Value = serde_json::from_str(text).unwrap();
     let paths: Vec<&str> = data["data"]["chunks"]
         .as_array()
@@ -3565,8 +4575,14 @@ fn mcp_context_forwards_resolved_expansion() {
         .iter()
         .filter_map(|chunk| chunk["path"].as_str())
         .collect();
-    assert!(paths.contains(&"helper.rs"), "reachable definition missing: {data}");
-    assert!(!paths.contains(&"other.rs"), "resolved was not forwarded: {data}");
+    assert!(
+        paths.contains(&"helper.rs"),
+        "reachable definition missing: {data}"
+    );
+    assert!(
+        !paths.contains(&"other.rs"),
+        "resolved was not forwarded: {data}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3576,7 +4592,10 @@ fn mcp_context_forwards_resolved_expansion() {
 #[test]
 fn map_is_factual_and_reproducible() {
     let f = Fixture::new();
-    f.write("src/a.rs", "use crate::db::Store;\nfn one() {}\nfn two() {}\n");
+    f.write(
+        "src/a.rs",
+        "use crate::db::Store;\nfn one() {}\nfn two() {}\n",
+    );
     f.write("src/b.rs", "use crate::db::Store;\nstruct S;\n");
     f.write("Cargo.toml", "[package]\nname = \"x\"\n");
     f.write("README.md", "# x\n");
@@ -3612,9 +4631,14 @@ fn map_is_factual_and_reproducible() {
     // Default (text) output must render the per-row metric counts, not drop them
     // into empty payloads (the generic renderer's key=value fallback).
     let text = String::from_utf8_lossy(&f.raw(&["map"]).stdout).into_owned();
-    assert!(text.contains("src/a.rs: ") && text.contains("definitions=2"),
-            "map text output lost its counts: {text}");
-    assert!(text.contains("importers=2"), "import counts missing from map text: {text}");
+    assert!(
+        text.contains("src/a.rs: ") && text.contains("definitions=2"),
+        "map text output lost its counts: {text}"
+    );
+    assert!(
+        text.contains("importers=2"),
+        "import counts missing from map text: {text}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3678,10 +4702,23 @@ fn context_expand_prioritizes_syntax_calls_over_lexical_mentions() {
     // Both neighbours fit individually, but not together. The direct call must
     // take the expansion slot ahead of the lexical-only mention, even though it
     // sorts later by name.
-    let v = f.run(&["context", "--symbols", "seed", "--expand", "--max-tokens", "45"]);
+    let v = f.run(&[
+        "context",
+        "--symbols",
+        "seed",
+        "--expand",
+        "--max-tokens",
+        "45",
+    ]);
     let names = chunk_symbols(&v["data"]);
-    assert!(names.contains(&"z_called".to_string()), "called neighbour missing: {v}");
-    assert!(!names.contains(&"a_mentioned".to_string()), "lexical neighbour outranked call: {v}");
+    assert!(
+        names.contains(&"z_called".to_string()),
+        "called neighbour missing: {v}"
+    );
+    assert!(
+        !names.contains(&"a_mentioned".to_string()),
+        "lexical neighbour outranked call: {v}"
+    );
 }
 
 #[test]
@@ -3702,7 +4739,11 @@ fn context_expand_uses_a_module_qualified_call_to_rank_the_right_definition() {
         .filter(|chunk| chunk["name"] == "build")
         .filter_map(|chunk| chunk["path"].as_str())
         .collect();
-    assert_eq!(paths, ["context.rs"], "qualified expansion was not narrowed: {v}");
+    assert_eq!(
+        paths,
+        ["context.rs"],
+        "qualified expansion was not narrowed: {v}"
+    );
 }
 
 #[test]
@@ -3736,17 +4777,26 @@ fn context_respects_token_budget() {
     assert_eq!(sum, used);
     assert!(used <= 12000);
     // omitted is skipped when empty.
-    assert!(d.get("omitted").map_or(true, |o| o.as_array().unwrap().is_empty()));
+    assert!(d
+        .get("omitted")
+        .map_or(true, |o| o.as_array().unwrap().is_empty()));
 
     // Starve the budget: the explicitly-requested seeds are still returned — you
     // asked for them, and dropping the very symbol you named is worse than
     // overshooting. The budget caps automatic --expand growth, not the seeds.
     let v = f.run(&[
-        "context", "--symbols", "aa,bb", "--no-text", "--max-tokens", "1",
+        "context",
+        "--symbols",
+        "aa,bb",
+        "--no-text",
+        "--max-tokens",
+        "1",
     ]);
     let names = chunk_symbols(&v["data"]);
-    assert!(names.contains(&"aa".to_string()) && names.contains(&"bb".to_string()),
-            "seeds dropped by a starved budget: {names:?}");
+    assert!(
+        names.contains(&"aa".to_string()) && names.contains(&"bb".to_string()),
+        "seeds dropped by a starved budget: {names:?}"
+    );
 }
 
 #[test]
@@ -3775,7 +4825,11 @@ fn context_marks_omissions_truncated_only_when_one_is_hidden() {
         "--max-tokens",
         "1",
     ]);
-    assert_eq!(complete["data"]["omitted"].as_array().unwrap().len(), 50, "{complete}");
+    assert_eq!(
+        complete["data"]["omitted"].as_array().unwrap().len(),
+        50,
+        "{complete}"
+    );
     assert!(
         complete["data"].get("omitted_truncated").is_none(),
         "a full report was mislabelled as truncated: {complete}"
@@ -3791,7 +4845,11 @@ fn context_marks_omissions_truncated_only_when_one_is_hidden() {
         "--max-tokens",
         "1",
     ]);
-    assert_eq!(truncated["data"]["omitted"].as_array().unwrap().len(), 50, "{truncated}");
+    assert_eq!(
+        truncated["data"]["omitted"].as_array().unwrap().len(),
+        50,
+        "{truncated}"
+    );
     assert_eq!(truncated["data"]["omitted_truncated"], true, "{truncated}");
 }
 
@@ -3803,7 +4861,14 @@ fn context_changed_mode_seeds_from_git() {
     f.write("a.py", "def old():\n    pass\n\ndef fresh():\n    pass\n");
 
     // --plan opts into the explanatory plan (omitted by default to stay lean).
-    let v = f.run(&["context", "--changed", "--compare-to", "HEAD", "--no-text", "--plan"]);
+    let v = f.run(&[
+        "context",
+        "--changed",
+        "--compare-to",
+        "HEAD",
+        "--no-text",
+        "--plan",
+    ]);
     let d = &v["data"];
     assert!(d["plan"]["modes"]
         .as_array()
@@ -3811,10 +4876,16 @@ fn context_changed_mode_seeds_from_git() {
         .iter()
         .any(|m| m == "changed"));
     let names = chunk_symbols(d);
-    assert!(names.contains(&"fresh".to_string()), "changed seed missing: {names:?}");
+    assert!(
+        names.contains(&"fresh".to_string()),
+        "changed seed missing: {names:?}"
+    );
     // Seed granularity is the touched *hunk*, not the changed *file*: `old()` is
     // in the same file but untouched, so it must not be seeded.
-    assert!(!names.contains(&"old".to_string()), "untouched def leaked as seed: {names:?}");
+    assert!(
+        !names.contains(&"old".to_string()),
+        "untouched def leaked as seed: {names:?}"
+    );
 
     // Default (no --plan) omits the plan block.
     let lean = f.run(&["context", "--changed", "--compare-to", "HEAD", "--no-text"]);
@@ -3831,7 +4902,10 @@ fn freshness_reflects_tracked_edits() {
 
     f.write("a.rs", "fn renamed() {}\n"); // working-tree edit; git status sees it
     let names = field_set(&f.run(&["symbols"]), "name");
-    assert!(names.contains(&"renamed".to_string()), "edit not picked up: {names:?}");
+    assert!(
+        names.contains(&"renamed".to_string()),
+        "edit not picked up: {names:?}"
+    );
     assert!(!names.contains(&"original".to_string()));
 }
 
@@ -3848,7 +4922,10 @@ fn freshness_reflects_untracked_edits() {
 
     f.write("note.rs", "fn second() {}\n"); // edit in place
     let names = field_set(&f.run(&["symbols"]), "name");
-    assert!(names.contains(&"second".to_string()), "untracked edit missed: {names:?}");
+    assert!(
+        names.contains(&"second".to_string()),
+        "untracked edit missed: {names:?}"
+    );
     assert!(!names.contains(&"first".to_string()));
 }
 
@@ -3864,8 +4941,10 @@ fn rebuild_repopulates_the_index() {
 
     f.run(&["index", "--rebuild"]);
     let names = field_set(&f.run(&["symbols"]), "name");
-    assert!(names.contains(&"alpha".to_string()) && names.contains(&"beta".to_string()),
-            "rebuild left an empty index: {names:?}");
+    assert!(
+        names.contains(&"alpha".to_string()) && names.contains(&"beta".to_string()),
+        "rebuild left an empty index: {names:?}"
+    );
 }
 
 #[test]
@@ -3883,12 +4962,17 @@ fn freshness_reflects_gitignore_edits() {
 
     f.write(".gitignore", "gen/\n"); // now ignore the gen/ directory
     let names = field_set(&f.run(&["symbols"]), "name");
-    assert!(!names.contains(&"generated".to_string()), "gitignored file still indexed: {names:?}");
+    assert!(
+        !names.contains(&"generated".to_string()),
+        "gitignored file still indexed: {names:?}"
+    );
     assert!(names.contains(&"keep".to_string()));
 
     f.write(".gitignore", "\n"); // un-ignore
-    assert!(field_set(&f.run(&["symbols"]), "name").contains(&"generated".to_string()),
-            "un-ignored file not re-indexed");
+    assert!(
+        field_set(&f.run(&["symbols"]), "name").contains(&"generated".to_string()),
+        "un-ignored file not re-indexed"
+    );
 }
 
 #[test]
@@ -3902,7 +4986,10 @@ fn freshness_detects_added_file() {
 
     f.write("b.rs", "fn added() {}\n"); // new file bumps the dir mtime
     let names = field_set(&f.run(&["symbols"]), "name");
-    assert!(names.contains(&"added".to_string()), "added file not indexed: {names:?}");
+    assert!(
+        names.contains(&"added".to_string()),
+        "added file not indexed: {names:?}"
+    );
     assert!(names.contains(&"first".to_string()));
 }
 
@@ -3916,7 +5003,10 @@ fn freshness_detects_deleted_file() {
 
     f.remove("gone.rs"); // deletion also bumps the parent dir mtime
     let names = field_set(&f.run(&["symbols"]), "name");
-    assert!(!names.contains(&"vanishing".to_string()), "deleted symbol still present: {names:?}");
+    assert!(
+        !names.contains(&"vanishing".to_string()),
+        "deleted symbol still present: {names:?}"
+    );
     assert!(names.contains(&"keep".to_string()));
 }
 
@@ -3932,7 +5022,10 @@ fn freshness_detects_added_file_in_new_subdir() {
 
     f.write("sub/deep.rs", "fn deep_fn() {}\n"); // new subdir + file
     let names = field_set(&f.run(&["symbols"]), "name");
-    assert!(names.contains(&"deep_fn".to_string()), "file in new subdir missed: {names:?}");
+    assert!(
+        names.contains(&"deep_fn".to_string()),
+        "file in new subdir missed: {names:?}"
+    );
 }
 
 #[test]
@@ -3942,7 +5035,10 @@ fn changed_without_git_fails_with_nonzero_exit() {
     let out = f.raw(&["changed", "--compare-to", "main"]);
     assert!(!out.status.success(), "expected non-zero exit");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("Git"), "stderr should mention Git: {stderr}");
+    assert!(
+        stderr.contains("Git"),
+        "stderr should mention Git: {stderr}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3973,10 +5069,16 @@ fn at_roundtrips_a_definition_and_encloses_its_body() {
     f.write("a.rs", "fn outer() {\n    let x = 1;\n    let y = 2;\n}\n");
     let d0 = f.run(&["definitions", "outer"])["data"][0].clone();
     let p = d0["path"].as_str().unwrap().to_string();
-    let (s, e) = (d0["line"].as_u64().unwrap(), d0["end_line"].as_u64().unwrap());
+    let (s, e) = (
+        d0["line"].as_u64().unwrap(),
+        d0["end_line"].as_u64().unwrap(),
+    );
 
     let at_def = f.run(&["at", &format!("{p}:{s}")]);
-    assert_eq!(at_def["data"][0]["name"], "outer", "at the def line must resolve to it");
+    assert_eq!(
+        at_def["data"][0]["name"], "outer",
+        "at the def line must resolve to it"
+    );
 
     let mid = (s + e) / 2;
     let d = f.run(&["at", &format!("{p}:{mid}")])["data"][0].clone();
@@ -3991,12 +5093,17 @@ fn at_roundtrips_a_definition_and_encloses_its_body() {
 fn outline_names_are_a_subset_of_symbols() {
     let f = Fixture::new();
     f.write("a.rs", "struct S;\nfn f() {}\nimpl S { fn m(&self) {} }\n");
-    let symbols: std::collections::HashSet<String> =
-        field_set(&f.run(&["symbols", "--path", "a.rs", "--limit", "0"]), "name")
-            .into_iter()
-            .collect();
+    let symbols: std::collections::HashSet<String> = field_set(
+        &f.run(&["symbols", "--path", "a.rs", "--limit", "0"]),
+        "name",
+    )
+    .into_iter()
+    .collect();
     for n in field_set(&f.run(&["outline", "a.rs"]), "name") {
-        assert!(symbols.contains(&n), "outline name {n} absent from symbols {symbols:?}");
+        assert!(
+            symbols.contains(&n),
+            "outline name {n} absent from symbols {symbols:?}"
+        );
     }
 }
 
@@ -4008,7 +5115,10 @@ fn read_line_range_clamps_past_eof() {
     let out = f.raw(&["read", "a.rs", "--lines", "2-999"]);
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("fn b") && text.contains("fn c"), "range content missing: {text}");
+    assert!(
+        text.contains("fn b") && text.contains("fn c"),
+        "range content missing: {text}"
+    );
     assert!(!text.contains("fn a"), "range must start at line 2: {text}");
 }
 
@@ -4017,7 +5127,10 @@ fn at_beyond_eof_resolves_to_nothing() {
     let f = Fixture::new();
     f.write("a.rs", "fn a() {}\n");
     let v = f.run(&["at", "a.rs:9999"]);
-    assert!(v["data"].as_array().unwrap().is_empty(), "line past EOF should enclose nothing");
+    assert!(
+        v["data"].as_array().unwrap().is_empty(),
+        "line past EOF should enclose nothing"
+    );
 }
 
 #[test]
@@ -4025,32 +5138,55 @@ fn fields_ignores_unknown_columns() {
     let f = Fixture::new();
     f.write("a.rs", "fn f() {}\n");
     let row = f.run(&["symbols", "--fields", "name,not_a_real_field"])["data"][0].clone();
-    let keys: Vec<&str> = row.as_object().unwrap().keys().map(|s| s.as_str()).collect();
-    assert_eq!(keys, ["name"], "only the known requested field survives: {keys:?}");
+    let keys: Vec<&str> = row
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|s| s.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        ["name"],
+        "only the known requested field survives: {keys:?}"
+    );
 }
 
 #[test]
 fn rust_impl_method_extracted_with_signature() {
     let f = Fixture::new();
-    f.write("a.rs", "struct S;\nimpl S {\n    pub fn method(&self, x: i32) -> i32 { x }\n}\n");
-    assert!(field_set(&f.run(&["symbols", "--path", "a.rs"]), "name").contains(&"method".to_string()));
+    f.write(
+        "a.rs",
+        "struct S;\nimpl S {\n    pub fn method(&self, x: i32) -> i32 { x }\n}\n",
+    );
+    assert!(
+        field_set(&f.run(&["symbols", "--path", "a.rs"]), "name").contains(&"method".to_string())
+    );
     let sig = f.run(&["definitions", "method"])["data"][0]["signature"]
         .as_str()
         .unwrap()
         .to_string();
-    assert!(sig.contains("fn method") && sig.contains("i32"), "signature: {sig}");
+    assert!(
+        sig.contains("fn method") && sig.contains("i32"),
+        "signature: {sig}"
+    );
 }
 
 #[test]
 fn python_class_method_nests_in_outline() {
     let f = Fixture::new();
-    f.write("a.py", "class Widget:\n    def method(self):\n        pass\n");
+    f.write(
+        "a.py",
+        "class Widget:\n    def method(self):\n        pass\n",
+    );
     let v = f.run(&["outline", "a.py"]);
     let rows = v["data"].as_array().unwrap();
     let cls = rows.iter().find(|r| r["name"] == "Widget").unwrap();
     let meth = rows.iter().find(|r| r["name"] == "method").unwrap();
     assert_eq!(cls["depth"], 0);
-    assert!(meth["depth"].as_u64().unwrap() >= 1, "method must nest under its class");
+    assert!(
+        meth["depth"].as_u64().unwrap() >= 1,
+        "method must nest under its class"
+    );
 }
 
 #[test]
@@ -4067,8 +5203,14 @@ fn python_import_forms_all_capture_the_module() {
     // `from X import a, b` is captured qualified per name (X.a) so the imported
     // symbol — dropped by the bare module string — resolves to its defining file.
     assert!(mods.contains(&"sys.path".to_string()), "{mods:?}");
-    assert!(mods.contains(&"collections.OrderedDict".to_string()), "{mods:?}");
-    assert!(mods.contains(&"collections.defaultdict".to_string()), "{mods:?}");
+    assert!(
+        mods.contains(&"collections.OrderedDict".to_string()),
+        "{mods:?}"
+    );
+    assert!(
+        mods.contains(&"collections.defaultdict".to_string()),
+        "{mods:?}"
+    );
 }
 
 #[test]
@@ -4076,10 +5218,23 @@ fn search_composes_word_language_and_path_filters() {
     let f = Fixture::new();
     f.write("a.rs", "fn value() {}\nlet value = 1;\n");
     f.write("b.py", "value = 2\n");
-    let v = f.run(&["search", "value", "-w", "--language", "rust", "--path", "a.rs", "--limit", "0"]);
+    let v = f.run(&[
+        "search",
+        "value",
+        "-w",
+        "--language",
+        "rust",
+        "--path",
+        "a.rs",
+        "--limit",
+        "0",
+    ]);
     let matches = v["data"]["matches"].as_array().unwrap();
     assert!(!matches.is_empty(), "expected matches in a.rs");
-    assert!(matches.iter().all(|m| m["path"] == "a.rs"), "path/language filter leaked: {matches:?}");
+    assert!(
+        matches.iter().all(|m| m["path"] == "a.rs"),
+        "path/language filter leaked: {matches:?}"
+    );
 }
 
 #[test]
@@ -4087,12 +5242,28 @@ fn context_changed_mode_can_expand_to_referenced_defs() {
     let f = Fixture::new();
     f.write("a.py", "def helper():\n    pass\n");
     f.git_init_commit();
-    f.write("a.py", "def helper():\n    pass\n\ndef changed():\n    helper()\n");
-    let names = chunk_symbols(
-        &f.run(&["context", "--changed", "--compare-to", "HEAD", "--expand", "--no-text"])["data"],
+    f.write(
+        "a.py",
+        "def helper():\n    pass\n\ndef changed():\n    helper()\n",
     );
-    assert!(names.contains(&"changed".to_string()), "touched seed missing: {names:?}");
-    assert!(names.contains(&"helper".to_string()), "expansion to referenced def missing: {names:?}");
+    let names = chunk_symbols(
+        &f.run(&[
+            "context",
+            "--changed",
+            "--compare-to",
+            "HEAD",
+            "--expand",
+            "--no-text",
+        ])["data"],
+    );
+    assert!(
+        names.contains(&"changed".to_string()),
+        "touched seed missing: {names:?}"
+    );
+    assert!(
+        names.contains(&"helper".to_string()),
+        "expansion to referenced def missing: {names:?}"
+    );
 }
 
 #[test]
@@ -4102,15 +5273,26 @@ fn map_totals_agree_with_the_summary_and_symbols() {
     f.write("a.rs", "fn one() {}\nfn two() {}\n");
     f.write("b.py", "def three():\n    pass\n");
     f.run(&["index"]);
-    let files_stats = f.run(&["map", "--totals"])["data"]["totals"]["files"].as_u64().unwrap();
+    let files_stats = f.run(&["map", "--totals"])["data"]["totals"]["files"]
+        .as_u64()
+        .unwrap();
     let map = f.run(&["map"]);
     assert_eq!(files_stats, 2);
-    assert_eq!(map["data"]["totals"]["files"].as_u64().unwrap(), files_stats,
-               "map totals.files must match the --totals summary");
-    let nsym = f.run(&["symbols", "--limit", "0"])["data"].as_array().unwrap().len() as u64;
+    assert_eq!(
+        map["data"]["totals"]["files"].as_u64().unwrap(),
+        files_stats,
+        "map totals.files must match the --totals summary"
+    );
+    let nsym = f.run(&["symbols", "--limit", "0"])["data"]
+        .as_array()
+        .unwrap()
+        .len() as u64;
     assert_eq!(nsym, 3);
-    assert_eq!(map["data"]["totals"]["symbols"].as_u64().unwrap(), nsym,
-               "map totals.symbols must match the actual symbol count");
+    assert_eq!(
+        map["data"]["totals"]["symbols"].as_u64().unwrap(),
+        nsym,
+        "map totals.symbols must match the actual symbol count"
+    );
 }
 
 #[test]
@@ -4140,7 +5322,10 @@ fn go_struct_method_and_free_func_extracted() {
     );
     let names = field_set(&f.run(&["symbols", "--path", "a.go"]), "name");
     for n in ["T", "Method", "Free"] {
-        assert!(names.iter().any(|x| x == n), "go symbol {n} missing: {names:?}");
+        assert!(
+            names.iter().any(|x| x == n),
+            "go symbol {n} missing: {names:?}"
+        );
     }
 }
 
@@ -4153,7 +5338,10 @@ fn typescript_interface_class_and_method_extracted() {
     );
     let names = field_set(&f.run(&["symbols", "--path", "a.ts"]), "name");
     for n in ["Shape", "Circle", "area"] {
-        assert!(names.iter().any(|x| x == n), "ts symbol {n} missing: {names:?}");
+        assert!(
+            names.iter().any(|x| x == n),
+            "ts symbol {n} missing: {names:?}"
+        );
     }
 }
 
@@ -4175,9 +5363,17 @@ fn search_case_insensitive_matches_mixed_case() {
     let f = Fixture::new();
     f.write("a.rs", "let Value = 1;\nlet value = 2;\nlet VALUE = 3;\n");
     let ci = f.run(&["search", "value", "-i", "--limit", "0"]);
-    assert_eq!(ci["data"]["matches"].as_array().unwrap().len(), 3, "-i must match all three cases");
+    assert_eq!(
+        ci["data"]["matches"].as_array().unwrap().len(),
+        3,
+        "-i must match all three cases"
+    );
     let cs = f.run(&["search", "value", "--limit", "0"]);
-    assert_eq!(cs["data"]["matches"].as_array().unwrap().len(), 1, "case-sensitive matches only 'value'");
+    assert_eq!(
+        cs["data"]["matches"].as_array().unwrap().len(),
+        1,
+        "case-sensitive matches only 'value'"
+    );
 }
 
 #[test]
@@ -4195,36 +5391,72 @@ fn search_regex_features_match_expected_lines() {
         l.dedup();
         l
     };
-    assert_eq!(lines(&f.run(&["search", "[0-9]+", "--limit", "0"])), vec![1], "char class + quantifier");
-    assert_eq!(lines(&f.run(&["search", "foo|bar", "--limit", "0"])), vec![2, 3], "alternation");
-    assert_eq!(lines(&f.run(&["search", "names?", "--limit", "0"])), vec![2], "optional quantifier");
+    assert_eq!(
+        lines(&f.run(&["search", "[0-9]+", "--limit", "0"])),
+        vec![1],
+        "char class + quantifier"
+    );
+    assert_eq!(
+        lines(&f.run(&["search", "foo|bar", "--limit", "0"])),
+        vec![2, 3],
+        "alternation"
+    );
+    assert_eq!(
+        lines(&f.run(&["search", "names?", "--limit", "0"])),
+        vec![2],
+        "optional quantifier"
+    );
 }
 
 #[test]
 fn read_symbol_returns_only_that_definition() {
     let f = Fixture::new();
-    f.write("a.rs", "fn first() {\n    let a = 1;\n}\nfn second() {\n    let b = 2;\n}\n");
+    f.write(
+        "a.rs",
+        "fn first() {\n    let a = 1;\n}\nfn second() {\n    let b = 2;\n}\n",
+    );
     f.run(&["index"]);
-    let out = String::from_utf8_lossy(&f.raw(&["read", "a.rs", "--symbol", "second"]).stdout).into_owned();
-    assert!(out.contains("fn second") && out.contains("let b = 2"), "second not returned: {out}");
-    assert!(!out.contains("fn first") && !out.contains("let a = 1"), "sibling leaked into --symbol read: {out}");
+    let out = String::from_utf8_lossy(&f.raw(&["read", "a.rs", "--symbol", "second"]).stdout)
+        .into_owned();
+    assert!(
+        out.contains("fn second") && out.contains("let b = 2"),
+        "second not returned: {out}"
+    );
+    assert!(
+        !out.contains("fn first") && !out.contains("let a = 1"),
+        "sibling leaked into --symbol read: {out}"
+    );
 }
 
 #[test]
 fn read_raw_emits_exact_bytes_ready_for_edit() {
     let f = Fixture::new();
-    f.write("a.rs", "fn other() {}\nfn helper() {\n    let x = 1;\n    x\n}\n");
+    f.write(
+        "a.rs",
+        "fn other() {}\nfn helper() {\n    let x = 1;\n    x\n}\n",
+    );
 
     // Default is line-numbered; --raw is the exact source, no prefixes.
-    let numbered = String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "helper"]).stdout).unwrap();
-    assert!(numbered.contains("  2  fn helper"), "default should be line-numbered: {numbered:?}");
+    let numbered =
+        String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "helper"]).stdout).unwrap();
+    assert!(
+        numbered.contains("  2  fn helper"),
+        "default should be line-numbered: {numbered:?}"
+    );
 
-    let raw = String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "helper", "--raw"]).stdout).unwrap();
+    let raw = String::from_utf8(
+        f.raw(&["read", "a.rs", "--symbol", "helper", "--raw"])
+            .stdout,
+    )
+    .unwrap();
     // Byte-exact: the source of `helper` verbatim, and it drops into Edit's
     // old_string as-is (must be a substring of the file's own text).
     assert_eq!(raw, "fn helper() {\n    let x = 1;\n    x\n}\n");
     let file = std::fs::read_to_string(f.dir.path().join("a.rs")).unwrap();
-    assert!(file.contains(raw.trim_end()), "raw output must be a verbatim slice of the file");
+    assert!(
+        file.contains(raw.trim_end()),
+        "raw output must be a verbatim slice of the file"
+    );
 }
 
 #[test]
@@ -4234,7 +5466,10 @@ fn read_raw_symbol_refuses_ambiguous_match() {
     let r = f.raw(&["read", "a.rs", "--symbol", "dup", "--raw"]);
     assert!(!r.status.success(), "ambiguous --raw should fail");
     let err = String::from_utf8_lossy(&r.stderr);
-    assert!(err.contains("needs one"), "should explain the ambiguity: {err}");
+    assert!(
+        err.contains("needs one"),
+        "should explain the ambiguity: {err}"
+    );
 }
 
 #[test]
@@ -4245,9 +5480,18 @@ fn callees_report_the_functions_a_symbol_calls() {
         "fn caller() {\n    helper();\n    other();\n}\nfn helper() {}\nfn other() {}\nfn unrelated() {}\n",
     );
     let names = field_set(&f.run(&["callees", "caller"]), "name");
-    assert!(names.contains(&"helper".to_string()), "helper missing: {names:?}");
-    assert!(names.contains(&"other".to_string()), "other missing: {names:?}");
-    assert!(!names.contains(&"unrelated".to_string()), "uncalled sibling listed as callee: {names:?}");
+    assert!(
+        names.contains(&"helper".to_string()),
+        "helper missing: {names:?}"
+    );
+    assert!(
+        names.contains(&"other".to_string()),
+        "other missing: {names:?}"
+    );
+    assert!(
+        !names.contains(&"unrelated".to_string()),
+        "uncalled sibling listed as callee: {names:?}"
+    );
 }
 
 #[test]
@@ -4256,7 +5500,14 @@ fn path_scopes_definitions_to_one_file() {
     let f = Fixture::new();
     f.write("a.rs", "fn build() {}\n");
     f.write("b.rs", "fn build() {}\n");
-    assert_eq!(f.run(&["definitions", "build"])["data"].as_array().unwrap().len(), 2, "both defs unscoped");
+    assert_eq!(
+        f.run(&["definitions", "build"])["data"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2,
+        "both defs unscoped"
+    );
     let scoped = f.run(&["definitions", "build", "--path", "a.rs"]);
     let rows = scoped["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "scoped to one file");
@@ -4273,15 +5524,27 @@ fn javascript_require_and_es_import_both_captured() {
         "import fs from \"fs\";\nconst p = require(\"path\");\nfunction f() { console.log(\"hi\"); }\n",
     );
     let mods = field_set(&f.run(&["imports", "a.js"]), "module");
-    assert!(mods.iter().any(|m| m == "fs"), "ES import missing: {mods:?}");
-    assert!(mods.iter().any(|m| m == "path"), "require() import missing: {mods:?}");
-    assert!(!mods.iter().any(|m| m == "hi" || m == "console"), "a non-require call leaked: {mods:?}");
+    assert!(
+        mods.iter().any(|m| m == "fs"),
+        "ES import missing: {mods:?}"
+    );
+    assert!(
+        mods.iter().any(|m| m == "path"),
+        "require() import missing: {mods:?}"
+    );
+    assert!(
+        !mods.iter().any(|m| m == "hi" || m == "console"),
+        "a non-require call leaked: {mods:?}"
+    );
 }
 
 #[test]
 fn tests_linkage_finds_tests_in_test_files() {
     let f = Fixture::new();
-    f.write("src/lib.rs", "pub fn widget() -> i32 { 1 }\npub fn other() {}\n");
+    f.write(
+        "src/lib.rs",
+        "pub fn widget() -> i32 { 1 }\npub fn other() {}\n",
+    );
     f.write(
         "tests/w.rs",
         "fn test_widget_works() {\n    assert_eq!(widget(), 1);\n}\nfn test_other_only() {\n    other();\n}\n",
@@ -4292,8 +5555,14 @@ fn tests_linkage_finds_tests_in_test_files() {
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_string())
         .collect();
-    assert!(names.contains(&"test_widget_works".to_string()), "{names:?}");
-    assert!(!names.contains(&"test_other_only".to_string()), "doesn't reference widget: {names:?}");
+    assert!(
+        names.contains(&"test_widget_works".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        !names.contains(&"test_other_only".to_string()),
+        "doesn't reference widget: {names:?}"
+    );
 }
 
 #[test]
@@ -4325,9 +5594,14 @@ fn tests_linkage_finds_rust_unit_tests_in_a_cfg_test_module() {
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_string())
         .collect();
-    assert!(names.contains(&"returns_one".to_string()), "unit test not linked: {names:?}");
-    assert!(!names.contains(&"touches_other".to_string()),
-            "doesn't reference widget: {names:?}");
+    assert!(
+        names.contains(&"returns_one".to_string()),
+        "unit test not linked: {names:?}"
+    );
+    assert!(
+        !names.contains(&"touches_other".to_string()),
+        "doesn't reference widget: {names:?}"
+    );
 }
 
 #[test]
@@ -4345,7 +5619,10 @@ fn tests_linkage_uses_test_name_heuristic() {
         .map(|t| t["name"].as_str().unwrap().to_string())
         .collect();
     assert!(names.contains(&"test_target".to_string()), "{names:?}");
-    assert!(!names.contains(&"helper".to_string()), "helper is not a test: {names:?}");
+    assert!(
+        !names.contains(&"helper".to_string()),
+        "helper is not a test: {names:?}"
+    );
 }
 
 #[test]
@@ -4372,7 +5649,10 @@ fn astgrep_matches_method_calls_structurally() {
 #[test]
 fn astgrep_metavariable_binds_consistently() {
     let f = Fixture::new();
-    f.write("a.rs", "fn f(a: i32, b: i32) -> bool {\n    let _ = a == a;\n    a == b\n}\n");
+    f.write(
+        "a.rs",
+        "fn f(a: i32, b: i32) -> bool {\n    let _ = a == a;\n    a == b\n}\n",
+    );
     let m = f.run(&["astgrep", "$X == $X", "--language", "rust"]);
     let rows = m["data"]["matches"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "only a==a matches a consistent metavar");
@@ -4389,7 +5669,11 @@ fn astgrep_keeps_literals_and_keywords_exact() {
     );
     let rows = f.run(&["astgrep", "return Ok($X)", "--language", "rust"]);
     let m = rows["data"]["matches"].as_array().unwrap();
-    assert_eq!(m.len(), 1, "must stay anchored to `return`, not match `let _x = Ok(2)`");
+    assert_eq!(
+        m.len(),
+        1,
+        "must stay anchored to `return`, not match `let _x = Ok(2)`"
+    );
     assert_eq!(m[0]["text"], "return Ok(1)");
 }
 
@@ -4398,16 +5682,27 @@ fn astgrep_works_across_languages() {
     let f = Fixture::new();
     f.write("a.py", "def f():\n    print(x)\n    print(y)\n    log(z)\n");
     let rows = f.run(&["astgrep", "print($X)", "--language", "python"]);
-    assert_eq!(rows["data"]["matches"].as_array().unwrap().len(), 2, "two print() calls");
+    assert_eq!(
+        rows["data"]["matches"].as_array().unwrap().len(),
+        2,
+        "two print() calls"
+    );
 }
 
 #[test]
 fn astgrep_variadic_matches_any_arguments() {
     // `$$$` absorbs a run of zero-or-more siblings in a list position.
     let f = Fixture::new();
-    f.write("a.rs", "fn f() {\n    foo();\n    foo(1);\n    foo(1, 2, 3);\n    bar(9);\n}\n");
+    f.write(
+        "a.rs",
+        "fn f() {\n    foo();\n    foo(1);\n    foo(1, 2, 3);\n    bar(9);\n}\n",
+    );
     let all = f.run(&["astgrep", "foo($$$)", "--language", "rust"]);
-    assert_eq!(all["data"]["matches"].as_array().unwrap().len(), 3, "foo() with 0/1/3 args, not bar");
+    assert_eq!(
+        all["data"]["matches"].as_array().unwrap().len(),
+        3,
+        "foo() with 0/1/3 args, not bar"
+    );
     // A fixed leading arg plus a variadic requires at least that arg.
     let some = f.run(&["astgrep", "foo($A, $$$)", "--language", "rust"]);
     let texts: Vec<String> = some["data"]["matches"]
@@ -4416,7 +5711,11 @@ fn astgrep_variadic_matches_any_arguments() {
         .iter()
         .map(|r| r["text"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(texts.len(), 2, "foo(1) and foo(1,2,3), not the no-arg call: {texts:?}");
+    assert_eq!(
+        texts.len(),
+        2,
+        "foo(1) and foo(1,2,3), not the no-arg call: {texts:?}"
+    );
     assert!(!texts.iter().any(|t| t == "foo()"), "{texts:?}");
 }
 
@@ -4433,23 +5732,39 @@ fn astgrep_variadic_works_in_parameter_and_body_positions_at_once() {
          fn empty() {}\nfn typed() -> i32 { 3 }\n",
     );
     let m = f.run(&["astgrep", "fn $N($$$) { $$$ }", "--language", "rust"]);
-    let names: Vec<String> = m["data"]["matches"].as_array().unwrap().iter()
-        .map(|r| r["binds"][0]["value"].as_str().unwrap_or_default().to_string())
+    let names: Vec<String> = m["data"]["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            r["binds"][0]["value"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
         .collect();
     assert_eq!(
-        m["data"]["matches"].as_array().unwrap().len(), 3,
+        m["data"]["matches"].as_array().unwrap().len(),
+        3,
         "expected none/two/empty (typed() has a return type): {names:?}"
     );
 
     // Same shape in a language with untyped parameters.
-    f.write("p.py", "def one(a, b):\n    return a\ndef two():\n    return 1\n");
+    f.write(
+        "p.py",
+        "def one(a, b):\n    return a\ndef two():\n    return 1\n",
+    );
     let py = f.run(&["astgrep", "def $N($$$): $$$", "--language", "python"]);
     assert_eq!(py["data"]["matches"].as_array().unwrap().len(), 2, "{py}");
 
     // The single-variadic behaviour it must not regress.
     f.write("b.rs", "fn g() {\n    foo();\n    foo(1, 2);\n}\n");
     let calls = f.run(&["astgrep", "foo($$$)", "--language", "rust"]);
-    assert_eq!(calls["data"]["matches"].as_array().unwrap().len(), 2, "{calls}");
+    assert_eq!(
+        calls["data"]["matches"].as_array().unwrap().len(),
+        2,
+        "{calls}"
+    );
 }
 
 #[test]
@@ -4463,9 +5778,18 @@ fn callees_are_calls_not_field_or_type_references() {
         "fn helper() {}\nfn field() {}\nstruct SomeType;\nfn caller() {\n    helper();\n    let y = self.field;\n    let z = SomeType;\n}\n",
     );
     let names = field_set(&f.run(&["callees", "caller"]), "name");
-    assert!(names.contains(&"helper".to_string()), "called function missing: {names:?}");
-    assert!(!names.contains(&"field".to_string()), "a field access is not a callee: {names:?}");
-    assert!(!names.contains(&"SomeType".to_string()), "a type reference is not a callee: {names:?}");
+    assert!(
+        names.contains(&"helper".to_string()),
+        "called function missing: {names:?}"
+    );
+    assert!(
+        !names.contains(&"field".to_string()),
+        "a field access is not a callee: {names:?}"
+    );
+    assert!(
+        !names.contains(&"SomeType".to_string()),
+        "a type reference is not a callee: {names:?}"
+    );
 }
 
 #[test]
@@ -4479,17 +5803,33 @@ fn cpp_header_method_declarations_are_extracted() {
         "class Widget {\npublic:\n    void declared_only();\n    int compute(int x) const;\n    void inline_def() {}\n};\nint free_prototype(int a);\n",
     );
     let names = field_set(&f.run(&["symbols", "--path", "w.hpp"]), "name");
-    for n in ["Widget", "declared_only", "compute", "inline_def", "free_prototype"] {
-        assert!(names.iter().any(|x| x == n), "cpp symbol {n} missing: {names:?}");
+    for n in [
+        "Widget",
+        "declared_only",
+        "compute",
+        "inline_def",
+        "free_prototype",
+    ] {
+        assert!(
+            names.iter().any(|x| x == n),
+            "cpp symbol {n} missing: {names:?}"
+        );
     }
     // The inline definition is not double-counted.
-    assert_eq!(names.iter().filter(|x| *x == "inline_def").count(), 1, "inline method duplicated");
+    assert_eq!(
+        names.iter().filter(|x| *x == "inline_def").count(),
+        1,
+        "inline method duplicated"
+    );
     // A declaration-only method still resolves via `definitions`, with a signature.
     let sig = f.run(&["definitions", "declared_only"])["data"][0]["signature"]
         .as_str()
         .unwrap()
         .to_string();
-    assert!(sig.contains("declared_only"), "declaration signature missing: {sig}");
+    assert!(
+        sig.contains("declared_only"),
+        "declaration signature missing: {sig}"
+    );
 }
 
 #[test]
@@ -4503,19 +5843,40 @@ fn php_require_and_include_are_imports() {
         "<?php\nuse App\\Thing;\nrequire 'bootstrap.php';\ninclude_once \"vendor/autoload.php\";\nfunction f() { echo \"hi\"; }\n",
     );
     let mods = field_set(&f.run(&["imports", "a.php"]), "module");
-    assert!(mods.iter().any(|m| m == "App\\Thing"), "use statement missing: {mods:?}");
-    assert!(mods.iter().any(|m| m == "bootstrap.php"), "single-quoted require missing: {mods:?}");
-    assert!(mods.iter().any(|m| m == "vendor/autoload.php"), "double-quoted include_once missing: {mods:?}");
-    assert!(!mods.iter().any(|m| m == "hi"), "an echoed string leaked as an import: {mods:?}");
+    assert!(
+        mods.iter().any(|m| m == "App\\Thing"),
+        "use statement missing: {mods:?}"
+    );
+    assert!(
+        mods.iter().any(|m| m == "bootstrap.php"),
+        "single-quoted require missing: {mods:?}"
+    );
+    assert!(
+        mods.iter().any(|m| m == "vendor/autoload.php"),
+        "double-quoted include_once missing: {mods:?}"
+    );
+    assert!(
+        !mods.iter().any(|m| m == "hi"),
+        "an echoed string leaked as an import: {mods:?}"
+    );
 }
 
 #[test]
 fn go_import_block_captures_each_module() {
     let f = Fixture::new();
-    f.write("a.go", "package main\nimport (\n\t\"fmt\"\n\t\"os\"\n)\nfunc F() { fmt.Println(os.Args) }\n");
+    f.write(
+        "a.go",
+        "package main\nimport (\n\t\"fmt\"\n\t\"os\"\n)\nfunc F() { fmt.Println(os.Args) }\n",
+    );
     let mods = field_set(&f.run(&["imports", "a.go"]), "module");
-    assert!(mods.iter().any(|m| m == "fmt"), "fmt missing from import block: {mods:?}");
-    assert!(mods.iter().any(|m| m == "os"), "os missing from import block: {mods:?}");
+    assert!(
+        mods.iter().any(|m| m == "fmt"),
+        "fmt missing from import block: {mods:?}"
+    );
+    assert!(
+        mods.iter().any(|m| m == "os"),
+        "os missing from import block: {mods:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4532,7 +5893,11 @@ fn deps_resolves_imports_to_internal_files_and_drops_external() {
     let v = f.run(&["deps", "a.py"]);
     let rows = v["data"].as_array().unwrap();
     let targets: Vec<&str> = rows.iter().map(|r| r["path"].as_str().unwrap()).collect();
-    assert_eq!(targets, ["b.py"], "only the internal import resolves: {targets:?}");
+    assert_eq!(
+        targets,
+        ["b.py"],
+        "only the internal import resolves: {targets:?}"
+    );
     assert_eq!(rows[0]["module"], "b", "edge carries the raw import string");
     assert_eq!(rows[0]["depth"], 1);
 }
@@ -4546,13 +5911,19 @@ fn deps_depth_walks_the_import_chain() {
 
     // depth 1 stops at the direct import.
     let d1 = field_set(&f.run(&["deps", "a.py"]), "path");
-    assert!(d1.contains(&"b.py".to_string()) && !d1.contains(&"c.py".to_string()), "{d1:?}");
+    assert!(
+        d1.contains(&"b.py".to_string()) && !d1.contains(&"c.py".to_string()),
+        "{d1:?}"
+    );
 
     // depth 2 reaches c through b, tagged with its hop distance.
     let d2 = f.run(&["deps", "a.py", "--depth", "2"]);
     let rows = d2["data"].as_array().unwrap();
-    let depth_of = |p: &str| rows.iter()
-        .find(|r| r["path"] == p).unwrap()["depth"].as_u64().unwrap();
+    let depth_of = |p: &str| {
+        rows.iter().find(|r| r["path"] == p).unwrap()["depth"]
+            .as_u64()
+            .unwrap()
+    };
     assert_eq!(depth_of("b.py"), 1);
     assert_eq!(depth_of("c.py"), 2, "transitive dep is hop 2");
 }
@@ -4567,9 +5938,17 @@ fn deps_cycles_reports_import_cycle() {
     let v = f.run(&["deps", "--cycles"]);
     let rows = v["data"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "exactly one cycle: {rows:?}");
-    let cyc: Vec<&str> = rows[0]["cycle"].as_array().unwrap()
-        .iter().map(|v| v.as_str().unwrap()).collect();
-    assert_eq!(cyc, ["x.py", "y.py"], "cycle canonicalized to start at least member: {cyc:?}");
+    let cyc: Vec<&str> = rows[0]["cycle"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        cyc,
+        ["x.py", "y.py"],
+        "cycle canonicalized to start at least member: {cyc:?}"
+    );
     assert_eq!(rows[0]["length"], 2);
 }
 
@@ -4583,9 +5962,18 @@ fn deps_cycles_reports_overlapping_cycles_through_a_shared_file() {
         .write("c.py", "import b\n");
 
     let v = f.run(&["deps", "--cycles"]);
-    let cycles: Vec<Vec<&str>> = v["data"].as_array().unwrap().iter()
-        .map(|r| r["cycle"].as_array().unwrap().iter()
-            .map(|v| v.as_str().unwrap()).collect())
+    let cycles: Vec<Vec<&str>> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            r["cycle"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect()
+        })
         .collect();
     assert_eq!(
         cycles,
@@ -4631,7 +6019,10 @@ fn deps_cycles_stays_fast_on_a_wide_acyclic_graph() {
     let started = std::time::Instant::now();
     let v = f.run(&["deps", "--cycles"]);
     let elapsed = started.elapsed();
-    assert!(v["data"].as_array().unwrap().is_empty(), "a DAG has no cycles: {v}");
+    assert!(
+        v["data"].as_array().unwrap().is_empty(),
+        "a DAG has no cycles: {v}"
+    );
     assert!(
         elapsed < std::time::Duration::from_secs(5),
         "cycle search cost scaled with paths, not cycles: took {elapsed:?}"
@@ -4650,7 +6041,10 @@ fn deps_cycles_ignores_segment_overlap_that_is_not_an_import_target() {
             "updater/data/teams.py",
             "from updater.data.dataframes import serialize\n",
         )
-        .write("updater/data/dataframes/__init__.py", "def serialize(): pass\n");
+        .write(
+            "updater/data/dataframes/__init__.py",
+            "def serialize(): pass\n",
+        );
 
     let v = f.run(&["deps", "--cycles"]);
     assert!(v["data"].as_array().unwrap().is_empty(), "false cycle: {v}");
@@ -4672,9 +6066,14 @@ fn deps_disambiguates_same_stem_by_path_alignment() {
     f.write("main.py", "import pkg.util\n");
 
     let targets = field_set(&f.run(&["deps", "main.py"]), "path");
-    assert!(targets.contains(&"pkg/util.py".to_string()), "aligned file missing: {targets:?}");
-    assert!(!targets.contains(&"other/util.py".to_string()),
-            "unaligned same-stem file leaked: {targets:?}");
+    assert!(
+        targets.contains(&"pkg/util.py".to_string()),
+        "aligned file missing: {targets:?}"
+    );
+    assert!(
+        !targets.contains(&"other/util.py".to_string()),
+        "unaligned same-stem file leaked: {targets:?}"
+    );
 }
 
 #[test]
@@ -4694,7 +6093,12 @@ fn map_totals_reports_per_language_counts_and_the_byte_total() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|r| (r["language"].as_str().unwrap(), r["files"].as_i64().unwrap()))
+        .map(|r| {
+            (
+                r["language"].as_str().unwrap(),
+                r["files"].as_i64().unwrap(),
+            )
+        })
         .collect();
     assert_eq!(by.get("rust"), Some(&2), "{v}");
     assert_eq!(by.get("python"), Some(&1), "{v}");
@@ -4716,7 +6120,10 @@ fn map_totals_reports_per_language_counts_and_the_byte_total() {
     assert_eq!(full["data"]["totals"], v["data"]["totals"], "{full}");
 
     // And the command it replaced is gone.
-    assert!(!f.raw(&["stats"]).status.success(), "`stats` should no longer exist");
+    assert!(
+        !f.raw(&["stats"]).status.success(),
+        "`stats` should no longer exist"
+    );
 }
 
 #[test]
@@ -4724,9 +6131,14 @@ fn context_accepts_multiple_seed_symbols() {
     let f = Fixture::new();
     f.write("a.rs", "fn aa() {}\nfn bb() {}\nfn cc() {}\n");
     let names = chunk_symbols(&f.run(&["context", "--symbols", "aa,bb", "--no-text"])["data"]);
-    assert!(names.contains(&"aa".to_string()) && names.contains(&"bb".to_string()),
-            "both seeds should be returned: {names:?}");
-    assert!(!names.contains(&"cc".to_string()), "unrequested symbol leaked: {names:?}");
+    assert!(
+        names.contains(&"aa".to_string()) && names.contains(&"bb".to_string()),
+        "both seeds should be returned: {names:?}"
+    );
+    assert!(
+        !names.contains(&"cc".to_string()),
+        "unrequested symbol leaked: {names:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4767,11 +6179,21 @@ fn piped_input_is_never_inferred_only_opt_in() {
 
     // Stdin is a pipe carrying text that does NOT contain the pattern; without
     // --stdin the search must still come from the index and find the file.
-    let out = piped(f.path(), &["search", "indexed_only"], "nothing to see here\n");
+    let out = piped(
+        f.path(),
+        &["search", "indexed_only"],
+        "nothing to see here\n",
+    );
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success(), "search must not fail on a stray pipe");
-    assert!(text.contains("a.rs:1"), "must read the index, not stdin: {text}");
-    assert!(!text.contains("(stdin)"), "must not label rows stdin: {text}");
+    assert!(
+        text.contains("a.rs:1"),
+        "must read the index, not stdin: {text}"
+    );
+    assert!(
+        !text.contains("(stdin)"),
+        "must not label rows stdin: {text}"
+    );
 }
 
 #[test]
@@ -4796,8 +6218,14 @@ fn piped_input_searches_the_buffer_not_the_index() {
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success());
     assert_eq!(text.lines().count(), 1, "one row per matching line: {text}");
-    assert!(text.starts_with("(stdin):2:"), "located in the buffer: {text}");
-    assert!(!text.contains("from_the_index"), "index not consulted: {text}");
+    assert!(
+        text.starts_with("(stdin):2:"),
+        "located in the buffer: {text}"
+    );
+    assert!(
+        !text.contains("from_the_index"),
+        "index not consulted: {text}"
+    );
 }
 
 /// What piped input buys over grep: with --language the buffer is parsed, so
@@ -4808,7 +6236,12 @@ fn piped_input_with_language_annotates_and_filters() {
     let src = "// target lives in a comment\nfn holder() {\n    let s = \"target in a string\";\n    target();\n}\n";
 
     let annotated = String::from_utf8(
-        piped(f.path(), &["search", "target", "--stdin", "--language", "rust"], src).stdout,
+        piped(
+            f.path(),
+            &["search", "target", "--stdin", "--language", "rust"],
+            src,
+        )
+        .stdout,
     )
     .unwrap();
     assert!(
@@ -4824,14 +6257,25 @@ fn piped_input_with_language_annotates_and_filters() {
         let out = String::from_utf8(
             piped(
                 f.path(),
-                &["search", "target", "--stdin", "--language", "rust", "--in", filter],
+                &[
+                    "search",
+                    "target",
+                    "--stdin",
+                    "--language",
+                    "rust",
+                    "--in",
+                    filter,
+                ],
                 src,
             )
             .stdout,
         )
         .unwrap();
         assert!(out.contains(want), "--in {filter} keeps {want}: {out}");
-        assert!(!out.contains(unwanted), "--in {filter} drops {unwanted}: {out}");
+        assert!(
+            !out.contains(unwanted),
+            "--in {filter} drops {unwanted}: {out}"
+        );
     }
 }
 
@@ -4852,8 +6296,14 @@ fn piped_input_rejects_in_filter_without_a_language() {
 fn piped_input_needs_no_repository() {
     let empty = TempDir::new().unwrap();
     let out = piped(empty.path(), &["search", "hit", "--stdin"], "a hit here\n");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(String::from_utf8(out.stdout).unwrap().contains("(stdin):1:"));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8(out.stdout)
+        .unwrap()
+        .contains("(stdin):1:"));
     assert!(
         !empty.path().join(".codeq").exists(),
         "must not create an index for a piped scan"
@@ -4871,10 +6321,9 @@ fn piped_input_supports_count_and_context() {
             .unwrap();
     assert!(counted.contains("count=2"), "per-buffer count: {counted}");
 
-    let ctx = String::from_utf8(
-        piped(f.path(), &["search", "hit", "--stdin", "-C", "1"], input).stdout,
-    )
-    .unwrap();
+    let ctx =
+        String::from_utf8(piped(f.path(), &["search", "hit", "--stdin", "-C", "1"], input).stdout)
+            .unwrap();
     assert!(ctx.contains("(stdin)-1- one"), "context before: {ctx}");
     assert!(ctx.contains("(stdin)-3- three"), "context after: {ctx}");
 }
@@ -4930,7 +6379,10 @@ fn members_are_structural_not_name_based() {
         !has(&scoped, "local"),
         "a local inside a method is not a member of the class: {scoped:?}"
     );
-    assert!(!has(&scoped, "zzz"), "--path scopes to one owner: {scoped:?}");
+    assert!(
+        !has(&scoped, "zzz"),
+        "--path scopes to one owner: {scoped:?}"
+    );
     // Methods are members of the class body they sit in.
     assert!(has(&scoped, "m"), "method is a member: {scoped:?}");
 
@@ -4990,7 +6442,12 @@ fn about_includes_members_only_when_there_are_some() {
 #[test]
 fn members_extracted_across_languages() {
     let cases: &[(&str, &str, &str, &[&str])] = &[
-        ("a.go", "type S struct { A int; b string }", "S", &["A", "b"]),
+        (
+            "a.go",
+            "type S struct { A int; b string }",
+            "S",
+            &["A", "b"],
+        ),
         (
             "a.ts",
             "class C { a: number = 1; private b: string; }",
@@ -5017,11 +6474,31 @@ fn members_extracted_across_languages() {
             "C",
             &["a", "b"],
         ),
-        ("a.kt", "class C(val a: Int) { var b: String = \"\" }", "C", &["a", "b"]),
-        ("a.swift", "struct S { var a: Int\nlet b: String }", "S", &["a", "b"]),
-        ("a.scala", "case class C(a: Int) { val c: Int = 1 }", "C", &["a", "c"]),
+        (
+            "a.kt",
+            "class C(val a: Int) { var b: String = \"\" }",
+            "C",
+            &["a", "b"],
+        ),
+        (
+            "a.swift",
+            "struct S { var a: Int\nlet b: String }",
+            "S",
+            &["a", "b"],
+        ),
+        (
+            "a.scala",
+            "case class C(a: Int) { val c: Int = 1 }",
+            "C",
+            &["a", "c"],
+        ),
         ("a.dart", "class C { int a = 1; }", "C", &["a"]),
-        ("a.zig", "const P = struct { x: i32, y: i32 };", "P", &["x", "y"]),
+        (
+            "a.zig",
+            "const P = struct { x: i32, y: i32 };",
+            "P",
+            &["x", "y"],
+        ),
         ("a.sol", "contract C { uint a; }", "C", &["a"]),
     ];
 
@@ -5053,8 +6530,14 @@ fn a_variant_inherits_the_visibility_of_its_enum() {
         let f = Fixture::new();
         f.write(file, src);
         let api = field_set(&f.run(&["api", file]), "name");
-        assert!(api.contains(&"A".to_string()), "{file}: public variant missing from api: {api:?}");
-        assert!(!api.contains(&"B".to_string()), "{file}: private variant leaked into api: {api:?}");
+        assert!(
+            api.contains(&"A".to_string()),
+            "{file}: public variant missing from api: {api:?}"
+        );
+        assert!(
+            !api.contains(&"B".to_string()),
+            "{file}: private variant leaked into api: {api:?}"
+        );
     }
 }
 
@@ -5103,7 +6586,10 @@ fn indexing_a_normal_repo_yields_facts() {
 #[test]
 fn uppercase_extensions_are_parsed_as_their_language() {
     let f = Fixture::new();
-    f.write("Component.TSX", "export function Widget() { return <div />; }\n");
+    f.write(
+        "Component.TSX",
+        "export function Widget() { return <div />; }\n",
+    );
 
     let names = field_set(&f.run(&["symbols", "--language", "tsx"]), "name");
     assert!(
@@ -5180,7 +6666,8 @@ fn members_carry_their_doc_comments() {
     let out = String::from_utf8(f.raw(&["members", "S"]).stdout).unwrap();
     assert!(out.contains("pub count: u32  // How many times."), "{out}");
     assert!(
-        out.lines().any(|l| l.contains("other") && !l.contains("//")),
+        out.lines()
+            .any(|l| l.contains("other") && !l.contains("//")),
         "an undocumented field carries no empty marker: {out}"
     );
 }
@@ -5199,12 +6686,18 @@ fn note_of(f: &Fixture, args: &[&str]) -> String {
 #[test]
 fn empty_results_explain_themselves() {
     let f = Fixture::new();
-    f.write("a.rs", "pub struct ScanOpts { pub limit: usize }\npub fn lonely() {}\n");
+    f.write(
+        "a.rs",
+        "pub struct ScanOpts { pub limit: usize }\npub fn lonely() {}\n",
+    );
 
     // 1. The name does not exist, and the near-miss is offered.
     let note = note_of(&f, &["definitions", "ScanOpt"]);
     assert!(note.contains("no symbol named 'ScanOpt'"), "{note}");
-    assert!(note.contains("closest: ScanOpts"), "suggests the real name: {note}");
+    assert!(
+        note.contains("closest: ScanOpts"),
+        "suggests the real name: {note}"
+    );
 
     // 2. The name exists but has none of the relation asked for.
     let note = note_of(&f, &["callers", "lonely"]);
@@ -5227,9 +6720,18 @@ fn empty_results_explain_themselves() {
     f2.write("A.cs", "public class E { }\n");
     f2.write("z.ts", "export interface E { }\n");
     let note = note_of(&f2, &["callers", "E", "--path", "z.ts"]);
-    assert!(note.contains("z.ts:1"), "note should name the scoped definition: {note}");
-    assert!(!note.contains("A.cs"), "note names a file the scope excluded: {note}");
-    assert!(!note.contains("more definitions"), "count should be scoped too: {note}");
+    assert!(
+        note.contains("z.ts:1"),
+        "note should name the scoped definition: {note}"
+    );
+    assert!(
+        !note.contains("A.cs"),
+        "note names a file the scope excluded: {note}"
+    );
+    assert!(
+        !note.contains("more definitions"),
+        "count should be scoped too: {note}"
+    );
 
     // A name with no plausible neighbour gets no invented suggestion.
     let note = note_of(&f, &["definitions", "zzzzzzzzzz"]);
@@ -5254,14 +6756,23 @@ fn the_note_is_diagnostic_not_data() {
     // stdout and the agent behind it is who needs to know.
     let v = f.run(&["callers", "nope_xyz"]);
     assert!(
-        v["note"].as_str().unwrap().contains("no symbol named 'nope_xyz'"),
+        v["note"]
+            .as_str()
+            .unwrap()
+            .contains("no symbol named 'nope_xyz'"),
         "{v}"
     );
-    assert!(v["data"].as_array().unwrap().is_empty(), "data is still empty");
+    assert!(
+        v["data"].as_array().unwrap().is_empty(),
+        "data is still empty"
+    );
 
     // A non-empty result carries no note at all.
     let v = f.run(&["definitions", "lonely"]);
-    assert!(v.get("note").is_none(), "no note when there are results: {v}");
+    assert!(
+        v.get("note").is_none(),
+        "no note when there are results: {v}"
+    );
 }
 
 /// `api` returning nothing almost always means "nothing here is public", which
@@ -5269,7 +6780,10 @@ fn the_note_is_diagnostic_not_data() {
 #[test]
 fn api_explains_an_empty_surface() {
     let f = Fixture::new();
-    f.write("a.rs", "pub(crate) fn restricted() {}\nfn private_fn() {}\n");
+    f.write(
+        "a.rs",
+        "pub(crate) fn restricted() {}\nfn private_fn() {}\n",
+    );
 
     let note = note_of(&f, &["api", "a.rs"]);
     assert!(note.contains("no public definitions"), "{note}");
@@ -5343,7 +6857,11 @@ fn markdown_headings_are_definitions() {
 
     let outline = f.run(&["outline", "doc.md"]);
     let names = field_set(&outline, "name");
-    assert_eq!(names, ["Title", "Install", "Details", "Usage"], "in source order");
+    assert_eq!(
+        names,
+        ["Title", "Install", "Details", "Usage"],
+        "in source order"
+    );
 
     // Nesting comes from byte containment, as it does for every other language.
     let depths: Vec<i64> = outline["data"]
@@ -5352,7 +6870,11 @@ fn markdown_headings_are_definitions() {
         .iter()
         .map(|r| r["depth"].as_i64().unwrap())
         .collect();
-    assert_eq!(depths, [0, 1, 2, 1], "### nests under ##, which nests under #");
+    assert_eq!(
+        depths,
+        [0, 1, 2, 1],
+        "### nests under ##, which nests under #"
+    );
 
     // A `#` line inside a fenced block is code, not structure.
     assert!(
@@ -5367,10 +6889,20 @@ fn markdown_sections_are_readable_and_foldable() {
     f.write("doc.md", DOC);
 
     // One section verbatim, instead of ingesting the whole document.
-    let section = String::from_utf8(f.raw(&["read", "doc.md", "--symbol", "Install"]).stdout).unwrap();
-    assert!(section.contains("## Install") && section.contains("Run it."), "{section}");
-    assert!(section.contains("### Details"), "a section includes its subsections");
-    assert!(!section.contains("## Usage"), "and stops at the next peer: {section}");
+    let section =
+        String::from_utf8(f.raw(&["read", "doc.md", "--symbol", "Install"]).stdout).unwrap();
+    assert!(
+        section.contains("## Install") && section.contains("Run it."),
+        "{section}"
+    );
+    assert!(
+        section.contains("### Details"),
+        "a section includes its subsections"
+    );
+    assert!(
+        !section.contains("## Usage"),
+        "and stops at the next peer: {section}"
+    );
 
     // Folded, a document becomes its table of contents: every heading visible,
     // prose collapsed with a copy-pasteable line range.
@@ -5390,21 +6922,30 @@ fn markdown_separates_examples_from_prose() {
     f.write("doc.md", DOC);
 
     let in_code = String::from_utf8(
-        f.raw(&["search", "codeq", "--path", "doc.md", "--in", "strings"]).stdout,
+        f.raw(&["search", "codeq", "--path", "doc.md", "--in", "strings"])
+            .stdout,
     )
     .unwrap();
     assert!(in_code.contains("codeq index"), "example found: {in_code}");
 
     let in_prose = String::from_utf8(
-        f.raw(&["search", "prose", "--path", "doc.md", "--in", "comments"]).stdout,
+        f.raw(&["search", "prose", "--path", "doc.md", "--in", "comments"])
+            .stdout,
     )
     .unwrap();
     assert!(in_prose.contains("Intro prose"), "prose found: {in_prose}");
-    assert!(!in_prose.contains("codeq index"), "not the example: {in_prose}");
+    assert!(
+        !in_prose.contains("codeq index"),
+        "not the example: {in_prose}"
+    );
 
     // Search hits carry the section they sit in, like code hits carry a function.
-    let hit = String::from_utf8(f.raw(&["search", "More prose", "--path", "doc.md"]).stdout).unwrap();
-    assert!(hit.contains("[Details]"), "annotated with its section: {hit}");
+    let hit =
+        String::from_utf8(f.raw(&["search", "More prose", "--path", "doc.md"]).stdout).unwrap();
+    assert!(
+        hit.contains("[Details]"),
+        "annotated with its section: {hit}"
+    );
 }
 
 /// A link or image with a local target is a file reference, so the dependency
@@ -5416,7 +6957,10 @@ fn markdown_local_links_and_images_are_file_references() {
     f.write("guide.md", "# Guide\n");
 
     let imports = field_set(&f.run(&["imports", "doc.md"]), "module");
-    assert!(imports.iter().any(|i| i == "./guide.md"), "link: {imports:?}");
+    assert!(
+        imports.iter().any(|i| i == "./guide.md"),
+        "link: {imports:?}"
+    );
     assert!(
         imports.iter().any(|i| i == "assets/logo.png"),
         "image: {imports:?}"
@@ -5454,7 +6998,10 @@ fn unused_does_not_report_headings() {
         !kinds.iter().any(|k| k == "heading"),
         "prose is not dead code: {kinds:?}"
     );
-    assert!(kinds.iter().any(|k| k == "function"), "real dead code still found");
+    assert!(
+        kinds.iter().any(|k| k == "function"),
+        "real dead code still found"
+    );
 }
 
 /// A bare `README.md` used to match every README in the repo at once, merging
@@ -5480,7 +7027,10 @@ fn markdown_setext_headings_and_frontmatter() {
         "---\ntitle: meta\n---\n\nOld Style\n=========\n\nBody text.\n\nSub\n---\n\nMore.\n\nParagraph.\n\n---\n\nAfter a rule.\n",
     );
     let names = field_set(&f.run(&["outline", "doc.md"]), "name");
-    assert!(names.iter().any(|n| n == "Old Style"), "setext h1: {names:?}");
+    assert!(
+        names.iter().any(|n| n == "Old Style"),
+        "setext h1: {names:?}"
+    );
     assert!(names.iter().any(|n| n == "Sub"), "setext h2: {names:?}");
     assert!(
         !names.iter().any(|n| n == "title: meta"),
@@ -5507,13 +7057,26 @@ fn rst_headings_and_local_doc_links_are_indexed() {
     f.write("docs/api.rst", "API\n===\n");
     f.write("docs/tutorial/index.rst", "Tutorial\n========\n");
 
-    assert_eq!(field_set(&f.run(&["outline", "docs/index.rst"]), "name"), ["Guide", "Install"]);
+    assert_eq!(
+        field_set(&f.run(&["outline", "docs/index.rst"]), "name"),
+        ["Guide", "Install"]
+    );
     let imports = field_set(&f.run(&["imports", "docs/index.rst"]), "module");
-    for target in ["install.rst", "api.rst", "tutorial/index.rst", "images/logo.svg"] {
-        assert!(imports.iter().any(|item| item == target), "missing {target}: {imports:?}");
+    for target in [
+        "install.rst",
+        "api.rst",
+        "tutorial/index.rst",
+        "images/logo.svg",
+    ] {
+        assert!(
+            imports.iter().any(|item| item == target),
+            "missing {target}: {imports:?}"
+        );
     }
     assert!(
-        field_set(&f.run(&["deps", "docs/index.rst"]), "path").iter().any(|path| path == "docs/install.rst"),
+        field_set(&f.run(&["deps", "docs/index.rst"]), "path")
+            .iter()
+            .any(|path| path == "docs/install.rst"),
         "RST doc role resolves as a local dependency"
     );
 }
@@ -5521,25 +7084,45 @@ fn rst_headings_and_local_doc_links_are_indexed() {
 #[test]
 fn jinja_templates_expose_blocks_macros_and_composition() {
     let f = Fixture::new();
-    f.write("templates/base.html", "{% block body %}base{% endblock %}\n");
+    f.write(
+        "templates/base.html",
+        "{% block body %}base{% endblock %}\n",
+    );
     f.write(
         "templates/page.html",
         "{% extends 'base.html' %}\n{% import 'macros.j2' as ui %}\n{% block body %}{% include 'partials/card.html' %}{% endblock %}\n{% macro greeting(name) %}Hi {{ name }}{% endmacro %}\n",
     );
-    f.write("templates/macros.j2", "{% macro button(text) %}{{ text }}{% endmacro %}");
+    f.write(
+        "templates/macros.j2",
+        "{% macro button(text) %}{{ text }}{% endmacro %}",
+    );
     f.write("templates/partials/card.html", "<article>card</article>");
 
     let outline = field_set(&f.run(&["outline", "templates/page.html"]), "name");
-    assert!(outline.iter().any(|name| name == "body"), "block: {outline:?}");
-    assert!(outline.iter().any(|name| name == "greeting"), "macro: {outline:?}");
+    assert!(
+        outline.iter().any(|name| name == "body"),
+        "block: {outline:?}"
+    );
+    assert!(
+        outline.iter().any(|name| name == "greeting"),
+        "macro: {outline:?}"
+    );
     let unused = field_set(&f.run(&["unused", "templates", "--kind", "block"]), "name");
-    assert!(!unused.contains(&"body".to_string()), "template blocks are runtime entry points: {unused:?}");
+    assert!(
+        !unused.contains(&"body".to_string()),
+        "template blocks are runtime entry points: {unused:?}"
+    );
     let imports = field_set(&f.run(&["imports", "templates/page.html"]), "module");
     for target in ["base.html", "macros.j2", "partials/card.html"] {
-        assert!(imports.iter().any(|item| item == target), "missing {target}: {imports:?}");
+        assert!(
+            imports.iter().any(|item| item == target),
+            "missing {target}: {imports:?}"
+        );
     }
     assert!(
-        field_set(&f.run(&["deps", "templates/page.html"]), "path").iter().any(|path| path == "templates/base.html"),
+        field_set(&f.run(&["deps", "templates/page.html"]), "path")
+            .iter()
+            .any(|path| path == "templates/base.html"),
         "extends resolves as a local dependency"
     );
 }
@@ -5558,30 +7141,64 @@ fn extension_bearing_doc_and_template_references_prefer_the_relative_file() {
     f.write("docs/_static/flask-name.svg", "<svg />");
 
     let docs = field_set(&f.run(&["deps", "docs/index.rst"]), "path");
-    assert_eq!(docs, ["docs/guide.rst"], "RST file reference stays relative: {docs:?}");
+    assert_eq!(
+        docs,
+        ["docs/guide.rst"],
+        "RST file reference stays relative: {docs:?}"
+    );
     f.write("docs/index.rst", "See :doc:`tutorial/index`.\n");
     let nested = field_set(&f.run(&["deps", "docs/index.rst"]), "path");
-    assert_eq!(nested, ["docs/tutorial/index.rst"], "RST index file stays relative: {nested:?}");
+    assert_eq!(
+        nested,
+        ["docs/tutorial/index.rst"],
+        "RST index file stays relative: {nested:?}"
+    );
     f.write("docs/index.rst", ".. image:: _static/flask-name.svg\n");
     let asset = field_set(&f.run(&["deps", "docs/index.rst"]), "path");
-    assert_eq!(asset, ["docs/_static/flask-name.svg"], "hyphenated asset stays relative: {asset:?}");
+    assert_eq!(
+        asset,
+        ["docs/_static/flask-name.svg"],
+        "hyphenated asset stays relative: {asset:?}"
+    );
     f.write("docs/page.rst", "See :doc:`page`.\n");
     let self_deps = field_set(&f.run(&["deps", "docs/page.rst"]), "path");
-    assert!(self_deps.is_empty(), "an explicit self-link is not a dependency: {self_deps:?}");
+    assert!(
+        self_deps.is_empty(),
+        "an explicit self-link is not a dependency: {self_deps:?}"
+    );
     let templates = field_set(&f.run(&["deps", "templates/page.html"]), "path");
-    assert_eq!(templates, ["templates/base.html"], "template inheritance stays relative: {templates:?}");
+    assert_eq!(
+        templates,
+        ["templates/base.html"],
+        "template inheritance stays relative: {templates:?}"
+    );
 }
 
 #[test]
 fn bare_node_package_imports_do_not_resolve_local_same_stem_files() {
     let f = Fixture::new();
-    f.write("app.js", "import express from 'express';\nexport const app = express();\n");
-    f.write("express.js", "import { app } from './app.js';\nexport default app;\n");
+    f.write(
+        "app.js",
+        "import express from 'express';\nexport const app = express();\n",
+    );
+    f.write(
+        "express.js",
+        "import { app } from './app.js';\nexport default app;\n",
+    );
 
     let deps = field_set(&f.run(&["deps", "app.js"]), "path");
-    assert!(deps.is_empty(), "a bare package import is external: {deps:?}");
-    let cycles = f.run(&["deps", "--cycles"])["data"].as_array().unwrap().clone();
-    assert!(cycles.is_empty(), "package name must not manufacture a local cycle: {cycles:?}");
+    assert!(
+        deps.is_empty(),
+        "a bare package import is external: {deps:?}"
+    );
+    let cycles = f.run(&["deps", "--cycles"])["data"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(
+        cycles.is_empty(),
+        "package name must not manufacture a local cycle: {cycles:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -5725,7 +7342,8 @@ fn on_receiver_still_rejects_the_wrong_receiver() {
         .map(|r| r["line"].as_i64().unwrap())
         .collect();
     assert_eq!(
-        lines, [4],
+        lines,
+        [4],
         "a different receiver, a longer name ending in it, and a nested field \
          must all be excluded: {lines:?}"
     );
@@ -5801,23 +7419,75 @@ fn call_filters_use_the_parse_tree() {
 #[test]
 fn call_sites_resolve_across_languages() {
     let cases: &[(&str, &str, &str)] = &[
-        ("a.py", "def query(x): pass\ndb.query()\nother.query()\n", "db"),
-        ("a.js", "function query(x) {}\ndb.query();\nother.query();\n", "db"),
+        (
+            "a.py",
+            "def query(x): pass\ndb.query()\nother.query()\n",
+            "db",
+        ),
+        (
+            "a.js",
+            "function query(x) {}\ndb.query();\nother.query();\n",
+            "db",
+        ),
         ("a.ts", "function query(x: number) {}\ndb.query();\n", "db"),
         ("a.go", "package m\nfunc f() {\n\tdb.query()\n}\n", "db"),
-        ("A.java", "class T {\n  void query() {}\n  void f() {\n    db.query();\n  }\n}\n", "db"),
+        (
+            "A.java",
+            "class T {\n  void query() {}\n  void f() {\n    db.query();\n  }\n}\n",
+            "db",
+        ),
         ("a.rb", "def query(x); end\ndb.query\n", "db"),
-        ("a.c", "void query(int x) {}\nvoid f() {\n  db->query();\n}\n", "db"),
-        ("a.cs", "class T {\n  void query() {}\n  void f() {\n    db.query();\n  }\n}\n", "db"),
-        ("a.php", "<?php\nfunction query($x) {}\n$db->query();\n", "$db"),
+        (
+            "a.c",
+            "void query(int x) {}\nvoid f() {\n  db->query();\n}\n",
+            "db",
+        ),
+        (
+            "a.cs",
+            "class T {\n  void query() {}\n  void f() {\n    db.query();\n  }\n}\n",
+            "db",
+        ),
+        (
+            "a.php",
+            "<?php\nfunction query($x) {}\n$db->query();\n",
+            "$db",
+        ),
         ("a.kt", "fun query() {}\nfun f() {\n  db.query()\n}\n", "db"),
-        ("a.swift", "func query() {}\nfunc f() {\n  db.query()\n}\n", "db"),
-        ("a.scala", "object M {\n  def query() = {}\n  def f() = {\n    db.query()\n  }\n}\n", "db"),
-        ("a.dart", "void query() {}\nvoid f() {\n  db.query();\n}\n", "db"),
-        ("a.zig", "fn query() void {}\nfn f() void {\n    db.query();\n}\n", "db"),
-        ("a.ex", "defmodule M do\n  def f do\n    db.query()\n  end\nend\n", "db"),
-        ("a.sol", "contract C {\n  function f() public {\n    db.query();\n  }\n}\n", "db"),
-        ("a.lua", "local function query() end\nlocal function f()\n  db.query()\nend\n", "db"),
+        (
+            "a.swift",
+            "func query() {}\nfunc f() {\n  db.query()\n}\n",
+            "db",
+        ),
+        (
+            "a.scala",
+            "object M {\n  def query() = {}\n  def f() = {\n    db.query()\n  }\n}\n",
+            "db",
+        ),
+        (
+            "a.dart",
+            "void query() {}\nvoid f() {\n  db.query();\n}\n",
+            "db",
+        ),
+        (
+            "a.zig",
+            "fn query() void {}\nfn f() void {\n    db.query();\n}\n",
+            "db",
+        ),
+        (
+            "a.ex",
+            "defmodule M do\n  def f do\n    db.query()\n  end\nend\n",
+            "db",
+        ),
+        (
+            "a.sol",
+            "contract C {\n  function f() public {\n    db.query();\n  }\n}\n",
+            "db",
+        ),
+        (
+            "a.lua",
+            "local function query() end\nlocal function f()\n  db.query()\nend\n",
+            "db",
+        ),
     ];
 
     for (file, src, recv) in cases {
@@ -5867,7 +7537,9 @@ fn external_deps_separate_third_party_from_broken_links() {
         "only the links that point at nothing: {modules:?}"
     );
     assert!(
-        !modules.iter().any(|m| m == "./other.md" || m == "assets/real.png"),
+        !modules
+            .iter()
+            .any(|m| m == "./other.md" || m == "assets/real.png"),
         "a link that resolves is not external: {modules:?}"
     );
     assert!(
@@ -5920,7 +7592,10 @@ fn root_makes_an_ignored_dependency_readable() {
         "node_modules/lodash/chunk.js",
         "export function chunk(array, size) { return []; }\nexport function head(a) { return a[0]; }\n",
     );
-    f.write("src/app.js", "import { chunk } from \"lodash\";\nchunk([1, 2], 1);\n");
+    f.write(
+        "src/app.js",
+        "import { chunk } from \"lodash\";\nchunk([1, 2], 1);\n",
+    );
 
     // The dependency stays out of the ordinary index: it is not this repo's code.
     let own = field_set(&f.run(&["definitions", "chunk"]), "path");
@@ -5936,8 +7611,15 @@ fn root_makes_an_ignored_dependency_readable() {
     assert_eq!(api, ["chunk", "head"], "the dependency's public API");
 
     let src = String::from_utf8(
-        f.raw(&["--root", "node_modules/lodash", "read", "chunk.js", "--symbol", "chunk"])
-            .stdout,
+        f.raw(&[
+            "--root",
+            "node_modules/lodash",
+            "read",
+            "chunk.js",
+            "--symbol",
+            "chunk",
+        ])
+        .stdout,
     )
     .unwrap();
     assert!(src.contains("export function chunk"), "its source: {src}");
@@ -5969,17 +7651,29 @@ fn capabilities_reports_per_language_support() {
     assert_eq!(get("rust")["relations"], true);
     assert_eq!(get("go")["relations"], false, "Go is structurally typed");
     assert_eq!(get("c")["relations"], false, "C has no inheritance");
-    assert_eq!(get("ruby")["members"], true, "attr_accessor, read via a guard");
+    assert_eq!(
+        get("ruby")["members"],
+        true,
+        "attr_accessor, read via a guard"
+    );
     assert_eq!(get("bash")["imports"], true, "source ./lib.sh");
     assert_eq!(get("zig")["relations"], false, "Zig has no inheritance");
     assert_eq!(get("elixir")["members"], false, "no field declarations");
     assert_eq!(get("markdown")["definitions"], true, "headings");
     assert_eq!(get("markdown")["calls"], false);
     for lang in ["svelte", "vue"] {
-        assert_eq!(get(lang)["calls"], true, "{lang} embedded scripts have structural calls");
+        assert_eq!(
+            get(lang)["calls"],
+            true,
+            "{lang} embedded scripts have structural calls"
+        );
     }
     for lang in ["rust", "python", "go", "markdown"] {
-        assert_eq!(get(lang)["spans"], true, "{lang} classifies comments/strings");
+        assert_eq!(
+            get(lang)["spans"],
+            true,
+            "{lang} classifies comments/strings"
+        );
     }
 }
 
@@ -6014,7 +7708,10 @@ fn untested_reports_public_definitions_no_test_names() {
     f.write("tests/t.rs", "#[test]\nfn works() { covered(); }\n");
 
     let names = field_set(&f.run(&["untested"]), "name");
-    assert!(names.iter().any(|n| n == "bare"), "uncovered public fn: {names:?}");
+    assert!(
+        names.iter().any(|n| n == "bare"),
+        "uncovered public fn: {names:?}"
+    );
     assert!(!names.iter().any(|n| n == "covered"), "covered: {names:?}");
     assert!(
         !names.iter().any(|n| n == "private_helper"),
@@ -6053,7 +7750,11 @@ fn api_diff_reports_the_exported_surface_only() {
     };
     assert_eq!(names("removed"), ["doomed"]);
     assert_eq!(names("added"), ["fresh"]);
-    assert_eq!(names("changed"), ["shape"], "same name, different signature");
+    assert_eq!(
+        names("changed"),
+        ["shape"],
+        "same name, different signature"
+    );
     let changed = &d["data"]["changed"][0];
     assert!(
         changed["was"].as_str().unwrap().contains("a: u32)"),
@@ -6061,7 +7762,10 @@ fn api_diff_reports_the_exported_surface_only() {
     );
     // An unexported change is not an API change, however much the diff shows.
     for k in ["removed", "added", "changed"] {
-        assert!(!names(k).iter().any(|n| n == "internal"), "{k} leaked a private fn");
+        assert!(
+            !names(k).iter().any(|n| n == "internal"),
+            "{k} leaked a private fn"
+        );
     }
 }
 
@@ -6125,12 +7829,22 @@ fn call_style_imports_are_extracted() {
 #[test]
 fn elixir_tells_a_definition_from_an_import() {
     let f = Fixture::new();
-    f.write("a.ex", "defmodule M do\n  alias Foo.Bar\n  def run do\n    :ok\n  end\nend\n");
+    f.write(
+        "a.ex",
+        "defmodule M do\n  alias Foo.Bar\n  def run do\n    :ok\n  end\nend\n",
+    );
 
     let mods = field_set(&f.run(&["imports"]), "module");
-    assert_eq!(mods, ["Foo.Bar"], "defmodule defines, it does not import: {mods:?}");
+    assert_eq!(
+        mods,
+        ["Foo.Bar"],
+        "defmodule defines, it does not import: {mods:?}"
+    );
     let defs = field_set(&f.run(&["symbols"]), "name");
-    assert!(defs.iter().any(|d| d == "M"), "the module is a definition: {defs:?}");
+    assert!(
+        defs.iter().any(|d| d == "M"),
+        "the module is a definition: {defs:?}"
+    );
     assert!(defs.iter().any(|d| d == "run"));
 }
 
@@ -6140,14 +7854,19 @@ fn elixir_tells_a_definition_from_an_import() {
 #[test]
 fn ruby_attr_accessors_are_fields() {
     let f = Fixture::new();
-    f.write("a.rb", "class C\n  attr_accessor :a, :b\n  attr_reader :c\n  def m; end\nend\n");
+    f.write(
+        "a.rb",
+        "class C\n  attr_accessor :a, :b\n  attr_reader :c\n  def m; end\nend\n",
+    );
 
     let mut fields = field_set(&f.run(&["members", "C", "--kind", "field"]), "name");
     fields.sort();
     assert_eq!(fields, ["a", "b", "c"], "no leading colons");
     // Requires still work; the two share the call shape.
     f.write("b.rb", "require 'json'\n");
-    assert!(field_set(&f.run(&["imports"]), "module").iter().any(|m| m == "json"));
+    assert!(field_set(&f.run(&["imports"]), "module")
+        .iter()
+        .any(|m| m == "json"));
 }
 
 // ---------------------------------------------------------------------------
@@ -6165,7 +7884,10 @@ fn functions_inside_a_type_are_methods() {
         ("a.swift", "class C { func meth() {} }\n"),
         ("a.scala", "class C {\n  def meth() = {}\n}\n"),
         ("a.sol", "contract C {\n  function meth() public {}\n}\n"),
-        ("a.zig", "const C = struct {\n  fn meth(self: C) void {}\n};\n"),
+        (
+            "a.zig",
+            "const C = struct {\n  fn meth(self: C) void {}\n};\n",
+        ),
         ("a.rs", "struct S;\nimpl S { fn meth(&self) {} }\n"),
     ];
     for (file, src) in cases {
@@ -6200,7 +7922,10 @@ fn a_function_nested_in_a_method_is_not_a_method() {
         "a.py",
         "class C:\n    def meth(self):\n        def inner():\n            pass\n",
     );
-    assert_eq!(field_set(&f.run(&["definitions", "meth"]), "kind"), ["method"]);
+    assert_eq!(
+        field_set(&f.run(&["definitions", "meth"]), "kind"),
+        ["method"]
+    );
     assert_eq!(
         field_set(&f.run(&["definitions", "inner"]), "kind"),
         ["function"],
@@ -6260,7 +7985,10 @@ fn call_sites_report_the_receiver_they_are_called_on() {
 
     // Visible in text mode, not just JSON.
     let text = String::from_utf8(f.raw(&["references", "stem", "--calls"]).stdout).unwrap();
-    assert!(text.contains("on=helpers") && text.contains("on=db"), "{text}");
+    assert!(
+        text.contains("on=helpers") && text.contains("on=db"),
+        "{text}"
+    );
 
     // An unfiltered query parses nothing, so it reports no receiver.
     let plain = f.run(&["references", "stem"]);
@@ -6296,12 +8024,18 @@ fn react_wrapped_components_are_definitions() {
     );
     let names = field_set(&f.run(&["symbols", "--path", "a.tsx"]), "name");
     for n in ["Card", "Input", "Wrapper", "Ctx", "VERSION"] {
-        assert!(names.iter().any(|x| x == n), "tsx binding {n} missing: {names:?}");
+        assert!(
+            names.iter().any(|x| x == n),
+            "tsx binding {n} missing: {names:?}"
+        );
     }
     // All five are exported, so the public API must list them too.
     let api = field_set(&f.run(&["api", "a.tsx"]), "name");
     for n in ["Card", "Input", "Wrapper", "Ctx", "VERSION"] {
-        assert!(api.iter().any(|x| x == n), "exported {n} missing from api: {api:?}");
+        assert!(
+            api.iter().any(|x| x == n),
+            "exported {n} missing from api: {api:?}"
+        );
     }
 }
 
@@ -6311,7 +8045,10 @@ fn module_scope_bindings_do_not_duplicate_function_definitions() {
     // module-scope binding pattern; only the function capture should survive, or
     // every arrow component would be reported twice.
     let f = Fixture::new();
-    f.write("a.ts", "export const go = () => 1;\nconst old = function () { return 2; };\n");
+    f.write(
+        "a.ts",
+        "export const go = () => 1;\nconst old = function () { return 2; };\n",
+    );
     for name in ["go", "old"] {
         let rows = f.run(&["definitions", name]);
         assert_eq!(
@@ -6339,7 +8076,10 @@ fn commonjs_require_bindings_are_imports_not_definitions() {
     );
     let names = field_set(&f.run(&["symbols", "--path", "a.js"]), "name");
     for n in ["http", "Buffer", "deprecate"] {
-        assert!(!names.iter().any(|x| x == n), "require binding '{n}' leaked: {names:?}");
+        assert!(
+            !names.iter().any(|x| x == n),
+            "require binding '{n}' leaked: {names:?}"
+        );
     }
     // A non-require binding in the same file must survive, or the exclusion is
     // just suppressing the whole pattern.
@@ -6349,7 +8089,10 @@ fn commonjs_require_bindings_are_imports_not_definitions() {
     // And they must still be reachable as imports.
     let mods = field_set(&f.run(&["imports", "a.js"]), "module");
     for m in ["http", "safe-buffer", "depd"] {
-        assert!(mods.iter().any(|x| x == m), "import '{m}' missing: {mods:?}");
+        assert!(
+            mods.iter().any(|x| x == m),
+            "import '{m}' missing: {mods:?}"
+        );
     }
 }
 
@@ -6358,10 +8101,16 @@ fn locals_are_not_definitions() {
     // The binding pattern is anchored to module scope on purpose: capturing every
     // declarator would bury the index in loop counters.
     let f = Fixture::new();
-    f.write("a.ts", "export function run() {\n  const tmp = compute();\n  return tmp;\n}\n");
+    f.write(
+        "a.ts",
+        "export function run() {\n  const tmp = compute();\n  return tmp;\n}\n",
+    );
     let names = field_set(&f.run(&["symbols", "--path", "a.ts"]), "name");
     assert!(names.iter().any(|x| x == "run"), "run missing: {names:?}");
-    assert!(!names.iter().any(|x| x == "tmp"), "function-local binding leaked: {names:?}");
+    assert!(
+        !names.iter().any(|x| x == "tmp"),
+        "function-local binding leaked: {names:?}"
+    );
 }
 
 #[test]
@@ -6390,7 +8139,11 @@ fn namespaced_base_class_yields_a_relation() {
     }
     // A bare supertype must not start matching everything as a side effect.
     let subs = field_set(&f.run(&["implementors", "Base"]), "name");
-    assert_eq!(subs.len(), 1, "Base gained unrelated implementors: {subs:?}");
+    assert_eq!(
+        subs.len(),
+        1,
+        "Base gained unrelated implementors: {subs:?}"
+    );
 }
 
 #[test]
@@ -6406,14 +8159,29 @@ fn capabilities_lists_every_extractable_language() {
         .iter()
         .map(|e| e["language"].as_str().unwrap().to_string())
         .collect();
-    for l in ["svelte", "vue", "css", "hcl", "powershell", "proto", "graphql", "sql"] {
-        assert!(langs.iter().any(|x| x == l), "'{l}' extracts but is undocumented: {langs:?}");
+    for l in [
+        "svelte",
+        "vue",
+        "css",
+        "hcl",
+        "powershell",
+        "proto",
+        "graphql",
+        "sql",
+    ] {
+        assert!(
+            langs.iter().any(|x| x == l),
+            "'{l}' extracts but is undocumented: {langs:?}"
+        );
     }
     // Data-only formats must stay out: they are indexed for search, not parsed.
     // SQL used to be here — it is a language with declarations and uses, not a
     // data format, and parking it here left `.sql` with no definitions at all.
     for l in ["json", "yaml", "toml"] {
-        assert!(!langs.iter().any(|x| x == l), "'{l}' has no extraction but is advertised");
+        assert!(
+            !langs.iter().any(|x| x == l),
+            "'{l}' has no extraction but is advertised"
+        );
     }
     // The three language lists are three views of one fact and used to be three
     // hand-kept copies. Every extraction language must be classifiable, and
@@ -6424,7 +8192,10 @@ fn capabilities_lists_every_extractable_language() {
         names("classified_languages"),
         names("data_only_languages"),
     );
-    assert_eq!(extraction, langs, "extraction_languages must match language_support");
+    assert_eq!(
+        extraction, langs,
+        "extraction_languages must match language_support"
+    );
     assert_eq!(
         classified.len(),
         extraction.len() + data_only.len(),
@@ -6446,21 +8217,42 @@ fn group_hoists_the_path_and_keeps_line_and_col() {
 
     let flat = String::from_utf8(f.raw(&["search", "target"]).stdout).unwrap();
     for line in flat.lines() {
-        assert!(line.starts_with("a.rs:") || line.starts_with("b.rs:"), "flat row lost its path: {line}");
+        assert!(
+            line.starts_with("a.rs:") || line.starts_with("b.rs:"),
+            "flat row lost its path: {line}"
+        );
     }
 
     let grouped = String::from_utf8(f.raw(&["search", "target", "--group"]).stdout).unwrap();
     // Header carries the path and the group size; rows keep line:col so grouped
     // output is never less precise than flat, only less repetitive.
-    assert!(grouped.contains("a.rs (2)\n"), "missing counted header: {grouped}");
-    assert!(grouped.contains("b.rs (1)\n"), "missing counted header: {grouped}");
-    assert!(!grouped.contains("a.rs:1:"), "grouped row still repeats the path: {grouped}");
+    assert!(
+        grouped.contains("a.rs (2)\n"),
+        "missing counted header: {grouped}"
+    );
+    assert!(
+        grouped.contains("b.rs (1)\n"),
+        "missing counted header: {grouped}"
+    );
+    assert!(
+        !grouped.contains("a.rs:1:"),
+        "grouped row still repeats the path: {grouped}"
+    );
     for line in grouped.lines().filter(|l| !l.contains(".rs (")) {
         assert!(
-            line.split(':').next().unwrap().trim().parse::<u32>().is_ok(),
+            line.split(':')
+                .next()
+                .unwrap()
+                .trim()
+                .parse::<u32>()
+                .is_ok(),
             "grouped row should start with a line number: {line}"
         );
-        assert_eq!(line.matches(':').count() >= 2, true, "grouped row dropped col: {line}");
+        assert_eq!(
+            line.matches(':').count() >= 2,
+            true,
+            "grouped row dropped col: {line}"
+        );
     }
 }
 
@@ -6486,7 +8278,11 @@ fn explore_at_a_position_resolves_the_enclosing_definition() {
     );
     let by_pos = f.run(&["explore", "--at", "a.rs:4"]);
     let focus = by_pos["data"]["focus"].as_array().unwrap();
-    assert_eq!(focus.len(), 1, "expected one enclosing definition: {focus:?}");
+    assert_eq!(
+        focus.len(),
+        1,
+        "expected one enclosing definition: {focus:?}"
+    );
     assert_eq!(focus[0]["name"], "outer");
 
     // The position form must agree with the name form, or they are two answers
@@ -6517,7 +8313,10 @@ fn explore_at_a_position_with_no_definition_says_so() {
     let v = f.run(&["explore", "--at", "a.rs:1"]);
     assert!(v["data"]["focus"].as_array().unwrap().is_empty());
     let note = v["note"].as_str().unwrap_or_default();
-    assert!(note.contains("no definition encloses"), "unhelpful note: {note}");
+    assert!(
+        note.contains("no definition encloses"),
+        "unhelpful note: {note}"
+    );
 }
 
 #[test]
@@ -6547,7 +8346,10 @@ fn context_expand_resolved_drops_unreachable_same_named_definitions() {
     // A direct named import is stronger evidence than a bare name: expansion can
     // select helper.rs even before --resolved adds its reachability filter.
     let f = Fixture::new();
-    f.write("seed.rs", "mod helper;\nuse helper::build;\n\nfn seed() -> u32 {\n    build()\n}\n");
+    f.write(
+        "seed.rs",
+        "mod helper;\nuse helper::build;\n\nfn seed() -> u32 {\n    build()\n}\n",
+    );
     f.write("helper.rs", "pub fn build() -> u32 { 1 }\n");
     f.write("unrelated.rs", "pub fn build() -> u32 { 999 }\n");
 
@@ -6570,7 +8372,14 @@ fn context_expand_resolved_drops_unreachable_same_named_definitions() {
         "named import should not include unrelated.rs: {:?}",
         files(&wide)
     );
-    let narrow = f.run(&["context", "--symbols", "seed", "--expand", "--resolved", "--no-text"]);
+    let narrow = f.run(&[
+        "context",
+        "--symbols",
+        "seed",
+        "--expand",
+        "--resolved",
+        "--no-text",
+    ]);
     assert!(
         !files(&narrow).iter().any(|p| p == "unrelated.rs"),
         "--resolved kept an unreachable definition: {:?}",
@@ -6593,15 +8402,25 @@ fn max_per_file_caps_rows_and_never_hides_the_true_count() {
     // trap, where an agent reads a truncated answer as a complete one, so every
     // capped file has to report what it withheld.
     let f = Fixture::new();
-    f.write("a.rs", "fn a1() { t(); }\nfn a2() { t(); }\nfn a3() { t(); }\nfn a4() { t(); }\n");
+    f.write(
+        "a.rs",
+        "fn a1() { t(); }\nfn a2() { t(); }\nfn a3() { t(); }\nfn a4() { t(); }\n",
+    );
     f.write("b.rs", "fn b1() { t(); }\n");
 
     let v = f.run(&["search", "t()", "--max-per-file", "2"]);
     let rows = v["data"]["matches"].as_array().unwrap();
     let a_rows = rows.iter().filter(|r| r["path"] == "a.rs").count();
     assert_eq!(a_rows, 2, "cap not applied: {rows:?}");
-    assert!(rows.iter().any(|r| r["path"] == "b.rs"), "uncapped file dropped");
-    assert_eq!(v["notes"]["truncated_per_file"]["a.rs"], 4, "true count missing: {:?}", v["notes"]);
+    assert!(
+        rows.iter().any(|r| r["path"] == "b.rs"),
+        "uncapped file dropped"
+    );
+    assert_eq!(
+        v["notes"]["truncated_per_file"]["a.rs"], 4,
+        "true count missing: {:?}",
+        v["notes"]
+    );
     assert!(
         v["notes"]["truncated_per_file"].get("b.rs").is_none(),
         "an uncapped file must not be reported as truncated"
@@ -6613,29 +8432,50 @@ fn max_per_file_changes_json_and_text_alike() {
     // Capping in the renderer alone would have been simpler, but then --json and
     // the default text output would disagree about which rows the answer has.
     let f = Fixture::new();
-    f.write("a.rs", "fn a1() { t(); }\nfn a2() { t(); }\nfn a3() { t(); }\n");
+    f.write(
+        "a.rs",
+        "fn a1() { t(); }\nfn a2() { t(); }\nfn a3() { t(); }\n",
+    );
     let v = f.run(&["search", "t()", "--max-per-file", "1"]);
     assert_eq!(v["data"]["matches"].as_array().unwrap().len(), 1);
 
     let text = String::from_utf8(f.raw(&["search", "t()", "--max-per-file", "1"]).stdout).unwrap();
-    let hits = text.lines().filter(|l| l.contains("t()") && !l.contains("more")).count();
-    assert_eq!(hits, 1, "text kept a different number of rows than JSON: {text}");
+    let hits = text
+        .lines()
+        .filter(|l| l.contains("t()") && !l.contains("more"))
+        .count();
+    assert_eq!(
+        hits, 1,
+        "text kept a different number of rows than JSON: {text}"
+    );
 }
 
 #[test]
 fn a_capped_file_is_marked_in_both_flat_and_grouped_text() {
     let f = Fixture::new();
-    f.write("a.rs", "fn a1() { t(); }\nfn a2() { t(); }\nfn a3() { t(); }\n");
+    f.write(
+        "a.rs",
+        "fn a1() { t(); }\nfn a2() { t(); }\nfn a3() { t(); }\n",
+    );
 
     // Flat rows have no header to carry the count, so the marker is its own
     // line — led by the path, so it stays self-describing like every other row.
     let flat = String::from_utf8(f.raw(&["search", "t()", "--max-per-file", "1"]).stdout).unwrap();
-    assert!(flat.contains("a.rs: +2 more (of 3)"), "missing flat marker: {flat}");
+    assert!(
+        flat.contains("a.rs: +2 more (of 3)"),
+        "missing flat marker: {flat}"
+    );
 
     // Grouped output folds it into the header instead of spending a line.
-    let grouped =
-        String::from_utf8(f.raw(&["search", "t()", "--max-per-file", "1", "--group"]).stdout).unwrap();
-    assert!(grouped.contains("a.rs (1 of 3)"), "missing grouped count: {grouped}");
+    let grouped = String::from_utf8(
+        f.raw(&["search", "t()", "--max-per-file", "1", "--group"])
+            .stdout,
+    )
+    .unwrap();
+    assert!(
+        grouped.contains("a.rs (1 of 3)"),
+        "missing grouped count: {grouped}"
+    );
 }
 
 #[test]
@@ -6646,7 +8486,8 @@ fn max_per_file_leaves_pathless_rows_alone() {
     let v = f.run(&["map", "--max-per-file", "1"]);
     assert!(
         v["data"]["definitions_by_file"].as_array().is_some(),
-        "map lost its shape under the cap: {:?}", v["data"]
+        "map lost its shape under the cap: {:?}",
+        v["data"]
     );
 }
 
@@ -6663,11 +8504,17 @@ fn a_result_stopped_by_limit_says_so_in_text() {
 
     let out = f.raw(&["search", "t()", "--limit", "5"]);
     let err = String::from_utf8(out.stderr).unwrap();
-    assert!(err.contains("--limit"), "text mode hid the truncation: {err:?}");
+    assert!(
+        err.contains("--limit"),
+        "text mode hid the truncation: {err:?}"
+    );
 
     // ... and stays quiet when the answer is whole, or the note is just noise.
     let err = String::from_utf8(f.raw(&["search", "t()", "--limit", "0"]).stderr).unwrap();
-    assert!(!err.contains("stopped at --limit"), "cried truncation on a complete result: {err:?}");
+    assert!(
+        !err.contains("stopped at --limit"),
+        "cried truncation on a complete result: {err:?}"
+    );
 }
 
 #[test]
@@ -6678,19 +8525,30 @@ fn max_per_file_surveys_every_file_not_just_the_first_limit_rows() {
     // numbers below were wrong -- the file list was short, and `of N` under-read.
     let f = Fixture::new();
     for name in ["a.rs", "b.rs", "c.rs"] {
-        let body: String = (0..10).map(|i| format!("fn {}{i}() {{ t(); }}\n", &name[..1])).collect();
+        let body: String = (0..10)
+            .map(|i| format!("fn {}{i}() {{ t(); }}\n", &name[..1]))
+            .collect();
         f.write(name, &body);
     }
     let v = f.run(&["search", "t()", "--max-per-file", "1", "--limit", "3"]);
     let rows = v["data"]["matches"].as_array().unwrap();
-    assert_eq!(rows.len(), 3, "the limit must still bound the rows returned: {rows:?}");
+    assert_eq!(
+        rows.len(),
+        3,
+        "the limit must still bound the rows returned: {rows:?}"
+    );
 
     let paths: Vec<_> = rows.iter().filter_map(|r| r["path"].as_str()).collect();
-    assert_eq!(paths, ["a.rs", "b.rs", "c.rs"], "the cap surveyed only the first file(s)");
+    assert_eq!(
+        paths,
+        ["a.rs", "b.rs", "c.rs"],
+        "the cap surveyed only the first file(s)"
+    );
     for p in ["a.rs", "b.rs", "c.rs"] {
         assert_eq!(
             v["notes"]["truncated_per_file"][p], 10,
-            "{p}'s true count was cut short by --limit: {:?}", v["notes"]
+            "{p}'s true count was cut short by --limit: {:?}",
+            v["notes"]
         );
     }
 }
@@ -6704,11 +8562,21 @@ fn fields_projection_does_not_disable_max_per_file() {
     let body: String = (0..6).map(|i| format!("fn f{i}() {{ t(); }}\n")).collect();
     f.write("a.rs", &body);
 
-    let v = f.run(&["search", "t()", "--max-per-file", "2", "--fields", "line,text"]);
+    let v = f.run(&[
+        "search",
+        "t()",
+        "--max-per-file",
+        "2",
+        "--fields",
+        "line,text",
+    ]);
     let rows = v["data"]["matches"].as_array().unwrap();
     assert_eq!(rows.len(), 2, "the cap was lost to --fields: {rows:?}");
     assert!(rows[0].get("path").is_none(), "--fields no longer projects");
-    assert_eq!(v["notes"]["truncated_per_file"]["a.rs"], 6, "the true count went missing");
+    assert_eq!(
+        v["notes"]["truncated_per_file"]["a.rs"], 6,
+        "the true count went missing"
+    );
 }
 
 #[test]
@@ -6725,7 +8593,10 @@ fn grouping_a_path_only_row_does_not_leave_a_dangling_separator() {
         "row led by a bare separator: {text:?}"
     );
     // The payload itself must survive the fix.
-    assert!(text.contains("rust"), "grouping dropped the row's payload: {text:?}");
+    assert!(
+        text.contains("rust"),
+        "grouping dropped the row's payload: {text:?}"
+    );
 }
 
 #[test]
@@ -6735,18 +8606,37 @@ fn members_and_symbols_owner_answer_different_questions() {
     // only fields and variants carry, so it silently drops every method. Pinning
     // the difference here so the docs can't drift back to treating them as equal.
     let f = Fixture::new();
-    f.write("a.py", "class Thing:\n    name = 1\n    def go(self): pass\n");
+    f.write(
+        "a.py",
+        "class Thing:\n    name = 1\n    def go(self): pass\n",
+    );
 
     let members: Vec<String> = f.run(&["members", "Thing"])["data"]
-        .as_array().unwrap().iter()
-        .filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
-    assert!(members.contains(&"go".to_string()), "members lost the method: {members:?}");
-    assert!(members.contains(&"name".to_string()), "members lost the field: {members:?}");
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        members.contains(&"go".to_string()),
+        "members lost the method: {members:?}"
+    );
+    assert!(
+        members.contains(&"name".to_string()),
+        "members lost the field: {members:?}"
+    );
 
     let owned: Vec<String> = f.run(&["symbols", "--owner", "Thing"])["data"]
-        .as_array().unwrap().iter()
-        .filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
-    assert_eq!(owned, ["name"], "--owner's scope changed; the docs need to change with it");
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(
+        owned,
+        ["name"],
+        "--owner's scope changed; the docs need to change with it"
+    );
 }
 
 #[test]
@@ -6762,17 +8652,31 @@ fn resolved_reports_ambiguity_in_both_directions() {
     f.write("b.rs", "pub fn helper() {}\n");
 
     let callees = f.run(&["callees", "run", "--resolved"]);
-    let vias: Vec<&str> = callees["data"].as_array().unwrap().iter()
-        .filter_map(|r| r["via"].as_str()).collect();
-    assert_eq!(vias, ["ambiguous", "ambiguous"], "callees hid the ambiguity: {callees:?}");
+    let vias: Vec<&str> = callees["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["via"].as_str())
+        .collect();
+    assert_eq!(
+        vias,
+        ["ambiguous", "ambiguous"],
+        "callees hid the ambiguity: {callees:?}"
+    );
 
     let callers = f.run(&["callers", "helper", "--resolved"]);
-    assert_eq!(callers["data"][0]["via"], "ambiguous", "the mirror question disagrees: {callers:?}");
+    assert_eq!(
+        callers["data"][0]["via"], "ambiguous",
+        "the mirror question disagrees: {callers:?}"
+    );
 
     // One reachable definition is still a confident resolution, not ambiguity.
     f.write("b.rs", "pub fn unrelated() {}\n");
     let one = f.run(&["callees", "run", "--resolved"]);
-    assert_eq!(one["data"][0]["via"], "imported", "over-tagged a single match: {one:?}");
+    assert_eq!(
+        one["data"][0]["via"], "imported",
+        "over-tagged a single match: {one:?}"
+    );
 }
 
 #[test]
@@ -6788,16 +8692,27 @@ fn unused_and_untested_agree_on_what_counts_as_test_scaffolding() {
         "pub fn real() {}\n#[cfg(test)]\nmod tests {\n    pub fn fixture_builder() {}\n    #[test]\n    fn t() { super::real(); }\n}\n",
     );
 
-    let untested: Vec<String> = f.run(&["untested"])["data"].as_array().unwrap().iter()
-        .filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
+    let untested: Vec<String> = f.run(&["untested"])["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_string))
+        .collect();
     assert!(
         !untested.contains(&"fixture_builder".to_string()),
         "a test-module helper was reported as untested public API: {untested:?}"
     );
 
-    let unused: Vec<String> = f.run(&["unused"])["data"].as_array().unwrap().iter()
-        .filter_map(|r| r["name"].as_str().map(str::to_string)).collect();
-    assert!(!unused.contains(&"fixture_builder".to_string()), "the two disagree again: {unused:?}");
+    let unused: Vec<String> = f.run(&["unused"])["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        !unused.contains(&"fixture_builder".to_string()),
+        "the two disagree again: {unused:?}"
+    );
 }
 
 #[test]
@@ -6814,15 +8729,31 @@ fn the_call_graph_walks_agree_on_depth_semantics() {
     );
 
     let up = f.run(&["callers", "leaf", "--depth", "3"]);
-    let up: Vec<(&str, i64)> = up["data"].as_array().unwrap().iter()
-        .map(|r| (r["name"].as_str().unwrap(), r["depth"].as_i64().unwrap())).collect();
+    let up: Vec<(&str, i64)> = up["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["name"].as_str().unwrap(), r["depth"].as_i64().unwrap()))
+        .collect();
     // `top` calls leaf directly *and* sits above mid: shortest depth wins.
-    assert_eq!(up, [("mid", 1), ("top", 1), ("root", 2)], "callers depth changed");
+    assert_eq!(
+        up,
+        [("mid", 1), ("top", 1), ("root", 2)],
+        "callers depth changed"
+    );
 
     let down = f.run(&["callees", "root", "--depth", "3"]);
-    let down: Vec<(&str, i64)> = down["data"].as_array().unwrap().iter()
-        .map(|r| (r["name"].as_str().unwrap(), r["depth"].as_i64().unwrap())).collect();
-    assert_eq!(down, [("top", 1), ("leaf", 2), ("mid", 2)], "callees depth changed");
+    let down: Vec<(&str, i64)> = down["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["name"].as_str().unwrap(), r["depth"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(
+        down,
+        [("top", 1), ("leaf", 2), ("mid", 2)],
+        "callees depth changed"
+    );
 
     for (cmd, seed, key) in [("callers", "leaf", "name"), ("callees", "root", "name")] {
         let v = f.run(&[cmd, seed, "--depth", "3"]);
@@ -6915,7 +8846,10 @@ fn a_column_added_by_a_later_migration_still_belongs_to_its_table() {
     // so the newest half of a schema would have been the invisible half.
     let f = Fixture::new();
     f.write("db/001_init.sql", SCHEMA);
-    f.write("db/002_name.sql", "ALTER TABLE users ADD COLUMN display_name TEXT;\n");
+    f.write(
+        "db/002_name.sql",
+        "ALTER TABLE users ADD COLUMN display_name TEXT;\n",
+    );
 
     let members = field_set(&f.run(&["members", "users"]), "name");
     assert!(
@@ -6983,7 +8917,10 @@ fn sql_enum_variants_are_stored_without_their_quotes() {
     // verbatim would answer `members mood` with `'sad'` — a name no query for
     // `sad` can ever match.
     let f = Fixture::new();
-    f.write("db/a.sql", "CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');\n");
+    f.write(
+        "db/a.sql",
+        "CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');\n",
+    );
 
     let members = field_set(&f.run(&["members", "mood"]), "name");
     assert_eq!(members, ["sad", "ok", "happy"], "{members:?}");
@@ -7029,7 +8966,10 @@ fn a_table_is_reachable_from_the_query_that_names_it_in_another_language() {
     let v = f.run(&["references", "users", "--path", "app.py"]);
     let refs = v["data"]["references"].as_array().unwrap();
     assert_eq!(refs.len(), 1, "{v}");
-    assert_eq!(refs[0]["symbol"], "load", "attributed to the function around it");
+    assert_eq!(
+        refs[0]["symbol"], "load",
+        "attributed to the function around it"
+    );
 
     // And the definition it resolves to is the table, from `about`.
     let defs = field_set(&f.run(&["definitions", "users"]), "kind");
@@ -7047,17 +8987,26 @@ fn unused_reports_the_sql_objects_that_can_be_referenced_and_no_others() {
     f.write("db/001_init.sql", SCHEMA);
     f.write("db/002_dead.sql", "CREATE TABLE forgotten (id INT);\n");
     f.write("db/003_enum.sql", "CREATE TYPE mood AS ENUM ('sad');\n");
-    f.write("app.py", "def load(conn):\n    return conn.execute(\"SELECT id FROM users\")\n");
+    f.write(
+        "app.py",
+        "def load(conn):\n    return conn.execute(\"SELECT id FROM users\")\n",
+    );
 
     let dead = field_set(&f.run(&["unused"]), "name");
-    assert!(dead.contains(&"forgotten".to_string()), "a table nothing queries: {dead:?}");
+    assert!(
+        dead.contains(&"forgotten".to_string()),
+        "a table nothing queries: {dead:?}"
+    );
     for quiet in ["idx_users_email", "users_touch", "sad"] {
         assert!(
             !dead.contains(&quiet.to_string()),
             "{quiet} is named once by construction, so it is not evidence of anything: {dead:?}"
         );
     }
-    assert!(!dead.contains(&"users".to_string()), "queried from app.py: {dead:?}");
+    assert!(
+        !dead.contains(&"users".to_string()),
+        "queried from app.py: {dead:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -7075,7 +9024,10 @@ fn astgrep_explain_names_the_kinds_a_pattern_is_written_from() {
     let v = f.run(&["astgrep", "--explain", "a.rs:2"]);
     let kinds = field_set(&v, "kind");
     for want in ["let_declaration", "call_expression", "identifier"] {
-        assert!(kinds.contains(&want.to_string()), "{want} missing: {kinds:?}");
+        assert!(
+            kinds.contains(&want.to_string()),
+            "{want} missing: {kinds:?}"
+        );
     }
     // Field names matter more than kinds — they are the part of a grammar that
     // is stable across languages, and `callsite.rs` is written against them.
@@ -7091,11 +9043,18 @@ fn astgrep_explain_names_the_kinds_a_pattern_is_written_from() {
         .map(|r| r["depth"].as_i64().unwrap())
         .collect();
     assert_eq!(depths.first(), Some(&0), "{v}");
-    assert!(depths.iter().any(|d| *d > 1), "the tree has depth: {depths:?}");
+    assert!(
+        depths.iter().any(|d| *d > 1),
+        "the tree has depth: {depths:?}"
+    );
 
     // The whole point: the kinds it reports are the ones that then match.
     let hits = f.run(&["astgrep", "$F(&$A)", "--language", "rust"]);
-    assert_eq!(hits["data"]["matches"].as_array().unwrap().len(), 1, "{hits}");
+    assert_eq!(
+        hits["data"]["matches"].as_array().unwrap().len(),
+        1,
+        "{hits}"
+    );
 }
 
 #[test]
@@ -7110,7 +9069,10 @@ fn astgrep_explain_refuses_to_invent_a_tree_it_does_not_have() {
     let v = f.run(&["astgrep", "--explain", "a.rs:9999"]);
     assert!(v["data"].as_array().unwrap().is_empty(), "{v}");
     assert!(
-        v["note"].as_str().unwrap_or_default().contains("no parse tree"),
+        v["note"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no parse tree"),
         "an empty result must say why: {v}"
     );
 
@@ -7144,10 +9106,18 @@ fn search_takes_paths_positionally_the_way_grep_does() {
     assert_eq!(hits(&[]), 3, "no path: everything");
     assert_eq!(hits(&["src/a.rs"]), 1, "one file");
     assert_eq!(hits(&["src"]), 2, "a directory scopes everything under it");
-    assert_eq!(hits(&["src/a.rs", "docs"]), 2, "several are OR'd, as a shell glob expands to");
+    assert_eq!(
+        hits(&["src/a.rs", "docs"]),
+        2,
+        "several are OR'd, as a shell glob expands to"
+    );
     // Composes with the flags rather than replacing them.
     assert_eq!(hits(&["src", "-g", "*.rs"]), 2);
-    assert_eq!(hits(&["src", "-g", "!*.rs"]), 0, "glob and path compose by AND");
+    assert_eq!(
+        hits(&["src", "-g", "!*.rs"]),
+        0,
+        "glob and path compose by AND"
+    );
 }
 
 #[test]
@@ -7179,7 +9149,10 @@ fn the_envelope_says_where_its_rows_are() {
     // A result with several lists has no single answer, and saying nothing beats
     // guessing which list was meant.
     let about = f.run(&["about", "alpha"]);
-    assert!(about["rows"].is_null(), "about carries several lists: {about}");
+    assert!(
+        about["rows"].is_null(),
+        "about carries several lists: {about}"
+    );
 }
 
 #[test]
@@ -7188,8 +9161,14 @@ fn unused_exclusions_are_one_policy_not_a_growing_query() {
     // behaviour it governs so moving it cannot quietly change it.
     let f = Fixture::new();
     f.write("s.graphql", "type User { id: ID! }\n");
-    f.write("u.proto", "syntax = \"proto3\";\nmessage Order { string id = 1; }\n");
-    f.write("main.tf", "output \"url\" { value = 1 }\nvariable \"dead_var\" {}\n");
+    f.write(
+        "u.proto",
+        "syntax = \"proto3\";\nmessage Order { string id = 1; }\n",
+    );
+    f.write(
+        "main.tf",
+        "output \"url\" { value = 1 }\nvariable \"dead_var\" {}\n",
+    );
     // `ghost` is named nowhere else, so it is dead. `kept` is named by the index
     // below it, which is a real reference — the index itself is named nowhere,
     // by construction, which is exactly why it is excluded.
@@ -7202,10 +9181,16 @@ fn unused_exclusions_are_one_policy_not_a_growing_query() {
 
     let dead = field_set(&f.run(&["unused"]), "name");
     for reported in ["dead_var", "orphan", "ghost"] {
-        assert!(dead.contains(&reported.to_string()), "{reported} is dead: {dead:?}");
+        assert!(
+            dead.contains(&reported.to_string()),
+            "{reported} is dead: {dead:?}"
+        );
     }
     for quiet in ["User", "Order", "url", "idx_kept", "kept"] {
-        assert!(!dead.contains(&quiet.to_string()), "{quiet} is consumed elsewhere: {dead:?}");
+        assert!(
+            !dead.contains(&quiet.to_string()),
+            "{quiet} is consumed elsewhere: {dead:?}"
+        );
     }
 }
 
@@ -7228,12 +9213,18 @@ fn javascript_property_assignment_is_a_definition() {
          \n\
          exports.helper = function () {\n  return 2;\n};\n",
     );
-    f.write("local.js", "function outer() {\n  var o = {};\n  o.inner = function () {};\n}\n");
+    f.write(
+        "local.js",
+        "function outer() {\n  var o = {};\n  o.inner = function () {};\n}\n",
+    );
 
     let v = f.run(&["symbols", "--path", "router.js", "--limit", "0"]);
     let names = field_set(&v, "name");
     for want in ["use", "render", "helper"] {
-        assert!(names.contains(&want.to_string()), "{want} missing: {names:?}");
+        assert!(
+            names.contains(&want.to_string()),
+            "{want} missing: {names:?}"
+        );
     }
     // The name is the property, not the path to it — what a call site writes.
     assert!(!names.iter().any(|n| n.contains('.')), "{names:?}");
@@ -7249,7 +9240,10 @@ fn javascript_property_assignment_is_a_definition() {
 
     // Module scope only: an assignment inside a function is not a definition, or
     // every local object literal would bury the index.
-    let local = field_set(&f.run(&["symbols", "--path", "local.js", "--limit", "0"]), "name");
+    let local = field_set(
+        &f.run(&["symbols", "--path", "local.js", "--limit", "0"]),
+        "name",
+    );
     assert!(!local.contains(&"inner".to_string()), "{local:?}");
 
     // `exports.x` *is* the CommonJS export; `proto.x` cannot be known to escape.
@@ -7266,12 +9260,19 @@ fn a_reference_at_file_scope_says_so_instead_of_coming_back_blank() {
     // A bare call at module scope, deliberately *not* an assignment: a
     // module-scope binding is now a definition, so `VALUE = helper()` has an
     // enclosing definition to be attributed to and no longer exercises this path.
-    f.write("a.py", "def helper():\n    return 1\n\nhelper()\n\ndef user():\n    return helper()\n");
+    f.write(
+        "a.py",
+        "def helper():\n    return 1\n\nhelper()\n\ndef user():\n    return helper()\n",
+    );
 
     let v = f.run(&["callers", "helper"]);
     let rows = v["data"].as_array().unwrap();
     let anon: Vec<&Value> = rows.iter().filter(|r| r["name"].is_null()).collect();
-    assert_eq!(anon.len(), 1, "the module-level call is still reported: {v}");
+    assert_eq!(
+        anon.len(),
+        1,
+        "the module-level call is still reported: {v}"
+    );
     assert_eq!(anon[0]["scope"], "file", "and it says what it is: {v}");
     assert_eq!(anon[0]["line"], 4);
     // A real definition never carries the label.
@@ -7291,8 +9292,20 @@ fn callers_and_callees_can_be_bounded_like_every_other_list() {
     }
     f.write("a.py", &src);
 
-    assert_eq!(f.run(&["callers", "target", "--limit", "0"])["data"].as_array().unwrap().len(), 12);
-    assert_eq!(f.run(&["callers", "target", "--limit", "3"])["data"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        f.run(&["callers", "target", "--limit", "0"])["data"]
+            .as_array()
+            .unwrap()
+            .len(),
+        12
+    );
+    assert_eq!(
+        f.run(&["callers", "target", "--limit", "3"])["data"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
     // Also on the transitive walk, where an unbounded result is worse.
     let deep = f.run(&["callers", "target", "--depth", "3", "--limit", "4"]);
     assert_eq!(deep["data"].as_array().unwrap().len(), 4, "{deep}");
@@ -7338,7 +9351,10 @@ fn a_sql_foreign_key_is_an_edge_but_not_an_is_a() {
     // Asking for inheritance gets nothing, which is the point of the separate kind.
     let inherit = f.run(&["supertypes", "orders", "--relation", "extends"]);
     assert!(inherit["data"].as_array().unwrap().is_empty(), "{inherit}");
-    let fk = field_set(&f.run(&["supertypes", "orders", "--relation", "references"]), "name");
+    let fk = field_set(
+        &f.run(&["supertypes", "orders", "--relation", "references"]),
+        "name",
+    );
     assert_eq!(fk.len(), 3, "{fk:?}");
 }
 
@@ -7350,10 +9366,16 @@ fn graph_says_which_relation_kinds_exist_when_the_filter_empties_it() {
     // genuinely has no inheritance edges to graph" — a claim about the code,
     // when the true cause was the filter.
     let f = Fixture::new();
-    f.write("a.cs", "interface I { }\nabstract class B { }\nclass C : B, I { }\n");
+    f.write(
+        "a.cs",
+        "interface I { }\nabstract class B { }\nclass C : B, I { }\n",
+    );
 
     let note = note_of(&f, &["graph", "--relation", "implements"]);
-    assert!(note.contains("extends"), "note should name the kinds present: {note}");
+    assert!(
+        note.contains("extends"),
+        "note should name the kinds present: {note}"
+    );
     assert!(
         !note.contains("genuinely has no"),
         "the filter emptied this, not the code: {note}"
@@ -7390,9 +9412,18 @@ fn graph_emits_the_whole_relation_graph_not_one_node() {
             )
         })
         .collect();
-    assert!(pairs.contains(&("orders".into(), "users".into())), "{pairs:?}");
-    assert!(pairs.contains(&("items".into(), "orders".into())), "{pairs:?}");
-    assert!(pairs.contains(&("Post".into(), "Node".into())), "one graph, all languages: {pairs:?}");
+    assert!(
+        pairs.contains(&("orders".into(), "users".into())),
+        "{pairs:?}"
+    );
+    assert!(
+        pairs.contains(&("items".into(), "orders".into())),
+        "{pairs:?}"
+    );
+    assert!(
+        pairs.contains(&("Post".into(), "Node".into())),
+        "one graph, all languages: {pairs:?}"
+    );
 
     // Filterable to one kind of edge, which is how you get just the schema.
     let fks = f.run(&["graph", "--relation", "references"]);
@@ -7465,8 +9496,14 @@ fn a_test_attribute_is_read_instead_of_guessed_from_the_name() {
 
     // None of these names, paths or containers say "test".
     let rust = names(&["parse", "--path", "lib.rs"]);
-    assert!(rust.contains(&"parses_an_empty_string".to_string()), "{rust:?}");
-    assert!(rust.contains(&"parses_async".to_string()), "`#[tokio::test]`: {rust:?}");
+    assert!(
+        rust.contains(&"parses_an_empty_string".to_string()),
+        "{rust:?}"
+    );
+    assert!(
+        rust.contains(&"parses_async".to_string()),
+        "`#[tokio::test]`: {rust:?}"
+    );
     assert!(names(&["parse", "--path", "lib.py"]).contains(&"handles_anything".to_string()));
     assert!(names(&["add"]).contains(&"addsTwoNumbers".to_string()));
     assert!(names(&["Mul"]).contains(&"MultipliesOne".to_string()));
@@ -7474,11 +9511,21 @@ fn a_test_attribute_is_read_instead_of_guessed_from_the_name() {
     // The three commands that share the predicate agree: an attributed test is
     // scaffolding, so it is neither dead code nor untested public API.
     let dead = field_set(&f.run(&["unused"]), "name");
-    for t in ["parses_an_empty_string", "handles_anything", "addsTwoNumbers"] {
-        assert!(!dead.contains(&t.to_string()), "{t} is a test, not dead code: {dead:?}");
+    for t in [
+        "parses_an_empty_string",
+        "handles_anything",
+        "addsTwoNumbers",
+    ] {
+        assert!(
+            !dead.contains(&t.to_string()),
+            "{t} is a test, not dead code: {dead:?}"
+        );
     }
     let untested = field_set(&f.run(&["untested"]), "name");
-    assert!(!untested.contains(&"parse".to_string()), "it has a test now: {untested:?}");
+    assert!(
+        !untested.contains(&"parse".to_string()),
+        "it has a test now: {untested:?}"
+    );
 }
 
 #[test]
@@ -7495,7 +9542,10 @@ fn an_ordinary_attribute_does_not_make_something_a_test() {
     );
 
     assert!(
-        f.run(&["tests", "helper"])["data"]["tests"].as_array().unwrap().is_empty(),
+        f.run(&["tests", "helper"])["data"]["tests"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
         "#[inline] is not a test attribute"
     );
     // And an unreferenced definition next to those attributes is still dead code,
@@ -7517,12 +9567,18 @@ fn callers_and_references_see_a_declaration_below_its_annotation() {
     );
 
     let callers = field_set(&f.run(&["callers", "NextLine"]), "name");
-    assert!(callers.is_empty(), "a declaration is not a call of itself: {callers:?}");
+    assert!(
+        callers.is_empty(),
+        "a declaration is not a call of itself: {callers:?}"
+    );
 
     let v = f.run(&["references", "NextLine"]);
     let rows = v["data"]["references"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{v}");
-    assert_eq!(rows[0]["definition"], true, "the declaration was not flagged: {v}");
+    assert_eq!(
+        rows[0]["definition"], true,
+        "the declaration was not flagged: {v}"
+    );
 }
 
 #[test]
@@ -7530,7 +9586,10 @@ fn a_recursive_call_is_still_a_caller() {
     // The declaration is the first occurrence inside its extent; a later one is
     // a real call. Claiming the whole extent instead would erase recursion.
     let f = Fixture::new();
-    f.write("a.py", "def fact(n):\n    return 1 if n < 2 else n * fact(n - 1)\n");
+    f.write(
+        "a.py",
+        "def fact(n):\n    return 1 if n < 2 else n * fact(n - 1)\n",
+    );
 
     let callers = field_set(&f.run(&["callers", "fact"]), "name");
     assert_eq!(callers, ["fact".to_string()], "recursion lost: {callers:?}");
@@ -7555,7 +9614,10 @@ fn unused_sees_a_declaration_written_below_its_annotation() {
 
     let names = field_set(&f.run(&["unused", "--include-tests"]), "name");
     for n in ["SameLine", "NextLine", "sameLine", "nextLine"] {
-        assert!(names.iter().any(|x| x == n), "'{n}' missing from unused: {names:?}");
+        assert!(
+            names.iter().any(|x| x == n),
+            "'{n}' missing from unused: {names:?}"
+        );
     }
 }
 
@@ -7566,15 +9628,27 @@ fn unused_still_counts_recursion_as_a_use() {
     // whole extent as "the definition site" would report every recursive
     // function as dead code.
     let f = Fixture::new();
-    f.write("a.py", "def fact(n):\n    return 1 if n < 2 else n * fact(n - 1)\n\ndef orphan():\n    pass\n");
-    f.write("b.rs", "fn walk(n: u32) -> u32 { if n == 0 { 0 } else { walk(n - 1) } }\nfn orphan_rs() {}\n");
+    f.write(
+        "a.py",
+        "def fact(n):\n    return 1 if n < 2 else n * fact(n - 1)\n\ndef orphan():\n    pass\n",
+    );
+    f.write(
+        "b.rs",
+        "fn walk(n: u32) -> u32 { if n == 0 { 0 } else { walk(n - 1) } }\nfn orphan_rs() {}\n",
+    );
 
     let names = field_set(&f.run(&["unused"]), "name");
     for live in ["fact", "walk"] {
-        assert!(!names.iter().any(|x| x == live), "recursive '{live}' called dead: {names:?}");
+        assert!(
+            !names.iter().any(|x| x == live),
+            "recursive '{live}' called dead: {names:?}"
+        );
     }
     for dead in ["orphan", "orphan_rs"] {
-        assert!(names.iter().any(|x| x == dead), "'{dead}' missing: {names:?}");
+        assert!(
+            names.iter().any(|x| x == dead),
+            "'{dead}' missing: {names:?}"
+        );
     }
 }
 
@@ -7587,9 +9661,15 @@ fn a_python_attribute_assignment_is_not_a_decorator() {
     // it whole reported `decorator=public` on every plain `public class`. Both
     // make the tag meaningless in the place it is supposed to carry meaning.
     let f = Fixture::new();
-    f.write("a.py", "class W:\n    def __init__(self):\n        self._hidden = True\n");
+    f.write(
+        "a.py",
+        "class W:\n    def __init__(self):\n        self._hidden = True\n",
+    );
     f.write("C.java", "public class T {\n  public void plain() { }\n}\n");
-    f.write("D.java", "public class S {\n  @Bean public void made() { }\n}\n");
+    f.write(
+        "D.java",
+        "public class S {\n  @Bean public void made() { }\n}\n",
+    );
 
     let rows = f.run(&["unused", "--include-tests"]);
     let tagged: Vec<(String, String)> = rows["data"]
@@ -7597,7 +9677,10 @@ fn a_python_attribute_assignment_is_not_a_decorator() {
         .unwrap()
         .iter()
         .filter_map(|r| {
-            Some((r["name"].as_str()?.to_string(), r["decorator"].as_str()?.to_string()))
+            Some((
+                r["name"].as_str()?.to_string(),
+                r["decorator"].as_str()?.to_string(),
+            ))
         })
         .collect();
     assert!(
@@ -7609,7 +9692,9 @@ fn a_python_attribute_assignment_is_not_a_decorator() {
         "an access modifier is not a decorator: {tagged:?}"
     );
     assert!(
-        tagged.iter().any(|(n, d)| n == "made" && d.contains("@Bean")),
+        tagged
+            .iter()
+            .any(|(n, d)| n == "made" && d.contains("@Bean")),
         "a real annotation must still be tagged: {tagged:?}"
     );
 }
@@ -7622,11 +9707,17 @@ fn a_multiline_astgrep_match_keeps_its_enclosing_symbol() {
     // `context` chunks and lost it, so whether a pattern spans a line decided
     // whether the answer named where it was.
     let f = Fixture::new();
-    f.write("a.go", "package p\n\nfunc handler() {\n\tif err != nil {\n\t\treturn\n\t}\n}\n");
+    f.write(
+        "a.go",
+        "package p\n\nfunc handler() {\n\tif err != nil {\n\t\treturn\n\t}\n}\n",
+    );
 
     let out = f.raw(&["astgrep", "if err != nil { return }", "--language", "go"]);
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("[handler]"), "multi-line match lost its symbol:\n{text}");
+    assert!(
+        text.contains("[handler]"),
+        "multi-line match lost its symbol:\n{text}"
+    );
 }
 
 #[test]
@@ -7652,9 +9743,17 @@ fn capabilities_says_which_relation_kinds_a_language_emits() {
             .map(|k| k.as_str().unwrap().to_string())
             .collect()
     };
-    assert_eq!(kinds("csharp"), ["extends"], "C# cannot distinguish the two");
+    assert_eq!(
+        kinds("csharp"),
+        ["extends"],
+        "C# cannot distinguish the two"
+    );
     assert_eq!(kinds("rust"), ["implements"], "Rust has no `extends`");
-    assert_eq!(kinds("java"), ["extends", "implements"], "Java has separate syntax");
+    assert_eq!(
+        kinds("java"),
+        ["extends", "implements"],
+        "Java has separate syntax"
+    );
     assert!(kinds("go").is_empty(), "Go has no relation extraction");
 }
 
@@ -7671,8 +9770,15 @@ fn a_capped_listing_says_it_was_capped() {
 
     let out = f.raw(&["imports", "--limit", "5"]);
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("stopped at --limit"), "silent truncation: {err}");
-    assert_eq!(String::from_utf8_lossy(&out.stdout).lines().count(), 5, "{out:?}");
+    assert!(
+        err.contains("stopped at --limit"),
+        "silent truncation: {err}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).lines().count(),
+        5,
+        "{out:?}"
+    );
 
     // A result that fits says nothing.
     let out = f.raw(&["imports", "--limit", "0"]);
@@ -7686,7 +9792,9 @@ fn every_capped_listing_says_so_not_just_the_ones_measured() {
     // 200 of 1,228 in silence. `LIMIT n+1` is the whole cost of telling a page
     // that fills exactly from one that was cut.
     let f = Fixture::new();
-    let body: String = (0..12).map(|i| format!("def thing{i}():\n    pass\n")).collect();
+    let body: String = (0..12)
+        .map(|i| format!("def thing{i}():\n    pass\n"))
+        .collect();
     f.write("a.py", &body);
     f.write("b.py", &body);
     f.write("c.py", &body);
@@ -7697,9 +9805,16 @@ fn every_capped_listing_says_so_not_just_the_ones_measured() {
     ] {
         let out = f.raw(&args);
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains("stopped at --limit"), "{args:?} cut in silence: {err}");
+        assert!(
+            err.contains("stopped at --limit"),
+            "{args:?} cut in silence: {err}"
+        );
         let want: usize = args.last().unwrap().parse().unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout).lines().count(), want, "{args:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).lines().count(),
+            want,
+            "{args:?}"
+        );
     }
 
     // `members` reaches its rows a different way; same guarantee.
@@ -7730,10 +9845,20 @@ fn unused_skips_a_method_that_exists_to_satisfy_a_trait() {
     );
 
     let rows = f.run(&["unused"]);
-    let lines: Vec<i64> =
-        rows["data"].as_array().unwrap().iter().filter_map(|r| r["line"].as_i64()).collect();
-    assert!(lines.contains(&4), "an inherent method with no callers is still dead: {rows}");
-    assert!(!lines.contains(&3), "a trait implementation is not dead code: {rows}");
+    let lines: Vec<i64> = rows["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["line"].as_i64())
+        .collect();
+    assert!(
+        lines.contains(&4),
+        "an inherent method with no callers is still dead: {rows}"
+    );
+    assert!(
+        !lines.contains(&3),
+        "a trait implementation is not dead code: {rows}"
+    );
 }
 
 #[test]
@@ -7787,17 +9912,34 @@ fn entrypoints_lists_syntax_registered_routes_and_optional_tests() {
     );
 
     let routes = f.run(&["entrypoints"])["data"].as_array().unwrap().clone();
-    assert_eq!(routes.len(), 1, "ordinary/test definitions leaked in: {routes:?}");
+    assert_eq!(
+        routes.len(),
+        1,
+        "ordinary/test definitions leaked in: {routes:?}"
+    );
     assert_eq!(routes[0]["name"], "health");
-    assert!(routes[0]["registration"].as_str().unwrap().starts_with("@app.get"));
-    assert!(routes[0]["test"].is_null(), "route is not a test: {routes:?}");
+    assert!(routes[0]["registration"]
+        .as_str()
+        .unwrap()
+        .starts_with("@app.get"));
+    assert!(
+        routes[0]["test"].is_null(),
+        "route is not a test: {routes:?}"
+    );
     assert!(
         !routes.iter().any(|row| row["name"] == "status"),
         "ordinary instance fields are not decorator registrations: {routes:?}"
     );
 
-    let all = f.run(&["entrypoints", "--include-tests"])["data"].as_array().unwrap().clone();
-    assert!(all.iter().any(|row| row["name"] == "test_health" && row["test"] == true), "{all:?}");
+    let all = f.run(&["entrypoints", "--include-tests"])["data"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(
+        all.iter()
+            .any(|row| row["name"] == "test_health" && row["test"] == true),
+        "{all:?}"
+    );
 }
 
 #[test]
@@ -7815,14 +9957,28 @@ fn a_qualified_stdlib_decorator_is_inert_however_it_is_imported() {
     );
 
     let by_name: std::collections::HashMap<String, String> = f.run(&["entrypoints"])["data"]
-        .as_array().unwrap().iter()
-        .map(|r| (r["name"].as_str().unwrap().to_string(),
-                  r["registration"].as_str().unwrap_or_default().to_string()))
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["name"].as_str().unwrap().to_string(),
+                r["registration"].as_str().unwrap_or_default().to_string(),
+            )
+        })
         .collect();
-    assert!(!by_name.contains_key("memoized"), "caching is behaviour: {by_name:?}");
-    assert!(!by_name.contains_key("scoped"), "a context manager registers nothing: {by_name:?}");
     assert!(
-        by_name.get("route").is_some_and(|r| r.starts_with("@app.get")),
+        !by_name.contains_key("memoized"),
+        "caching is behaviour: {by_name:?}"
+    );
+    assert!(
+        !by_name.contains_key("scoped"),
+        "a context manager registers nothing: {by_name:?}"
+    );
+    assert!(
+        by_name
+            .get("route")
+            .is_some_and(|r| r.starts_with("@app.get")),
         "a real registration must survive the exclusion: {by_name:?}"
     );
 }
@@ -7848,16 +10004,37 @@ fn entrypoints_recognises_a_file_convention_with_no_decorator_to_read() {
         \x20 componentDidCatch(e) { console.log(e); }\n\
         \x20 helper() { return 1; }\n}\n",
     )
-    .write("components/Unused.tsx", "export function Orphan() { return null; }\n");
+    .write(
+        "components/Unused.tsx",
+        "export function Orphan() { return null; }\n",
+    );
 
     let by_name: std::collections::HashMap<String, String> = f.run(&["entrypoints"])["data"]
-        .as_array().unwrap().iter()
-        .map(|r| (r["name"].as_str().unwrap().to_string(),
-                  r["registration"].as_str().unwrap_or_default().to_string()))
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["name"].as_str().unwrap().to_string(),
+                r["registration"].as_str().unwrap_or_default().to_string(),
+            )
+        })
         .collect();
-    assert_eq!(by_name.get("AboutPage").map(String::as_str), Some("next/page"), "{by_name:?}");
-    assert_eq!(by_name.get("metadata").map(String::as_str), Some("next/page"), "{by_name:?}");
-    assert_eq!(by_name.get("RootLayout").map(String::as_str), Some("next/layout"), "{by_name:?}");
+    assert_eq!(
+        by_name.get("AboutPage").map(String::as_str),
+        Some("next/page"),
+        "{by_name:?}"
+    );
+    assert_eq!(
+        by_name.get("metadata").map(String::as_str),
+        Some("next/page"),
+        "{by_name:?}"
+    );
+    assert_eq!(
+        by_name.get("RootLayout").map(String::as_str),
+        Some("next/layout"),
+        "{by_name:?}"
+    );
     assert_eq!(
         by_name.get("componentDidCatch").map(String::as_str),
         Some("react/lifecycle"),
@@ -7870,11 +10047,16 @@ fn entrypoints_recognises_a_file_convention_with_no_decorator_to_read() {
     // Tagged in `unused`, not suppressed: deleting a route still compiles, so
     // it stays a judgement for the reader.
     let unused: std::collections::HashMap<String, Value> = f.run(&["unused"])["data"]
-        .as_array().unwrap().iter()
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|r| (r["name"].as_str().unwrap().to_string(), r.clone()))
         .collect();
     assert_eq!(unused["AboutPage"]["entrypoint"], "next/page", "{unused:?}");
-    assert!(unused.contains_key("Orphan"), "real dead code still reported: {unused:?}");
+    assert!(
+        unused.contains_key("Orphan"),
+        "real dead code still reported: {unused:?}"
+    );
     assert!(unused["Orphan"]["entrypoint"].is_null(), "{unused:?}");
 }
 
@@ -7893,14 +10075,23 @@ fn arrow_functions_read_as_signatures_not_assignments() {
     );
 
     let sigs: std::collections::HashMap<String, String> = f.run(&["outline", "a.ts"])["data"]
-        .as_array().unwrap().iter()
-        .map(|r| (r["name"].as_str().unwrap().to_string(),
-                  r["signature"].as_str().unwrap_or_default().to_string()))
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["name"].as_str().unwrap().to_string(),
+                r["signature"].as_str().unwrap_or_default().to_string(),
+            )
+        })
         .collect();
     // Parentheses come back on the single-parameter form, which source omits.
     assert_eq!(sigs["bare"], "bare(x)", "{sigs:?}");
     assert_eq!(sigs["typed"], "typed(n: number): string", "{sigs:?}");
-    assert_eq!(sigs["waits"], "async waits(u: string): Promise<void>", "{sigs:?}");
+    assert_eq!(
+        sigs["waits"], "async waits(u: string): Promise<void>",
+        "{sigs:?}"
+    );
     // A const bound to something that is not a function is untouched.
     assert!(sigs["notAFn"].starts_with("const notAFn"), "{sigs:?}");
 }
@@ -7915,21 +10106,36 @@ fn clones_excludes_tests_and_takes_a_positional_path() {
         format!("fn {n}(a: u32, b: u32) -> u32 {{\n    let x = a + b;\n    let y = x * 2;\n    y - a\n}}\n")
     };
     f.write("src/a.rs", &format!("{}{}", dup("one"), dup("two")));
-    f.write("tests/t.rs", &format!("#[test]\n{}#[test]\n{}", dup("case_a"), dup("case_b")));
+    f.write(
+        "tests/t.rs",
+        &format!("#[test]\n{}#[test]\n{}", dup("case_a"), dup("case_b")),
+    );
 
     let names = field_set(&f.run(&["clones", "--min-nodes", "8"]), "name");
-    assert!(names.contains(&"one".to_string()) && names.contains(&"two".to_string()), "{names:?}");
-    assert!(!names.iter().any(|n| n.starts_with("case_")), "tests excluded: {names:?}");
+    assert!(
+        names.contains(&"one".to_string()) && names.contains(&"two".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n.starts_with("case_")),
+        "tests excluded: {names:?}"
+    );
 
     // Opt back in for the old behaviour.
-    let all = field_set(&f.run(&["clones", "--min-nodes", "8", "--include-tests"]), "name");
+    let all = field_set(
+        &f.run(&["clones", "--min-nodes", "8", "--include-tests"]),
+        "name",
+    );
     assert!(all.iter().any(|n| n.starts_with("case_")), "{all:?}");
 
     // Positional path, like `unused`/`untested`/`hotspots`/`tree`. `clones` was
     // the one command in that family that insisted on `--path`.
     let scoped = field_set(&f.run(&["clones", "src", "--min-nodes", "8"]), "name");
     assert_eq!(scoped.len(), 2, "{scoped:?}");
-    assert!(!f.raw(&["clones", "--path", "src"]).status.success(), "--path is gone");
+    assert!(
+        !f.raw(&["clones", "--path", "src"]).status.success(),
+        "--path is gone"
+    );
 }
 
 #[test]
@@ -7940,13 +10146,22 @@ fn tree_and_map_can_separate_code_from_the_data_around_it() {
     let f = Fixture::new();
     f.write("src/lib.py", "def compute():\n    return 1\n");
     for i in 0..6 {
-        f.write(&format!("data/set{i}/README.md"), "# A\n## B\n## C\n### D\n");
+        f.write(
+            &format!("data/set{i}/README.md"),
+            "# A\n## B\n## C\n### D\n",
+        );
     }
 
     let all = field_set(&f.run(&["tree", "--min-symbols", "1"]), "path");
-    assert!(all.iter().any(|d| d.starts_with("data")), "prose outranks code: {all:?}");
+    assert!(
+        all.iter().any(|d| d.starts_with("data")),
+        "prose outranks code: {all:?}"
+    );
 
-    let code = field_set(&f.run(&["tree", "--language", "python", "--min-symbols", "1"]), "path");
+    let code = field_set(
+        &f.run(&["tree", "--language", "python", "--min-symbols", "1"]),
+        "path",
+    );
     assert!(code.iter().any(|d| d == "src"), "{code:?}");
     assert!(!code.iter().any(|d| d.starts_with("data")), "{code:?}");
 }
@@ -7958,7 +10173,10 @@ fn map_says_when_a_repo_is_mostly_things_it_cannot_index() {
     let f = Fixture::new();
     f.write("src/lib.py", "def compute():\n    return 1\n");
     for i in 0..8 {
-        f.write_bytes(&format!("assets/flag{i}.png"), &[0x89, b'P', b'N', b'G', 0, 1, 2, 3]);
+        f.write_bytes(
+            &format!("assets/flag{i}.png"),
+            &[0x89, b'P', b'N', b'G', 0, 1, 2, 3],
+        );
     }
 
     let out = f.raw(&["map", "--totals"]);
@@ -7966,15 +10184,23 @@ fn map_says_when_a_repo_is_mostly_things_it_cannot_index() {
     assert!(note.contains("carry no symbols"), "{note}");
     assert!(note.contains("of 9 files"), "{note}");
     // The extension is the fact; the category was a guess.
-    assert!(note.contains(".png (8)"), "note should name what the bulk is: {note}");
+    assert!(
+        note.contains(".png (8)"),
+        "note should name what the bulk is: {note}"
+    );
     // Under a megabyte the quantities have to survive the unit.
-    assert!(!note.contains("0 MB"), "sub-MB totals rendered as zero: {note}");
+    assert!(
+        !note.contains("0 MB"),
+        "sub-MB totals rendered as zero: {note}"
+    );
 
     // A repo that is mostly code says nothing — the note is for the case that
     // misleads, not a banner on every call.
     let g = Fixture::new();
     g.write("a.py", "def x():\n    pass\n");
-    assert!(!String::from_utf8_lossy(&g.raw(&["map", "--totals"]).stderr).contains("carry no symbols"));
+    assert!(
+        !String::from_utf8_lossy(&g.raw(&["map", "--totals"]).stderr).contains("carry no symbols")
+    );
 }
 
 #[test]
@@ -7985,7 +10211,10 @@ fn map_says_when_a_committed_data_tree_owns_the_index() {
     // backups turned a 700 KB codebase into a 129 MB index.db, silently.
     let f = Fixture::new();
     f.write("src/lib.py", "def compute():\n    return 1\n");
-    let blob = format!("[{}]", vec!["{\"team\":\"x\",\"score\":1}"; 30_000].join(","));
+    let blob = format!(
+        "[{}]",
+        vec!["{\"team\":\"x\",\"score\":1}"; 30_000].join(",")
+    );
     f.write("updater/backups/general_2024.json", &blob);
     f.write("updater/backups/general_2025.json", &blob);
 
@@ -8011,16 +10240,27 @@ fn map_says_when_generated_source_owns_most_of_the_symbols() {
     // real dashboard repo three files held 5,507 of 7,558 symbols and
     // `hotspots` answered `function t refs=45993`.
     let f = Fixture::new();
-    f.write("src/app.ts", "export function compute() {\n    return 1;\n}\n");
+    f.write(
+        "src/app.ts",
+        "export function compute() {\n    return 1;\n}\n",
+    );
     // One line, many declarations — what minification produces.
-    let minified: String =
-        (0..80).map(|i| format!("const v{i}=()=>{i};")).collect::<Vec<_>>().join("");
+    let minified: String = (0..80)
+        .map(|i| format!("const v{i}=()=>{i};"))
+        .collect::<Vec<_>>()
+        .join("");
     f.write("vendor/bundle.min.js", &format!("{minified}\n"));
 
     let note = String::from_utf8_lossy(&f.raw(&["map", "--totals"]).stderr).to_string();
-    assert!(note.contains("vendor/bundle.min.js"), "should name the file: {note}");
+    assert!(
+        note.contains("vendor/bundle.min.js"),
+        "should name the file: {note}"
+    );
     assert!(note.contains("stacked on a few lines"), "{note}");
-    assert!(note.contains("hotspots"), "should say what it distorts: {note}");
+    assert!(
+        note.contains("hotspots"),
+        "should say what it distorts: {note}"
+    );
 
     // Hand-written code declares about one thing per line, so an ordinary repo
     // stays silent — the ratio is bounded above by the grammar, not tuned.
@@ -8048,7 +10288,10 @@ fn map_names_an_unsupported_language_rather_than_calling_it_data() {
     let note = String::from_utf8_lossy(&f.raw(&["map", "--totals"]).stderr).to_string();
     assert!(note.contains("codeq has no grammar for"), "{note}");
     assert!(note.contains(".al (6)"), "{note}");
-    assert!(!note.contains("assets"), "the category was the guess: {note}");
+    assert!(
+        !note.contains("assets"),
+        "the category was the guess: {note}"
+    );
 }
 
 #[test]
@@ -8072,12 +10315,24 @@ fn a_python_module_scope_binding_is_a_definition() {
 
     let names = field_set(&f.run(&["symbols", "--limit", "0"]), "name");
     for want in ["DATA_DIR", "ALIAS", "COUNT"] {
-        assert!(names.contains(&want.to_string()), "{want} missing: {names:?}");
+        assert!(
+            names.contains(&want.to_string()),
+            "{want} missing: {names:?}"
+        );
     }
     // Module scope only, and only real bindings.
-    assert!(!names.contains(&"local_thing".to_string()), "a local: {names:?}");
-    assert!(!names.contains(&"LATER".to_string()), "annotation, not a binding: {names:?}");
-    assert!(!names.contains(&"a".to_string()), "destructuring declares nothing here: {names:?}");
+    assert!(
+        !names.contains(&"local_thing".to_string()),
+        "a local: {names:?}"
+    );
+    assert!(
+        !names.contains(&"LATER".to_string()),
+        "annotation, not a binding: {names:?}"
+    );
+    assert!(
+        !names.contains(&"a".to_string()),
+        "destructuring declares nothing here: {names:?}"
+    );
 
     // The commands above it work again, which is how this failed: quietly.
     let defs = f.run(&["definitions", "DATA_DIR"]);
@@ -8100,9 +10355,15 @@ fn a_member_of_a_private_type_is_not_public_api() {
 
     let api = field_set(&f.run(&["api", "lib.py"]), "name");
     assert!(api.contains(&"Public".to_string()), "{api:?}");
-    assert!(api.contains(&"size".to_string()) && api.contains(&"visible".to_string()), "{api:?}");
+    assert!(
+        api.contains(&"size".to_string()) && api.contains(&"visible".to_string()),
+        "{api:?}"
+    );
     for hidden in ["_Draw", "value", "method"] {
-        assert!(!api.contains(&hidden.to_string()), "{hidden} is inside a private type: {api:?}");
+        assert!(
+            !api.contains(&hidden.to_string()),
+            "{hidden} is inside a private type: {api:?}"
+        );
     }
     // `untested` is "public only", so it must agree.
     let untested = field_set(&f.run(&["untested", "lib.py"]), "name");
@@ -8138,9 +10399,15 @@ fn an_impacted_row_points_at_the_definition_not_the_call_site() {
     // site's — one command, one key, two meanings. Click the line and you land
     // mid-body.
     let f = Fixture::new();
-    f.write("mod.py", "def touched():\n    return 1\n\ndef caller():\n    return touched()\n");
+    f.write(
+        "mod.py",
+        "def touched():\n    return 1\n\ndef caller():\n    return touched()\n",
+    );
     f.git_init_commit();
-    f.write("mod.py", "def touched():\n    return 2\n\ndef caller():\n    return touched()\n");
+    f.write(
+        "mod.py",
+        "def touched():\n    return 2\n\ndef caller():\n    return touched()\n",
+    );
 
     let v = f.run(&["affected", "--compare-to", "HEAD"]);
     let imp = &v["data"]["impacted"][0];
@@ -8190,21 +10457,37 @@ fn a_moved_and_reexported_definition_is_not_a_removed_export() {
     // but a definitions-only comparison called it a removed public export, which
     // is the answer that would block a PR on a non-breaking change.
     let f = Fixture::new();
-    f.write("pkg/handler.py", "def helper():\n    return 1\n\ndef resolve_key(n):\n    return n\n");
+    f.write(
+        "pkg/handler.py",
+        "def helper():\n    return 1\n\ndef resolve_key(n):\n    return n\n",
+    );
     f.write("pkg/generate.py", "def other():\n    return 2\n");
     f.git_init_commit();
-    f.write("pkg/handler.py", "from pkg.generate import resolve_key\n\ndef helper():\n    return 1\n");
-    f.write("pkg/generate.py", "def other():\n    return 2\n\ndef resolve_key(n):\n    return n\n");
+    f.write(
+        "pkg/handler.py",
+        "from pkg.generate import resolve_key\n\ndef helper():\n    return 1\n",
+    );
+    f.write(
+        "pkg/generate.py",
+        "def other():\n    return 2\n\ndef resolve_key(n):\n    return n\n",
+    );
 
     let names = |v: &Value, section: &str| -> Vec<String> {
         v["data"][section]
             .as_array()
-            .map(|a| a.iter().filter_map(|r| r["name"].as_str().map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|r| r["name"].as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default()
     };
 
     let v = f.run(&["api", "pkg/handler.py", "--compare-to", "HEAD"]);
-    assert!(!names(&v, "removed").contains(&"resolve_key".to_string()), "still exported: {v}");
+    assert!(
+        !names(&v, "removed").contains(&"resolve_key".to_string()),
+        "still exported: {v}"
+    );
     let out = f.raw(&["api", "pkg/handler.py", "--compare-to", "HEAD"]);
     let note = String::from_utf8_lossy(&out.stderr);
     assert!(note.contains("still exported, now via an import"), "{note}");
@@ -8213,7 +10496,10 @@ fn a_moved_and_reexported_definition_is_not_a_removed_export() {
     // A genuine removal is still a removal.
     f.write("pkg/handler.py", "def helper():\n    return 1\n");
     let v = f.run(&["api", "pkg/handler.py", "--compare-to", "HEAD"]);
-    assert!(names(&v, "removed").contains(&"resolve_key".to_string()), "{v}");
+    assert!(
+        names(&v, "removed").contains(&"resolve_key".to_string()),
+        "{v}"
+    );
 }
 
 #[test]
@@ -8239,8 +10525,14 @@ fn clone_rows_carry_the_directories_their_group_spans() {
         .collect();
     // Every row of a group carries the same span, so it groups.
     assert_eq!(by_name["one"], by_name["two"], "{rows}");
-    assert!(by_name["one"].contains("core") && by_name["one"].contains("vendor"), "{rows}");
-    assert!(by_name["one"].contains("<->"), "a cross-directory group: {rows}");
+    assert!(
+        by_name["one"].contains("core") && by_name["one"].contains("vendor"),
+        "{rows}"
+    );
+    assert!(
+        by_name["one"].contains("<->"),
+        "a cross-directory group: {rows}"
+    );
 }
 
 #[test]
@@ -8252,12 +10544,28 @@ fn astgrep_path_scopes_instead_of_emptying_the_result() {
     // documented defence (`--explain` on a line you know matches) does not help:
     // the tree was perfect while the scoped query stayed empty.
     let f = Fixture::new();
-    f.write("src/a.rs", "fn a() { let x: Option<u32> = None; x.unwrap(); }\n");
-    f.write("src/b.rs", "fn b() { let y: Option<u32> = None; y.unwrap(); }\n");
-    f.write("tests/t.rs", "fn t() { let z: Option<u32> = None; z.unwrap(); }\n");
+    f.write(
+        "src/a.rs",
+        "fn a() { let x: Option<u32> = None; x.unwrap(); }\n",
+    );
+    f.write(
+        "src/b.rs",
+        "fn b() { let y: Option<u32> = None; y.unwrap(); }\n",
+    );
+    f.write(
+        "tests/t.rs",
+        "fn t() { let z: Option<u32> = None; z.unwrap(); }\n",
+    );
 
     let n = |args: &[&str]| {
-        let mut v = vec!["astgrep", "$X.unwrap()", "--language", "rust", "--limit", "0"];
+        let mut v = vec![
+            "astgrep",
+            "$X.unwrap()",
+            "--language",
+            "rust",
+            "--limit",
+            "0",
+        ];
         v.extend_from_slice(args);
         f.run(&v)["data"]["matches"].as_array().unwrap().len()
     };
@@ -8268,13 +10576,30 @@ fn astgrep_path_scopes_instead_of_emptying_the_result() {
     assert_eq!(n(&["--path", "tests"]), 1);
 
     // A `--path` matching no file says so, instead of looking like "no matches".
-    let out = f.raw(&["astgrep", "$X.unwrap()", "--language", "rust", "--path", "nosuchdir"]);
+    let out = f.raw(&[
+        "astgrep",
+        "$X.unwrap()",
+        "--language",
+        "rust",
+        "--path",
+        "nosuchdir",
+    ]);
     assert!(out.status.success());
     let note = String::from_utf8_lossy(&out.stderr);
-    assert!(note.contains("no indexed rust file matches --path nosuchdir"), "{note}");
+    assert!(
+        note.contains("no indexed rust file matches --path nosuchdir"),
+        "{note}"
+    );
     // A real path where the pattern genuinely misses stays quiet — the note is
     // for the case that misleads, not a banner on every empty result.
-    let quiet = f.raw(&["astgrep", "$X.never_called()", "--language", "rust", "--path", "src"]);
+    let quiet = f.raw(&[
+        "astgrep",
+        "$X.never_called()",
+        "--language",
+        "rust",
+        "--path",
+        "src",
+    ]);
     assert!(!String::from_utf8_lossy(&quiet.stderr).contains("matches --path"));
 }
 
@@ -8292,7 +10617,10 @@ fn a_file_outside_the_index_says_so_rather_than_not_found() {
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("not in this index"), "{err}");
-    assert!(err.contains("--root"), "it should say how to reach it: {err}");
+    assert!(
+        err.contains("--root"),
+        "it should say how to reach it: {err}"
+    );
 
     // A path that really doesn't exist keeps the plain message.
     let gone = f.raw(&["outline", "nosuchfile.rs"]);
@@ -8307,7 +10635,10 @@ fn callpath_says_which_of_the_four_reasons_it_found_nothing() {
     // chain past --max-depth — and it distinguished none of them: no stdout, no
     // stderr, exit 0, and no `note` under --json either.
     let f = Fixture::new();
-    f.write("a.py", "def alpha():\n    return 1\n\ndef beta():\n    return 2\n");
+    f.write(
+        "a.py",
+        "def alpha():\n    return 1\n\ndef beta():\n    return 2\n",
+    );
 
     let note = |args: &[&str]| -> String {
         let mut v = vec!["callpath"];
@@ -8319,11 +10650,20 @@ fn callpath_says_which_of_the_four_reasons_it_found_nothing() {
     assert!(note(&["zzznotreal", "alsonotreal"]).contains("neither"));
     let unreachable = note(&["alpha", "beta"]);
     assert!(unreachable.contains("both are defined"), "{unreachable}");
-    assert!(unreachable.contains("--max-depth"), "raise it or give up: {unreachable}");
+    assert!(
+        unreachable.contains("--max-depth"),
+        "raise it or give up: {unreachable}"
+    );
 
     // The note reaches --json too, where there was nothing at all before.
     let v = f.run(&["callpath", "alpha", "beta"]);
-    assert!(v["note"].as_str().unwrap_or_default().contains("both are defined"), "{v}");
+    assert!(
+        v["note"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("both are defined"),
+        "{v}"
+    );
 }
 
 #[test]
@@ -8335,7 +10675,10 @@ fn an_empty_graph_explains_this_repo_not_some_other_one() {
     f.write("a.py", "class A:\n    pass\n\nclass B:\n    pass\n");
     let py = String::from_utf8_lossy(&f.raw(&["graph"]).stderr).to_string();
     assert!(py.contains("python does produce them"), "{py}");
-    assert!(!py.contains("Zig"), "not about languages that aren't here: {py}");
+    assert!(
+        !py.contains("Zig"),
+        "not about languages that aren't here: {py}"
+    );
 
     let g = Fixture::new();
     g.write("m.go", "package main\n\nfunc main() {}\n");
@@ -8358,13 +10701,25 @@ fn python_names_the_interpreter_reads_are_not_api_or_dead_code() {
     let dead = field_set(&f.run(&["unused"]), "name");
     assert!(!dead.contains(&"__all__".to_string()), "{dead:?}");
     for hook in ["__enter__", "__get__", "__post_init__"] {
-        assert!(!dead.contains(&hook.to_string()), "runtime hook {hook}: {dead:?}");
+        assert!(
+            !dead.contains(&hook.to_string()),
+            "runtime hook {hook}: {dead:?}"
+        );
     }
-    assert!(dead.contains(&"dead".to_string()), "ordinary method: {dead:?}");
-    assert!(dead.contains(&"__version__".to_string()), "not a blanket dunder rule: {dead:?}");
+    assert!(
+        dead.contains(&"dead".to_string()),
+        "ordinary method: {dead:?}"
+    );
+    assert!(
+        dead.contains(&"__version__".to_string()),
+        "not a blanket dunder rule: {dead:?}"
+    );
 
     let api = field_set(&f.run(&["api", "pkg/__init__.py"]), "name");
-    assert!(!api.contains(&"__all__".to_string()), "metadata, not surface: {api:?}");
+    assert!(
+        !api.contains(&"__all__".to_string()),
+        "metadata, not surface: {api:?}"
+    );
     assert!(api.contains(&"a".to_string()), "{api:?}");
 }
 
@@ -8373,7 +10728,10 @@ fn a_heading_copied_out_of_outline_works_as_a_symbol() {
     // `outline` renders a heading's signature (`## Heading`); `--symbol` stores
     // it bare. Copy-paste between them is the obvious workflow and it failed.
     let f = Fixture::new();
-    f.write("doc.md", "# Title\n\nintro\n\n## Second Part\n\nbody text\n");
+    f.write(
+        "doc.md",
+        "# Title\n\nintro\n\n## Second Part\n\nbody text\n",
+    );
 
     // `read` prints source, not the row envelope, so compare the bytes.
     let bare = f.raw(&["read", "doc.md", "--symbol", "Second Part"]);
@@ -8381,7 +10739,10 @@ fn a_heading_copied_out_of_outline_works_as_a_symbol() {
     let bare_out = String::from_utf8_lossy(&bare.stdout).to_string();
     assert!(bare_out.contains("body text"), "{bare_out}");
     let copied = f.raw(&["read", "doc.md", "--symbol", "## Second Part"]);
-    assert!(copied.status.success(), "the form `outline` prints must work too");
+    assert!(
+        copied.status.success(),
+        "the form `outline` prints must work too"
+    );
     assert_eq!(
         String::from_utf8_lossy(&copied.stdout),
         bare_out,
@@ -8389,7 +10750,10 @@ fn a_heading_copied_out_of_outline_works_as_a_symbol() {
     );
 
     // A name that genuinely doesn't exist still fails.
-    assert!(!f.raw(&["read", "doc.md", "--symbol", "## Nope"]).status.success());
+    assert!(!f
+        .raw(&["read", "doc.md", "--symbol", "## Nope"])
+        .status
+        .success());
 }
 
 #[test]
@@ -8397,7 +10761,10 @@ fn a_folded_multiline_constant_says_what_it_folded() {
     // A 52-entry dict rendered as a bare `alias =`, which reads like the
     // renderer gave up rather than like a deliberate fold.
     let f = Fixture::new();
-    f.write("m.py", "alias = {\n  \"a\": 1,\n  \"b\": 2,\n}\nITEMS = [\n  1,\n  2,\n]\nVERSION = \"1.0\"\n");
+    f.write(
+        "m.py",
+        "alias = {\n  \"a\": 1,\n  \"b\": 2,\n}\nITEMS = [\n  1,\n  2,\n]\nVERSION = \"1.0\"\n",
+    );
 
     let sigs: std::collections::HashMap<String, String> = f.run(&["outline", "m.py"])["data"]
         .as_array()
@@ -8426,23 +10793,37 @@ fn an_empty_result_says_why_it_is_empty() {
     let f = Fixture::new();
     // Line 1 is a comment, so it sits between definitions — that is the `at`
     // case, and it is what `explore --at` already explained while `at` did not.
-    f.write("src/a.py", "# a comment outside every definition\ndef alpha():\n    return 1\n");
+    f.write(
+        "src/a.py",
+        "# a comment outside every definition\ndef alpha():\n    return 1\n",
+    );
 
-    let note = |args: &[&str]| -> String {
-        String::from_utf8_lossy(&f.raw(args).stderr).to_string()
-    };
+    let note =
+        |args: &[&str]| -> String { String::from_utf8_lossy(&f.raw(args).stderr).to_string() };
     for (args, want) in [
         (vec!["imports", "nosuchdir"], "no indexed file matches"),
         (vec!["hotspots", "nosuchdir"], "no indexed file matches"),
         (vec!["clones", "nosuchdir"], "no indexed file matches"),
         (vec!["tree", "nosuchdir"], "no indexed file matches"),
-        (vec!["search", "def", "--path", "nosuchdir"], "the pattern was never run"),
-        (vec!["search", "def", "--language", "cobol"], "the pattern was never run"),
-        (vec!["context", "--symbols", "zzznotreal"], "no symbol named"),
+        (
+            vec!["search", "def", "--path", "nosuchdir"],
+            "the pattern was never run",
+        ),
+        (
+            vec!["search", "def", "--language", "cobol"],
+            "the pattern was never run",
+        ),
+        (
+            vec!["context", "--symbols", "zzznotreal"],
+            "no symbol named",
+        ),
         (vec!["at", "src/a.py:1"], "no definition encloses"),
     ] {
         let got = note(&args);
-        assert!(got.contains(want), "{args:?} should say '{want}', said: {got}");
+        assert!(
+            got.contains(want),
+            "{args:?} should say '{want}', said: {got}"
+        );
     }
 
     // A real scope that genuinely holds none of the thing says *that* instead —
@@ -8461,14 +10842,29 @@ fn context_names_a_seed_that_resolved_to_nothing() {
     // beside good ones is *more* dangerous — the bundle looks full, and the name
     // you got wrong is the one missing from it.
     let f = Fixture::new();
-    f.write("a.py", "def alpha():\n    return 1\n\ndef beta():\n    return 2\n");
+    f.write(
+        "a.py",
+        "def alpha():\n    return 1\n\ndef beta():\n    return 2\n",
+    );
 
     let note = |args: &[&str]| String::from_utf8_lossy(&f.raw(args).stderr).to_string();
     let only_bad = note(&["context", "--symbols", "zzznotreal"]);
-    assert!(only_bad.contains("no symbol named zzznotreal"), "{only_bad}");
+    assert!(
+        only_bad.contains("no symbol named zzznotreal"),
+        "{only_bad}"
+    );
 
-    let mixed = note(&["context", "--symbols", "alpha,zzznotreal", "--max-tokens", "400"]);
-    assert!(mixed.contains("zzznotreal"), "a bad seed among good ones: {mixed}");
+    let mixed = note(&[
+        "context",
+        "--symbols",
+        "alpha,zzznotreal",
+        "--max-tokens",
+        "400",
+    ]);
+    assert!(
+        mixed.contains("zzznotreal"),
+        "a bad seed among good ones: {mixed}"
+    );
     assert!(mixed.contains("1 of 2 seeds"), "{mixed}");
 
     // All seeds good: no note, and the bundle is real.
@@ -8491,8 +10887,14 @@ fn a_huge_data_file_is_still_searchable() {
     let big = format!("{{\"needle\":\"{}\"}}\n", "x".repeat(3 * 1024 * 1024));
     f.write("huge.json", &big);
 
-    let hits = f.run(&["search", "needle"])["data"]["matches"].as_array().unwrap().len();
-    assert!(hits >= 1, "a big data file stays searchable — search is a superset of grep");
+    let hits = f.run(&["search", "needle"])["data"]["matches"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert!(
+        hits >= 1,
+        "a big data file stays searchable — search is a superset of grep"
+    );
 }
 
 #[test]
@@ -8506,10 +10908,17 @@ fn an_undefined_name_does_not_guess_why_it_is_undefined() {
 
     let err = String::from_utf8_lossy(&f.raw(&["definitions", "areaBank"]).stderr).to_string();
     assert!(err.contains("no definition codeq indexes"), "{err}");
-    assert!(err.contains("a parameter"), "the likeliest cause must be listed: {err}");
-    assert!(!err.contains("(a dependency, or a built-in)"), "no longer picks one: {err}");
+    assert!(
+        err.contains("a parameter"),
+        "the likeliest cause must be listed: {err}"
+    );
+    assert!(
+        !err.contains("(a dependency, or a built-in)"),
+        "no longer picks one: {err}"
+    );
 
     // A genuine typo still gets the typo message, not this one.
-    let typo = String::from_utf8_lossy(&f.raw(&["definitions", "zzznotanything"]).stderr).to_string();
+    let typo =
+        String::from_utf8_lossy(&f.raw(&["definitions", "zzznotanything"]).stderr).to_string();
     assert!(typo.contains("no symbol named"), "{typo}");
 }

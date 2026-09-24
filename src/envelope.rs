@@ -90,9 +90,7 @@ impl<T: Serialize> Envelope<T> {
 
     /// Whether the meta blocks carry signal worth the tokens.
     fn noteworthy(&self) -> bool {
-        self.index.reindexed_files > 0
-            || !self.index.fresh
-            || self.index.partial_failures > 0
+        self.index.reindexed_files > 0 || !self.index.fresh || self.index.partial_failures > 0
     }
 
     pub fn print(&self, r: Render) -> anyhow::Result<()> {
@@ -146,7 +144,10 @@ impl<T: Serialize> Envelope<T> {
                 if !truncated.is_empty() {
                     // Per file, the count *before* capping — so a consumer can
                     // tell "3 hits" from "3 of 240 hits" and go back for the rest.
-                    notes.insert("truncated_per_file".into(), serde_json::to_value(&truncated)?);
+                    notes.insert(
+                        "truncated_per_file".into(),
+                        serde_json::to_value(&truncated)?,
+                    );
                 }
                 out.insert("notes".into(), Value::Object(notes));
             }
@@ -170,7 +171,11 @@ impl<T: Serialize> Envelope<T> {
                 } else {
                     String::new()
                 },
-                if self.index.fresh { "" } else { ", index stale" },
+                if self.index.fresh {
+                    ""
+                } else {
+                    ", index stale"
+                },
             );
         }
         if note_fields {
@@ -228,7 +233,9 @@ pub fn render_data_text(data: &Value) -> String {
 /// `truncated: true` sibling of their row array; the text renderer drops scalars
 /// next to a single row list, so it is read here instead and reported on stderr.
 fn hit_limit(data: &Value) -> bool {
-    data.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false)
+    data.get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
 }
 
 /// Keep at most `n` rows per `path`, returning `path -> count before capping`
@@ -309,8 +316,7 @@ fn render_value(data: &Value, group: bool, truncated: &BTreeMap<String, usize>, 
                 for (k, v) in map {
                     out.push_str(&format!("{k}: {}\n", inline(v)));
                 }
-            } else if arrays == 1 && map.keys().all(|k| k == "truncated" || map[k].is_array())
-            {
+            } else if arrays == 1 && map.keys().all(|k| k == "truncated" || map[k].is_array()) {
                 // A single result list whose only companions are *metadata*: emit
                 // just the rows. The test used to be positional (`len() <= 2`),
                 // which collapsed any two-key object — so `map --totals`, which is
@@ -345,12 +351,7 @@ fn render_value(data: &Value, group: bool, truncated: &BTreeMap<String, usize>, 
 /// relative to the shallowest row. `outline` numbers top-level definitions 0
 /// while `callers`/`callees`/`deps` number direct hits 1; without this every
 /// row of a `--depth` walk would carry a leading indent that means nothing.
-fn render_rows(
-    rows: &[Value],
-    group: bool,
-    truncated: &BTreeMap<String, usize>,
-    out: &mut String,
-) {
+fn render_rows(rows: &[Value], group: bool, truncated: &BTreeMap<String, usize>, out: &mut String) {
     let base = rows
         .iter()
         .filter_map(|r| r.get("depth").and_then(|v| v.as_i64()))
@@ -460,14 +461,18 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     // --expand, so surface it in the header.
     if let Some(t) = str_of("text") {
         if t.contains('\n') {
-            let reason = str_of("reason").map(|r| format!(" ({r})")).unwrap_or_default();
+            let reason = str_of("reason")
+                .map(|r| format!(" ({r})"))
+                .unwrap_or_default();
             // The enclosing symbol belongs on the header too. This branch exists
             // for `context` chunks, where a header plus a verbatim block is the
             // right shape — but a multi-line `astgrep` match lands here as well,
             // and silently lost the `[symbol]` the docs promise on *every*
             // match. Whether a pattern happens to span a line is not a reason to
             // answer a different question.
-            let enclosing = str_of("symbol").map(|s| format!("  [{s}]")).unwrap_or_default();
+            let enclosing = str_of("symbol")
+                .map(|s| format!("  [{s}]"))
+                .unwrap_or_default();
             out.push_str(&format!(
                 "{pad}{}{reason}{enclosing}\n{t}\n",
                 loc.trim_end_matches([':', ' '])
@@ -498,17 +503,29 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
                 // match line does — the header already carries it — and with it
                 // the separating `-`, so the row reads `196- code` rather than
                 // leading with a stray dash.
-                let lead = if in_group { String::new() } else { format!("{p}-") };
+                let lead = if in_group {
+                    String::new()
+                } else {
+                    format!("{p}-")
+                };
                 if let Some(b) = before {
                     let start = ln - b.len() as i64;
                     for (i, cl) in b.iter().filter_map(|v| v.as_str()).enumerate() {
-                        out.push_str(&format!("{pad}{lead}{}- {}\n", start + i as i64, cl.trim_end()));
+                        out.push_str(&format!(
+                            "{pad}{lead}{}- {}\n",
+                            start + i as i64,
+                            cl.trim_end()
+                        ));
                     }
                 }
                 out.push_str(&match_line);
                 if let Some(a) = after {
                     for (i, cl) in a.iter().filter_map(|v| v.as_str()).enumerate() {
-                        out.push_str(&format!("{pad}{lead}{}- {}\n", ln + 1 + i as i64, cl.trim_end()));
+                        out.push_str(&format!(
+                            "{pad}{lead}{}- {}\n",
+                            ln + 1 + i as i64,
+                            cl.trim_end()
+                        ));
                     }
                 }
                 return;
@@ -541,7 +558,9 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     // bare field it had) and left `from=`/`to=` as trailing metadata, burying the
     // one thing an edge row says. Same treatment the cycle list gets below.
     if let (Some(from), Some(to)) = (str_of("from"), str_of("to")) {
-        let how = str_of("relation").map(|r| format!("  relation={r}")).unwrap_or_default();
+        let how = str_of("relation")
+            .map(|r| format!("  relation={r}"))
+            .unwrap_or_default();
         out.push_str(&format!("{pad}{loc}{from} -> {to}{how}\n"));
         return;
     }
@@ -572,9 +591,27 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     // below doesn't print them twice. Position keys follow ROW_KEY_RULE; the
     // `start_*` spellings are gone from the wire, so they are gone from here too.
     const CONSUMED: &[&str] = &[
-        "path", "line", "col", "byte", "end_line", "end_col", "end_byte", "depth",
-        "text", "signature", "doc", "source", "receiver", "id", "confidence",
-        "language", "kind", "name", "module", "symbol", "dir",
+        "path",
+        "line",
+        "col",
+        "byte",
+        "end_line",
+        "end_col",
+        "end_byte",
+        "depth",
+        "text",
+        "signature",
+        "doc",
+        "source",
+        "receiver",
+        "id",
+        "confidence",
+        "language",
+        "kind",
+        "name",
+        "module",
+        "symbol",
+        "dir",
     ];
     for (k, v) in o {
         if CONSUMED.contains(&k.as_str()) {

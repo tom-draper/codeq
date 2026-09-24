@@ -213,7 +213,8 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         for t in seed_text.values() {
             collect_identifiers(t, &mut lexical);
         }
-        let seed_names: HashSet<&str> = defs[..seed_count].iter().map(|d| d.name.as_str()).collect();
+        let seed_names: HashSet<&str> =
+            defs[..seed_count].iter().map(|d| d.name.as_str()).collect();
         calls.unscoped.retain(|r| !seed_names.contains(r.as_str()));
         calls.scoped.retain(|r, _| !seed_names.contains(r.as_str()));
         syntax_names.retain(|r| !seed_names.contains(r.as_str()));
@@ -245,16 +246,18 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         } else {
             None
         };
-        let mut add_group = |
-            names: HashSet<String>,
-            only_in: Option<&HashMap<String, HashSet<String>>>
-        | -> Result<()> {
+        let mut add_group = |names: HashSet<String>,
+                             only_in: Option<&HashMap<String, HashSet<String>>>|
+         -> Result<()> {
             let mut names: Vec<String> = names.into_iter().collect();
             names.sort();
             let mut group = defs_by_column(db, "name", &names)?;
             group.sort_by(|a, b| {
-                (a.name.as_str(), a.path.as_str(), a.start_line)
-                    .cmp(&(b.name.as_str(), b.path.as_str(), b.start_line))
+                (a.name.as_str(), a.path.as_str(), a.start_line).cmp(&(
+                    b.name.as_str(),
+                    b.path.as_str(),
+                    b.start_line,
+                ))
             });
             for d in group {
                 if let Some(paths) = only_in.and_then(|targets| targets.get(&d.name)) {
@@ -488,8 +491,11 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
     // result — showed callees and not the definition. Hoisting one block costs
     // nothing and makes `head` do the right thing.
     chunks.sort_by(|a, b| {
-        (a.reason != "focus", a.path.as_str(), a.start_line)
-            .cmp(&(b.reason != "focus", b.path.as_str(), b.start_line))
+        (a.reason != "focus", a.path.as_str(), a.start_line).cmp(&(
+            b.reason != "focus",
+            b.path.as_str(),
+            b.start_line,
+        ))
     });
 
     Ok(ContextResult {
@@ -507,9 +513,8 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
 
 /// Definitions of an exact name within one file, via the facts(name) index.
 fn defs_by_name_in_path(db: &Db, name: &str, path: &str) -> Result<Vec<Def>> {
-    let sql = format!(
-        "SELECT {DEF_COLUMNS} FROM facts WHERE name = ? AND path = ? AND kind <> 'import'"
-    );
+    let sql =
+        format!("SELECT {DEF_COLUMNS} FROM facts WHERE name = ? AND path = ? AND kind <> 'import'");
     let mut stmt = db.conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params![name, path], row_to_def)?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -528,8 +533,7 @@ fn row_to_def(r: &rusqlite::Row) -> rusqlite::Result<Def> {
     })
 }
 
-const DEF_COLUMNS: &str =
-    "name, kind, path, language, start_byte, end_byte, start_line, end_line";
+const DEF_COLUMNS: &str = "name, kind, path, language, start_byte, end_byte, start_line, end_line";
 
 /// Load definitions matching a set of values in one indexed column, in chunks to
 /// stay under SQLite's bound-parameter limit.
@@ -537,7 +541,10 @@ const DEF_COLUMNS: &str =
 /// `column` is `name` or `path`; both are indexed, and the two call sites were
 /// otherwise the same function written twice.
 fn defs_by_column(db: &Db, column: &str, values: &[String]) -> Result<Vec<Def>> {
-    debug_assert!(matches!(column, "name" | "path"), "column is not interpolable from input");
+    debug_assert!(
+        matches!(column, "name" | "path"),
+        "column is not interpolable from input"
+    );
     let mut out = Vec::new();
     for chunk in values.chunks(500) {
         if chunk.is_empty() {
@@ -586,14 +593,13 @@ fn called_names(db: &Db, seeds: &[Def]) -> Result<CalledNames> {
         "SELECT name, receiver FROM calls WHERE path = ?1 AND start_byte >= ?2 AND start_byte < ?3",
     )?;
     let graph = crate::commands::load_dep_graph(db)?;
-    let mut out = CalledNames { unscoped: HashSet::new(), scoped: HashMap::new() };
+    let mut out = CalledNames {
+        unscoped: HashSet::new(),
+        scoped: HashMap::new(),
+    };
     for seed in seeds {
         let rows = stmt.query_map(
-            rusqlite::params![
-                &seed.path,
-                seed.start_byte as i64,
-                seed.end_byte as i64
-            ],
+            rusqlite::params![&seed.path, seed.start_byte as i64, seed.end_byte as i64],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
         )?;
         for row in rows {
@@ -718,10 +724,9 @@ fn fold_bodies(db: &Db, d: &Def, text: &str) -> Option<String> {
         )
         .ok()?;
     let rows = stmt
-        .query_map(
-            rusqlite::params![&d.path, d.start_line, d.end_line],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
-        )
+        .query_map(rusqlite::params![&d.path, d.start_line, d.end_line], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+        })
         .ok()?;
 
     let lines: Vec<&str> = text.lines().collect();
@@ -775,11 +780,7 @@ fn fold_bodies(db: &Db, d: &Def, text: &str) -> Option<String> {
 /// on disk. Slicing the raw bytes instead shifted every chunk by three on a
 /// BOM-prefixed file, and by two per invalid byte on anything that wasn't valid
 /// UTF-8, yielding source that started mid-expression.
-fn chunk_text(
-    root: &Path,
-    d: &Def,
-    cache: &mut HashMap<String, Option<String>>,
-) -> Option<String> {
+fn chunk_text(root: &Path, d: &Def, cache: &mut HashMap<String, Option<String>>) -> Option<String> {
     let text = cache.entry(d.path.clone()).or_insert_with(|| {
         let bytes = std::fs::read(root.join(&d.path)).ok()?;
         let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);

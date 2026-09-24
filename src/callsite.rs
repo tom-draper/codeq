@@ -47,11 +47,22 @@ pub struct CallSite {
 /// Fields naming the called function on a call node, most specific first.
 const CALLEE_FIELDS: &[&str] = &["function", "method", "name", "constructor"];
 /// Fields naming the receiver, on either the call node or a member-access node.
-const RECEIVER_FIELDS: &[&str] =
-    &["object", "receiver", "operand", "target", "value", "expression"];
+const RECEIVER_FIELDS: &[&str] = &[
+    "object",
+    "receiver",
+    "operand",
+    "target",
+    "value",
+    "expression",
+];
 /// Fields naming the member being selected on a member-access node.
 const MEMBER_FIELDS: &[&str] = &[
-    "field", "property", "attribute", "name", "selector", "suffix",
+    "field",
+    "property",
+    "attribute",
+    "name",
+    "selector",
+    "suffix",
 ];
 
 /// Every call site in `src`, or `None` when the language has no grammar — or has
@@ -129,7 +140,10 @@ fn component_call_sites(language: &str, src: &str) -> Option<Vec<CallSite>> {
     for (start, end, is_ts) in crate::facts::script_regions(tree.root_node(), src.as_bytes()) {
         let blanked = crate::facts::blank_outside(src.as_bytes(), start, end);
         let blanked = std::str::from_utf8(&blanked).ok()?;
-        sites.extend(call_sites_in(if is_ts { "typescript" } else { "javascript" }, blanked)?);
+        sites.extend(call_sites_in(
+            if is_ts { "typescript" } else { "javascript" },
+            blanked,
+        )?);
     }
     Some(sort_dedup(sites))
 }
@@ -329,7 +343,11 @@ mod tests {
     fn curried_calls_keep_only_the_named_inner_callee() {
         let src = "wrapped(handler)(value)\n";
         let sites = super::call_sites_in("python", src).unwrap();
-        assert_eq!(sites.len(), 1, "outer call-result invocation has no named callee");
+        assert_eq!(
+            sites.len(),
+            1,
+            "outer call-result invocation has no named callee"
+        );
         assert_eq!(sites[0].name, "wrapped");
         assert_eq!(sites[0].receiver, None);
     }

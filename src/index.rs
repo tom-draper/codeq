@@ -85,40 +85,41 @@ fn parse_one(
         .unwrap_or(true);
     let was_indexed = prev.is_some();
 
-    let (body, facts, spans, relations, calls, parse_errors, parse_recovered) = if content_changed && !is_binary {
-        // Everything downstream shares one coordinate system: the file decoded as
-        // UTF-8 with invalid bytes replaced (and the BOM already stripped above).
-        // Extracting from the raw bytes instead would put fact offsets and the
-        // searchable body on different scales for any file that is not valid
-        // UTF-8 — each invalid byte becomes a three-byte U+FFFD — so every
-        // enclosing-symbol lookup past the first bad byte would name the wrong
-        // definition. For valid UTF-8, which is virtually every file, this is
-        // byte-identical and free: the string is materialised for the FTS body
-        // either way.
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        let ((f, s, r), health) = match language {
-            Some(lang) => extractor.extract(lang, rel, text.as_bytes()),
-            None => ((Vec::new(), Vec::new(), Vec::new()), None),
+    let (body, facts, spans, relations, calls, parse_errors, parse_recovered) =
+        if content_changed && !is_binary {
+            // Everything downstream shares one coordinate system: the file decoded as
+            // UTF-8 with invalid bytes replaced (and the BOM already stripped above).
+            // Extracting from the raw bytes instead would put fact offsets and the
+            // searchable body on different scales for any file that is not valid
+            // UTF-8 — each invalid byte becomes a three-byte U+FFFD — so every
+            // enclosing-symbol lookup past the first bad byte would name the wrong
+            // definition. For valid UTF-8, which is virtually every file, this is
+            // byte-identical and free: the string is materialised for the FTS body
+            // either way.
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            let ((f, s, r), health) = match language {
+                Some(lang) => extractor.extract(lang, rel, text.as_bytes()),
+                None => ((Vec::new(), Vec::new(), Vec::new()), None),
+            };
+            let calls = language
+                .and_then(|lang| crate::callsite::call_sites_in(lang, &text))
+                .unwrap_or_default();
+            let (parse_errors, parse_recovered) = health
+                .map(|h| (Some(h.errors as i64), h.recovered))
+                .unwrap_or((None, false));
+            (Some(text), f, s, r, calls, parse_errors, parse_recovered)
+        } else {
+            let previous_health = prev.map(|p| (p.parse_errors, p.parse_recovered));
+            (
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                previous_health.map(|h| h.0).flatten(),
+                previous_health.is_some_and(|h| h.1),
+            )
         };
-        let calls = language
-            .and_then(|lang| crate::callsite::call_sites_in(lang, &text))
-            .unwrap_or_default();
-        let (parse_errors, parse_recovered) = health
-            .map(|h| (Some(h.errors as i64), h.recovered))
-            .unwrap_or((None, false));
-        (Some(text), f, s, r, calls, parse_errors, parse_recovered)
-    } else {
-        let previous_health = prev.map(|p| (p.parse_errors, p.parse_recovered));
-        (
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            previous_health.map(|h| h.0).flatten(),
-            previous_health.is_some_and(|h| h.1),
-        )
-    };
 
     Some(Parsed {
         rel: rel.to_string(),
@@ -199,9 +200,9 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     let mut work: Vec<(String, PathBuf, i64, i64, i64)> = Vec::new();
     let mut wb = WalkBuilder::new(repo_root);
     wb.standard_filters(true); // .gitignore, .ignore, hidden, parents
-    // `parents(false)` when the root was pinned with --root: a dependency
-    // directory is ignored *by its parent repo*, and consulting that would make
-    // every file in it invisible. Ignore files inside the root still apply.
+                               // `parents(false)` when the root was pinned with --root: a dependency
+                               // directory is ignored *by its parent repo*, and consulting that would make
+                               // every file in it invisible. Ignore files inside the root still apply.
     wb.parents(!repo.pinned);
     // `.codeqignore` — for trees that are *committed* but not code. Respecting
     // .gitignore is not enough on a data-heavy repo: an external user reported
@@ -236,8 +237,16 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             // (never walked), so an in-place `.gitignore`/`.ignore` edit bumps
             // no cached mtime — track them here or freshness would miss it.
             for ig in [".gitignore", ".ignore", ".codeqignore"] {
-                if let Some(m) = std::fs::metadata(abs.join(ig)).ok().as_ref().and_then(mtime_ns_of) {
-                    let key = if rel.is_empty() { ig.to_string() } else { format!("{rel}/{ig}") };
+                if let Some(m) = std::fs::metadata(abs.join(ig))
+                    .ok()
+                    .as_ref()
+                    .and_then(mtime_ns_of)
+                {
+                    let key = if rel.is_empty() {
+                        ig.to_string()
+                    } else {
+                        format!("{rel}/{ig}")
+                    };
                     dirs_seen.insert(key, m);
                 }
             }
@@ -287,10 +296,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     // busy timeout entirely, because two readers both upgrading would deadlock.
     // Taking the write lock up front is what lets the busy handler do its job, so
     // concurrent refreshes queue instead of failing.
-    let tx = rusqlite::Transaction::new_unchecked(
-        &db.conn,
-        rusqlite::TransactionBehavior::Immediate,
-    )?;
+    let tx =
+        rusqlite::Transaction::new_unchecked(&db.conn, rusqlite::TransactionBehavior::Immediate)?;
     // Whoever held the lock may have just done exactly this work: several agent
     // invocations noticing the same edit at once all decide to refresh, then
     // queue here. Re-check now that the lock is ours, and skip the parse and the
@@ -392,7 +399,17 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
             let mut reindexed: u64 = 0;
             for p in res_rx {
-                upsert.execute((&p.rel, p.language, p.size, p.mtime_ns, p.ctime_ns, &p.hash, now, p.parse_errors, p.parse_recovered))?;
+                upsert.execute((
+                    &p.rel,
+                    p.language,
+                    p.size,
+                    p.mtime_ns,
+                    p.ctime_ns,
+                    &p.hash,
+                    now,
+                    p.parse_errors,
+                    p.parse_recovered,
+                ))?;
                 if !p.content_changed {
                     continue;
                 }
@@ -691,7 +708,6 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
 /// extract definitions from — no grammar is wired up for them. Kept explicit so
 /// the drift test can tell "deliberately data-only" from "someone forgot".
 pub const NO_EXTRACTION: &[&str] = &["json", "yaml", "toml"];
-
 
 /// Extension-based language classification. Deliberately syntactic and cheap;
 /// this is not content sniffing.

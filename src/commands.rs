@@ -15,8 +15,8 @@ use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
 use crate::index::{language_for, refresh};
 use crate::repo::Repo;
 use crate::search::{
-    self, innermost, like_of, load_file_defs, regex_prefilter, run_search, scan_stdin,
-    FileDef, Hit, InFilter, OutMode, ScanOpts, SearchData,
+    self, innermost, like_of, load_file_defs, regex_prefilter, run_search, scan_stdin, FileDef,
+    Hit, InFilter, OutMode, ScanOpts, SearchData,
 };
 
 /// Output rendering options parsed from global CLI flags.
@@ -150,10 +150,9 @@ fn nearest_names(s: &Session, name: &str) -> Result<Vec<String>> {
     // bad suggestion is worse than none because it invites a second wrong query.
     let budget = (name.chars().count() / 4).clamp(1, 2);
     let needle = name.to_lowercase();
-    let mut stmt = s
-        .db
-        .conn
-        .prepare("SELECT DISTINCT name FROM facts WHERE kind <> 'import'")?;
+    let mut stmt =
+        s.db.conn
+            .prepare("SELECT DISTINCT name FROM facts WHERE kind <> 'import'")?;
     let mut scored: Vec<(usize, String)> = stmt
         .query_map([], |r| r.get::<_, String>(0))?
         .filter_map(|n| n.ok())
@@ -200,11 +199,7 @@ fn definition_sites(s: &Session, name: &str) -> Result<Vec<(String, i64)>> {
 /// one helper rather than eleven bespoke messages — the shared form is also what
 /// stops the list regrowing. A bare pattern miss stays silent on purpose: an
 /// empty `search zzz` is unambiguous, and a note on every one would be noise.
-fn note_if_scope_empty(
-    s: &Session,
-    path: Option<&str>,
-    what: &str,
-) -> Result<Option<String>> {
+fn note_if_scope_empty(s: &Session, path: Option<&str>, what: &str) -> Result<Option<String>> {
     let Some(p) = path else { return Ok(None) };
     let n: i64 = s.db.conn.query_row(
         "SELECT COUNT(*) FROM files WHERE path LIKE ?1",
@@ -254,8 +249,11 @@ fn note_if_empty_feat<T>(
     // language for the support check below.
     let sites = match path {
         Some(filter) if !sites.is_empty() => {
-            let scoped: Vec<(String, i64)> =
-                sites.iter().filter(|(p, _)| p.contains(filter)).cloned().collect();
+            let scoped: Vec<(String, i64)> = sites
+                .iter()
+                .filter(|(p, _)| p.contains(filter))
+                .cloned()
+                .collect();
             if scoped.is_empty() {
                 let where_ = sites
                     .iter()
@@ -429,7 +427,11 @@ impl DeclSites {
              WHERE name = ?1 AND kind <> 'import'",
         )?;
         let rows = stmt.query_map([name], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
         })?;
         Ok(Self {
             extents: rows.collect::<std::result::Result<Vec<_>, _>>()?,
@@ -541,7 +543,9 @@ pub fn cmd_files(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
-    let filters = Filters::new().like("path", pattern).eq("language", language);
+    let filters = Filters::new()
+        .like("path", pattern)
+        .eq("language", language);
     let sql = format!(
         "SELECT path, language, size_bytes, parse_errors, parse_recovered FROM files WHERE 1=1{} ORDER BY path{}",
         filters.sql(),
@@ -608,11 +612,10 @@ pub fn cmd_changed(
 
     let mut data = Vec::with_capacity(paths.len());
     for p in paths {
-        let indexed: bool = s
-            .db
-            .conn
-            .query_row("SELECT 1 FROM files WHERE path = ?1", [&p], |_| Ok(true))
-            .unwrap_or(false);
+        let indexed: bool =
+            s.db.conn
+                .query_row("SELECT 1 FROM files WHERE path = ?1", [&p], |_| Ok(true))
+                .unwrap_or(false);
         let language = language_for(&p).map(|l| l.to_string());
         data.push(ChangedRow {
             path: p,
@@ -931,8 +934,17 @@ pub fn cmd_api(
 /// Container kinds whose extracted `signature` is the whole declaration, body
 /// and all, because the grammar has no separate body capture for them.
 const CONTAINER_KINDS: &[&str] = &[
-    "struct", "enum", "union", "trait", "class", "interface", "record",
-    "namespace", "module", "type", "typealias",
+    "struct",
+    "enum",
+    "union",
+    "trait",
+    "class",
+    "interface",
+    "record",
+    "namespace",
+    "module",
+    "type",
+    "typealias",
 ];
 
 #[derive(Serialize)]
@@ -982,13 +994,16 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
             Some(bytes) => ex
                 .extract(lang, &file, &bytes)
                 .0
-                .0
+                 .0
                 .into_iter()
                 .filter(|f| f.visibility.as_deref() == Some("public") && f.kind != "import")
                 .map(|f| {
                     (
                         f.name.clone(),
-                        (f.kind.clone(), declaration_header(&f.kind, Some(f.signature)).unwrap_or_default()),
+                        (
+                            f.kind.clone(),
+                            declaration_header(&f.kind, Some(f.signature)).unwrap_or_default(),
+                        ),
                     )
                 })
                 .collect(),
@@ -1002,7 +1017,9 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
              ORDER BY start_line",
         )?;
         let now: Vec<(String, String, i64, Option<String>)> = stmt
-            .query_map([&file], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .query_map([&file], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?
             .collect::<std::result::Result<_, _>>()?;
 
         let mut seen: HashSet<String> = HashSet::new();
@@ -1227,8 +1244,15 @@ fn callers_of(
         identifier_boundary: true,
         per_file: None,
     };
-    let mut hits = match run_search(&s.db.conn, &re, like_of(name).as_deref(), path, None, None, &opts)?
-    {
+    let mut hits = match run_search(
+        &s.db.conn,
+        &re,
+        like_of(name).as_deref(),
+        path,
+        None,
+        None,
+        &opts,
+    )? {
         SearchData::Matches { matches, .. } => matches,
         _ => unreachable!(),
     };
@@ -1248,10 +1272,9 @@ fn callers_of(
     let hit_paths: HashSet<&str> = hits.iter().map(|h| h.path.as_str()).collect();
     let mut importsites: HashSet<(String, i64)> = HashSet::new();
     {
-        let mut st = s
-            .db
-            .conn
-            .prepare("SELECT path, start_line FROM facts WHERE kind = 'import'")?;
+        let mut st =
+            s.db.conn
+                .prepare("SELECT path, start_line FROM facts WHERE kind = 'import'")?;
         let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
         for row in rows {
             let (p, line) = row?;
@@ -1431,7 +1454,9 @@ fn callees_of(
     let graph = load_dep_graph(&s.db)?;
     let mut module_targets: HashMap<String, Vec<Option<HashSet<String>>>> = HashMap::new();
     {
-        let mut body_stmt = s.db.conn.prepare("SELECT body FROM content_fts WHERE path = ?1")?;
+        let mut body_stmt =
+            s.db.conn
+                .prepare("SELECT body FROM content_fts WHERE path = ?1")?;
         let mut calls_stmt = s.db.conn.prepare(
             "SELECT start_byte, name, receiver FROM calls
              WHERE path = ?1 AND start_byte >= ?2 AND start_byte < ?3
@@ -1452,10 +1477,14 @@ fn callees_of(
             // the existing textual fallback below.
             let lang = language_for(path).unwrap_or("");
             if crate::callsite::supports_syntax_calls(lang) {
-                let rows = calls_stmt.query_map(
-                    rusqlite::params![path, *sb as i64, *eb as i64],
-                    |r| Ok((r.get::<_, i64>(0)? as usize, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
-                )?;
+                let rows =
+                    calls_stmt.query_map(rusqlite::params![path, *sb as i64, *eb as i64], |r| {
+                        Ok((
+                            r.get::<_, i64>(0)? as usize,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, Option<String>>(2)?,
+                        ))
+                    })?;
                 for row in rows {
                     let (off, word, recv) = row?;
                     let lookup = if recv.is_none() {
@@ -1466,13 +1495,16 @@ fn callees_of(
                     } else {
                         word.clone()
                     };
-                    let targets = recv.as_deref().map(|receiver| {
-                        graph
-                            .direct_targets_for_receiver(path, receiver)
-                            .into_iter()
-                            .map(str::to_string)
-                            .collect::<HashSet<_>>()
-                    }).filter(|targets| !targets.is_empty());
+                    let targets = recv
+                        .as_deref()
+                        .map(|receiver| {
+                            graph
+                                .direct_targets_for_receiver(path, receiver)
+                                .into_iter()
+                                .map(str::to_string)
+                                .collect::<HashSet<_>>()
+                        })
+                        .filter(|targets| !targets.is_empty());
                     let targets = targets.or_else(|| {
                         let targets = graph
                             .direct_targets_for_receiver(path, &word)
@@ -1493,8 +1525,10 @@ fn callees_of(
                             Some(r) => format!("{r}.{word}"),
                             None => word.clone(),
                         };
-                        let line = b[..off.min(b.len())].bytes().filter(|c| *c == b'\n').count()
-                            as i64
+                        let line = b[..off.min(b.len())]
+                            .bytes()
+                            .filter(|c| *c == b'\n')
+                            .count() as i64
                             + 1;
                         sites.entry(lookup.clone()).or_insert((expr, line));
                     }
@@ -1542,11 +1576,9 @@ fn callees_of(
         for row in rows {
             let (n, k, p, l) = row?;
             let allowed = module_targets.get(&n).is_none_or(|calls| {
-                calls.iter().any(|targets| {
-                    targets
-                        .as_ref()
-                        .is_none_or(|targets| targets.contains(&p))
-                })
+                calls
+                    .iter()
+                    .any(|targets| targets.as_ref().is_none_or(|targets| targets.contains(&p)))
             });
             if n != name && allowed && seen.insert((n.clone(), p.clone(), l)) {
                 let site = sites.get(&n);
@@ -1609,12 +1641,7 @@ fn callees_of(
 /// Identifiers in call position within `text`, skipping any that fall inside a
 /// comment or string. `base` is `text`'s byte offset within its file, so the
 /// sorted `prose` ranges (which are file-absolute) line up.
-fn collect_idents(
-    text: &str,
-    base: usize,
-    prose: &[(usize, usize)],
-    out: &mut HashSet<String>,
-) {
+fn collect_idents(text: &str, base: usize, prose: &[(usize, usize)], out: &mut HashSet<String>) {
     let in_prose = |off: usize| {
         let abs = base + off;
         let idx = prose.partition_point(|(s, _)| *s <= abs);
@@ -1698,9 +1725,16 @@ pub fn cmd_callers(
     if depth <= 1 {
         let mut callers = callers_of(&s, name, path, call_only, qualifier, examples)?;
         truncate_rows(&mut callers, limit);
-        let rows = resolve_rows(&s, name, resolved, callers, |c| c.path.as_str(), |c, v| {
-            c.via = v;
-        })?;
+        let rows = resolve_rows(
+            &s,
+            name,
+            resolved,
+            callers,
+            |c| c.path.as_str(),
+            |c, v| {
+                c.via = v;
+            },
+        )?;
         let note = note_if_empty(&s, &rows, name, "callers", path)?;
         return s.emit_noted(rows, note);
     }
@@ -1877,7 +1911,12 @@ pub fn cmd_callpath(
             // Scope only the start symbol's callees; hops after it follow anywhere.
             let scope = if node.as_str() == from { path } else { None };
             let mut callees = callees_of(&s, node, scope, false, false)?;
-            callees.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)).then(a.line.cmp(&b.line)));
+            callees.sort_by(|a, b| {
+                a.name
+                    .cmp(&b.name)
+                    .then(a.path.cmp(&b.path))
+                    .then(a.line.cmp(&b.line))
+            });
             for c in callees {
                 if !visited.insert(c.name.clone()) {
                     continue;
@@ -1964,7 +2003,13 @@ pub fn cmd_callpath(
             loc.get(&name).cloned()
         };
         let (kind, path, line) = l.unwrap_or_else(|| (String::new(), String::new(), 0));
-        steps.push(PathStep { symbol: name, kind, path, line, depth });
+        steps.push(PathStep {
+            symbol: name,
+            kind,
+            path,
+            line,
+            depth,
+        });
     }
     s.emit(steps)
 }
@@ -2033,9 +2078,16 @@ fn symbol_graph(
     resolved: bool,
 ) -> Result<(Vec<DefinitionRow>, Vec<Caller>, Vec<Callee>)> {
     let callers = callers_of(s, name, None, false, None, false)?;
-    let callers = resolve_rows(s, name, resolved, callers, |c| c.path.as_str(), |c, v| {
-        c.via = v;
-    })?;
+    let callers = resolve_rows(
+        s,
+        name,
+        resolved,
+        callers,
+        |c| c.path.as_str(),
+        |c, v| {
+            c.via = v;
+        },
+    )?;
     Ok((
         definitions_of(s, name, path, 0)?,
         callers,
@@ -2379,9 +2431,9 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
     let data: Vec<DefinitionRow> = rows.collect::<std::result::Result<_, _>>()?;
     // `explore --at` on the identical position says "no definition encloses"; this
     // said nothing at all. Two commands answering one question, one of them mute.
-    let note = data
-        .is_empty()
-        .then(|| format!("no definition encloses {rel}:{line} (between definitions, or past the end)"));
+    let note = data.is_empty().then(|| {
+        format!("no definition encloses {rel}:{line} (between definitions, or past the end)")
+    });
     s.emit_noted(data, note)
 }
 
@@ -2702,8 +2754,8 @@ pub fn cmd_read(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let rel = resolve_file(&s, file)?;
-    let bytes = std::fs::read(s.repo.root.join(&rel))
-        .map_err(|e| anyhow!("cannot read {rel}: {e}"))?;
+    let bytes =
+        std::fs::read(s.repo.root.join(&rel)).map_err(|e| anyhow!("cannot read {rel}: {e}"))?;
     // Match the index: drop a leading UTF-8 BOM so line/column numbering here
     // agrees with what search and the symbol facts report.
     let text = String::from_utf8_lossy(bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes));
@@ -2781,9 +2833,7 @@ pub fn cmd_read(
             "SELECT start_line, end_line FROM facts
              WHERE path = ?1 AND kind IN ('function', 'method')",
         )?;
-        let rows = stmt.query_map([&rel], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
-        })?;
+        let rows = stmt.query_map([&rel], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
         for row in rows {
             let (sl, el) = row?;
             let (sl, el) = (sl.max(1) as usize, el.max(1) as usize);
@@ -2827,8 +2877,14 @@ fn parse_range(spec: &str) -> Result<(usize, usize)> {
     let (a, b) = spec
         .split_once('-')
         .ok_or_else(|| anyhow!("--lines must be A-B, e.g. 40-80"))?;
-    let a: usize = a.trim().parse().map_err(|_| anyhow!("invalid line range"))?;
-    let b: usize = b.trim().parse().map_err(|_| anyhow!("invalid line range"))?;
+    let a: usize = a
+        .trim()
+        .parse()
+        .map_err(|_| anyhow!("invalid line range"))?;
+    let b: usize = b
+        .trim()
+        .parse()
+        .map_err(|_| anyhow!("invalid line range"))?;
     Ok((a.max(1), b.max(a)))
 }
 
@@ -2872,8 +2928,7 @@ fn print_folded(lines: &[&str], folded: &[bool]) {
 
 /// Resolve a file argument (repo-relative path or basename) to an indexed path.
 fn resolve_file(s: &Session, arg: &str) -> Result<String> {
-    if s
-        .db
+    if s.db
         .conn
         .query_row("SELECT 1 FROM files WHERE path = ?1", [arg], |_| Ok(()))
         .is_ok()
@@ -2881,10 +2936,9 @@ fn resolve_file(s: &Session, arg: &str) -> Result<String> {
         return Ok(arg.to_string());
     }
     let suffix = format!("%/{arg}");
-    let mut stmt = s
-        .db
-        .conn
-        .prepare("SELECT path FROM files WHERE path LIKE ?1 ORDER BY path")?;
+    let mut stmt =
+        s.db.conn
+            .prepare("SELECT path FROM files WHERE path LIKE ?1 ORDER BY path")?;
     let matches: Vec<String> = stmt
         .query_map([suffix], |r| r.get(0))?
         .collect::<std::result::Result<_, _>>()?;
@@ -2896,8 +2950,8 @@ fn resolve_file(s: &Session, arg: &str) -> Result<String> {
         // it does not exist sends you checking the path instead of the repo. Same
         // class as the empty-result notes: the branch is known, so name it.
         0 => {
-            let elsewhere = std::path::Path::new(arg).is_absolute()
-                && std::path::Path::new(arg).exists();
+            let elsewhere =
+                std::path::Path::new(arg).is_absolute() && std::path::Path::new(arg).exists();
             if elsewhere {
                 Err(anyhow!(
                     "'{arg}' exists but is not in this index (rooted at {}); run codeq from \
@@ -3034,15 +3088,17 @@ struct CycleRow {
 /// an `(importing_file, raw_module, local_binding)` tuple, resolved to file→file
 /// edges. Bindings are optional metadata for alias-aware call resolution.
 pub(crate) fn load_dep_graph(db: &Db) -> Result<deps::Graph> {
-    let files: Vec<String> = {
-        all_file_paths(&db.conn)?
-    };
+    let files: Vec<String> = { all_file_paths(&db.conn)? };
     let imports: Vec<(String, String, Option<String>)> = {
         let mut stmt = db
             .conn
             .prepare("SELECT path, name, NULLIF(signature, '') FROM facts WHERE kind = 'import'")?;
         let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
         })?;
         rows.collect::<std::result::Result<_, _>>()?
     };
@@ -3083,9 +3139,10 @@ impl Resolver {
     fn new(s: &Session, name: &str) -> Result<Resolver> {
         let mut defs = HashSet::new();
         {
-            let mut stmt = s.db.conn.prepare(
-                "SELECT DISTINCT path FROM facts WHERE name = ?1 AND kind <> 'import'",
-            )?;
+            let mut stmt = s
+                .db
+                .conn
+                .prepare("SELECT DISTINCT path FROM facts WHERE name = ?1 AND kind <> 'import'")?;
             let rows = stmt.query_map([name], |r| r.get::<_, String>(0))?;
             for row in rows {
                 defs.insert(row?);
@@ -3112,7 +3169,13 @@ impl Resolver {
             "same-file"
         } else {
             let reach = self.graph.reachable_from(file);
-            via_of(false, self.defs.iter().filter(|d| reach.contains(d.as_str())).count())
+            via_of(
+                false,
+                self.defs
+                    .iter()
+                    .filter(|d| reach.contains(d.as_str()))
+                    .count(),
+            )
         };
         self.cache.insert(file.to_string(), v);
         v
@@ -3246,7 +3309,10 @@ pub fn cmd_deps(
         let data: Vec<CycleRow> = graph
             .cycles()
             .into_iter()
-            .map(|c| CycleRow { length: c.len(), cycle: c })
+            .map(|c| CycleRow {
+                length: c.len(),
+                cycle: c,
+            })
             .collect();
         return s.emit(data);
     }
@@ -3257,7 +3323,11 @@ pub fn cmd_deps(
     let hops = graph.deps(&target, depth.max(1));
     let data: Vec<DepRow> = hops
         .into_iter()
-        .map(|h| DepRow { path: h.path, module: h.module, depth: h.depth })
+        .map(|h| DepRow {
+            path: h.path,
+            module: h.module,
+            depth: h.depth,
+        })
         .collect();
     s.emit(data)
 }
@@ -3323,10 +3393,9 @@ pub fn cmd_astgrep(
     // that", which is what the reporter concluded before giving up on the
     // command. `search` was never affected because it LIKEs `body` (which *is*
     // the indexed column) and filters paths in Rust, as here.
-    let mut stmt = s
-        .db
-        .conn
-        .prepare("SELECT path, body FROM content_fts WHERE language = ?1 ORDER BY path")?;
+    let mut stmt =
+        s.db.conn
+            .prepare("SELECT path, body FROM content_fts WHERE language = ?1 ORDER BY path")?;
     let mut scanned = 0usize;
     // Stream the bodies into the matcher one at a time (it re-parses each and
     // keeps only matches), so a big single-language repo isn't all held in memory
@@ -3451,8 +3520,9 @@ pub fn cmd_astgrep_explain(cwd: &Path, location: &str, out: Out) -> Result<()> {
         [&rel],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    let language = language
-        .ok_or_else(|| anyhow!("'{rel}' has no language codeq classifies, so it has no parse tree"))?;
+    let language = language.ok_or_else(|| {
+        anyhow!("'{rel}' has no language codeq classifies, so it has no parse tree")
+    })?;
     if crate::astgrep::ts_language(&language).is_none() {
         return Err(anyhow!(
             "no grammar for '{language}', so `astgrep` cannot match in '{rel}' either \
@@ -3529,7 +3599,6 @@ pub fn cmd_context(cwd: &Path, req: Request, out: Out) -> Result<()> {
     };
     s.emit_noted(result, note)
 }
-
 
 /// Include/exclude glob filter over repo-relative paths, ripgrep-style: a `!`
 /// prefix excludes; a pattern with no `/` matches by basename in any directory;
@@ -3713,10 +3782,9 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
             "SELECT COUNT(*) FROM files WHERE (?1 IS NULL OR path LIKE ?2) AND (?3 IS NULL OR language = ?3)",
         )?;
         let like = args.path.map(|p| format!("%{p}%"));
-        let n: i64 = stmt.query_row(
-            rusqlite::params![args.path, like, args.language],
-            |r| r.get(0),
-        )?;
+        let n: i64 = stmt.query_row(rusqlite::params![args.path, like, args.language], |r| {
+            r.get(0)
+        })?;
         (n == 0).then(|| {
             let mut which: Vec<String> = Vec::new();
             if let Some(p) = args.path {
@@ -3798,8 +3866,15 @@ pub fn cmd_references(
         identifier_boundary: true,
         per_file,
     };
-    let (mut hits, mut truncated) =
-        match run_search(&s.db.conn, &re, match_query.as_deref(), path, language, None, &opts)? {
+    let (mut hits, mut truncated) = match run_search(
+        &s.db.conn,
+        &re,
+        match_query.as_deref(),
+        path,
+        language,
+        None,
+        &opts,
+    )? {
         SearchData::Matches { matches, truncated } => (matches, truncated),
         _ => unreachable!("references always uses Matches mode"),
     };
@@ -3818,7 +3893,11 @@ pub fn cmd_references(
         .into_iter()
         .map(|h| {
             let definition = defsites.is_declaration(&h.path, h.line as i64);
-            ReferenceRow { hit: h, definition, via: None }
+            ReferenceRow {
+                hit: h,
+                definition,
+                via: None,
+            }
         })
         // A definition is not a call. `fn foo(` and `def foo(` are followed by
         // `(` just as a call is, so the byte-level test cannot tell them apart —
@@ -3836,7 +3915,13 @@ pub fn cmd_references(
     )?;
 
     let note = note_if_empty(&s, &references, name, "references", path)?;
-    s.emit_noted(ReferencesResult { references, truncated }, note)
+    s.emit_noted(
+        ReferencesResult {
+            references,
+            truncated,
+        },
+        note,
+    )
 }
 
 /// `graph` — every type relation in the repository as an edge list.
@@ -3904,10 +3989,19 @@ pub fn cmd_graph(
         for e in &edges {
             let next = |n: usize| format!("n{n}");
             let len = ids.len();
-            let a = ids.entry(e.from.as_str()).or_insert_with(|| next(len)).clone();
+            let a = ids
+                .entry(e.from.as_str())
+                .or_insert_with(|| next(len))
+                .clone();
             let len = ids.len();
-            let b = ids.entry(e.to.as_str()).or_insert_with(|| next(len)).clone();
-            lines.push(format!("  {a}[{}] -->|{}| {b}[{}]", e.from, e.relation, e.to));
+            let b = ids
+                .entry(e.to.as_str())
+                .or_insert_with(|| next(len))
+                .clone();
+            lines.push(format!(
+                "  {a}[{}] -->|{}| {b}[{}]",
+                e.from, e.relation, e.to
+            ));
         }
         if edges.is_empty() {
             lines.push("  %% no relation edges".to_string());
@@ -3935,7 +4029,11 @@ pub fn cmd_graph(
         );
         let mut stmt = s.db.conn.prepare(&sql)?;
         let rows = stmt.query_map(params_with(&[], &unfiltered).as_slice(), |r| {
-            Ok(format!("{} {}", r.get::<_, i64>(1)?, r.get::<_, String>(0)?))
+            Ok(format!(
+                "{} {}",
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(0)?
+            ))
         })?;
         rows.filter_map(|r| r.ok()).collect()
     } else {
@@ -4093,7 +4191,14 @@ pub fn cmd_implementors(
                 language: e.language,
             })
             .collect();
-    let note = note_if_empty_feat(&s, &data, name, "implementors or subtypes", path, Some("relations"))?;
+    let note = note_if_empty_feat(
+        &s,
+        &data,
+        name,
+        "implementors or subtypes",
+        path,
+        Some("relations"),
+    )?;
     s.emit_noted(data, note)
 }
 
@@ -4121,7 +4226,14 @@ pub fn cmd_supertypes(
                 language: e.language,
             })
             .collect();
-    let note = note_if_empty_feat(&s, &data, name, "supertypes (it extends nothing)", path, Some("relations"))?;
+    let note = note_if_empty_feat(
+        &s,
+        &data,
+        name,
+        "supertypes (it extends nothing)",
+        path,
+        Some("relations"),
+    )?;
     s.emit_noted(data, note)
 }
 
@@ -4257,7 +4369,9 @@ fn used_definition_names(
     let re = regex::Regex::new(&format!("(?:{expr})"))
         .map_err(|e| anyhow!("building unused-name matcher: {e}"))?;
 
-    let mut body_stmt = s.db.conn.prepare("SELECT path, language, body FROM content_fts")?;
+    let mut body_stmt =
+        s.db.conn
+            .prepare("SELECT path, language, body FROM content_fts")?;
     let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
     let mut used = HashSet::new();
     // Definition extents already accounted for, so a second occurrence inside
@@ -4291,8 +4405,7 @@ fn used_definition_names(
                 m.end(),
                 crate::index::language_for(path),
                 crate::search::is_in_string(&spans, m.start()),
-            )
-                || !crate::search::is_not_comment(&spans, m.start())
+            ) || !crate::search::is_not_comment(&spans, m.start())
             {
                 continue;
             }
@@ -4414,7 +4527,10 @@ pub fn cmd_tree(
     // claims to answer and cannot, because a markdown heading is a definition and
     // 281 country READMEs outrank the source 68 to 1.
     let filters = Filters::new().like("path", path).eq("language", language);
-    let sql = format!("SELECT path, language FROM files WHERE 1=1{} ORDER BY path", filters.sql());
+    let sql = format!(
+        "SELECT path, language FROM files WHERE 1=1{} ORDER BY path",
+        filters.sql()
+    );
     let mut stmt = s.db.conn.prepare(&sql)?;
     let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
@@ -4463,7 +4579,11 @@ pub fn cmd_tree(
                 files: a.files,
                 symbols: a.symbols,
                 dirs: a.children.len() as i64,
-                languages: langs.into_iter().map(|(l, _)| l).collect::<Vec<_>>().join(","),
+                languages: langs
+                    .into_iter()
+                    .map(|(l, _)| l)
+                    .collect::<Vec<_>>()
+                    .join(","),
             }
         })
         .collect();
@@ -4560,7 +4680,10 @@ pub fn cmd_hotspots(
 
     // The definitions to rank. Scoped for *reporting* only — the count below is
     // repo-wide, because a reference from an unscoped file is still a reference.
-    let filters = Filters::new().like("path", path).eq("kind", kind).eq("language", language);
+    let filters = Filters::new()
+        .like("path", path)
+        .eq("kind", kind)
+        .eq("language", language);
     let sql = format!(
         "SELECT name, kind, path, start_line FROM facts
          WHERE kind <> 'import' AND name IS NOT NULL{} ORDER BY path, start_line",
@@ -4618,8 +4741,10 @@ pub fn cmd_hotspots(
                  GROUP BY c.name"
             );
             let mut stmt = s.db.conn.prepare(&sql)?;
-            let params: Vec<&dyn rusqlite::ToSql> =
-                chunk.iter().map(|name| name as &dyn rusqlite::ToSql).collect();
+            let params: Vec<&dyn rusqlite::ToSql> = chunk
+                .iter()
+                .map(|name| name as &dyn rusqlite::ToSql)
+                .collect();
             let rows = stmt.query_map(params.as_slice(), |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
             })?;
@@ -4633,15 +4758,15 @@ pub fn cmd_hotspots(
     // One pass over indexed bodies for normal hotspots, or only the opaque
     // grammar fallback in --calls mode.
     {
-        let mut stmt = s.db.conn.prepare("SELECT path, language, body FROM content_fts")?;
+        let mut stmt =
+            s.db.conn
+                .prepare("SELECT path, language, body FROM content_fts")?;
         let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let rel = row.get_ref(0)?.as_str()?;
             let lang: Option<String> = row.get(1)?;
-            if calls_only
-                && crate::callsite::supports_syntax_calls(lang.as_deref().unwrap_or(""))
-            {
+            if calls_only && crate::callsite::supports_syntax_calls(lang.as_deref().unwrap_or("")) {
                 continue;
             }
             // Unparseable files have no comment/string spans, so every match in
@@ -4657,7 +4782,13 @@ pub fn cmd_hotspots(
             // Byte offset of each line start, so an occurrence can be matched
             // against the definition sites recorded above (which are line-based).
             let mut line_starts: Vec<usize> = vec![0];
-            line_starts.extend(bytes.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i + 1));
+            line_starts.extend(
+                bytes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| **b == b'\n')
+                    .map(|(i, _)| i + 1),
+            );
             for_each_ident(body, |off, tok| {
                 if let Some(name) = wanted.get(tok) {
                     if crate::search::class_at(&spans, off).is_some() {
@@ -4700,7 +4831,10 @@ pub fn cmd_hotspots(
     }
     // Most-referenced first; ties by location so the order is stable.
     data.sort_by(|a, b| {
-        b.refs.cmp(&a.refs).then(a.path.cmp(&b.path)).then(a.line.cmp(&b.line))
+        b.refs
+            .cmp(&a.refs)
+            .then(a.path.cmp(&b.path))
+            .then(a.line.cmp(&b.line))
     });
     if limit > 0 {
         data.truncate(limit);
@@ -4750,7 +4884,11 @@ pub fn cmd_unused(
     // It used to be three hand-written clauses in this query, which is the wrong
     // home for a policy that gains an entry every time a language with an
     // external contract is added.
-    let exclude_headings = if kind == Some("heading") { "" } else { " AND kind <> 'heading'" };
+    let exclude_headings = if kind == Some("heading") {
+        ""
+    } else {
+        " AND kind <> 'heading'"
+    };
     let sql = format!(
         // A definition that exists to satisfy a trait is called through the
         // trait and named by nothing, and deleting it does not remove code — it
@@ -4920,9 +5058,11 @@ impl TestScopes {
 
     /// Whether `line` of `path` falls inside a test-like container.
     fn contains(&self, path: &str, line: i64) -> bool {
-        self.by_path
-            .get(path)
-            .is_some_and(|spans| spans.iter().any(|&(start, end)| line >= start && line <= end))
+        self.by_path.get(path).is_some_and(|spans| {
+            spans
+                .iter()
+                .any(|&(start, end)| line >= start && line <= end)
+        })
     }
 }
 
@@ -4931,9 +5071,7 @@ impl TestScopes {
 /// `callers` and `unused` agree on what a test is instead of each carrying its own
 /// (differently wrong) notion.
 fn is_test_site(path: &str, symbol: Option<&str>, line: i64, scopes: &TestScopes) -> bool {
-    is_test_path(path)
-        || symbol.is_some_and(is_test_name)
-        || scopes.contains(path, line)
+    is_test_path(path) || symbol.is_some_and(is_test_name) || scopes.contains(path, line)
 }
 
 /// `tests <name>` — the test functions that reference `name`. A reference counts
@@ -4969,7 +5107,15 @@ fn test_sites(
         identifier_boundary: true,
         per_file: None,
     };
-    let hits = match run_search(&s.db.conn, &re, like_of(name).as_deref(), path, None, None, &opts)? {
+    let hits = match run_search(
+        &s.db.conn,
+        &re,
+        like_of(name).as_deref(),
+        path,
+        None,
+        None,
+        &opts,
+    )? {
         SearchData::Matches { matches, .. } => matches,
         _ => unreachable!("tests always uses Matches mode"),
     };
@@ -5140,7 +5286,9 @@ pub fn cmd_untested(
 
     let note = if data.is_empty() {
         match path {
-            Some(p) => Some(format!("every public definition in '{p}' is referenced by a test")),
+            Some(p) => Some(format!(
+                "every public definition in '{p}' is referenced by a test"
+            )),
             None => Some("every public definition is referenced by a test".to_string()),
         }
     } else if stopped_at_limit {
@@ -5241,7 +5389,9 @@ pub fn cmd_affected(
         let mut next: Vec<String> = Vec::new();
         for sym in &frontier {
             for c in callers_of(&s, sym, None, false, None, false)? {
-                let Some(cname) = c.symbol.clone() else { continue };
+                let Some(cname) = c.symbol.clone() else {
+                    continue;
+                };
                 if !reported.insert((c.path.clone(), cname.clone())) {
                     continue;
                 }
@@ -5369,7 +5519,10 @@ pub fn cmd_install(
                 .as_deref()
                 .map(|n| format!("  ({n})"))
                 .unwrap_or_default();
-            println!("{:<12}  {:<6}  {:<15}  {}{}", a.agent, a.what, a.action, a.config, note);
+            println!(
+                "{:<12}  {:<6}  {:<15}  {}{}",
+                a.agent, a.what, a.action, a.config, note
+            );
         }
         let touched = actions
             .iter()
@@ -5491,7 +5644,11 @@ fn generated_files(conn: &rusqlite::Connection, total_symbols: i64) -> Result<Op
          ORDER BY syms DESC",
     )?;
     let rows = stmt.query_map(rusqlite::params![MIN_SYMBOLS, DENSITY], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(2)?,
+        ))
     })?;
     let hits: Vec<(String, i64, i64)> = rows.filter_map(|r| r.ok()).collect();
     if hits.is_empty() {
@@ -5562,14 +5719,15 @@ fn committed_data(
 
     // Name where it lives, because the note is only actionable if the reader
     // knows what to write in `.codeqignore`.
-    let mut stmt =
-        conn.prepare("SELECT path, size_bytes FROM files WHERE language = ?1")?;
+    let mut stmt = conn.prepare("SELECT path, size_bytes FROM files WHERE language = ?1")?;
     let mut by_dir: BTreeMap<String, (i64, i64)> = BTreeMap::new();
     for row in stmt.query_map([&l.language], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
     })? {
         let (path, bytes) = row?;
-        let dir = path.rsplit_once('/').map_or(String::new(), |(d, _)| d.to_string());
+        let dir = path
+            .rsplit_once('/')
+            .map_or(String::new(), |(d, _)| d.to_string());
         let e = by_dir.entry(dir).or_default();
         e.0 += bytes;
         e.1 += 1;
@@ -5595,9 +5753,7 @@ fn committed_data(
 }
 
 fn unindexed_extensions(conn: &rusqlite::Connection) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT path FROM files WHERE language IS NULL",
-    )?;
+    let mut stmt = conn.prepare("SELECT path FROM files WHERE language IS NULL")?;
     let mut counts: BTreeMap<String, i64> = BTreeMap::new();
     for path in stmt.query_map([], |r| r.get::<_, String>(0))? {
         let path = path?;
@@ -5612,7 +5768,10 @@ fn unindexed_extensions(conn: &rusqlite::Connection) -> Result<Vec<String>> {
     let mut rows: Vec<(String, i64)> = counts.into_iter().collect();
     rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     rows.truncate(3);
-    Ok(rows.into_iter().map(|(e, n)| format!("{e} ({n})")).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(e, n)| format!("{e} ({n})"))
+        .collect())
 }
 
 /// Bytes at a unit that keeps the number meaningful. Fixing this at MB rendered
@@ -5639,7 +5798,9 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
 
     let totals = MapTotals {
         files: conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?,
-        bytes: conn.query_row("SELECT COALESCE(SUM(size_bytes),0) FROM files", [], |r| r.get(0))?,
+        bytes: conn.query_row("SELECT COALESCE(SUM(size_bytes),0) FROM files", [], |r| {
+            r.get(0)
+        })?,
         symbols: conn.query_row(
             "SELECT COUNT(*) FROM facts WHERE kind <> 'import'",
             [],
@@ -5660,7 +5821,11 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
              FROM files GROUP BY language",
         )?;
         let rows = st.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
         })?;
         for row in rows {
             let (l, f, b) = row?;
@@ -5817,7 +5982,11 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
         .into_iter()
         .map(|(dir, (files, _bytes))| {
             let symbols = dir_syms.get(&dir).copied().unwrap_or(0);
-            DirStat { dir, files, symbols }
+            DirStat {
+                dir,
+                files,
+                symbols,
+            }
         })
         .collect();
     directories.sort_by(|a, b| b.files.cmp(&a.files).then(a.dir.cmp(&b.dir)));
@@ -6028,7 +6197,9 @@ pub fn cmd_clones(
         };
         let mut dirs: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
         for r in &data {
-            dirs.entry(r.shape.clone()).or_default().insert(dir_of(&r.path));
+            dirs.entry(r.shape.clone())
+                .or_default()
+                .insert(dir_of(&r.path));
         }
         for r in &mut data {
             if let Some(d) = dirs.get(&r.shape) {
