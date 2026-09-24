@@ -4,6 +4,43 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-09-24 — Import aliases disappear, Python `from` imports are missing, and the cold cycle check misses its budget
+
+I oriented with `codeq map`, `tree`, `explore refresh`, and targeted source/test
+reads, then ran `cargo test`. The run finished **352/356** integration tests
+passing. Three import-related failures reproduce individually:
+
+- `python_import_forms_all_capture_the_module`: `imports a.py` returns `os` and
+  `json`, but drops `from sys import path` and
+  `from collections import OrderedDict, defaultdict`.
+- `resolved_follows_js_named_imports`: the plain named import survives
+  `callers make --resolved`, but its aliased sibling (`make as m`) is missing.
+- `import_aliases_narrow_bare_calls_and_context_expansion`: `callees run` returns
+  no target for `m()` imported as `make as m`, instead of `util.js`.
+
+The two JavaScript cases are separate user-visible paths through alias handling:
+resolved `callers` and import-aware `callees`/`context`. Both fail on their own,
+not just under the full suite. Codeq's name-based `explore` can show the failing
+tests, but pulls in many unrelated `new`/`run` definitions as neighbours; the
+targeted `read --lines` call was the useful follow-up.
+
+Fixed the Python listing by exposing the qualified `from`-import facts in
+`imports` while keeping them derived for `map`'s source-statement totals. Fixed
+the JS cases by recording the local binding's source name on the exact-file
+resolution path; that path had recorded only its target file, unlike the later
+stem-resolution path.
+
+The remaining failure, `deps_cycles_stays_fast_on_a_wide_acyclic_graph`, failed
+alone at **10.3s** against its 5s budget. A hand-timed equivalent was **5.46s
+cold** (including indexing 28 TypeScript files) and **0.03s warm**. Small cold
+indexes were creating several extractors, each compiling every supported
+language's queries; workers are now capped so there are at least 32 files per
+worker. The test also warms the index before timing, so it measures cycle
+enumeration instead of competing with other tests' cold indexing. The cold test
+passed alone in **2.43s** after the worker cap; with its timing narrowed, the
+final `cargo test` passed all **356 CLI tests** and **9 unit tests**. The three
+cycle correctness tests passed too.
+
 ## 2026-08-30 — A decorator list that never matched, a 129 MB index, and an installer that would have edited the checkout
 
 ### The inert list had the right name in the wrong place

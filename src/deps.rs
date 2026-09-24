@@ -369,6 +369,12 @@ impl Graph {
                             .entry(binding.clone())
                             .or_default()
                             .insert(cand.to_string());
+                        if let Some(name) = segments(&module).last() {
+                            binding_names
+                                .entry(from.clone())
+                                .or_default()
+                                .insert(binding.clone(), (*name).to_string());
+                        }
                     }
                 }
                 continue;

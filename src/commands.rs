@@ -2986,7 +2986,8 @@ pub fn cmd_imports(cwd: &Path, path: Option<&str>, limit: usize, out: Out) -> Re
 
     let mut sql = String::from(
         "SELECT path, name, start_line, language
-         FROM facts WHERE kind = 'import' AND is_derived = 0",
+         FROM facts WHERE kind = 'import'
+           AND (is_derived = 0 OR language = 'python')",
     );
     let mut args: Vec<String> = Vec::new();
     if let Some(p) = path {

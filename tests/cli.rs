@@ -6016,6 +6016,10 @@ fn deps_cycles_stays_fast_on_a_wide_acyclic_graph() {
         }
     }
 
+    // Build the index outside the timed section: this assertion is about cycle
+    // enumeration, not cold tree-sitter/query setup competing with other tests.
+    f.run(&["files"]);
+
     let started = std::time::Instant::now();
     let v = f.run(&["deps", "--cycles"]);
     let elapsed = started.elapsed();
