@@ -3086,19 +3086,21 @@ struct CycleRow {
 }
 
 /// Load the internal import graph: every indexed file, and every import fact as
-/// an `(importing_file, raw_module, local_binding)` tuple, resolved to file→file
-/// edges. Bindings are optional metadata for alias-aware call resolution.
+/// an `(importing_file, raw_module, local_binding, is_derived)` tuple, resolved
+/// to file→file edges. Derived Python from-imports may append an imported name to
+/// their module string. Bindings are optional metadata for alias-aware calls.
 pub(crate) fn load_dep_graph(db: &Db) -> Result<deps::Graph> {
     let files: Vec<String> = { all_file_paths(&db.conn)? };
-    let imports: Vec<(String, String, Option<String>)> = {
-        let mut stmt = db
-            .conn
-            .prepare("SELECT path, name, NULLIF(signature, '') FROM facts WHERE kind = 'import'")?;
+    let imports: Vec<(String, String, Option<String>, bool)> = {
+        let mut stmt = db.conn.prepare(
+            "SELECT path, name, NULLIF(signature, ''), is_derived FROM facts WHERE kind = 'import'",
+        )?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, Option<String>>(2)?,
+                r.get::<_, bool>(3)?,
             ))
         })?;
         rows.collect::<std::result::Result<_, _>>()?

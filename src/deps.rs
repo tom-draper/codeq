@@ -10,7 +10,7 @@
 //! import's path *segments* against repository file stems, preferring the file
 //! whose path shares the most segments (so `foo.bar.util` picks `foo/bar/util`
 //! over an unrelated `util`). Segments a real resolver would treat specially
-//! (`crate`, `self`, `super`, `mod`) are dropped. An import that matches no
+//! (`crate`, `self`, `super`) are dropped. An import that matches no
 //! repo file is *external* (a stdlib or third-party dependency) and carries no
 //! edge. Ambiguity that scoring can't break is reported as multiple edges — a
 //! fact, not a guess.
@@ -20,7 +20,7 @@ use std::path::Path;
 
 /// Segments of a module string that never name a file — language roots and
 /// relative markers. Dropped before matching so `crate::db` matches `db`.
-const DROP_SEGMENTS: &[&str] = &["crate", "self", "super", "mod"];
+const DROP_SEGMENTS: &[&str] = &["crate", "self", "super"];
 
 fn is_file_reference(module: &str) -> bool {
     module.rsplit_once('.').is_some_and(|(_, ext)| {
@@ -147,7 +147,7 @@ fn path_components(path: &str) -> HashSet<&str> {
 /// named import can append an exported symbol (`from pkg.util import run`), but
 /// facts intentionally do not retain enough syntax to distinguish that from an
 /// ordinary dotted module import, so that useful resolution stays heuristic.
-fn exact_module_match(from: &str, path: &str, module: &str) -> bool {
+fn exact_module_match(from: &str, path: &str, module: &str, allow_imported_name: bool) -> bool {
     // A known file extension makes this a path reference, even when a document
     // or template writes `guide.rst` / `base.html` instead of `./guide.rst`.
     // Do not use `Path::extension` alone: Python's `pkg.module` would then look
@@ -218,11 +218,52 @@ fn exact_module_match(from: &str, path: &str, module: &str) -> bool {
     }
 
     let module = segments(module);
-    if module.is_empty() || module.len() > parts.len() {
+    if module.is_empty() || (!allow_imported_name && module.len() > parts.len()) {
         return false;
     }
-    let matches_tail = |needle: &[&str]| parts.ends_with(needle);
-    matches_tail(&module)
+    // A Python `from pkg.mod import value` is stored as `pkg.mod.value`, so
+    // imported symbols may trail the module path. Compare the longest suffix
+    // of the file path against a prefix of the import. The resolver's caller
+    // chooses the strongest such match, which keeps `pkg/__init__.py` from
+    // winning over `pkg/mod.py` merely because both share `pkg`.
+    if allow_imported_name {
+        (1..=parts.len().min(module.len()))
+            .rev()
+            .any(|n| parts.ends_with(&module[..n]))
+    } else {
+        parts.ends_with(&module)
+    }
+}
+
+fn exact_module_match_score(
+    from: &str,
+    path: &str,
+    module: &str,
+    allow_imported_name: bool,
+) -> Option<usize> {
+    if !exact_module_match(from, path, module, allow_imported_name) {
+        return None;
+    }
+    if module.starts_with('.') || is_file_reference(module) {
+        return Some(path.split(['/', '\\']).filter(|s| !s.is_empty()).count());
+    }
+    let mut parts: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+    let file = parts.pop().unwrap_or(path);
+    if matches!(file, "__init__.py" | "mod.rs") || file.starts_with("index.") {
+        // Entry files stand for the directory component already in `parts`.
+    } else {
+        parts.push(stem(file));
+    }
+    let module = segments(module);
+    if allow_imported_name {
+        (1..=parts.len().min(module.len()))
+            .rev()
+            .find(|&n| parts.ends_with(&module[..n]))
+    } else if parts.ends_with(&module) {
+        Some(module.len())
+    } else {
+        None
+    }
 }
 
 /// The `.go` files that form an internal Go package imported by `module`.
@@ -279,7 +320,7 @@ impl Graph {
     pub fn build<F, I>(files: F, imports: I, go_module: Option<&str>) -> Graph
     where
         F: IntoIterator<Item = String>,
-        I: IntoIterator<Item = (String, String, Option<String>)>,
+        I: IntoIterator<Item = (String, String, Option<String>, bool)>,
     {
         // stem -> files with that stem (usually one; more when names collide).
         let paths: Vec<String> = files.into_iter().collect();
@@ -311,7 +352,7 @@ impl Graph {
         for p in &paths {
             edges.entry(p.clone()).or_default();
         }
-        for (from, module, binding) in imports {
+        for (from, module, binding, allow_imported_name) in imports {
             // `import express from "express"` must not resolve a sibling
             // `express.js`: unlike Python, Node's bare specifiers are packages
             // or built-ins. Relative paths retain the ordinary file resolver.
@@ -352,11 +393,23 @@ impl Graph {
             let exact_files: Vec<&str> = paths
                 .iter()
                 .map(String::as_str)
-                .filter(|path| *path != from && exact_module_match(&from, path, &module))
+                .filter(|path| {
+                    *path != from && exact_module_match(&from, path, &module, allow_imported_name)
+                })
                 .collect();
             if !exact_files.is_empty() {
+                let strongest = exact_files
+                    .iter()
+                    .filter_map(|path| {
+                        exact_module_match_score(&from, path, &module, allow_imported_name)
+                    })
+                    .max()
+                    .unwrap_or(0);
                 let bucket = edges.entry(from.clone()).or_default();
-                for cand in exact_files {
+                for cand in exact_files.into_iter().filter(|path| {
+                    exact_module_match_score(&from, path, &module, allow_imported_name)
+                        == Some(strongest)
+                }) {
                     bucket.push(Edge {
                         to: cand.to_string(),
                         module: module.clone(),
@@ -418,7 +471,7 @@ impl Graph {
             let exact: Vec<&str> = best
                 .iter()
                 .copied()
-                .filter(|cand| exact_module_match(&from, cand, &module))
+                .filter(|cand| exact_module_match(&from, cand, &module, allow_imported_name))
                 .collect();
             if !exact.is_empty() {
                 best = exact;
@@ -430,7 +483,7 @@ impl Graph {
                 bucket.push(Edge {
                     to: cand.to_string(),
                     module: module.clone(),
-                    exact: exact_module_match(&from, cand, &module),
+                    exact: exact_module_match(&from, cand, &module, allow_imported_name),
                 });
                 if let Some(binding) = &binding {
                     bindings

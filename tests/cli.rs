@@ -5903,6 +5903,23 @@ fn deps_resolves_imports_to_internal_files_and_drops_external() {
 }
 
 #[test]
+fn deps_prefers_python_submodule_over_package_initializer() {
+    let f = Fixture::new();
+    f.write("pkg/__init__.py", "\n");
+    f.write("pkg/mod.py", "def real():\n    return 1\n");
+    f.write("client.py", "from pkg.mod import real\n");
+
+    let deps = f.run(&["deps", "client.py"]);
+    let targets: Vec<&str> = deps["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(targets, ["pkg/mod.py"]);
+}
+
+#[test]
 fn deps_depth_walks_the_import_chain() {
     let f = Fixture::new();
     f.write("a.py", "import b\n"); // a -> b -> c
@@ -8840,6 +8857,34 @@ fn sql_declarations_are_definitions_named_once_each() {
     // without SQL having anything a call-graph extractor would recognise.
     let callers = field_set(&f.run(&["callers", "touch_updated_at"]), "name");
     assert_eq!(callers, ["users_touch"], "{callers:?}");
+}
+
+#[test]
+fn sql_quoted_column_names_keep_their_names_and_source_spelling() {
+    let f = Fixture::new();
+    f.write(
+        "db/schema.sql",
+        "CREATE TABLE t (\"select\" TEXT, `backtick` INTEGER, [bracket] TEXT);\n",
+    );
+
+    let mut names = field_set(&f.run(&["members", "t"]), "name");
+    names.sort();
+    assert_eq!(
+        names,
+        ["backtick", "bracket", "select"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
+        "quoted SQL identifiers should be addressable without their delimiters"
+    );
+    let outline = f.run(&["outline", "schema.sql"]);
+    let bracket = outline["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "bracket")
+        .expect("bracket-quoted column should appear in the outline");
+    assert_eq!(bracket["signature"], "[bracket] TEXT");
 }
 
 #[test]

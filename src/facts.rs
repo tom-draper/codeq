@@ -436,6 +436,8 @@ impl LangSpec {
                     let name = if kind == "import" {
                         name.trim_matches(|c: char| "\"'`<>".contains(c))
                             .to_string()
+                    } else if self.lang == "sql" && kind == "field" {
+                        unquote_sql_identifier(&name)
                     } else if kind == "field" {
                         // A Ruby `attr_accessor :a` declares the field `a`; the
                         // colon is symbol syntax, not part of the name.
@@ -495,20 +497,46 @@ impl LangSpec {
                     if matches!(kind, "field" | "variant") && owner.is_none() {
                         continue;
                     }
+                    let (start_byte, start_line, start_col, signature) = if self.lang == "sql"
+                        && kind == "field"
+                        && node.start_byte() > 0
+                        && src[node.start_byte() - 1] == b'['
+                    {
+                        // The SQL grammar treats T-SQL's opening `[` as an
+                        // external token on a column name, while the closing `]`
+                        // remains in the column_definition range. Restore the
+                        // source span so the signature is a faithful slice.
+                        (
+                            node.start_byte() - 1,
+                            start.row + 1,
+                            start.column.saturating_sub(1),
+                            format!(
+                                "[{}",
+                                with_value_shape(signature_of(src, node, body), kind, val)
+                            ),
+                        )
+                    } else {
+                        (
+                            node.start_byte(),
+                            start.row + 1,
+                            start.column,
+                            with_value_shape(signature_of(src, node, body), kind, val),
+                        )
+                    };
                     facts.push(Fact {
                         kind: kind.to_string(),
                         is_derived: false,
                         name,
-                        start_byte: node.start_byte(),
+                        start_byte,
                         end_byte: node.end_byte(),
-                        start_line: start.row + 1, // 1-based lines for humans/agents
-                        start_col: start.column,
+                        start_line,
+                        start_col,
                         end_line: end.row + 1,
                         end_col: end.column,
                         signature: if kind == "import" {
                             binding.unwrap_or_default()
                         } else {
-                            with_value_shape(signature_of(src, node, body), kind, val)
+                            signature
                         },
                         doc: doc_of(src, self.lang, node, body),
                         source: self.source.clone(),
@@ -4014,7 +4042,7 @@ const SQL_QUERY: &str = r#"
 (create_function (keyword_function) . (object_reference) @name (function_body)? @body) @function
 (create_type (keyword_type) . (object_reference) @name) @type
 (create_schema (identifier) @name) @module
-(column_definition . (identifier) @name) @field
+(column_definition name: (_) @name) @field
 "#;
 
 // `marginalia` is this grammar's name for a `/* … */` block comment; `comment` is
@@ -4050,6 +4078,22 @@ const SQL_REL: &str = r#"
   (add_constraint
     (constraint (keyword_references) . (object_reference) @references)))
 "#;
+
+/// Remove delimiter syntax from a SQL identifier while preserving its spelling.
+/// The Sequel grammar exposes quoted identifiers with their delimiters, and its
+/// T-SQL bracket form can expose only the contents as the name node.
+fn unquote_sql_identifier(name: &str) -> String {
+    if name.len() >= 2 {
+        let bytes = name.as_bytes();
+        if (bytes[0] == b'"' && bytes[name.len() - 1] == b'"')
+            || (bytes[0] == b'`' && bytes[name.len() - 1] == b'`')
+            || (bytes[0] == b'[' && bytes[name.len() - 1] == b']')
+        {
+            return name[1..name.len() - 1].to_string();
+        }
+    }
+    name.to_string()
+}
 
 /// The two SQL facts a tree-sitter query cannot express, in one walk.
 ///

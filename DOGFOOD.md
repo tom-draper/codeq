@@ -4,6 +4,34 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-09-24 — Fixed Python submodule resolution and quoted SQL columns
+
+Rebuilt the release binary and indexed a small temporary polyglot repo to probe
+syntax that the real-repository corpus is unlikely to exercise. Two issues
+reproduced:
+
+- With `pkg/mod.py` and `from pkg.mod import real`,
+  `codeq deps client2.py --depth 3 --json` reports `pkg/__init__.py` as the
+  dependency, even though the imported module is `pkg/mod.py`. The sibling
+  `from pkg import exported` correctly resolves to `pkg/__init__.py`; the
+  dotted import appears to stop at the package initializer instead of choosing
+  the more specific module file.
+- For `CREATE TABLE t ([bracket] TEXT);`, `outline` reports the member as
+  `bracket` with signature `bracket] TEXT`. The opening `[` is dropped from
+  the captured name/signature. The same table also showed the double-quoted
+  column `"select"` missing from members, so quoted SQL identifiers need a
+  wider check across supported dialects.
+
+The resolver now keeps `mod` as a real module segment and selects the longest
+exact import-prefix match, so `pkg/mod.py` wins over `pkg/__init__.py`. SQL
+column extraction now captures the declared `name` field, removes identifier
+delimiters from lookup names, and restores the opening bracket in the source
+range/signature for T-SQL names. New CLI regressions cover both. The alias-
+related `callees` misses seen in the same fixture are consistent with the
+command's documented name-based graph and were not counted as bugs. The index
+schema is bumped to v39 so existing repositories rebuild these corrected
+facts instead of retaining stale SQL extraction results.
+
 ## 2026-09-24 — Import aliases disappear, Python `from` imports are missing, and the cold cycle check misses its budget
 
 I oriented with `codeq map`, `tree`, `explore refresh`, and targeted source/test

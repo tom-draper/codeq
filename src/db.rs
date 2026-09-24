@@ -82,6 +82,8 @@ use rusqlite::Connection;
 // trait method (never dead — deleting it breaks the build) from dead code.
 // v38: derived import facts are marked so user-facing import listings and
 // counts report source statements while resolution retains named bindings.
+// v39: Python dotted from-imports resolve to the deepest matching module, and
+// SQL field facts capture and normalize quoted column identifiers.
 //
 // **This is an extraction version, not just a storage version.** Freshness is
 // content hash plus this number, so changing *how* a fact is extracted — a
@@ -95,7 +97,7 @@ use rusqlite::Connection;
 // hashing the query constants is the obvious form — but it would cover only the
 // query-driven half. A visibility rule or an attribute reader is ordinary Rust
 // and would slip through, while the mechanism looked complete. Not yet solved.
-pub const SCHEMA_VERSION: i64 = 38;
+pub const SCHEMA_VERSION: i64 = 39;
 
 pub struct Db {
     pub conn: Connection,
