@@ -8888,6 +8888,82 @@ fn sql_quoted_column_names_keep_their_names_and_source_spelling() {
 }
 
 #[test]
+fn sql_escaped_identifier_delimiters_are_unescaped_without_parse_errors() {
+    let f = Fixture::new();
+    f.write(
+        "db/escaped.sql",
+        r#"CREATE TABLE t ("quote""name" TEXT, `tick``name` TEXT, [close]]name] TEXT);
+"#,
+    );
+
+    let mut names = field_set(&f.run(&["members", "t"]), "name");
+    names.sort();
+    assert_eq!(
+        names,
+        ["close]name", "quote\"name", "tick`name"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    );
+    let health = f.run(&["files", "escaped.sql"]);
+    assert_eq!(health["data"][0]["parse_errors"], 0);
+
+    let outline = f.run(&["outline", "escaped.sql"]);
+    for (name, signature) in [
+        ("quote\"name", "\"quote\"\"name\" TEXT"),
+        ("tick`name", "`tick``name` TEXT"),
+        ("close]name", "[close]]name] TEXT"),
+    ] {
+        let row = outline["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == name)
+            .unwrap_or_else(|| panic!("missing SQL column {name:?}: {outline}"));
+        assert_eq!(row["signature"], signature);
+    }
+}
+
+#[test]
+fn escaped_language_identifiers_resolve_by_their_semantic_names() {
+    let f = Fixture::new();
+    f.write(
+        "raw.rs",
+        "pub fn r#type() {}\npub fn call() { r#type(); }\n",
+    );
+    f.write(
+        "escaped.cs",
+        "public class @class { public int @value { get; set; } public void @event() {} public void invoke() { @event(); } }\n",
+    );
+
+    let rust_def = f.run(&["definitions", "type", "--path", "raw.rs"]);
+    assert_eq!(rust_def["data"][0]["name"], "type");
+    assert!(rust_def["data"][0]["signature"]
+        .as_str()
+        .unwrap()
+        .contains("r#type"));
+    let rust_calls = field_set(&f.run(&["callees", "call", "--path", "raw.rs"]), "name");
+    assert!(rust_calls.contains(&"type".to_string()), "{rust_calls:?}");
+
+    let csharp_type = f.run(&["definitions", "class", "--path", "escaped.cs"]);
+    assert_eq!(csharp_type["data"][0]["name"], "class");
+    let value = f.run(&["definitions", "value", "--path", "escaped.cs"]);
+    let value = &value["data"][0];
+    assert_eq!(value["owner"], "class");
+
+    let csharp_def = f.run(&["definitions", "event", "--path", "escaped.cs"]);
+    assert_eq!(csharp_def["data"][0]["name"], "event");
+    let csharp_calls = field_set(
+        &f.run(&["callees", "invoke", "--path", "escaped.cs"]),
+        "name",
+    );
+    assert!(
+        csharp_calls.contains(&"event".to_string()),
+        "{csharp_calls:?}"
+    );
+}
+
+#[test]
 fn a_column_added_by_a_later_migration_still_belongs_to_its_table() {
     // Members are dropped when they have no owning type, and owners are resolved
     // by walking up the parse tree — which finds `CREATE TABLE` but would miss

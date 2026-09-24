@@ -4,6 +4,36 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-09-24 — Fixed semantic lookup for escaped identifiers and escaped SQL columns
+
+Probed source spellings that contain language-level escapes after the SQL
+identifier fix. Two more edge cases surfaced:
+
+- Rust `pub fn r#type() {}` is indexed as `r#type`; `definitions type` says no
+  definition, although `references type` and `callers type` find the function
+  and its `r#type()` call. C# behaves similarly for `@class` and `@event`:
+  `symbols` retains the `@`, while `definitions class` / `definitions event`
+  miss names that `references` recognizes. Exact definition lookup and usage
+  lookup disagree on the semantic identifier spelling.
+- In SQL, doubled delimiters escape a quote inside a quoted identifier:
+  `"quote""name"`, `` `tick``name` ``, and `[close]]name]`. For a table with
+  these columns, `files escaped.sql` reports four parser errors and `outline`
+  emits only `quote`, `tick`, and `close`, with truncated signatures. The
+  parser-health count exposes the recovery, but the partial member rows can
+  still be mistaken for complete names.
+
+Both cases reproduce in a fresh temporary index. They need separate decisions:
+whether identifier facts should use semantic names without escape prefixes,
+and whether the SQL grammar or Codeq's recovery layer should handle doubled
+identifier delimiters. Codeq now stores Rust `r#name` and C# `@name` as
+semantic `name` facts while retaining source spellings in signatures; syntax
+callsites use the same normalization. For SQL, a byte-preserving sanitizer
+rewrites only quoted-identifier escape syntax before parsing, while harvesting
+all names and signatures from the original source. Comments and single-quoted
+strings are skipped. Regression tests cover all three SQL delimiter styles,
+zero parser errors, semantic Rust/C# definitions and their callees. The index
+schema is bumped to v40 so existing indexes receive the normalized facts.
+
 ## 2026-09-24 — Fixed Python submodule resolution and quoted SQL columns
 
 Rebuilt the release binary and indexed a small temporary polyglot repo to probe

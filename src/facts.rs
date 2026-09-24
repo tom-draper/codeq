@@ -445,6 +445,7 @@ impl LangSpec {
                     } else {
                         name
                     };
+                    let name = normalize_identifier(self.lang, &name);
                     // A function declared inside a type body is a method: it
                     // can be called on a value. Several grammars use the same
                     // node for both (Rust `function_item`, Python
@@ -492,7 +493,7 @@ impl LangSpec {
                     // anonymous C struct's field, or a `self.x =` in a plain
                     // function — and an owner-less `field` is exactly the bare
                     // name this fact kind exists to avoid.
-                    let owner = owner_of(kind, node, src);
+                    let owner = owner_of(self.lang, kind, node, src);
                     let (shape, shape_nodes) = shape_of(node);
                     if matches!(kind, "field" | "variant") && owner.is_none() {
                         continue;
@@ -993,7 +994,14 @@ impl Extractor {
             // Query plus a code pass — see `sql_extras` and `unqualify` for the
             // three things a query cannot do here.
             "sql" => {
-                let tree = match self.sql.parser.parse(src, None) {
+                // tree-sitter-sequel does not accept doubled delimiters inside
+                // quoted identifiers and does not parse T-SQL bracket quoting.
+                // Substitute only escape syntax with same-width identifier bytes
+                // so node offsets remain identical, then harvest text/ranges from
+                // the untouched source below.
+                let repaired = repair_sql_identifier_escapes(src);
+                let parse_src = repaired.as_deref().unwrap_or(src);
+                let tree = match self.sql.parser.parse(parse_src, None) {
                     Some(t) => t,
                     None => return ((Vec::new(), Vec::new(), Vec::new()), None),
                 };
@@ -2455,8 +2463,8 @@ fn enclosing_type_visibility(lang: &str, node: Node, src: &[u8]) -> Option<Strin
     let mut cur = node.parent();
     while let Some(n) = cur {
         if TYPE_KINDS.contains(&n.kind()) {
-            let name = type_name_of(n, src)?;
-            return visibility_of(lang, name, n, src);
+            let name = type_name_of(lang, n, src)?;
+            return visibility_of(lang, &name, n, src);
         }
         cur = n.parent();
     }
@@ -2464,7 +2472,17 @@ fn enclosing_type_visibility(lang: &str, node: Node, src: &[u8]) -> Option<Strin
 }
 
 /// The declared name of a type node, however its grammar spells the field.
-fn type_name_of<'a>(n: Node, src: &'a [u8]) -> Option<&'a str> {
+pub(crate) fn normalize_identifier(lang: &str, name: &str) -> String {
+    match lang {
+        // Rust raw identifiers and C# verbatim identifiers escape a keyword;
+        // the prefix is syntax and is not part of the declared identifier.
+        "rust" => name.strip_prefix("r#").unwrap_or(name).to_string(),
+        "csharp" => name.strip_prefix('@').unwrap_or(name).to_string(),
+        _ => name.to_string(),
+    }
+}
+
+fn type_name_of(lang: &str, n: Node, src: &[u8]) -> Option<String> {
     let mut c = n.walk();
     let named = n.children(&mut c).find(|ch| {
         let k = ch.kind();
@@ -2473,6 +2491,7 @@ fn type_name_of<'a>(n: Node, src: &'a [u8]) -> Option<&'a str> {
     n.child_by_field_name("name")
         .or(named)
         .and_then(|c| c.utf8_text(src).ok())
+        .map(|name| normalize_identifier(lang, name))
 }
 
 /// Whether any type declaration enclosing `node` is itself private.
@@ -2484,8 +2503,8 @@ fn enclosed_by_private_type(lang: &str, node: Node, src: &[u8]) -> bool {
     let mut cur = node.parent();
     while let Some(n) = cur {
         if TYPE_KINDS.contains(&n.kind()) {
-            if let Some(name) = type_name_of(n, src) {
-                if visibility_of(lang, name, n, src).as_deref() == Some("private") {
+            if let Some(name) = type_name_of(lang, n, src) {
+                if visibility_of(lang, &name, n, src).as_deref() == Some("private") {
                     return true;
                 }
             }
@@ -2765,7 +2784,7 @@ fn is_test_marker(lang: &str, attrs: &str) -> bool {
 /// Walks up to the nearest type declaration and reads its name — the identifier
 /// child, whatever the grammar happens to call it. `None` for non-members, and
 /// for a member whose owner is anonymous (a bare `struct { … }` in C).
-fn owner_of(kind: &str, node: Node, src: &[u8]) -> Option<String> {
+fn owner_of(lang: &str, kind: &str, node: Node, src: &[u8]) -> Option<String> {
     if kind != "field" && kind != "variant" {
         return None;
     }
@@ -2778,7 +2797,7 @@ fn owner_of(kind: &str, node: Node, src: &[u8]) -> Option<String> {
                 .child_by_field_name("name")
                 .and_then(|c| c.utf8_text(src).ok())
             {
-                return Some(t.to_string());
+                return Some(normalize_identifier(lang, t));
             }
             // No `name:` field, so take the first child that *is* the name.
             // `_name` catches the grammars that spell it out per construct
@@ -2796,7 +2815,7 @@ fn owner_of(kind: &str, node: Node, src: &[u8]) -> Option<String> {
                         || k == "object_reference"
                 })
                 .and_then(|ch| ch.utf8_text(src).ok())
-                .map(|t| t.to_string());
+                .map(|t| normalize_identifier(lang, t));
             if own.is_some() {
                 return own;
             }
@@ -2811,7 +2830,7 @@ fn owner_of(kind: &str, node: Node, src: &[u8]) -> Option<String> {
                 .children(&mut pc)
                 .find(|ch| ch.kind().ends_with("identifier"))
                 .and_then(|ch| ch.utf8_text(src).ok())
-                .map(|t| t.to_string());
+                .map(|t| normalize_identifier(lang, t));
         }
         cur = n.parent();
     }
@@ -4083,16 +4102,132 @@ const SQL_REL: &str = r#"
 /// The Sequel grammar exposes quoted identifiers with their delimiters, and its
 /// T-SQL bracket form can expose only the contents as the name node.
 fn unquote_sql_identifier(name: &str) -> String {
-    if name.len() >= 2 {
-        let bytes = name.as_bytes();
-        if (bytes[0] == b'"' && bytes[name.len() - 1] == b'"')
-            || (bytes[0] == b'`' && bytes[name.len() - 1] == b'`')
-            || (bytes[0] == b'[' && bytes[name.len() - 1] == b']')
-        {
-            return name[1..name.len() - 1].to_string();
+    let Some((open, close)) = name
+        .as_bytes()
+        .first()
+        .copied()
+        .zip(name.as_bytes().last().copied())
+        .filter(|(open, close)| {
+            (*open == b'"' && *close == b'"')
+                || (*open == b'`' && *close == b'`')
+                || (*open == b'[' && *close == b']')
+        })
+    else {
+        return name.to_string();
+    };
+    let inner = &name[1..name.len() - 1];
+    let escaped = match (open, close) {
+        (b'"', b'"') => "\"\"",
+        (b'`', b'`') => "``",
+        (b'[', b']') => "]]",
+        _ => unreachable!(),
+    };
+    let delimiter = close as char;
+    inner.replace(escaped, &delimiter.to_string())
+}
+
+/// Make the SQL grammar accept common escaped identifier delimiters without
+/// changing source offsets. Quoted string literals and comments are skipped.
+fn repair_sql_identifier_escapes(src: &[u8]) -> Option<Vec<u8>> {
+    let mut out = src.to_vec();
+    let mut changed = false;
+    let mut i = 0;
+    while i < src.len() {
+        if src.get(i..i + 2) == Some(b"--") {
+            i += 2;
+            while i < src.len() && src[i] != b'\n' {
+                i += 1;
+            }
+            continue;
         }
+        if src.get(i..i + 2) == Some(b"/*") {
+            i += 2;
+            while i + 1 < src.len() && src.get(i..i + 2) != Some(b"*/") {
+                i += 1;
+            }
+            i = (i + 2).min(src.len());
+            continue;
+        }
+        if src[i] == b'\'' {
+            i += 1;
+            while i < src.len() {
+                if src[i] == b'\'' {
+                    if src.get(i + 1) == Some(&b'\'') {
+                        i += 2;
+                    } else {
+                        i += 1;
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        if matches!(src[i], b'"' | b'`') {
+            let delimiter = src[i];
+            i += 1;
+            while i < src.len() {
+                if src[i] == delimiter {
+                    if src.get(i + 1) == Some(&delimiter) {
+                        out[i] = b'_';
+                        out[i + 1] = b'_';
+                        changed = true;
+                        i += 2;
+                    } else {
+                        i += 1;
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        if src[i] == b'[' && sql_column_bracket_start(src, i) {
+            let mut end = i + 1;
+            let mut closed = false;
+            if src
+                .get(end)
+                .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_')
+            {
+                while end < src.len() {
+                    if src[end] == b']' {
+                        if src.get(end + 1) == Some(&b']') {
+                            out[end] = b'_';
+                            out[end + 1] = b'_';
+                            changed = true;
+                            end += 2;
+                        } else {
+                            out[i] = b'"';
+                            out[end] = b'"';
+                            changed = true;
+                            i = end + 1;
+                            closed = true;
+                            break;
+                        }
+                    } else {
+                        end += 1;
+                    }
+                }
+                if !closed {
+                    // No closing bracket was found; leave the text untouched.
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        i += 1;
     }
-    name.to_string()
+    changed.then_some(out)
+}
+
+fn sql_column_bracket_start(src: &[u8], start: usize) -> bool {
+    src[..start]
+        .iter()
+        .rev()
+        .find(|b| !b.is_ascii_whitespace())
+        .is_some_and(|b| matches!(b, b'(' | b','))
 }
 
 /// The two SQL facts a tree-sitter query cannot express, in one walk.

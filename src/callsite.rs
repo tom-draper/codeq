@@ -104,7 +104,7 @@ pub fn call_sites_in(language: &str, src: &str) -> Option<Vec<CallSite>> {
             if let Some((name_node, receiver)) = callee_of(node, src) {
                 sites.push(CallSite {
                     start_byte: name_node.start_byte(),
-                    name: text_of(name_node, src),
+                    name: crate::facts::normalize_identifier(language, &text_of(name_node, src)),
                     receiver,
                 });
             }
