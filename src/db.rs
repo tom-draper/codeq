@@ -86,6 +86,8 @@ use rusqlite::Connection;
 // SQL field facts capture and normalize quoted column identifiers.
 // v40: Rust/C# escaped identifiers use semantic names in facts and callsites;
 // SQL's doubled and bracketed identifier escapes are parsed without recovery.
+// v41: clone shapes include anonymous syntax tokens such as operators, so cached
+// fingerprints must be regenerated.
 //
 // **This is an extraction version, not just a storage version.** Freshness is
 // content hash plus this number, so changing *how* a fact is extracted — a
@@ -99,7 +101,7 @@ use rusqlite::Connection;
 // hashing the query constants is the obvious form — but it would cover only the
 // query-driven half. A visibility rule or an attribute reader is ordinary Rust
 // and would slip through, while the mechanism looked complete. Not yet solved.
-pub const SCHEMA_VERSION: i64 = 40;
+pub const SCHEMA_VERSION: i64 = 41;
 
 pub struct Db {
     pub conn: Connection,

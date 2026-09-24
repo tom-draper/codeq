@@ -1582,6 +1582,12 @@ fn clones_are_exact_structural_matches_not_a_similarity_score() {
         "b.rs",
         "pub fn other(xs: &[i32]) -> i32 {\n    let mut acc = 0;\n    for x in xs {\n        if *x > 0 {\n            acc += x;\n        }\n    }\n    acc\n}\n",
     );
+    // Operators are syntax too: otherwise these bodies collapse to the same
+    // shape after named identifiers and literals are normalised away.
+    f.write(
+        "operators.rs",
+        "fn different(a: i32) -> bool {\n    let v0 = a + 1;\n    let v1 = v0 * 2;\n    let v2 = v1 - 3;\n    let v3 = v2 / 4;\n    let v4 = v3 % 5;\n    v0 != v4\n}\n\nfn same(a: i32) -> bool {\n    let v0 = a + 1;\n    let v1 = v0 * 2;\n    let v2 = v1 - 3;\n    let v3 = v2 / 4;\n    let v4 = v3 % 5;\n    v0 == v4\n}\n",
+    );
 
     let v = f.run(&["clones", "--min-nodes", "10"]);
     let rows = v["data"].as_array().unwrap();
@@ -1590,6 +1596,10 @@ fn clones_are_exact_structural_matches_not_a_similarity_score() {
     assert!(
         !names.contains(&"other"),
         "a different shape is not a clone: {v}"
+    );
+    assert!(
+        !names.contains(&"different") && !names.contains(&"same"),
+        "different comparison operators are not exact clones: {v}"
     );
     // Every row in a group carries the same shape and the group size.
     assert_eq!(rows[0]["shape"], rows[1]["shape"]);

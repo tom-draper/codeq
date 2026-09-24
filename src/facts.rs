@@ -4519,8 +4519,11 @@ fn shape_of(node: Node) -> (Option<String>, i64) {
         h.update(b"(");
         count += 1;
         stack.push((n, true));
+        // Anonymous children include punctuation and operators. Keep them in the
+        // shape: dropping the operator tokens makes `a != b` and `a == b`
+        // indistinguishable even though the two expressions do different work.
         let mut c = n.walk();
-        let kids: Vec<Node> = n.named_children(&mut c).collect();
+        let kids: Vec<Node> = n.children(&mut c).collect();
         for child in kids.into_iter().rev() {
             stack.push((child, false));
         }
