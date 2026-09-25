@@ -201,7 +201,9 @@ fn exact_module_match(from: &str, path: &str, module: &str, allow_imported_name:
             match segment {
                 "" | "." => {}
                 ".." => {
-                    expected.pop();
+                    if expected.pop().is_none() {
+                        return false;
+                    }
                 }
                 other => expected.push(other),
             }

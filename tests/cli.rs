@@ -5960,6 +5960,23 @@ fn deps_resolves_imports_to_internal_files_and_drops_external() {
 }
 
 #[test]
+fn deps_does_not_resolve_relative_imports_that_escape_the_repo_root() {
+    let f = Fixture::new();
+    f.write("main.js", "import '../helper.js';\n")
+        .write("helper.js", "export const value = 1;\n");
+
+    let deps = field_set(&f.run(&["deps", "main.js"]), "path");
+    assert!(
+        deps.is_empty(),
+        "an import outside the repository must not alias a root file: {deps:?}"
+    );
+
+    f.write("pkg/sub/inside.js", "import '../../helper.js';\n");
+    let deps = field_set(&f.run(&["deps", "pkg/sub/inside.js"]), "path");
+    assert_eq!(deps, ["helper.js"]);
+}
+
+#[test]
 fn deps_prefers_python_submodule_over_package_initializer() {
     let f = Fixture::new();
     f.write("pkg/__init__.py", "\n");

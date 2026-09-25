@@ -4,6 +4,16 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-09-25 — Relative dependencies could escape the repo root
+
+Exploring the dependency graph builder and probing a root-level JavaScript
+relative import found that `../helper.js` resolved to the repository's own
+`helper.js`. Path normalization silently ignored `..` once it reached the root,
+so an import pointing outside the indexed repository was reported as an
+internal edge. The resolver now rejects a relative path that would pop beyond
+the root; a regression also checks that a valid nested `../../helper.js` still
+resolves.
+
 ## 2026-09-25 — `read --raw` rewrote line endings
 
 Exploring `cmd_read` and its raw-line printer showed that it used `str::lines()`
