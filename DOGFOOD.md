@@ -4,6 +4,16 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-09-25 — Search called exact-limit results truncated
+
+Exploring `scan_doc` showed it set `truncated` as soon as the number of rows
+reached `--limit`. A one-result search with `--limit 1` therefore claimed there
+were more results even when there were none; the same boundary affected
+files-with-matches and count modes. Those modes now look for one extra result
+before setting the flag and trim that probe row from output. Match scans combined
+with `--max-per-file` keep their full-file survey behavior so per-file counts stay
+accurate.
+
 ## 2026-09-25 — API diffs collapsed overloaded exports by name
 
 After checking signature behavior in `api_diff`, a Java fixture that added

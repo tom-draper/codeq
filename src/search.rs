@@ -451,8 +451,12 @@ pub(crate) fn run_search(
 ) -> Result<SearchData> {
     let cap = if opts.limit == 0 {
         usize::MAX
-    } else {
+    } else if opts.out == OutMode::Matches && opts.per_file.is_some() {
+        // Per-file capping needs the rest of the final file to report its true
+        // count, so preserve that scan behavior when both caps are combined.
         opts.limit
+    } else {
+        opts.limit.saturating_add(1)
     };
     let filtering = opts.in_filter != InFilter::Any;
 
@@ -552,7 +556,11 @@ pub(crate) fn run_search(
         }
     }
 
-    Ok(acc.finish(opts.out))
+    Ok(acc.finish(
+        opts.out,
+        opts.limit,
+        opts.out == OutMode::Matches && opts.per_file.is_some(),
+    ))
 }
 
 /// Results accumulated across the documents a scan visits.
@@ -569,19 +577,43 @@ pub(crate) struct ScanAcc {
 }
 
 impl ScanAcc {
-    pub(crate) fn finish(self, out: OutMode) -> SearchData {
-        let ScanAcc {
-            files,
-            counts,
-            hits,
-            truncated,
-            ..
-        } = self;
+    pub(crate) fn finish(
+        mut self,
+        out: OutMode,
+        limit: usize,
+        preserve_file_survey: bool,
+    ) -> SearchData {
+        let cap = if limit == 0 { usize::MAX } else { limit };
+        let mut truncated = self.truncated;
         match out {
-            OutMode::Files => SearchData::Files { files, truncated },
-            OutMode::Count => SearchData::Counts { counts, truncated },
+            OutMode::Files => {
+                if self.files.len() > cap {
+                    self.files.truncate(cap);
+                    truncated = true;
+                }
+                SearchData::Files {
+                    files: self.files,
+                    truncated,
+                }
+            }
+            OutMode::Count => {
+                if self.counts.len() > cap {
+                    self.counts.truncate(cap);
+                    truncated = true;
+                }
+                SearchData::Counts {
+                    counts: self.counts,
+                    truncated,
+                }
+            }
             OutMode::Matches => SearchData::Matches {
-                matches: hits,
+                matches: {
+                    if !preserve_file_survey && self.hits.len() > cap {
+                        self.hits.truncate(cap);
+                        truncated = true;
+                    }
+                    self.hits
+                },
                 truncated,
             },
         }
@@ -831,8 +863,10 @@ pub(crate) fn scan_stdin(
 
     let cap = if opts.limit == 0 {
         usize::MAX
-    } else {
+    } else if opts.out == OutMode::Matches && opts.per_file.is_some() {
         opts.limit
+    } else {
+        opts.limit.saturating_add(1)
     };
     let calls = if opts.call_only || opts.qualifier.is_some() {
         language.and_then(|l| calls_in(l, &body))
@@ -853,7 +887,11 @@ pub(crate) fn scan_stdin(
         cap,
         &mut acc,
     );
-    Ok(acc.finish(opts.out))
+    Ok(acc.finish(
+        opts.out,
+        opts.limit,
+        opts.out == OutMode::Matches && opts.per_file.is_some(),
+    ))
 }
 
 /// A `%literal%` LIKE pattern for the content index — trigram needs >= 3 chars,

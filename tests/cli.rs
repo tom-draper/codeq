@@ -8613,6 +8613,31 @@ fn a_result_stopped_by_limit_says_so_in_text() {
 }
 
 #[test]
+fn search_does_not_mark_exactly_full_limit_results_truncated() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() { target(); }\n");
+
+    for mode in [
+        vec!["search", "target", "--limit", "1"],
+        vec!["search", "target", "--limit", "1", "--files-with-matches"],
+        vec!["search", "target", "--limit", "1", "--count"],
+    ] {
+        let v = f.run(&mode);
+        assert_eq!(v["data"]["truncated"], false, "{mode:?}: {v}");
+    }
+
+    f.write("b.rs", "fn two() { target(); }\n");
+    for mode in [
+        vec!["search", "target", "--limit", "1"],
+        vec!["search", "target", "--limit", "1", "--files-with-matches"],
+        vec!["search", "target", "--limit", "1", "--count"],
+    ] {
+        let v = f.run(&mode);
+        assert_eq!(v["data"]["truncated"], true, "{mode:?}: {v}");
+    }
+}
+
+#[test]
 fn max_per_file_surveys_every_file_not_just_the_first_limit_rows() {
     // --limit used to be spent on raw matches, including the ones the cap was
     // about to discard: `--max-per-file 1 --limit 3` surveyed three *files*
