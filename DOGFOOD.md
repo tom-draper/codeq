@@ -4,6 +4,14 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-09-25 — API comparisons ignored `--limit`
+
+Codeq showed that `api` accepts a row limit, but `api --compare-to REF` took a
+branch that never passed the limit into the diff builder. A three-addition,
+two-removal fixture still returned all five rows with `--limit 2`. API diffs
+now cap the combined rows, prioritize removals before changed and added rows,
+and set `data.truncated` so text output explains that results were capped.
+
 ## 2026-09-25 — Relative dependencies could escape the repo root
 
 Exploring the dependency graph builder and probing a root-level JavaScript

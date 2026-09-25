@@ -10650,6 +10650,22 @@ fn explore_at_refuses_a_line_that_declares_several_things() {
 }
 
 #[test]
+fn api_diff_obeys_the_row_limit_and_reports_truncation() {
+    let f = Fixture::new();
+    f.write("lib.rs", "pub fn old_a() {}\npub fn old_b() {}\n");
+    f.git_init_commit();
+    f.write(
+        "lib.rs",
+        "pub fn new_a() {}\npub fn new_b() {}\npub fn new_c() {}\n",
+    );
+
+    let v = f.run(&["api", "--compare-to", "HEAD", "--limit", "2"]);
+    assert_eq!(v["data"]["removed"].as_array().unwrap().len(), 2, "{v}");
+    assert!(v["data"]["added"].as_array().unwrap().is_empty(), "{v}");
+    assert_eq!(v["data"]["truncated"], true, "{v}");
+}
+
+#[test]
 fn a_moved_and_reexported_definition_is_not_a_removed_export() {
     // Moving a definition down a layer and importing it back keeps every
     // `from handler import resolve_key` working, so the surface is unchanged —

@@ -876,7 +876,7 @@ pub fn cmd_api(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if let Some(reference) = compare_to {
-        return api_diff(&s, reference, path);
+        return api_diff(&s, reference, path, limit);
     }
     let filters = Filters::new().like("path", path).eq("kind", kind);
     let sql = format!(
@@ -973,7 +973,7 @@ struct ApiChangeRow {
 ///
 /// Diff-shaped, not history-shaped: it compares two trees, the same thing
 /// `changed` and `affected` already do, and needs Git for exactly that reason.
-fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
+fn api_diff(s: &Session, compare_to: &str, path: Option<&str>, limit: usize) -> Result<()> {
     let changed = s.repo.changed_since(compare_to)?;
     let mut ex = crate::facts::Extractor::new()?;
     let mut data: Vec<ApiChangeRow> = Vec::new();
@@ -1100,13 +1100,19 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
     // are the breaking ones.
     #[derive(Serialize)]
     struct ApiDiff {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        truncated: Option<bool>,
         removed: Vec<ApiChangeRow>,
         changed: Vec<ApiChangeRow>,
         added: Vec<ApiChangeRow>,
     }
-    let take = |data: &mut Vec<ApiChangeRow>, which: &str| -> Vec<ApiChangeRow> {
-        data.iter()
+    let truncated = limit > 0 && data.len() > limit;
+    let mut remaining = if limit == 0 { usize::MAX } else { limit };
+    let mut take = |data: &[ApiChangeRow], which: &str| -> Vec<ApiChangeRow> {
+        let rows: Vec<ApiChangeRow> = data
+            .iter()
             .filter(|r| r.change == which)
+            .take(remaining)
             .map(|r| ApiChangeRow {
                 change: r.change.clone(),
                 name: r.name.clone(),
@@ -1116,12 +1122,16 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>) -> Result<()> {
                 signature: r.signature.clone(),
                 was: r.was.clone(),
             })
-            .collect()
+            .collect();
+        remaining -= rows.len();
+        rows
     };
     let out = ApiDiff {
-        removed: take(&mut data, "removed"),
-        changed: take(&mut data, "changed"),
-        added: take(&mut data, "added"),
+        truncated: truncated.then_some(true),
+        // Breaking removals are the most useful rows in a capped review.
+        removed: take(&data, "removed"),
+        changed: take(&data, "changed"),
+        added: take(&data, "added"),
     };
     if !moved.is_empty() {
         moved.sort();
