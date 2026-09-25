@@ -10479,6 +10479,18 @@ fn path_filters_treat_like_metacharacters_as_literal_path_chars() {
 }
 
 #[test]
+fn symbols_path_scope_treats_like_metacharacters_literally() {
+    let f = Fixture::new();
+    f.write("pkg/acb.rs", "fn unrelated() {}\n");
+
+    let result = f.run(&["symbols", "--path", "a_b"]);
+    assert!(
+        result["data"].as_array().unwrap().is_empty(),
+        "an unrelated symbol leaked through the path scope: {result}"
+    );
+}
+
+#[test]
 fn imports_path_scope_treats_like_metacharacters_literally() {
     let f = Fixture::new();
     f.write("pkg/acb.py", "import external_package\n");

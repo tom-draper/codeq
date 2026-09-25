@@ -746,8 +746,8 @@ pub fn cmd_symbols(
         args.push(l.to_string());
     }
     if let Some(p) = path {
-        sql.push_str(" AND path LIKE ?");
-        args.push(format!("%{p}%"));
+        sql.push_str(" AND path LIKE ? ESCAPE '\\'");
+        args.push(format!("%{}%", escape_like_literal(p)));
     }
     // Deterministic ordering: name, then location.
     sql.push_str(" ORDER BY name, path, start_line");

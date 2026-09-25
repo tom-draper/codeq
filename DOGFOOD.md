@@ -6528,3 +6528,10 @@ query for `imports a_b` included an import from `pkg/acb.py`; its empty-scope
 helper also counted that unrelated file. Both now use literal path matching via
 the shared escaping helper and filter builder. The regression checks the rows
 and the empty-scope note.
+
+## 2026-09-25 — `symbols --path` treated `_` as a wildcard
+
+Codeq's search for remaining `path LIKE` clauses found that `cmd_symbols` still
+bound a raw substring pattern. `symbols --path a_b` therefore returned a symbol
+from `pkg/acb.rs`. The path parameter now escapes SQL `LIKE` metacharacters; a
+focused CLI regression covers the false inclusion.
