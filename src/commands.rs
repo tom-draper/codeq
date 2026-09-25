@@ -5348,6 +5348,7 @@ pub fn cmd_untested(
     let mut stopped_at_limit = false;
     let mut covered: HashMap<String, bool> = HashMap::new();
     let mut data: Vec<UntestedRow> = Vec::new();
+    let mut checked = 0usize;
     for cand in candidates {
         // Test scaffolding is not production code that needs covering. Same rule
         // `unused` applies, via the same predicate: this used to be a path-only
@@ -5357,6 +5358,7 @@ pub fn cmd_untested(
         if is_test_site(&cand.path, Some(&cand.name), cand.line, &scopes) {
             continue;
         }
+        checked += 1;
         let has_test = match covered.get(&cand.name) {
             Some(&c) => c,
             None => {
@@ -5378,11 +5380,20 @@ pub fn cmd_untested(
     }
 
     let note = if data.is_empty() {
-        match path {
-            Some(p) => Some(format!(
-                "every public definition in '{p}' is referenced by a test"
-            )),
-            None => Some("every public definition is referenced by a test".to_string()),
+        if checked == 0 {
+            Some(match path {
+                Some(p) => format!("no eligible public definitions to check in '{p}'"),
+                None => "no eligible public definitions to check".to_string(),
+            })
+        } else {
+            match path {
+                Some(p) => Some(format!(
+                    "every eligible public definition in '{p}' is referenced by a test"
+                )),
+                None => {
+                    Some("every eligible public definition is referenced by a test".to_string())
+                }
+            }
         }
     } else if stopped_at_limit {
         Some(format!(

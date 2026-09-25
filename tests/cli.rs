@@ -7836,6 +7836,15 @@ fn untested_reports_public_definitions_no_test_names() {
         !names.iter().any(|n| n == "works"),
         "the test itself is not production code needing cover: {names:?}"
     );
+
+    let empty_scope = f.run(&["untested", "missing"]);
+    assert!(
+        empty_scope["note"]
+            .as_str()
+            .unwrap()
+            .contains("no eligible public definitions to check in 'missing'"),
+        "an unmatched path cannot establish test coverage: {empty_scope}"
+    );
 }
 
 /// "Does this break anyone" is not answerable from a diff, which shows every

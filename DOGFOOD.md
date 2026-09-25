@@ -6495,3 +6495,11 @@ the destination, so `api --compare-to` listed the export as added at its new pat
 but never removed it from the old module path. `changed_since` now disables rename
 detection for its name-only listing, yielding both old and new paths to the API
 comparison. The regression checks the removed and added rows separately.
+
+## 2026-09-25 — `untested` claimed unmatched scopes were covered
+
+Exploring `cmd_untested` revealed that an empty result always said every public
+definition was referenced by a test. An unmatched `untested missing` scope thus
+made a false coverage claim. The command now distinguishes “no eligible public
+definitions to check” from a real scope whose eligible definitions all have test
+references. The regression exercises the unmatched-scope case.
