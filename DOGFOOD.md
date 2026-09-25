@@ -4,6 +4,22 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-09-24 — Pure deletions vanished from changed-symbol and impact reports
+
+After rebuilding Codeq, I made a temporary Git repo with a function containing
+three statements, then deleted the middle statement. `changed` listed the file,
+but `changed --symbols` returned no definitions and `affected` had an empty
+`changed` list. The `-U0` diff hunk had a zero-length new side, which
+`changed_line_ranges` discarded; no current line remained to overlap the enclosing
+function.
+
+Zero-length deletion hunks now anchor to the preceding surviving line, clamped to
+line 1 at the start of a file. This lets `changed --symbols`, `affected`, and
+changed-context seeds include the containing definition. A regression test checks
+both changed-symbol and affected results while ensuring a neighboring untouched
+function stays out. The behavior is computed from Git diffs, so it needs no index
+version bump.
+
 ## 2026-09-24 — Fixed semantic lookup for escaped identifiers and escaped SQL columns
 
 Probed source spellings that contain language-level escapes after the SQL

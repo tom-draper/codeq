@@ -3768,6 +3768,37 @@ fn changed_symbols_reports_only_touched_definitions() {
     );
 }
 
+#[test]
+fn changed_symbols_and_affected_include_definitions_with_deleted_lines() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn keep() {\n    let value = 1;\n}\n\nfn change() {\n    let before = 1;\n    let removed = 2;\n    let after = before + 1;\n}\n",
+    );
+    f.git_init_commit();
+    f.write(
+        "a.rs",
+        "fn keep() {\n    let value = 1;\n}\n\nfn change() {\n    let before = 1;\n    let after = before + 1;\n}\n",
+    );
+
+    let changed = f.run(&["changed", "--symbols", "--compare-to", "HEAD"]);
+    let names = field_set(&changed, "name");
+    assert!(names.contains(&"change".to_string()), "{changed}");
+    assert!(
+        !names.contains(&"keep".to_string()),
+        "untouched definition leaked: {changed}"
+    );
+
+    let affected = f.run(&["affected", "--compare-to", "HEAD"]);
+    let names: Vec<&str> = affected["data"]["changed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["name"].as_str())
+        .collect();
+    assert!(names.contains(&"change"), "{affected}");
+}
+
 // ---------------------------------------------------------------------------
 // Search (content + enclosing symbol)
 // ---------------------------------------------------------------------------

@@ -157,7 +157,9 @@ impl Repo {
         let mut map: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
 
         // `-U0` gives hunk headers with no context, so each @@ range is exactly
-        // the changed new-side lines.
+        // the changed new-side lines. A pure deletion has no new-side lines;
+        // anchor that zero-width change to the preceding line (or line 1 at the
+        // start of a file) so the definition containing the deletion is touched.
         let diff = git(&self.root, &["diff", "-U0", "--no-color", &base])?;
         let mut current: Option<String> = None;
         for line in diff.lines() {
@@ -169,11 +171,13 @@ impl Repo {
                 };
             } else if line.starts_with("@@ ") {
                 if let (Some(path), Some((start, count))) = (&current, parse_new_hunk(line)) {
-                    if count > 0 {
-                        map.entry(path.clone())
-                            .or_default()
-                            .push((start, start + count - 1));
-                    }
+                    let range = if count > 0 {
+                        (start, start + count - 1)
+                    } else {
+                        let anchor = start.max(1);
+                        (anchor, anchor)
+                    };
+                    map.entry(path.clone()).or_default().push(range);
                 }
             }
         }
