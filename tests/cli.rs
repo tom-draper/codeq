@@ -10225,6 +10225,21 @@ fn entrypoints_lists_syntax_registered_routes_and_optional_tests() {
 }
 
 #[test]
+fn entrypoints_path_scope_treats_like_metacharacters_literally() {
+    let f = Fixture::new();
+    f.write(
+        "pkg/acb.py",
+        "@app.get('/health')\ndef health():\n    return {}\n",
+    );
+
+    let result = f.run(&["entrypoints", "a_b"]);
+    assert!(
+        result["data"].as_array().unwrap().is_empty(),
+        "unrelated route matched the literal path scope: {result}"
+    );
+}
+
+#[test]
 fn a_qualified_stdlib_decorator_is_inert_however_it_is_imported() {
     // `functools` was on the inert list, but the check compared the whole dotted
     // head (`functools.cache`) and its last segment (`cache`) — never the module

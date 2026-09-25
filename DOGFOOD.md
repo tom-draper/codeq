@@ -6512,3 +6512,11 @@ filter, but the note's visibility-count query still used a raw `LIKE`. With only
 private definition. The note now reuses the shared path filter, so diagnostics
 reflect the same literal scope as the query. Regression covers the wildcard-only
 false count.
+
+## 2026-09-25 — `entrypoints` path scopes treated `_` as a wildcard
+
+Codeq's `cmd_entrypoints` references led to a raw `LIKE` clause separate from the
+shared path filters. A registered route in `pkg/acb.py` appeared in
+`entrypoints a_b`, even though the underscore should match literally. The command
+now uses the shared escaped path filter and bound-parameter helper; the CLI
+regression reproduces that false inclusion.

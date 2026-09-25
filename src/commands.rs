@@ -4386,6 +4386,7 @@ pub fn cmd_entrypoints(
     let s = Session::open(cwd, false, out)?;
     // A file convention is not a column, so registration is decided in Rust and
     // the limit has to be applied after that rather than in SQL.
+    let filters = Filters::new().like("path", path);
     let mut sql = String::from(
         "SELECT name, kind, path, start_line, decorator, is_test, language, visibility
          FROM facts WHERE kind <> 'import'",
@@ -4393,11 +4394,10 @@ pub fn cmd_entrypoints(
     if !include_tests {
         sql.push_str(" AND is_test = 0");
     }
-    let like = path.map(|path| format!("%{path}%"));
-    sql.push_str(" AND (?1 IS NULL OR path LIKE ?1)");
+    sql.push_str(filters.sql());
     sql.push_str(" ORDER BY path, start_line");
     let mut stmt = s.db.conn.prepare(&sql)?;
-    let rows = stmt.query_map([&like], |r| {
+    let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
         let name: String = r.get(0)?;
         let kind: String = r.get(1)?;
         let path: String = r.get(2)?;
