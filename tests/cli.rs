@@ -10479,6 +10479,25 @@ fn path_filters_treat_like_metacharacters_as_literal_path_chars() {
 }
 
 #[test]
+fn imports_path_scope_treats_like_metacharacters_literally() {
+    let f = Fixture::new();
+    f.write("pkg/acb.py", "import external_package\n");
+
+    let result = f.run(&["imports", "a_b"]);
+    assert!(
+        result["data"].as_array().unwrap().is_empty(),
+        "an unrelated file leaked through the import path scope: {result}"
+    );
+    assert!(
+        result["note"]
+            .as_str()
+            .unwrap()
+            .contains("no indexed file matches 'a_b'"),
+        "scope note should use the same literal path matching: {result}"
+    );
+}
+
+#[test]
 fn file_suffix_resolution_treats_like_metacharacters_literally() {
     let f = Fixture::new();
     f.write("pkg/a_b.rs", "fn wanted() {}\n");

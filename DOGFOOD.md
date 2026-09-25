@@ -6520,3 +6520,11 @@ shared path filters. A registered route in `pkg/acb.py` appeared in
 `entrypoints a_b`, even though the underscore should match literally. The command
 now uses the shared escaped path filter and bound-parameter helper; the CLI
 regression reproduces that false inclusion.
+
+## 2026-09-25 — `imports` path scopes treated `_` as a wildcard
+
+Tracing `cmd_imports` revealed one more independent raw `LIKE` path filter. A
+query for `imports a_b` included an import from `pkg/acb.py`; its empty-scope
+helper also counted that unrelated file. Both now use literal path matching via
+the shared escaping helper and filter builder. The regression checks the rows
+and the empty-scope note.

@@ -203,8 +203,8 @@ fn definition_sites(s: &Session, name: &str) -> Result<Vec<(String, i64)>> {
 fn note_if_scope_empty(s: &Session, path: Option<&str>, what: &str) -> Result<Option<String>> {
     let Some(p) = path else { return Ok(None) };
     let n: i64 = s.db.conn.query_row(
-        "SELECT COUNT(*) FROM files WHERE path LIKE ?1",
-        [format!("%{p}%")],
+        "SELECT COUNT(*) FROM files WHERE path LIKE ?1 ESCAPE '\\'",
+        [format!("%{}%", escape_like_literal(p))],
         |r| r.get(0),
     )?;
     Ok(Some(if n == 0 {
@@ -3078,16 +3078,13 @@ struct ImportRow {
 pub fn cmd_imports(cwd: &Path, path: Option<&str>, limit: usize, out: Out) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
+    let filters = Filters::new().like("path", path);
     let mut sql = String::from(
         "SELECT path, name, start_line, language
          FROM facts WHERE kind = 'import'
            AND (is_derived = 0 OR language = 'python')",
     );
-    let mut args: Vec<String> = Vec::new();
-    if let Some(p) = path {
-        sql.push_str(" AND path LIKE ?");
-        args.push(format!("%{p}%"));
-    }
+    sql.push_str(filters.sql());
     sql.push_str(" ORDER BY path, start_line");
     // One past the limit, so a full page can be told from a page that happens to
     // end exactly on it. `imports` defaults to 200 and a real repo had 1,030;
@@ -3097,9 +3094,7 @@ pub fn cmd_imports(cwd: &Path, path: Option<&str>, limit: usize, out: Out) -> Re
     }
 
     let mut stmt = s.db.conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::ToSql> =
-        args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
-    let rows = stmt.query_map(param_refs.as_slice(), |r| {
+    let rows = stmt.query_map(params_with(&[], &filters).as_slice(), |r| {
         Ok(ImportRow {
             path: r.get(0)?,
             module: r.get(1)?,
