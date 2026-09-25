@@ -6503,3 +6503,12 @@ definition was referenced by a test. An unmatched `untested missing` scope thus
 made a false coverage claim. The command now distinguishes “no eligible public
 definitions to check” from a real scope whose eligible definitions all have test
 references. The regression exercises the unmatched-scope case.
+
+## 2026-09-25 — `api`'s empty-result note used different path matching
+
+`codeq explore cmd_api` showed that its data query used the escaped shared path
+filter, but the note's visibility-count query still used a raw `LIKE`. With only
+`pkg/acb.rs` indexed, `api a_b` returned no rows but claimed the scope contained a
+private definition. The note now reuses the shared path filter, so diagnostics
+reflect the same literal scope as the query. Regression covers the wildcard-only
+false count.

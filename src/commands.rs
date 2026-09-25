@@ -911,13 +911,17 @@ pub fn cmd_api(
     // with the counts, so it can't be mistaken for an empty or wrong path.
     let note = if data.is_empty() {
         let scope = path.unwrap_or("");
-        let mut counts = s.db.conn.prepare(
+        let scope_filter = Filters::new().like("path", path);
+        let sql = format!(
             "SELECT COALESCE(visibility, 'unknown'), COUNT(*) FROM facts
-             WHERE kind <> 'import' AND path LIKE ?1 GROUP BY 1 ORDER BY 1",
-        )?;
-        let like = format!("%{scope}%");
+             WHERE kind <> 'import'{} GROUP BY 1 ORDER BY 1",
+            scope_filter.sql(),
+        );
+        let mut counts = s.db.conn.prepare(&sql)?;
         let rows: Vec<(String, i64)> = counts
-            .query_map([&like], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .query_map(params_with(&[], &scope_filter).as_slice(), |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
             .collect::<std::result::Result<_, _>>()?;
         let total: i64 = rows.iter().map(|(_, n)| n).sum();
         let where_ = if scope.is_empty() {

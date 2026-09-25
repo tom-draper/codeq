@@ -7907,6 +7907,21 @@ fn api_diff_reports_public_exports_moved_by_file_rename() {
     assert_eq!(diff["data"]["added"][0]["path"], "new.rs", "{diff}");
 }
 
+#[test]
+fn api_empty_scope_note_uses_literal_path_matching() {
+    let f = Fixture::new();
+    f.write("pkg/acb.rs", "fn private() {}\n");
+
+    let api = f.run(&["api", "a_b"]);
+    assert!(
+        api["note"]
+            .as_str()
+            .unwrap()
+            .contains("no definitions at all in 'a_b'"),
+        "a wildcard-only diagnostic must not count pkg/acb.rs: {api}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // coverage gaps closed
 // ---------------------------------------------------------------------------
