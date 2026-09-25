@@ -6543,3 +6543,12 @@ same scope for `callees` and the first hop of `callpath`. `callees target
 --path a_b` incorrectly returned `leaf` from `pkg/acb.rs`. Its bound path pattern
 now escapes SQL metacharacters and declares the escape character. The focused
 regression verifies the unrelated target is excluded.
+
+## 2026-09-25 — `search --path` empty-result note ignored literal matching
+
+Codeq's search for remaining raw path `LIKE` clauses found the empty-scope note
+in `cmd_search`. The search itself treats `--path` as a literal substring, but
+the note's file count treated `_` as a SQL wildcard. `search not-present
+--path a_b` over a repo containing only `pkg/acb.rs` therefore stayed silent.
+The diagnostic now escapes `LIKE` metacharacters, and a focused CLI regression
+covers it.

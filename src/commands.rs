@@ -3871,9 +3871,9 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     // statement about the filter rather than about the code.
     let note = if scoped && data.is_empty() {
         let mut stmt = s.db.conn.prepare(
-            "SELECT COUNT(*) FROM files WHERE (?1 IS NULL OR path LIKE ?2) AND (?3 IS NULL OR language = ?3)",
+            "SELECT COUNT(*) FROM files WHERE (?1 IS NULL OR path LIKE ?2 ESCAPE '\\') AND (?3 IS NULL OR language = ?3)",
         )?;
-        let like = args.path.map(|p| format!("%{p}%"));
+        let like = args.path.map(|p| format!("%{}%", escape_like_literal(p)));
         let n: i64 = stmt.query_row(rusqlite::params![args.path, like, args.language], |r| {
             r.get(0)
         })?;

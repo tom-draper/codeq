@@ -11281,6 +11281,19 @@ fn an_empty_result_says_why_it_is_empty() {
 }
 
 #[test]
+fn search_path_scope_note_treats_like_metacharacters_literally() {
+    let f = Fixture::new();
+    f.write("pkg/acb.rs", "fn target() {}\n");
+
+    let note = String::from_utf8_lossy(&f.raw(&["search", "not-present", "--path", "a_b"]).stderr)
+        .to_string();
+    assert!(
+        note.contains("no indexed file matches --path a_b"),
+        "{note}"
+    );
+}
+
+#[test]
 fn context_names_a_seed_that_resolved_to_nothing() {
     // The worst of the silent empties: `context` exists to hand source to an
     // agent, so an empty bundle reads as "nothing more is needed". And a bad seed
