@@ -6535,3 +6535,11 @@ Codeq's search for remaining `path LIKE` clauses found that `cmd_symbols` still
 bound a raw substring pattern. `symbols --path a_b` therefore returned a symbol
 from `pkg/acb.rs`. The path parameter now escapes SQL `LIKE` metacharacters; a
 focused CLI regression covers the false inclusion.
+
+## 2026-09-25 — `callees --path` selected definitions through `_` wildcards
+
+Codeq's search for raw path `LIKE` clauses led to `callees_of`, which uses the
+same scope for `callees` and the first hop of `callpath`. `callees target
+--path a_b` incorrectly returned `leaf` from `pkg/acb.rs`. Its bound path pattern
+now escapes SQL metacharacters and declares the escape character. The focused
+regression verifies the unrelated target is excluded.

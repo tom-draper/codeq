@@ -1485,10 +1485,10 @@ fn callees_of(
         let mut sql = String::from(
             "SELECT path, start_byte, end_byte FROM facts WHERE name = ?1 AND kind <> 'import'",
         );
-        let like = path.map(|p| format!("%{p}%"));
+        let like = path.map(|p| format!("%{}%", escape_like_literal(p)));
         let mut params: Vec<&dyn rusqlite::ToSql> = vec![&name];
         if let Some(l) = &like {
-            sql.push_str(" AND path LIKE ?2");
+            sql.push_str(" AND path LIKE ?2 ESCAPE '\\'");
             params.push(l);
         }
         let mut st = s.db.conn.prepare(&sql)?;

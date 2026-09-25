@@ -10491,6 +10491,18 @@ fn symbols_path_scope_treats_like_metacharacters_literally() {
 }
 
 #[test]
+fn callees_path_scope_treats_like_metacharacters_literally() {
+    let f = Fixture::new();
+    f.write("pkg/acb.rs", "fn target() { leaf(); }\nfn leaf() {}\n");
+
+    let result = f.run(&["callees", "target", "--path", "a_b"]);
+    assert!(
+        result["data"].as_array().unwrap().is_empty(),
+        "an unrelated definition leaked through the path scope: {result}"
+    );
+}
+
+#[test]
 fn imports_path_scope_treats_like_metacharacters_literally() {
     let f = Fixture::new();
     f.write("pkg/acb.py", "import external_package\n");
