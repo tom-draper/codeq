@@ -6469,3 +6469,12 @@ Escaped `\\`, `%`, and `_` in the bound pattern and added the SQL `ESCAPE` claus
 The CLI regression covers underscore and percent filenames. The focused test
 passes; the same helper scopes `files`, `tree`, `symbols`, `definitions`, `api`,
 `graph`, and related list commands.
+
+## 2026-09-25 — `callpath x x` hid missing or out-of-scope symbols
+
+`codeq explore cmd_callpath` showed that the zero-hop shortcut returned an empty
+result immediately when `from == to`, even if the name was undefined or excluded
+by `--path`. That bypassed `callpath`'s existing empty-result explanation for
+all other queries. It now reports a missing-definition or path-scope note while
+preserving the one-row, depth-zero result for a defined symbol. Regression cases
+cover both missing and out-of-scope names.

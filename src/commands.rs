@@ -1946,14 +1946,31 @@ pub fn cmd_callpath(
 
     // Trivial path: a symbol reaches itself in zero hops.
     if from == to {
-        let step = loc_of(from)?.map(|(kind, path, line)| PathStep {
-            symbol: from.to_string(),
-            kind,
-            path,
-            line,
-            depth: 0,
-        });
-        return s.emit(step.into_iter().collect::<Vec<_>>());
+        if let Some((kind, path, line)) = loc_of(from)? {
+            return s.emit(vec![PathStep {
+                symbol: from.to_string(),
+                kind,
+                path,
+                line,
+                depth: 0,
+            }]);
+        }
+        let sites = definition_sites(&s, from)?;
+        let note = if sites.is_empty() {
+            format!("no symbol named '{from}' is defined in this repository")
+        } else {
+            format!(
+                "'{from}' is defined at {} but nothing matches --path {}",
+                sites
+                    .iter()
+                    .take(2)
+                    .map(|(p, l)| format!("{p}:{l}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                path.unwrap_or_default(),
+            )
+        };
+        return s.emit_noted(Vec::<PathStep>::new(), Some(note));
     }
 
     // BFS down the callee graph, recording each name's discoverer so the chain

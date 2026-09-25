@@ -3617,6 +3617,26 @@ fn path_empty_when_unreachable_and_single_when_self() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["name"], "top");
     assert_eq!(rows[0]["depth"], 0);
+
+    let missing = f.run(&["callpath", "missing", "missing"]);
+    assert_eq!(missing["data"].as_array().unwrap().len(), 0);
+    assert!(
+        missing["note"]
+            .as_str()
+            .unwrap()
+            .contains("no symbol named 'missing'"),
+        "{missing}"
+    );
+
+    let out_of_scope = f.run(&["callpath", "top", "top", "--path", "absent.rs"]);
+    assert_eq!(out_of_scope["data"].as_array().unwrap().len(), 0);
+    assert!(
+        out_of_scope["note"]
+            .as_str()
+            .unwrap()
+            .contains("nothing matches --path absent.rs"),
+        "{out_of_scope}"
+    );
 }
 
 #[test]
