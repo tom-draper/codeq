@@ -369,11 +369,16 @@ impl Filters {
         Self::default()
     }
 
-    /// `AND {col} LIKE '%needle%'` when `needle` is Some.
+    /// `AND {col} LIKE '%needle%'` when `needle` is Some. Treat SQL LIKE
+    /// metacharacters as path characters, not user-supplied wildcards.
     fn like(mut self, col: &str, needle: Option<&str>) -> Self {
         if let Some(n) = needle {
-            self.sql.push_str(&format!(" AND {col} LIKE ?"));
-            self.args.push(format!("%{n}%"));
+            self.sql.push_str(&format!(" AND {col} LIKE ? ESCAPE '\\'"));
+            let escaped = n
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            self.args.push(format!("%{escaped}%"));
         }
         self
     }

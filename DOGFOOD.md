@@ -6456,3 +6456,16 @@ absence — the kind of cross-cutting "is this consistent everywhere" question t
 tedious by hand and a single query here. codeq remains at its best when the question
 is a fact spanning many files; it is only the dependency-resolution boundary above
 where the map stops matching the territory.
+
+## 2026-09-25 — path filters treated SQL wildcards as literal filenames
+
+Using `codeq explore` on `Filters` showed that the shared path filter interpolated
+the user's substring directly into a SQL `LIKE` pattern. An underscore in a
+filename filter therefore matched any character (`files a_b` also returned
+`acb`), and percent broadened it to any sequence. This was especially surprising
+because the parameter is documented as a path substring, not a pattern.
+
+Escaped `\\`, `%`, and `_` in the bound pattern and added the SQL `ESCAPE` clause.
+The CLI regression covers underscore and percent filenames. The focused test
+passes; the same helper scopes `files`, `tree`, `symbols`, `definitions`, `api`,
+`graph`, and related list commands.

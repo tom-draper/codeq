@@ -10391,6 +10391,21 @@ fn tree_and_map_can_separate_code_from_the_data_around_it() {
 }
 
 #[test]
+fn path_filters_treat_like_metacharacters_as_literal_path_chars() {
+    let f = Fixture::new();
+    f.write("pkg/a_b.rs", "fn wanted() {}\n");
+    f.write("pkg/acb.rs", "fn wildcard_match() {}\n");
+    f.write("pkg/a%b.rs", "fn percent_name() {}\n");
+
+    let paths = |path: &str| field_set(&f.run(&["files", path]), "path");
+    for (filter, expected) in [("a_b", "pkg/a_b.rs"), ("a%b", "pkg/a%b.rs")] {
+        let got = paths(filter);
+        assert_eq!(got.len(), 1, "filter {filter}: {got:?}");
+        assert_eq!(got[0], expected, "filter {filter}: {got:?}");
+    }
+}
+
+#[test]
 fn map_says_when_a_repo_is_mostly_things_it_cannot_index() {
     // The `(unknown)` row is accurate and still reads like a gap in coverage
     // rather than "this repo is mostly images".
