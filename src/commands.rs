@@ -2760,10 +2760,13 @@ pub fn cmd_read(
     // agrees with what search and the symbol facts report.
     let text = String::from_utf8_lossy(bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes));
     let file_lines: Vec<&str> = text.lines().collect();
+    // Keep line terminators for --raw: splitting with `lines()` and printing
+    // each line would silently rewrite CRLF and add a final newline.
+    let raw_lines: Vec<&str> = text.split_inclusive('\n').collect();
     let n = file_lines.len();
     let show = |a: usize, b: usize| {
         if raw {
-            print_range_raw(&file_lines, a, b)
+            print_range_raw(&raw_lines, a, b)
         } else {
             print_range(&file_lines, a, b)
         }
@@ -2901,7 +2904,7 @@ fn print_range(lines: &[&str], a: usize, b: usize) {
 fn print_range_raw(lines: &[&str], a: usize, b: usize) {
     for i in a.max(1)..=b {
         if let Some(l) = lines.get(i - 1) {
-            println!("{l}");
+            print!("{l}");
         }
     }
 }

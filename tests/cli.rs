@@ -5501,6 +5501,18 @@ fn read_raw_emits_exact_bytes_ready_for_edit() {
 }
 
 #[test]
+fn read_raw_preserves_line_endings_and_missing_final_newline() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() {}\r\nfn two() {}\r\nlast");
+
+    let whole = f.raw(&["read", "a.rs", "--raw"]);
+    assert_eq!(whole.stdout, b"fn one() {}\r\nfn two() {}\r\nlast");
+
+    let first_line = f.raw(&["read", "a.rs", "--lines", "1-1", "--raw"]);
+    assert_eq!(first_line.stdout, b"fn one() {}\r\n");
+}
+
+#[test]
 fn read_raw_symbol_refuses_ambiguous_match() {
     let f = Fixture::new();
     f.write("a.rs", "fn dup() {}\nmod m { fn dup() {} }\n");

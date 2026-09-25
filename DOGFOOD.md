@@ -4,6 +4,14 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-09-25 — `read --raw` rewrote line endings
+
+Exploring `cmd_read` and its raw-line printer showed that it used `str::lines()`
+then `println!`, so a raw read normalized CRLF to LF and appended a newline to
+files that had no final newline. That broke the documented byte-exact workflow
+for copying source into an editor. Raw mode now prints newline-inclusive line
+slices; a regression covers CRLF and a missing final newline.
+
 ## 2026-09-24 — Pure deletions vanished from changed-symbol and impact reports
 
 After rebuilding Codeq, I made a temporary Git repo with a function containing
