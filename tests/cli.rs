@@ -10440,6 +10440,17 @@ fn path_filters_treat_like_metacharacters_as_literal_path_chars() {
 }
 
 #[test]
+fn file_suffix_resolution_treats_like_metacharacters_literally() {
+    let f = Fixture::new();
+    f.write("pkg/a_b.rs", "fn wanted() {}\n");
+    f.write("pkg/acb.rs", "fn wildcard_match() {}\n");
+
+    let outline = f.run(&["outline", "a_b.rs"]);
+    assert_eq!(outline["data"].as_array().unwrap().len(), 1, "{outline}");
+    assert_eq!(outline["data"][0]["name"], "wanted", "{outline}");
+}
+
+#[test]
 fn map_says_when_a_repo_is_mostly_things_it_cannot_index() {
     // The `(unknown)` row is accurate and still reads like a gap in coverage
     // rather than "this repo is mostly images".

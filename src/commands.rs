@@ -364,6 +364,13 @@ struct Filters {
     args: Vec<String>,
 }
 
+fn escape_like_literal(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 impl Filters {
     fn new() -> Self {
         Self::default()
@@ -374,10 +381,7 @@ impl Filters {
     fn like(mut self, col: &str, needle: Option<&str>) -> Self {
         if let Some(n) = needle {
             self.sql.push_str(&format!(" AND {col} LIKE ? ESCAPE '\\'"));
-            let escaped = n
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_");
+            let escaped = escape_like_literal(n);
             self.args.push(format!("%{escaped}%"));
         }
         self
@@ -3021,10 +3025,10 @@ fn resolve_file(s: &Session, arg: &str) -> Result<String> {
     {
         return Ok(arg.to_string());
     }
-    let suffix = format!("%/{arg}");
+    let suffix = format!("%/{}", escape_like_literal(arg));
     let mut stmt =
         s.db.conn
-            .prepare("SELECT path FROM files WHERE path LIKE ?1 ORDER BY path")?;
+            .prepare("SELECT path FROM files WHERE path LIKE ?1 ESCAPE '\\' ORDER BY path")?;
     let matches: Vec<String> = stmt
         .query_map([suffix], |r| r.get(0))?
         .collect::<std::result::Result<_, _>>()?;

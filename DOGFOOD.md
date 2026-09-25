@@ -6479,6 +6479,14 @@ all other queries. It now reports a missing-definition or path-scope note while
 preserving the one-row, depth-zero result for a defined symbol. Regression cases
 cover both missing and out-of-scope names.
 
+## 2026-09-25 — file suffix lookup treated `_` as a wildcard
+
+Using Codeq to trace `outline` into `resolve_file` found a second path-pattern
+construction outside the shared path-filter helper. With `pkg/a_b.rs` and
+`pkg/acb.rs` indexed, `outline a_b.rs` incorrectly reported an ambiguous suffix
+because SQLite interpreted `_` as any character. Suffix matching now shares the
+literal `LIKE` escaping helper. A CLI regression covers this nested-file case.
+
 ## 2026-09-25 — API diff missed removals when an exported file was renamed
 
 Exploring `api_diff` and `changed_since` with Codeq led to a pure file rename
