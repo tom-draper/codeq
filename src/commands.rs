@@ -997,8 +997,9 @@ fn api_diff(
         };
 
         // The exported surface as of `compare_to`.
-        let old: HashMap<String, (String, String)> = match s.repo.file_at(compare_to, &file) {
-            Some(bytes) => ex
+        let mut old: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        if let Some(bytes) = s.repo.file_at(compare_to, &file) {
+            for fact in ex
                 .extract(lang, &file, &bytes)
                 .0
                  .0
@@ -1008,18 +1009,13 @@ fn api_diff(
                         && f.kind != "import"
                         && kind_filter.is_none_or(|kind| f.kind == kind)
                 })
-                .map(|f| {
-                    (
-                        f.name.clone(),
-                        (
-                            f.kind.clone(),
-                            declaration_header(&f.kind, Some(f.signature)).unwrap_or_default(),
-                        ),
-                    )
-                })
-                .collect(),
-            None => HashMap::new(),
-        };
+            {
+                old.entry(fact.name).or_default().push((
+                    fact.kind.clone(),
+                    declaration_header(&fact.kind, Some(fact.signature)).unwrap_or_default(),
+                ));
+            }
+        }
 
         // ...and as of now, from the index (already fresh).
         let mut stmt = s.db.conn.prepare(
@@ -1034,14 +1030,23 @@ fn api_diff(
             .collect::<std::result::Result<_, _>>()?;
 
         let mut seen: HashSet<String> = HashSet::new();
+        let mut current: HashMap<String, Vec<ApiChangeRow>> = HashMap::new();
         for (name, current_kind, line, sig) in now {
             if kind_filter.is_some_and(|filter| current_kind != filter) {
                 continue;
             }
             let sig = declaration_header(&current_kind, sig);
             seen.insert(name.clone());
-            match old.get(&name) {
-                None => data.push(ApiChangeRow {
+            let before = old.get_mut(&name).and_then(|versions| {
+                versions
+                    .iter()
+                    .position(|(kind, signature)| {
+                        kind == &current_kind && Some(signature.as_str()) == sig.as_deref()
+                    })
+                    .map(|position| versions.remove(position))
+            });
+            if before.is_none() {
+                current.entry(name.clone()).or_default().push(ApiChangeRow {
                     change: "added".into(),
                     name,
                     kind: current_kind,
@@ -1049,19 +1054,7 @@ fn api_diff(
                     line,
                     signature: sig,
                     was: None,
-                }),
-                Some((_, before)) if Some(before.as_str()) != sig.as_deref() => {
-                    data.push(ApiChangeRow {
-                        change: "changed".into(),
-                        name,
-                        kind: current_kind,
-                        path: file.clone(),
-                        line,
-                        signature: sig,
-                        was: Some(before.clone()),
-                    })
-                }
-                Some(_) => {}
+                });
             }
         }
         // Names this file still binds through a module-scope import. Moving a
@@ -1085,23 +1078,59 @@ fn api_diff(
                 .filter_map(|m| m.rsplit(['.', '/']).next().map(str::to_string))
                 .collect()
         };
-        for (name, (kind, before)) in &old {
-            if seen.contains(name) {
+        let names: HashSet<String> = old.keys().chain(current.keys()).cloned().collect();
+        for name in names {
+            let mut old_versions = old.remove(&name).unwrap_or_default();
+            let mut current_versions = current.remove(&name).unwrap_or_default();
+            let had_current = seen.contains(&name);
+
+            // Pair unmatched overloads by kind first, so a changed parameter
+            // list remains a `changed` row while newly added overloads survive.
+            let mut unmatched_current = Vec::new();
+            for mut now in current_versions.drain(..) {
+                if let Some(position) = old_versions
+                    .iter()
+                    .position(|(old_kind, _)| old_kind == &now.kind)
+                {
+                    let (_, before) = old_versions.remove(position);
+                    now.change = "changed".into();
+                    now.was = Some(before);
+                    data.push(now);
+                } else {
+                    unmatched_current.push(now);
+                }
+            }
+
+            // A declaration changing kind but keeping its name is still one
+            // changed export once same-kind overload pairs have been handled.
+            let paired = unmatched_current.len().min(old_versions.len());
+            for (mut now, (_, before)) in unmatched_current
+                .drain(..paired)
+                .zip(old_versions.drain(..paired))
+            {
+                now.change = "changed".into();
+                now.was = Some(before);
+                data.push(now);
+            }
+            data.extend(unmatched_current);
+
+            if !had_current && rebound.contains(&name) {
+                if !old_versions.is_empty() {
+                    moved.push(name);
+                }
                 continue;
             }
-            if rebound.contains(name) {
-                moved.push(name.clone());
-                continue;
+            for (kind, before) in old_versions {
+                data.push(ApiChangeRow {
+                    change: "removed".into(),
+                    name: name.clone(),
+                    kind,
+                    path: file.clone(),
+                    line: 0,
+                    signature: None,
+                    was: Some(before),
+                });
             }
-            data.push(ApiChangeRow {
-                change: "removed".into(),
-                name: name.clone(),
-                kind: kind.clone(),
-                path: file.clone(),
-                line: 0,
-                signature: None,
-                was: Some(before.clone()),
-            });
         }
     }
 

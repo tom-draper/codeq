@@ -10689,6 +10689,46 @@ fn api_diff_obeys_the_kind_filter() {
 }
 
 #[test]
+fn api_diff_reports_an_added_overload_as_added() {
+    let f = Fixture::new();
+    f.write(
+        "Api.java",
+        "public class Api {\n    public void run() {}\n}\n",
+    );
+    f.git_init_commit();
+    f.write(
+        "Api.java",
+        "public class Api {\n    public void run() {}\n    public void run(int value) {}\n}\n",
+    );
+
+    let v = f.run(&["api", "--compare-to", "HEAD"]);
+    let added = v["data"]["added"].as_array().unwrap();
+    assert!(
+        added
+            .iter()
+            .any(|row| row["name"] == "run"
+                && row["signature"].as_str().unwrap().contains("int value")),
+        "the new overload should be an added export: {v}"
+    );
+
+    f.git(&["add", "Api.java"]);
+    f.git(&["commit", "-q", "-m", "add overload"]);
+    f.write(
+        "Api.java",
+        "public class Api {\n    public void run() {}\n}\n",
+    );
+    let v = f.run(&["api", "--compare-to", "HEAD"]);
+    assert!(
+        v["data"]["removed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["name"] == "run" && row["was"].as_str().unwrap().contains("int value")),
+        "the removed overload should be a removed export: {v}"
+    );
+}
+
+#[test]
 fn a_moved_and_reexported_definition_is_not_a_removed_export() {
     // Moving a definition down a layer and importing it back keeps every
     // `from handler import resolve_key` working, so the surface is unchanged —

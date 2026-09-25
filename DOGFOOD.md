@@ -4,6 +4,15 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-09-25 — API diffs collapsed overloaded exports by name
+
+After checking signature behavior in `api_diff`, a Java fixture that added
+`run(int)` alongside the existing `run()` showed the new overload as a changed
+`run()` declaration. The old surface was stored as one row per name, so one
+overload overwrote the others. API diffs now match identical signatures first,
+then pair one-to-one signature changes, leaving additional overloads as
+additions and removed overloads as removals.
+
 ## 2026-09-25 — API comparisons ignored `--kind`
 
 While exploring `cmd_api`, I found its comparison branch only forwarded the
