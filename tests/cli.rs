@@ -10666,6 +10666,29 @@ fn api_diff_obeys_the_row_limit_and_reports_truncation() {
 }
 
 #[test]
+fn api_diff_obeys_the_kind_filter() {
+    let f = Fixture::new();
+    f.write(
+        "lib.rs",
+        "pub fn before() {}\npub struct Widget { pub value: i32 }\n",
+    );
+    f.git_init_commit();
+    f.write(
+        "lib.rs",
+        "pub fn after() {}\npub struct Gadget { pub value: i32 }\n",
+    );
+
+    let v = f.run(&["api", "--compare-to", "HEAD", "--kind", "function"]);
+    for section in ["removed", "changed", "added"] {
+        for row in v["data"][section].as_array().unwrap() {
+            assert_eq!(row["kind"], "function", "kind filter leaked a row: {v}");
+        }
+    }
+    assert_eq!(v["data"]["removed"][0]["name"], "before", "{v}");
+    assert_eq!(v["data"]["added"][0]["name"], "after", "{v}");
+}
+
+#[test]
 fn a_moved_and_reexported_definition_is_not_a_removed_export() {
     // Moving a definition down a layer and importing it back keeps every
     // `from handler import resolve_key` working, so the surface is unchanged —

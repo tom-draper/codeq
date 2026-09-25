@@ -4,6 +4,14 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-09-25 — API comparisons ignored `--kind`
+
+While exploring `cmd_api`, I found its comparison branch only forwarded the
+path and row limit. A comparison with `--kind function` still reported changed
+structs and functions together. The filter now applies to both the old and
+current exported surfaces before changes are classified; a regression covers
+added and removed functions alongside struct changes.
+
 ## 2026-09-25 — API comparisons ignored `--limit`
 
 Codeq showed that `api` accepts a row limit, but `api --compare-to REF` took a

@@ -876,7 +876,7 @@ pub fn cmd_api(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     if let Some(reference) = compare_to {
-        return api_diff(&s, reference, path, limit);
+        return api_diff(&s, reference, path, kind, limit);
     }
     let filters = Filters::new().like("path", path).eq("kind", kind);
     let sql = format!(
@@ -973,7 +973,13 @@ struct ApiChangeRow {
 ///
 /// Diff-shaped, not history-shaped: it compares two trees, the same thing
 /// `changed` and `affected` already do, and needs Git for exactly that reason.
-fn api_diff(s: &Session, compare_to: &str, path: Option<&str>, limit: usize) -> Result<()> {
+fn api_diff(
+    s: &Session,
+    compare_to: &str,
+    path: Option<&str>,
+    kind_filter: Option<&str>,
+    limit: usize,
+) -> Result<()> {
     let changed = s.repo.changed_since(compare_to)?;
     let mut ex = crate::facts::Extractor::new()?;
     let mut data: Vec<ApiChangeRow> = Vec::new();
@@ -997,7 +1003,11 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>, limit: usize) -> 
                 .0
                  .0
                 .into_iter()
-                .filter(|f| f.visibility.as_deref() == Some("public") && f.kind != "import")
+                .filter(|f| {
+                    f.visibility.as_deref() == Some("public")
+                        && f.kind != "import"
+                        && kind_filter.is_none_or(|kind| f.kind == kind)
+                })
                 .map(|f| {
                     (
                         f.name.clone(),
@@ -1024,14 +1034,17 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>, limit: usize) -> 
             .collect::<std::result::Result<_, _>>()?;
 
         let mut seen: HashSet<String> = HashSet::new();
-        for (name, kind, line, sig) in now {
-            let sig = declaration_header(&kind, sig);
+        for (name, current_kind, line, sig) in now {
+            if kind_filter.is_some_and(|filter| current_kind != filter) {
+                continue;
+            }
+            let sig = declaration_header(&current_kind, sig);
             seen.insert(name.clone());
             match old.get(&name) {
                 None => data.push(ApiChangeRow {
                     change: "added".into(),
                     name,
-                    kind,
+                    kind: current_kind,
                     path: file.clone(),
                     line,
                     signature: sig,
@@ -1041,7 +1054,7 @@ fn api_diff(s: &Session, compare_to: &str, path: Option<&str>, limit: usize) -> 
                     data.push(ApiChangeRow {
                         change: "changed".into(),
                         name,
-                        kind,
+                        kind: current_kind,
                         path: file.clone(),
                         line,
                         signature: sig,
