@@ -120,7 +120,10 @@ impl Repo {
 
         let mut paths = Vec::new();
         // Committed changes since the base.
-        let committed = git(&self.root, &["diff", "--name-only", &base])?;
+        // Keep both sides of renames. Consumers such as `api --compare-to` need
+        // to see a removed module path as well as the destination path; with
+        // rename detection enabled `--name-only` reports only the destination.
+        let committed = git(&self.root, &["diff", "--name-only", "--no-renames", &base])?;
         for line in committed.lines() {
             let p = line.trim();
             if !p.is_empty() {

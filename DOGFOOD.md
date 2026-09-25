@@ -6478,3 +6478,12 @@ by `--path`. That bypassed `callpath`'s existing empty-result explanation for
 all other queries. It now reports a missing-definition or path-scope note while
 preserving the one-row, depth-zero result for a defined symbol. Regression cases
 cover both missing and out-of-scope names.
+
+## 2026-09-25 — API diff missed removals when an exported file was renamed
+
+Exploring `api_diff` and `changed_since` with Codeq led to a pure file rename
+fixture. Git's default rename detection made `git diff --name-only` report only
+the destination, so `api --compare-to` listed the export as added at its new path
+but never removed it from the old module path. `changed_since` now disables rename
+detection for its name-only listing, yielding both old and new paths to the API
+comparison. The regression checks the removed and added rows separately.

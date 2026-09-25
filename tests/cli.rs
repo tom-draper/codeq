@@ -7884,6 +7884,20 @@ fn api_diff_reports_the_exported_surface_only() {
     }
 }
 
+#[test]
+fn api_diff_reports_public_exports_moved_by_file_rename() {
+    let f = Fixture::new();
+    f.write("old.rs", "pub fn moved() {}\n");
+    f.git_init_commit();
+    f.git(&["mv", "old.rs", "new.rs"]);
+
+    let diff = f.run(&["api", "--compare-to", "HEAD"]);
+    assert_eq!(diff["data"]["removed"][0]["name"], "moved", "{diff}");
+    assert_eq!(diff["data"]["removed"][0]["path"], "old.rs", "{diff}");
+    assert_eq!(diff["data"]["added"][0]["name"], "moved", "{diff}");
+    assert_eq!(diff["data"]["added"][0]["path"], "new.rs", "{diff}");
+}
+
 // ---------------------------------------------------------------------------
 // coverage gaps closed
 // ---------------------------------------------------------------------------
