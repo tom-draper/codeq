@@ -2,6 +2,7 @@
 //! `index`, `files`, `changed`, `map`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
@@ -2758,24 +2759,29 @@ pub fn cmd_read(
         std::fs::read(s.repo.root.join(&rel)).map_err(|e| anyhow!("cannot read {rel}: {e}"))?;
     // Match the index: drop a leading UTF-8 BOM so line/column numbering here
     // agrees with what search and the symbol facts report.
-    let text = String::from_utf8_lossy(bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes));
+    let source_bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+    let text = String::from_utf8_lossy(source_bytes);
     let file_lines: Vec<&str> = text.lines().collect();
     // Keep line terminators for --raw: splitting with `lines()` and printing
-    // each line would silently rewrite CRLF and add a final newline.
-    let raw_lines: Vec<&str> = text.split_inclusive('\n').collect();
+    // each line would silently rewrite CRLF, invalid UTF-8, or a missing final
+    // newline.
+    let raw_lines: Vec<&[u8]> = source_bytes
+        .split_inclusive(|byte| *byte == b'\n')
+        .collect();
     let n = file_lines.len();
-    let show = |a: usize, b: usize| {
+    let show = |a: usize, b: usize| -> Result<()> {
         if raw {
-            print_range_raw(&raw_lines, a, b)
+            print_range_raw(&raw_lines, a, b)?;
         } else {
             print_range(&file_lines, a, b)
         }
+        Ok(())
     };
 
     // Verbatim line range.
     if let Some(spec) = lines {
         let (a, b) = parse_range(spec)?;
-        show(a, b);
+        show(a, b)?;
         return Ok(());
     }
 
@@ -2815,7 +2821,7 @@ pub fn cmd_read(
             ));
         }
         for (a, b) in &ranges {
-            show(*a as usize, *b as usize);
+            show(*a as usize, *b as usize)?;
             if !raw {
                 println!(); // blank between/after defs, as the folded view does
             }
@@ -2825,7 +2831,7 @@ pub fn cmd_read(
 
     // Whole file when asked, or when we can't parse it to know what to fold.
     if full || raw || !crate::facts::has_spans(language_for(&rel).unwrap_or("")) {
-        show(1, n);
+        show(1, n)?;
         return Ok(());
     }
 
@@ -2901,12 +2907,15 @@ fn print_range(lines: &[&str], a: usize, b: usize) {
 
 /// Verbatim lines with no line-number prefix — exact source, ready to drop into
 /// an editor's search text (the `--raw` view).
-fn print_range_raw(lines: &[&str], a: usize, b: usize) {
+fn print_range_raw(lines: &[&[u8]], a: usize, b: usize) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
     for i in a.max(1)..=b {
         if let Some(l) = lines.get(i - 1) {
-            print!("{l}");
+            stdout.write_all(l)?;
         }
     }
+    Ok(())
 }
 
 fn print_folded(lines: &[&str], folded: &[bool]) {

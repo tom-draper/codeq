@@ -8,9 +8,10 @@ here is a feature request or a bug report.
 
 Exploring `cmd_read` and its raw-line printer showed that it used `str::lines()`
 then `println!`, so a raw read normalized CRLF to LF and appended a newline to
-files that had no final newline. That broke the documented byte-exact workflow
-for copying source into an editor. Raw mode now prints newline-inclusive line
-slices; a regression covers CRLF and a missing final newline.
+files that had no final newline. A follow-up probe with invalid UTF-8 showed
+that decoding through `String::from_utf8_lossy` also replaced source bytes with
+U+FFFD. Raw mode now writes newline-inclusive byte slices; regressions cover
+CRLF, a missing final newline, and invalid UTF-8.
 
 ## 2026-09-24 — Pure deletions vanished from changed-symbol and impact reports
 

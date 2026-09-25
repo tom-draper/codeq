@@ -5510,6 +5510,10 @@ fn read_raw_preserves_line_endings_and_missing_final_newline() {
 
     let first_line = f.raw(&["read", "a.rs", "--lines", "1-1", "--raw"]);
     assert_eq!(first_line.stdout, b"fn one() {}\r\n");
+
+    f.write_bytes("invalid.rs", b"// invalid: \xff\nfn exact() {}\n");
+    let invalid_utf8 = f.raw(&["read", "invalid.rs", "--raw"]);
+    assert_eq!(invalid_utf8.stdout, b"// invalid: \xff\nfn exact() {}\n");
 }
 
 #[test]
