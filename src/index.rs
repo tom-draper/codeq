@@ -5,7 +5,7 @@
 //! how many files it had to touch. A no-op refresh on an unchanged tree writes
 //! nothing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
@@ -139,6 +139,21 @@ fn parse_one(
     })
 }
 
+/// A file the walk found changed (or new): relative path, absolute path, then
+/// size, mtime and ctime.
+type WorkItem = (String, PathBuf, i64, i64, i64);
+
+/// What the serial directory walk saw.
+struct Walked {
+    /// Every file path present in the tree, to spot the ones that vanished.
+    seen: HashSet<String>,
+    /// Every walked directory's mtime, for the freshness cache.
+    dirs_seen: HashMap<String, i64>,
+    /// Files whose stat differs from the index, so need (re)processing.
+    work: Vec<WorkItem>,
+    partial_failures: u64,
+}
+
 /// Bring the index in line with the working tree. Returns how many files were
 /// (re)parsed. Incremental: unchanged files (same size + mtime + ctime) are skipped
 /// without hashing. For git repos, a matching freshness token skips the walk
@@ -164,39 +179,85 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
     // Not fresh: load the full manifest (with hashes, to tell a real content
     // change from a mere mtime bump) and walk the tree to reconcile.
-    let mut existing: HashMap<String, Stored> = HashMap::new();
-    {
-        let mut stmt = db
-            .conn
-            .prepare("SELECT path, size_bytes, mtime_ns, ctime_ns, content_hash, parse_errors, parse_recovered FROM files")?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                Stored {
-                    size: r.get::<_, i64>(1)?,
-                    mtime_ns: r.get::<_, i64>(2).unwrap_or(0),
-                    ctime_ns: r.get::<_, i64>(3).unwrap_or(0),
-                    hash: r.get::<_, Option<String>>(4)?,
-                    parse_errors: r.get::<_, Option<i64>>(5)?,
-                    parse_recovered: r.get::<_, bool>(6).unwrap_or(false),
-                },
-            ))
-        })?;
-        for row in rows {
-            let (path, stored) = row?;
-            existing.insert(path, stored);
-        }
-    }
+    let existing = load_manifest(db)?;
+    let now = now_ns();
+    let Walked {
+        seen,
+        dirs_seen,
+        work,
+        mut partial_failures,
+    } = walk_tree(repo, &existing);
 
-    let mut seen: HashMap<String, ()> = HashMap::new();
+    // BEGIN IMMEDIATE, not the default DEFERRED. A deferred transaction takes its
+    // write lock lazily, on the first write — and SQLite refuses to make a reader
+    // wait for that upgrade, returning SQLITE_BUSY *immediately* and bypassing the
+    // busy timeout entirely, because two readers both upgrading would deadlock.
+    // Taking the write lock up front is what lets the busy handler do its job, so
+    // concurrent refreshes queue instead of failing.
+    let tx = rusqlite::Transaction::new_unchecked(
+        &db.conn,
+        rusqlite::TransactionBehavior::Immediate,
+    )?;
+    // Whoever held the lock may have just done exactly this work: several agent
+    // invocations noticing the same edit at once all decide to refresh, then
+    // queue here. Re-check now that the lock is ours, and skip the parse and the
+    // writes rather than redo them. Dropping `tx` unwritten rolls back cleanly.
+    if is_fresh(db, repo_root)? {
+        return Ok(RefreshStats {
+            reindexed: 0,
+            partial_failures,
+        });
+    }
+    let parse_failures = AtomicU64::new(0);
+    let reindexed = parse_and_write(&tx, &work, &existing, now, &parse_failures)?;
+    partial_failures += parse_failures.load(Ordering::Relaxed);
+
+    drop_vanished(&tx, &existing, &seen)?;
+    replace_dirs(&tx, &dirs_seen)?;
+
+    tx.commit()?;
+    db.set_meta("last_indexed_at", &now_ns().to_string())?;
+    Ok(RefreshStats {
+        reindexed,
+        partial_failures,
+    })
+}
+
+/// Every file row the index already holds, keyed by path.
+fn load_manifest(db: &Db) -> Result<HashMap<String, Stored>> {
+    let mut existing: HashMap<String, Stored> = HashMap::new();
+    let mut stmt = db
+        .conn
+        .prepare("SELECT path, size_bytes, mtime_ns, ctime_ns, content_hash, parse_errors, parse_recovered FROM files")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            Stored {
+                size: r.get::<_, i64>(1)?,
+                mtime_ns: r.get::<_, i64>(2).unwrap_or(0),
+                ctime_ns: r.get::<_, i64>(3).unwrap_or(0),
+                hash: r.get::<_, Option<String>>(4)?,
+                parse_errors: r.get::<_, Option<i64>>(5)?,
+                parse_recovered: r.get::<_, bool>(6).unwrap_or(false),
+            },
+        ))
+    })?;
+    for row in rows {
+        let (path, stored) = row?;
+        existing.insert(path, stored);
+    }
+    Ok(existing)
+}
+
+/// Serial walk (stat-bound): record directory mtimes for the freshness cache,
+/// build the `seen` set, and collect the files that actually need
+/// (re)processing — unchanged files short-circuit on the stat fast path.
+fn walk_tree(repo: &Repo, existing: &HashMap<String, Stored>) -> Walked {
+    let repo_root = repo.root.as_path();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut dirs_seen: HashMap<String, i64> = HashMap::new();
     let mut partial_failures: u64 = 0;
-
-    // Serial walk (stat-bound): record directory mtimes for the freshness cache,
-    // build the `seen` set, and collect the files that actually need
-    // (re)processing — unchanged files short-circuit on the stat fast path.
-    let now = now_ns();
-    let mut work: Vec<(String, PathBuf, i64, i64, i64)> = Vec::new();
+    let mut work: Vec<WorkItem> = Vec::new();
     let mut wb = WalkBuilder::new(repo_root);
     wb.standard_filters(true); // .gitignore, .ignore, hidden, parents
     // `parents(false)` when the root was pinned with --root: a dependency
@@ -263,7 +324,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
             .unwrap_or(0);
         let ctime_ns = ctime_ns_of(&meta);
 
-        seen.insert(rel.clone(), ());
+        seen.insert(rel.clone());
 
         // Fast path: size + mtime + ctime unchanged => trust the stored hash, no
         // read. ctime is what makes this safe: mtime alone can be restored after
@@ -275,83 +336,104 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
         }
         work.push((rel, abs.to_path_buf(), size, mtime_ns, ctime_ns));
     }
-
-    // Parse the changed files in parallel (read + hash + tree-sitter extraction
-    // is the CPU cost) and write the results serially on this thread — the
-    // transaction never crosses threads, so index content stays deterministic
-    // regardless of which worker finished first. A bounded channel bounds the
-    // parsed bodies held in flight.
-    // BEGIN IMMEDIATE, not the default DEFERRED. A deferred transaction takes its
-    // write lock lazily, on the first write — and SQLite refuses to make a reader
-    // wait for that upgrade, returning SQLITE_BUSY *immediately* and bypassing the
-    // busy timeout entirely, because two readers both upgrading would deadlock.
-    // Taking the write lock up front is what lets the busy handler do its job, so
-    // concurrent refreshes queue instead of failing.
-    let tx = rusqlite::Transaction::new_unchecked(
-        &db.conn,
-        rusqlite::TransactionBehavior::Immediate,
-    )?;
-    // Whoever held the lock may have just done exactly this work: several agent
-    // invocations noticing the same edit at once all decide to refresh, then
-    // queue here. Re-check now that the lock is ours, and skip the parse and the
-    // writes rather than redo them. Dropping `tx` unwritten rolls back cleanly.
-    if is_fresh(db, repo_root)? {
-        return Ok(RefreshStats {
-            reindexed: 0,
-            partial_failures,
-        });
+    Walked {
+        seen,
+        dirs_seen,
+        work,
+        partial_failures,
     }
+}
+
+/// Parse the changed files in parallel (read + hash + tree-sitter extraction
+/// is the CPU cost) and write the results serially on this thread — the
+/// transaction never crosses threads, so index content stays deterministic
+/// regardless of which worker finished first. A bounded channel bounds the
+/// parsed bodies held in flight. Returns how many files had their content
+/// rewritten; files that failed to parse are counted in `parse_failures`.
+fn parse_and_write(
+    tx: &rusqlite::Transaction,
+    work: &[WorkItem],
+    existing: &HashMap<String, Stored>,
+    now: i64,
+    parse_failures: &AtomicU64,
+) -> Result<u64> {
     // Worker-local extractors keep their parsers thread-confined. Do not build a
     // separate validation extractor here: constructing one compiles every
     // language's three queries, then the workers immediately compile the same
     // set again. A malformed query is still fatal in the worker below, before it
     // can write partial index content.
-    let parse_failures = AtomicU64::new(0);
-    let reindexed = {
-        let workers = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .clamp(1, 8);
-        let chunk = work.len().div_ceil(workers).max(1);
-        let (res_tx, res_rx) = std::sync::mpsc::sync_channel::<Parsed>(256);
-        std::thread::scope(|scope| -> Result<u64> {
-            for c in work.chunks(chunk) {
-                let sender = res_tx.clone();
-                let existing = &existing;
-                let failures = &parse_failures;
-                scope.spawn(move || {
-                    // Building the extractor compiles every language's queries, so
-                    // it fails only when one of them is malformed — a programming
-                    // error, identical for every worker and every file. Returning
-                    // quietly meant the workers sent nothing, the writer stored
-                    // nothing, and the whole index came back *empty and reporting
-                    // itself fresh*: a broken query in one language silently
-                    // zeroed all 28. Make it loud.
-                    let mut ex = match Extractor::new() {
-                        Ok(e) => e,
-                        Err(e) => {
-                            eprintln!("codeq: fact extraction unavailable: {e:#}");
-                            std::process::exit(1);
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 8);
+    let chunk = work.len().div_ceil(workers).max(1);
+    let (res_tx, res_rx) = std::sync::mpsc::sync_channel::<Parsed>(256);
+    std::thread::scope(|scope| -> Result<u64> {
+        for c in work.chunks(chunk) {
+            let sender = res_tx.clone();
+            scope.spawn(move || {
+                // Building the extractor compiles every language's queries, so
+                // it fails only when one of them is malformed — a programming
+                // error, identical for every worker and every file. Returning
+                // quietly meant the workers sent nothing, the writer stored
+                // nothing, and the whole index came back *empty and reporting
+                // itself fresh*: a broken query in one language silently
+                // zeroed all 28. Make it loud.
+                let mut ex = match Extractor::new() {
+                    Ok(e) => e,
+                    Err(e) => {
+                        eprintln!("codeq: fact extraction unavailable: {e:#}");
+                        std::process::exit(1);
+                    }
+                };
+                for (rel, abs, size, mtime, ctime) in c {
+                    match parse_one(existing, &mut ex, rel, abs, *size, *mtime, *ctime) {
+                        Some(p) => {
+                            if sender.send(p).is_err() {
+                                return; // writer went away (error) — stop
+                            }
                         }
-                    };
-                    for (rel, abs, size, mtime, ctime) in c {
-                        match parse_one(existing, &mut ex, rel, abs, *size, *mtime, *ctime) {
-                            Some(p) => {
-                                if sender.send(p).is_err() {
-                                    return; // writer went away (error) — stop
-                                }
-                            }
-                            None => {
-                                failures.fetch_add(1, Ordering::Relaxed);
-                            }
+                        None => {
+                            parse_failures.fetch_add(1, Ordering::Relaxed);
                         }
                     }
-                });
-            }
-            drop(res_tx); // close the channel once every worker's clone is gone
+                }
+            });
+        }
+        drop(res_tx); // close the channel once every worker's clone is gone
 
-            // Serial writer: owns the transaction and its prepared statements.
-            let mut upsert = tx.prepare(
+        let mut writer = RowWriter::new(tx, now)?;
+        let mut reindexed: u64 = 0;
+        for p in res_rx {
+            if writer.write(&p)? {
+                reindexed += 1;
+            }
+        }
+        Ok(reindexed)
+    })
+}
+
+/// The serial writer: owns the prepared statements that store one parsed file.
+struct RowWriter<'tx> {
+    now: i64,
+    upsert: rusqlite::Statement<'tx>,
+    del_facts: rusqlite::Statement<'tx>,
+    ins_fact: rusqlite::Statement<'tx>,
+    del_fts: rusqlite::Statement<'tx>,
+    ins_fts: rusqlite::Statement<'tx>,
+    del_spans: rusqlite::Statement<'tx>,
+    ins_span: rusqlite::Statement<'tx>,
+    del_impls: rusqlite::Statement<'tx>,
+    ins_impl: rusqlite::Statement<'tx>,
+    del_calls: rusqlite::Statement<'tx>,
+    ins_call: rusqlite::Statement<'tx>,
+}
+
+impl<'tx> RowWriter<'tx> {
+    fn new(tx: &'tx rusqlite::Transaction, now: i64) -> Result<Self> {
+        Ok(RowWriter {
+            now,
+            upsert: tx.prepare(
                 "INSERT INTO files(path, language, size_bytes, mtime_ns, ctime_ns, content_hash, indexed_at, parse_errors, parse_recovered)
                  VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(path) DO UPDATE SET
@@ -363,153 +445,147 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
                     indexed_at = excluded.indexed_at,
                     parse_errors = excluded.parse_errors,
                     parse_recovered = excluded.parse_recovered",
-            )?;
-            let mut del_facts = tx.prepare("DELETE FROM facts WHERE path = ?1")?;
-            let mut ins_fact = tx.prepare(
+            )?,
+            del_facts: tx.prepare("DELETE FROM facts WHERE path = ?1")?,
+            ins_fact: tx.prepare(
                 "INSERT OR REPLACE INTO facts(
                     id, kind, is_derived, name, path, language,
                     start_byte, end_byte, start_line, start_col, end_line, end_col,
                     signature, doc, source, confidence, visibility, owner, shape, shape_nodes,
                     is_test, decorator, contract)
                  VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
-            )?;
-            let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
-            let mut ins_fts =
-                tx.prepare("INSERT INTO content_fts(path, language, body) VALUES(?1, ?2, ?3)")?;
-            let mut del_spans = tx.prepare("DELETE FROM spans WHERE path = ?1")?;
-            let mut ins_span = tx.prepare(
+            )?,
+            del_fts: tx.prepare("DELETE FROM content_fts WHERE path = ?1")?,
+            ins_fts: tx
+                .prepare("INSERT INTO content_fts(path, language, body) VALUES(?1, ?2, ?3)")?,
+            del_spans: tx.prepare("DELETE FROM spans WHERE path = ?1")?,
+            ins_span: tx.prepare(
                 "INSERT INTO spans(path, start_byte, end_byte, kind) VALUES(?1, ?2, ?3, ?4)",
-            )?;
-            let mut del_impls = tx.prepare("DELETE FROM impls WHERE path = ?1")?;
-            let mut ins_impl = tx.prepare(
+            )?,
+            del_impls: tx.prepare("DELETE FROM impls WHERE path = ?1")?,
+            ins_impl: tx.prepare(
                 "INSERT INTO impls(path, line, subtype, supertype, relation, language)
                  VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-            )?;
-            let mut del_calls = tx.prepare("DELETE FROM calls WHERE path = ?1")?;
-            let mut ins_call = tx.prepare(
+            )?,
+            del_calls: tx.prepare("DELETE FROM calls WHERE path = ?1")?,
+            ins_call: tx.prepare(
                 "INSERT INTO calls(path, start_byte, name, receiver) VALUES(?1, ?2, ?3, ?4)",
-            )?;
+            )?,
+        })
+    }
 
-            let mut reindexed: u64 = 0;
-            for p in res_rx {
-                upsert.execute((&p.rel, p.language, p.size, p.mtime_ns, p.ctime_ns, &p.hash, now, p.parse_errors, p.parse_recovered))?;
-                if !p.content_changed {
-                    continue;
-                }
-                reindexed += 1;
-                // Only a previously-indexed file has stale rows to drop; a new file
-                // (every file on a cold index) has none, and `DELETE FROM
-                // content_fts WHERE path=?` scans the UNINDEXED-path FTS table, so
-                // skipping it for new files is what keeps cold indexing linear.
-                if p.was_indexed {
-                    del_fts.execute([&p.rel])?;
-                    del_facts.execute([&p.rel])?;
-                    del_spans.execute([&p.rel])?;
-                    del_impls.execute([&p.rel])?;
-                    del_calls.execute([&p.rel])?;
-                }
-                if let Some(body) = &p.body {
-                    // Every indexed file's body goes in, whatever its size. A cap
-                    // was tried and reverted: it made a data-heavy repo's index
-                    // 200x smaller, and it also made `search` stop being a strict
-                    // superset of ripgrep — the differential harness caught 20,000
-                    // lines of a 6.6 MB test fixture that `rg` finds and codeq no
-                    // longer would. That guarantee is the loudest thing this tool
-                    // claims, and no size threshold separates "somebody's test
-                    // fixture" from "committed geodata" on principle rather than
-                    // by fitting two data points. `.codeqignore` is the answer,
-                    // and `index` now says when it is worth writing one.
-                    ins_fts.execute((&p.rel, p.language, body.as_str()))?;
-                }
-                if let Some(lang) = p.language {
-                    for f in &p.facts {
-                        // `params!` rather than a tuple: rusqlite only implements
-                        // `Params` for tuples up to 16, and this is 22 columns.
-                        ins_fact.execute(rusqlite::params![
-                            f.id(&p.rel),
-                            &f.kind,
-                            f.is_derived,
-                            &f.name,
-                            &p.rel,
-                            lang,
-                            f.start_byte as i64,
-                            f.end_byte as i64,
-                            f.start_line as i64,
-                            f.start_col as i64,
-                            f.end_line as i64,
-                            f.end_col as i64,
-                            &f.signature,
-                            &f.doc,
-                            &f.source,
-                            f.confidence,
-                            &f.visibility,
-                            &f.owner,
-                            &f.shape,
-                            f.shape_nodes,
-                            f.is_test,
-                            &f.decorator,
-                            f.contract.as_deref(),
-                        ])?;
-                    }
-                    for (sb, eb, sp) in &p.spans {
-                        ins_span.execute((&p.rel, *sb as i64, *eb as i64, sp.as_i64()))?;
-                    }
-                    for r in &p.relations {
-                        ins_impl.execute((
-                            &p.rel,
-                            r.start_line as i64,
-                            &r.subtype,
-                            &r.supertype,
-                            r.relation,
-                            lang,
-                        ))?;
-                    }
-                    for call in &p.calls {
-                        ins_call.execute((
-                            &p.rel,
-                            call.start_byte as i64,
-                            &call.name,
-                            &call.receiver,
-                        ))?;
-                    }
-                }
+    /// Store one parsed file. Returns whether its content was rewritten (false
+    /// when only the stat columns changed).
+    fn write(&mut self, p: &Parsed) -> Result<bool> {
+        self.upsert.execute((&p.rel, p.language, p.size, p.mtime_ns, p.ctime_ns, &p.hash, self.now, p.parse_errors, p.parse_recovered))?;
+        if !p.content_changed {
+            return Ok(false);
+        }
+        // Only a previously-indexed file has stale rows to drop; a new file
+        // (every file on a cold index) has none, and `DELETE FROM
+        // content_fts WHERE path=?` scans the UNINDEXED-path FTS table, so
+        // skipping it for new files is what keeps cold indexing linear.
+        if p.was_indexed {
+            self.del_fts.execute([&p.rel])?;
+            self.del_facts.execute([&p.rel])?;
+            self.del_spans.execute([&p.rel])?;
+            self.del_impls.execute([&p.rel])?;
+            self.del_calls.execute([&p.rel])?;
+        }
+        if let Some(body) = &p.body {
+            // Every indexed file's body goes in, whatever its size. A cap
+            // was tried and reverted: it made a data-heavy repo's index
+            // 200x smaller, and it also made `search` stop being a strict
+            // superset of ripgrep — the differential harness caught 20,000
+            // lines of a 6.6 MB test fixture that `rg` finds and codeq no
+            // longer would. That guarantee is the loudest thing this tool
+            // claims, and no size threshold separates "somebody's test
+            // fixture" from "committed geodata" on principle rather than
+            // by fitting two data points. `.codeqignore` is the answer,
+            // and `index` now says when it is worth writing one.
+            self.ins_fts.execute((&p.rel, p.language, body.as_str()))?;
+        }
+        if let Some(lang) = p.language {
+            for f in &p.facts {
+                // `params!` rather than a tuple: rusqlite only implements
+                // `Params` for tuples up to 16, and this is 22 columns.
+                self.ins_fact.execute(rusqlite::params![
+                    f.id(&p.rel),
+                    &f.kind,
+                    f.is_derived,
+                    &f.name,
+                    &p.rel,
+                    lang,
+                    f.start_byte as i64,
+                    f.end_byte as i64,
+                    f.start_line as i64,
+                    f.start_col as i64,
+                    f.end_line as i64,
+                    f.end_col as i64,
+                    &f.signature,
+                    &f.doc,
+                    &f.source,
+                    f.confidence,
+                    &f.visibility,
+                    &f.owner,
+                    &f.shape,
+                    f.shape_nodes,
+                    f.is_test,
+                    &f.decorator,
+                    f.contract.as_deref(),
+                ])?;
             }
-            Ok(reindexed)
-        })?
-    };
-    partial_failures += parse_failures.load(Ordering::Relaxed);
-
-    // Drop files that vanished from the tree.
-    {
-        let mut del = tx.prepare("DELETE FROM files WHERE path = ?1")?;
-        // FTS is not FK-linked to files, so remove it explicitly.
-        let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
-        let gone: Vec<String> = existing
-            .keys()
-            .filter(|p| !seen.contains_key(*p))
-            .cloned()
-            .collect();
-        for p in gone {
-            del.execute([&p])?;
-            del_fts.execute([&p])?;
+            for (sb, eb, sp) in &p.spans {
+                self.ins_span.execute((&p.rel, *sb as i64, *eb as i64, sp.as_i64()))?;
+            }
+            for r in &p.relations {
+                self.ins_impl.execute((
+                    &p.rel,
+                    r.start_line as i64,
+                    &r.subtype,
+                    &r.supertype,
+                    r.relation,
+                    lang,
+                ))?;
+            }
+            for call in &p.calls {
+                self.ins_call.execute((
+                    &p.rel,
+                    call.start_byte as i64,
+                    &call.name,
+                    &call.receiver,
+                ))?;
+            }
         }
+        Ok(true)
     }
+}
 
-    // Replace the directory-mtime cache with the tree we just walked.
-    {
-        tx.execute("DELETE FROM dirs", [])?;
-        let mut ins_dir = tx.prepare("INSERT INTO dirs(path, mtime_ns) VALUES(?1, ?2)")?;
-        for (p, m) in &dirs_seen {
-            ins_dir.execute((p, m))?;
-        }
+/// Drop files that vanished from the tree.
+fn drop_vanished(
+    tx: &rusqlite::Transaction,
+    existing: &HashMap<String, Stored>,
+    seen: &HashSet<String>,
+) -> Result<()> {
+    let mut del = tx.prepare("DELETE FROM files WHERE path = ?1")?;
+    // FTS is not FK-linked to files, so remove it explicitly.
+    let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
+    let gone: Vec<&String> = existing.keys().filter(|p| !seen.contains(*p)).collect();
+    for p in gone {
+        del.execute([p])?;
+        del_fts.execute([p])?;
     }
+    Ok(())
+}
 
-    tx.commit()?;
-    db.set_meta("last_indexed_at", &now_ns().to_string())?;
-    Ok(RefreshStats {
-        reindexed,
-        partial_failures,
-    })
+/// Replace the directory-mtime cache with the tree we just walked.
+fn replace_dirs(tx: &rusqlite::Transaction, dirs_seen: &HashMap<String, i64>) -> Result<()> {
+    tx.execute("DELETE FROM dirs", [])?;
+    let mut ins_dir = tx.prepare("INSERT INTO dirs(path, mtime_ns) VALUES(?1, ?2)")?;
+    for (p, m) in dirs_seen {
+        ins_dir.execute((p, m))?;
+    }
+    Ok(())
 }
 
 /// Whether the index is fresh, checked against codeq's own cache without a walk:
