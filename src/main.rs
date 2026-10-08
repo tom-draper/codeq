@@ -21,7 +21,7 @@ mod mcp;
 mod repo;
 mod search;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -856,18 +856,30 @@ fn main() -> ExitCode {
         max_per_file: cli.max_per_file,
     };
 
-    let result = match cli.command {
-        Command::Index { rebuild } => commands::cmd_index(&cwd, rebuild, out),
+    match dispatch(&cwd, cli.command, out) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("codeq: {e:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Run one subcommand: unpack its clap arguments and hand them to the
+/// matching `commands::cmd_*`.
+fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<()> {
+    match command {
+        Command::Index { rebuild } => commands::cmd_index(cwd, rebuild, out),
         Command::Files {
             pattern,
             language,
             limit,
-        } => commands::cmd_files(&cwd, pattern.as_deref(), language.as_deref(), limit, out),
+        } => commands::cmd_files(cwd, pattern.as_deref(), language.as_deref(), limit, out),
         Command::Changed {
             compare_to,
             symbols,
             limit,
-        } => commands::cmd_changed(&cwd, &compare_to, symbols, limit, out),
+        } => commands::cmd_changed(cwd, &compare_to, symbols, limit, out),
         Command::Clones {
             path,
             kind,
@@ -875,7 +887,7 @@ fn main() -> ExitCode {
             include_tests,
             limit,
         } => commands::cmd_clones(
-            &cwd,
+            cwd,
             path.as_deref(),
             kind.as_deref(),
             min_nodes,
@@ -887,7 +899,7 @@ fn main() -> ExitCode {
             compare_to,
             depth,
             limit,
-        } => commands::cmd_affected(&cwd, &compare_to, depth, limit, out),
+        } => commands::cmd_affected(cwd, &compare_to, depth, limit, out),
         Command::Symbols {
             pattern,
             kind,
@@ -897,7 +909,7 @@ fn main() -> ExitCode {
             signatures,
             limit,
         } => commands::cmd_symbols(
-            &cwd,
+            cwd,
             pattern.as_deref(),
             kind.as_deref(),
             owner.as_deref(),
@@ -907,19 +919,19 @@ fn main() -> ExitCode {
             limit,
             out,
         ),
-        Command::Outline { file, docs } => commands::cmd_outline(&cwd, &file, docs, out),
+        Command::Outline { file, docs } => commands::cmd_outline(cwd, &file, docs, out),
         Command::Definitions {
             symbol,
             path,
             limit,
-        } => commands::cmd_definitions(&cwd, &symbol, path.as_deref(), limit, out),
+        } => commands::cmd_definitions(cwd, &symbol, path.as_deref(), limit, out),
         Command::Api {
             path,
             kind,
             compare_to,
             limit,
         } => commands::cmd_api(
-            &cwd,
+            cwd,
             path.as_deref(),
             kind.as_deref(),
             compare_to.as_deref(),
@@ -936,7 +948,7 @@ fn main() -> ExitCode {
             examples,
             limit,
         } => commands::cmd_callers(
-            &cwd,
+            cwd,
             &name,
             path.as_deref(),
             depth,
@@ -955,7 +967,7 @@ fn main() -> ExitCode {
             examples,
             limit,
         } => commands::cmd_callees(
-            &cwd,
+            cwd,
             &name,
             path.as_deref(),
             depth,
@@ -969,12 +981,12 @@ fn main() -> ExitCode {
             to,
             max_depth,
             path,
-        } => commands::cmd_callpath(&cwd, &from, &to, max_depth, path.as_deref(), out),
+        } => commands::cmd_callpath(cwd, &from, &to, max_depth, path.as_deref(), out),
         Command::About {
             name,
             path,
             resolved,
-        } => commands::cmd_about(&cwd, &name, path.as_deref(), resolved, out),
+        } => commands::cmd_about(cwd, &name, path.as_deref(), resolved, out),
         Command::Explore {
             name,
             at,
@@ -982,7 +994,7 @@ fn main() -> ExitCode {
             resolved,
             max_tokens,
         } => commands::cmd_explore(
-            &cwd,
+            cwd,
             name.as_deref(),
             at.as_deref(),
             path.as_deref(),
@@ -999,7 +1011,7 @@ fn main() -> ExitCode {
             calls,
             on,
         } => commands::cmd_references(
-            &cwd,
+            cwd,
             &name,
             path.as_deref(),
             language.as_deref(),
@@ -1014,34 +1026,22 @@ fn main() -> ExitCode {
             relation,
             path,
             limit,
-        } => commands::cmd_implementors(
-            &cwd,
-            &name,
-            relation.as_deref(),
-            path.as_deref(),
-            limit,
-            out,
-        ),
+        } => {
+            commands::cmd_implementors(cwd, &name, relation.as_deref(), path.as_deref(), limit, out)
+        }
         Command::Supertypes {
             name,
             relation,
             path,
             limit,
-        } => commands::cmd_supertypes(
-            &cwd,
-            &name,
-            relation.as_deref(),
-            path.as_deref(),
-            limit,
-            out,
-        ),
+        } => commands::cmd_supertypes(cwd, &name, relation.as_deref(), path.as_deref(), limit, out),
         Command::Unused {
             path,
             kind,
             include_tests,
             limit,
         } => commands::cmd_unused(
-            &cwd,
+            cwd,
             path.as_deref(),
             kind.as_deref(),
             include_tests,
@@ -1052,7 +1052,7 @@ fn main() -> ExitCode {
             path,
             include_tests,
             limit,
-        } => commands::cmd_entrypoints(&cwd, path.as_deref(), include_tests, limit, out),
+        } => commands::cmd_entrypoints(cwd, path.as_deref(), include_tests, limit, out),
         Command::Tree {
             path,
             language,
@@ -1061,7 +1061,7 @@ fn main() -> ExitCode {
             files,
             limit,
         } => commands::cmd_tree(
-            &cwd,
+            cwd,
             path.as_deref(),
             language.as_deref(),
             depth,
@@ -1078,7 +1078,7 @@ fn main() -> ExitCode {
             min_refs,
             limit,
         } => commands::cmd_hotspots(
-            &cwd,
+            cwd,
             path.as_deref(),
             kind.as_deref(),
             language.as_deref(),
@@ -1088,9 +1088,9 @@ fn main() -> ExitCode {
             out,
         ),
         Command::Tests { name, path, limit } => {
-            commands::cmd_tests(&cwd, &name, path.as_deref(), limit, out)
+            commands::cmd_tests(cwd, &name, path.as_deref(), limit, out)
         }
-        Command::At { location } => commands::cmd_at(&cwd, &location, out),
+        Command::At { location } => commands::cmd_at(cwd, &location, out),
         Command::Read {
             file,
             lines,
@@ -1098,7 +1098,7 @@ fn main() -> ExitCode {
             full,
             raw,
         } => commands::cmd_read(
-            &cwd,
+            cwd,
             &file,
             lines.as_deref(),
             symbol.as_deref(),
@@ -1106,16 +1106,14 @@ fn main() -> ExitCode {
             raw,
             out,
         ),
-        Command::Imports { path, limit } => {
-            commands::cmd_imports(&cwd, path.as_deref(), limit, out)
-        }
-        Command::Importers { query, limit } => commands::cmd_importers(&cwd, &query, limit, out),
+        Command::Imports { path, limit } => commands::cmd_imports(cwd, path.as_deref(), limit, out),
+        Command::Importers { query, limit } => commands::cmd_importers(cwd, &query, limit, out),
         Command::Deps {
             file,
             depth,
             cycles,
             external,
-        } => commands::cmd_deps(&cwd, file.as_deref(), depth, cycles, external, out),
+        } => commands::cmd_deps(cwd, file.as_deref(), depth, cycles, external, out),
         Command::Astgrep {
             pattern,
             language,
@@ -1123,10 +1121,10 @@ fn main() -> ExitCode {
             limit,
             explain,
         } => match explain {
-            Some(loc) => commands::cmd_astgrep_explain(&cwd, &loc, out),
+            Some(loc) => commands::cmd_astgrep_explain(cwd, &loc, out),
             // clap's `required_unless_present` guarantees both are set here.
             None => commands::cmd_astgrep(
-                &cwd,
+                cwd,
                 &pattern.unwrap_or_default(),
                 &language.unwrap_or_default(),
                 path,
@@ -1152,7 +1150,7 @@ fn main() -> ExitCode {
             limit,
             stdin,
         } => commands::cmd_search(
-            &cwd,
+            cwd,
             commands::SearchArgs {
                 pattern: &pattern,
                 paths: &paths,
@@ -1183,7 +1181,7 @@ fn main() -> ExitCode {
             no_text,
             plan,
         } => commands::cmd_context(
-            &cwd,
+            cwd,
             context::Request {
                 symbols,
                 changed,
@@ -1202,9 +1200,9 @@ fn main() -> ExitCode {
             path,
             kind,
             limit,
-        } => commands::cmd_members(&cwd, &name, path.as_deref(), kind.as_deref(), limit, out),
+        } => commands::cmd_members(cwd, &name, path.as_deref(), kind.as_deref(), limit, out),
         Command::Untested { path, kind, limit } => {
-            commands::cmd_untested(&cwd, path.as_deref(), kind.as_deref(), limit, out)
+            commands::cmd_untested(cwd, path.as_deref(), kind.as_deref(), limit, out)
         }
         Command::Graph {
             relation,
@@ -1213,7 +1211,7 @@ fn main() -> ExitCode {
             mermaid,
             limit,
         } => commands::cmd_graph(
-            &cwd,
+            cwd,
             relation.as_deref(),
             path.as_deref(),
             language.as_deref(),
@@ -1221,7 +1219,7 @@ fn main() -> ExitCode {
             limit,
             out,
         ),
-        Command::Map { limit, totals } => commands::cmd_map(&cwd, limit, totals, out),
+        Command::Map { limit, totals } => commands::cmd_map(cwd, limit, totals, out),
         Command::Capabilities {} => {
             // Ask clap what subcommands exist instead of keeping a second list in
             // sync by hand — the hand-written one had silently gone stale.
@@ -1241,13 +1239,5 @@ fn main() -> ExitCode {
             agent,
             no_skill,
         } => commands::cmd_install(dry_run, uninstall, agent.as_deref(), no_skill, out),
-    };
-
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("codeq: {e:#}");
-            ExitCode::FAILURE
-        }
     }
 }

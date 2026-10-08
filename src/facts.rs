@@ -2460,7 +2460,6 @@ fn cap(s: &str, max: usize) -> String {
 /// Each pattern binds `@name` (the identifier), one `@<kind>` capture on the
 /// whole definition node, and optionally `@body` (stripped from signatures).
 
-
 /// JavaScript definitions and ES imports. Node types here also exist in the
 /// TypeScript grammar, so this compiles against JS, TS, and TSX. `name: (_)`
 /// avoids depending on grammar-specific identifier node types.
@@ -2475,9 +2474,7 @@ fn cap(s: &str, max: usize) -> String {
 
 /// Go definitions and imports.
 
-
 /// Java definitions and imports.
-
 
 /// Ruby definitions and `require`/`require_relative` imports. Ruby has no import
 /// statement — `require "x"` is a plain method call — so imports are captured as
@@ -2485,19 +2482,14 @@ fn cap(s: &str, max: usize) -> String {
 /// Ruby method/class bodies aren't a strippable field here, so signatures are
 /// the whole declaration, capped.
 
-
 /// C definitions and #include directives. Declarator nesting means some forms
 /// (e.g. pointer-returning functions) need their own pattern.
 
-
 /// C++ (a superset of C): add classes, namespaces, and member functions.
-
 
 /// C#.
 
-
 /// PHP (the `<?php` variant).
-
 
 /// Syntactic class of a byte position, for `search --in`. Extracted at index
 /// time and stored in the `spans` table, so `search --in` is a lookup, not a
@@ -2525,27 +2517,15 @@ impl Span {
     }
 }
 
-
-
-
 // ---------------------------------------------------------------------------
 // Type-relation queries: `@sub` is the implementing/deriving type, `@implements`
 // / `@extends` the trait/interface/base. Go (structural typing) and C (no
 // inheritance) have none. Grammar-specific; kept minimal and verified by tests.
 // ---------------------------------------------------------------------------
 
-
-
-
-
 const GO_REL: &str = "";
 
-
-
 const C_REL: &str = "";
-
-
-
 
 // Bash: functions only (source/. includes are plain commands, not captured).
 
@@ -2554,24 +2534,19 @@ const C_REL: &str = "";
 
 // Scala: defs, classes/objects/traits/enums, type aliases, and imports.
 
-
 // Kotlin: classes/objects/functions and imports. The grammar exposes no body
 // field, so signatures are the (capped) declaration, like Ruby.
-
 
 // Swift: functions, class/struct/enum/actor (all `class_declaration`), protocols,
 // and imports. `name:` is pinned to the identifier node because a
 // `function_declaration` also exposes its return type under a `name` field.
 
-
 // Dart: top-level functions, methods, classes/mixins/enums, and imports.
-
 
 // Zig: functions, and the `const X = struct/enum/union {…}` type idiom.
 
 // Solidity: contracts/interfaces/libraries, functions, modifiers, structs, enums,
 // events, and imports.
-
 
 // Elixir: modules and functions. These are macro `call`s (`defmodule`/`def`/
 // `defp`), so the `def*` keyword is captured as a `@guard` that `extract` filters
@@ -2622,7 +2597,6 @@ const VUE_QUERY: &str = "";
 // outermost. One pattern per nesting level therefore, which covers up to five
 // interfaces on a type — a stated bound rather than a silent truncation, and
 // past anything real schemas do.
-
 
 // SQL. A schema is the one part of a polyglot repo that every language talks to,
 // and `.sql` was indexed as searchable text with no definitions at all — so

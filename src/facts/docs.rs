@@ -108,7 +108,12 @@ pub(super) fn markdown_facts(src: &[u8]) -> Extraction {
                 // A trailing run of `#` is decoration, not part of the name.
                 let name = rest.trim().trim_end_matches('#').trim().to_string();
                 if !name.is_empty() {
-                    heads.push(Head { line: i, level, name, start: *start });
+                    heads.push(Head {
+                        line: i,
+                        level,
+                        name,
+                        start: *start,
+                    });
                 }
                 continue;
             }
@@ -117,7 +122,9 @@ pub(super) fn markdown_facts(src: &[u8]) -> Extraction {
         // Setext underline: `===` or `---` directly under paragraph text. The
         // preceding line must be ordinary prose, otherwise `---` is a thematic
         // break (or a list marker), not a heading.
-        if indent < 4 && !t.is_empty() && (t.chars().all(|c| c == '=') || t.chars().all(|c| c == '-'))
+        if indent < 4
+            && !t.is_empty()
+            && (t.chars().all(|c| c == '=') || t.chars().all(|c| c == '-'))
         {
             if let Some(prev) = i.checked_sub(1) {
                 let prev_raw = lines[prev].2.trim();
@@ -202,7 +209,11 @@ pub(super) fn markdown_facts(src: &[u8]) -> Extraction {
         while j + 1 < lines.len() && classes[j + 1] == c {
             j += 1;
         }
-        let end = if j + 1 < lines.len() { lines[j + 1].0 } else { eof };
+        let end = if j + 1 < lines.len() {
+            lines[j + 1].0
+        } else {
+            eof
+        };
         spans.push((start, end, c.unwrap()));
         i = j + 1;
     }
@@ -311,7 +322,11 @@ fn inline_code_spans(raw: &str) -> Vec<(usize, usize)> {
                 j += 1;
             }
         }
-        i = if j < bytes.len() { j + ticks } else { bytes.len() };
+        i = if j < bytes.len() {
+            j + ticks
+        } else {
+            bytes.len()
+        };
     }
     spans
 }
@@ -339,11 +354,20 @@ pub(super) fn rst_facts(src: &[u8]) -> Extraction {
     let mut lines: Vec<(usize, usize, &str)> = Vec::new();
     let mut off = 0usize;
     for line in text.split_inclusive('\n') {
-        let raw = line.strip_suffix('\n').unwrap_or(line).strip_suffix('\r').unwrap_or(line);
+        let raw = line
+            .strip_suffix('\n')
+            .unwrap_or(line)
+            .strip_suffix('\r')
+            .unwrap_or(line);
         lines.push((off, off + raw.len(), raw));
         off += line.len();
     }
-    struct Head { line: usize, level: usize, name: String, start: usize }
+    struct Head {
+        line: usize,
+        level: usize,
+        name: String,
+        start: usize,
+    }
     let mut heads = Vec::<Head>::new();
     let mut adornments = Vec::<char>::new();
     let mut facts = Vec::new();
@@ -356,7 +380,16 @@ pub(super) fn rst_facts(src: &[u8]) -> Extraction {
                 // Blank lines and directive options belong to the toctree.
             } else if indent > base_indent {
                 if let Some(module) = rst_import_target(t, true) {
-                    facts.push(line_fact("import", &module, *start + indent, *start + indent + t.len(), i + 1, i + 1, String::new(), "lines/rst"));
+                    facts.push(line_fact(
+                        "import",
+                        &module,
+                        *start + indent,
+                        *start + indent + t.len(),
+                        i + 1,
+                        i + 1,
+                        String::new(),
+                        "lines/rst",
+                    ));
                 }
                 continue;
             } else {
@@ -372,39 +405,74 @@ pub(super) fn rst_facts(src: &[u8]) -> Extraction {
                 let marker = t.chars().next().unwrap();
                 let level = match adornments.iter().position(|c| *c == marker) {
                     Some(n) => n + 1,
-                    None => { adornments.push(marker); adornments.len() },
+                    None => {
+                        adornments.push(marker);
+                        adornments.len()
+                    }
                 };
-                heads.push(Head { line: i - 1, level, name: prev.to_string(), start: lines[i - 1].0 });
+                heads.push(Head {
+                    line: i - 1,
+                    level,
+                    name: prev.to_string(),
+                    start: lines[i - 1].0,
+                });
             }
         }
         collect_rst_links(raw, *start, i + 1, &mut facts);
     }
     let eof = text.len();
     for (i, head) in heads.iter().enumerate() {
-        let next = heads[i + 1..].iter().find(|other| other.level <= head.level);
+        let next = heads[i + 1..]
+            .iter()
+            .find(|other| other.level <= head.level);
         let end_byte = next.map(|h| h.start).unwrap_or(eof);
         let end_line = next.map(|h| h.line + 1).unwrap_or(lines.len());
         facts.push(line_fact(
-            "heading", &head.name, head.start, end_byte, head.line + 1, end_line,
-            cap(&collapse_ws(lines[head.line].2), MAX_SIG), "lines/rst",
+            "heading",
+            &head.name,
+            head.start,
+            end_byte,
+            head.line + 1,
+            end_line,
+            cap(&collapse_ws(lines[head.line].2), MAX_SIG),
+            "lines/rst",
         ));
     }
-    let spans = (!src.is_empty()).then(|| vec![(0, src.len(), Span::Comment)]).unwrap_or_default();
+    let spans = (!src.is_empty())
+        .then(|| vec![(0, src.len(), Span::Comment)])
+        .unwrap_or_default();
     facts.sort_by_key(|f| (f.start_byte, f.end_byte));
     (facts, spans, Vec::new())
 }
 
 fn is_rst_adornment(s: &str) -> bool {
     let mut chars = s.chars();
-    let Some(first) = chars.next() else { return false };
-    s.len() >= 3 && matches!(first, '=' | '-' | '~' | '^' | '"' | '\'' | '`' | ':' | '.' | '*' | '+' | '#')
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    s.len() >= 3
+        && matches!(
+            first,
+            '=' | '-' | '~' | '^' | '"' | '\'' | '`' | ':' | '.' | '*' | '+' | '#'
+        )
         && chars.all(|c| c == first)
 }
 
 fn collect_rst_links(raw: &str, line_start: usize, line_no: usize, facts: &mut Vec<Fact>) {
     let mut push = |target: &str, at: usize, doc_role: bool| {
-        let Some(module) = rst_import_target(target, doc_role) else { return };
-        facts.push(line_fact("import", &module, line_start + at, line_start + at + target.len(), line_no, line_no, String::new(), "lines/rst"));
+        let Some(module) = rst_import_target(target, doc_role) else {
+            return;
+        };
+        facts.push(line_fact(
+            "import",
+            &module,
+            line_start + at,
+            line_start + at + target.len(),
+            line_no,
+            line_no,
+            String::new(),
+            "lines/rst",
+        ));
     };
     let trimmed = raw.trim_start();
     let indent = raw.len() - trimmed.len();
@@ -416,7 +484,9 @@ fn collect_rst_links(raw: &str, line_start: usize, line_no: usize, facts: &mut V
         }
     }
     if let Some(rest) = trimmed.strip_prefix(".. _") {
-        if let Some((_, target)) = rest.split_once(':') { push(target, raw.len() - target.len(), false); }
+        if let Some((_, target)) = rest.split_once(':') {
+            push(target, raw.len() - target.len(), false);
+        }
     }
     let mut from = 0usize;
     while let Some(pos) = raw[from..].find(":doc:`") {
@@ -424,7 +494,9 @@ fn collect_rst_links(raw: &str, line_start: usize, line_no: usize, facts: &mut V
         if let Some(end) = raw[start..].find('`') {
             push(&raw[start..start + end], start, true);
             from = start + end + 1;
-        } else { break; }
+        } else {
+            break;
+        }
     }
     // Conventional RST hyperlink: `caption <relative/file.rst>`_.
     let mut from = 0usize;
@@ -433,18 +505,36 @@ fn collect_rst_links(raw: &str, line_start: usize, line_no: usize, facts: &mut V
         if let Some(end) = raw[start..].find(">`_") {
             push(&raw[start..start + end], start, false);
             from = start + end + 3;
-        } else { break; }
+        } else {
+            break;
+        }
     }
 }
 
 fn rst_import_target(target: &str, doc_role: bool) -> Option<String> {
-    let target = target.trim().trim_matches(|c| c == '`' || c == '"' || c == '\'');
-    let target = target.rsplit_once('<').and_then(|(_, tail)| tail.strip_suffix('>')).unwrap_or(target);
-    let target = target.trim_start_matches('~').split('#').next().unwrap_or(target).trim();
-    if target.is_empty() || is_external_url(target) || target.starts_with(':') { return None; }
-    Some(if doc_role && !target.rsplit('/').next().unwrap_or(target).contains('.') {
-        format!("{target}.rst")
-    } else { target.to_string() })
+    let target = target
+        .trim()
+        .trim_matches(|c| c == '`' || c == '"' || c == '\'');
+    let target = target
+        .rsplit_once('<')
+        .and_then(|(_, tail)| tail.strip_suffix('>'))
+        .unwrap_or(target);
+    let target = target
+        .trim_start_matches('~')
+        .split('#')
+        .next()
+        .unwrap_or(target)
+        .trim();
+    if target.is_empty() || is_external_url(target) || target.starts_with(':') {
+        return None;
+    }
+    Some(
+        if doc_role && !target.rsplit('/').next().unwrap_or(target).contains('.') {
+            format!("{target}.rst")
+        } else {
+            target.to_string()
+        },
+    )
 }
 
 // --- Jinja ------------------------------------------------------------------
@@ -457,13 +547,21 @@ fn rst_import_target(target: &str, doc_role: bool) -> Option<String> {
 /// `.j2`/`.jinja` files without pretending to understand rendered HTML.
 pub(super) fn jinja_facts(src: &[u8]) -> Extraction {
     let text = String::from_utf8_lossy(src);
-    struct Open { kind: &'static str, name: String, start: usize, line: usize, signature: String }
+    struct Open {
+        kind: &'static str,
+        name: String,
+        start: usize,
+        line: usize,
+        signature: String,
+    }
     let mut open = Vec::<Open>::new();
     let mut facts = Vec::new();
     let mut at = 0usize;
     while let Some(rel) = text[at..].find("{%") {
         let start = at + rel;
-        let Some(close_rel) = text[start + 2..].find("%}") else { break };
+        let Some(close_rel) = text[start + 2..].find("%}") else {
+            break;
+        };
         let end = start + 2 + close_rel + 2;
         let body = text[start + 2..start + 2 + close_rel].trim();
         let line = line_number(src, start);
@@ -471,22 +569,50 @@ pub(super) fn jinja_facts(src: &[u8]) -> Extraction {
         match word {
             "extends" | "include" | "import" | "from" => {
                 if let Some((target, offset)) = jinja_quoted_target(body) {
-                    facts.push(line_fact("import", target, start + 2 + offset, start + 2 + offset + target.len(), line, line, String::new(), "lines/jinja"));
+                    facts.push(line_fact(
+                        "import",
+                        target,
+                        start + 2 + offset,
+                        start + 2 + offset + target.len(),
+                        line,
+                        line,
+                        String::new(),
+                        "lines/jinja",
+                    ));
                 }
             }
             "block" | "macro" => {
                 if let Some(name) = body.split_whitespace().nth(1) {
                     let name = name.split('(').next().unwrap_or(name).trim_end_matches('-');
                     if !name.is_empty() {
-                        open.push(Open { kind: if word == "block" { "block" } else { "function" }, name: name.to_string(), start, line, signature: format!("{{% {body} %}}") });
+                        open.push(Open {
+                            kind: if word == "block" { "block" } else { "function" },
+                            name: name.to_string(),
+                            start,
+                            line,
+                            signature: format!("{{% {body} %}}"),
+                        });
                     }
                 }
             }
             "endblock" | "endmacro" => {
-                let kind = if word == "endblock" { "block" } else { "function" };
+                let kind = if word == "endblock" {
+                    "block"
+                } else {
+                    "function"
+                };
                 if let Some(pos) = open.iter().rposition(|o| o.kind == kind) {
                     let entry = open.remove(pos);
-                    facts.push(line_fact(entry.kind, &entry.name, entry.start, end, entry.line, line, entry.signature, "lines/jinja"));
+                    facts.push(line_fact(
+                        entry.kind,
+                        &entry.name,
+                        entry.start,
+                        end,
+                        entry.line,
+                        line,
+                        entry.signature,
+                        "lines/jinja",
+                    ));
                 }
             }
             _ => {}
@@ -495,16 +621,29 @@ pub(super) fn jinja_facts(src: &[u8]) -> Extraction {
     }
     let eof_line = line_number(src, src.len());
     for entry in open {
-        facts.push(line_fact(entry.kind, &entry.name, entry.start, src.len(), entry.line, eof_line, entry.signature, "lines/jinja"));
+        facts.push(line_fact(
+            entry.kind,
+            &entry.name,
+            entry.start,
+            src.len(),
+            entry.line,
+            eof_line,
+            entry.signature,
+            "lines/jinja",
+        ));
     }
-    let spans = (!src.is_empty()).then(|| vec![(0, src.len(), Span::Comment)]).unwrap_or_default();
+    let spans = (!src.is_empty())
+        .then(|| vec![(0, src.len(), Span::Comment)])
+        .unwrap_or_default();
     facts.sort_by_key(|f| (f.start_byte, f.end_byte));
     (facts, spans, Vec::new())
 }
 
 fn jinja_quoted_target(body: &str) -> Option<(&str, usize)> {
     for quote in ['\'', '"'] {
-        let Some(start) = body.find(quote) else { continue };
+        let Some(start) = body.find(quote) else {
+            continue;
+        };
         if let Some(end) = body[start + 1..].find(quote) {
             return Some((&body[start + 1..start + 1 + end], start + 1));
         }
@@ -512,13 +651,44 @@ fn jinja_quoted_target(body: &str) -> Option<(&str, usize)> {
     None
 }
 
-fn line_number(src: &[u8], offset: usize) -> usize { src[..offset.min(src.len())].iter().filter(|b| **b == b'\n').count() + 1 }
+fn line_number(src: &[u8], offset: usize) -> usize {
+    src[..offset.min(src.len())]
+        .iter()
+        .filter(|b| **b == b'\n')
+        .count()
+        + 1
+}
 
-fn line_fact(kind: &str, name: &str, start_byte: usize, end_byte: usize, start_line: usize, end_line: usize, signature: String, source: &str) -> Fact {
+fn line_fact(
+    kind: &str,
+    name: &str,
+    start_byte: usize,
+    end_byte: usize,
+    start_line: usize,
+    end_line: usize,
+    signature: String,
+    source: &str,
+) -> Fact {
     Fact {
-        kind: kind.to_string(), is_derived: false, name: name.to_string(), start_byte, end_byte,
-        start_line, start_col: 0, end_line, end_col: 0, signature, doc: None,
-        source: source.to_string(), confidence: 1.0, visibility: None, owner: None,
-        shape: None, shape_nodes: 0, is_test: false, decorator: None, contract: None,
+        kind: kind.to_string(),
+        is_derived: false,
+        name: name.to_string(),
+        start_byte,
+        end_byte,
+        start_line,
+        start_col: 0,
+        end_line,
+        end_col: 0,
+        signature,
+        doc: None,
+        source: source.to_string(),
+        confidence: 1.0,
+        visibility: None,
+        owner: None,
+        shape: None,
+        shape_nodes: 0,
+        is_test: false,
+        decorator: None,
+        contract: None,
     }
 }
