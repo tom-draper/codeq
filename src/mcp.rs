@@ -135,306 +135,353 @@ fn flag(args: &mut Vec<String>, a: &Value, key: &str, flag: &str) {
     }
 }
 
+/// How one MCP argument becomes CLI arguments.
+enum Arg {
+    /// Required positional value, emitted after `--`. A missing key makes the
+    /// whole call invalid.
+    Req(&'static str),
+    /// Optional positional value, emitted after `--`.
+    Pos(&'static str),
+    /// Required positional value placed with the flags, ahead of any `--`.
+    BareReq(&'static str),
+    /// Optional positional value placed with the flags, ahead of any `--`.
+    Bare(&'static str),
+    /// `--flag value` when the string key is present.
+    Str(&'static str, &'static str),
+    /// `--flag value`, and the call is invalid without it.
+    StrReq(&'static str, &'static str),
+    /// `--flag N` when the number key is present.
+    Num(&'static str, &'static str),
+    /// `--flag` when the bool key is true.
+    Flag(&'static str, &'static str),
+    /// `--flag value` once per element of a string-array key.
+    Each(&'static str, &'static str),
+    /// Arguments that need more than one key to decide.
+    Custom(fn(&Value, &mut Vec<String>, &mut Vec<String>) -> Option<()>),
+}
+use Arg::*;
+
+/// One MCP tool: its name, the CLI subcommand it runs, and how its arguments map.
+struct ToolArgs {
+    tool: &'static str,
+    command: &'static str,
+    args: &'static [Arg],
+}
+
+const TOOL_ARGS: &[ToolArgs] = &[
+    ToolArgs { tool: "codeq_map", command: "map", args: &[Num("limit", "--limit"), Flag("totals", "--totals")] },
+    ToolArgs {
+        tool: "codeq_search",
+        command: "search",
+        args: &[
+            Req("pattern"),
+            Flag("fixed", "--fixed"),
+            Flag("ignore_case", "-i"),
+            Flag("word", "-w"),
+            Str("path", "--path"),
+            Str("language", "--language"),
+            Str("in", "--in"),
+            Num("context", "-C"),
+            Num("before", "-B"),
+            Num("after", "-A"),
+            Flag("files_with_matches", "-l"),
+            Flag("count", "-c"),
+            Num("limit", "--limit"),
+            Each("glob", "-g"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_symbols",
+        command: "symbols",
+        args: &[
+            Pos("pattern"),
+            Str("kind", "--kind"),
+            Str("owner", "--owner"),
+            Str("language", "--language"),
+            Str("path", "--path"),
+            Flag("signatures", "--signatures"),
+            Num("limit", "--limit"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_definitions",
+        command: "definitions",
+        args: &[Req("symbol"), Str("path", "--path"), Num("limit", "--limit")],
+    },
+    ToolArgs {
+        tool: "codeq_references",
+        command: "references",
+        args: &[
+            Req("name"),
+            Str("path", "--path"),
+            Str("language", "--language"),
+            Num("limit", "--limit"),
+            Flag("resolved", "--resolved"),
+            Flag("calls", "--calls"),
+            Str("on", "--on"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_callers",
+        command: "callers",
+        args: &[
+            Req("name"),
+            Str("path", "--path"),
+            Num("depth", "--depth"),
+            Flag("resolved", "--resolved"),
+            Flag("calls", "--calls"),
+            Str("on", "--on"),
+            Flag("examples", "--examples"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_callees",
+        command: "callees",
+        args: &[
+            Req("name"),
+            Str("path", "--path"),
+            Num("depth", "--depth"),
+            Flag("resolved", "--resolved"),
+            Flag("examples", "--examples"),
+        ],
+    },
+    ToolArgs { tool: "codeq_about", command: "about", args: &[Req("name"), Str("path", "--path")] },
+    ToolArgs {
+        tool: "codeq_explore",
+        command: "explore",
+        args: &[Custom(explore_target), Str("path", "--path"), Num("max_tokens", "--max-tokens")],
+    },
+    ToolArgs {
+        tool: "codeq_callpath",
+        command: "callpath",
+        args: &[Req("from"), Req("to"), Num("max_depth", "--max-depth"), Str("path", "--path")],
+    },
+    ToolArgs {
+        tool: "codeq_members",
+        command: "members",
+        args: &[
+            BareReq("name"),
+            Str("path", "--path"),
+            Str("kind", "--kind"),
+            Num("limit", "--limit"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_untested",
+        command: "untested",
+        args: &[Bare("path"), Str("kind", "--kind"), Num("limit", "--limit")],
+    },
+    ToolArgs { tool: "codeq_outline", command: "outline", args: &[Req("file"), Flag("docs", "--docs")] },
+    ToolArgs { tool: "codeq_at", command: "at", args: &[Req("location")] },
+    ToolArgs {
+        tool: "codeq_read",
+        command: "read",
+        args: &[
+            Req("file"),
+            Str("lines", "--lines"),
+            Str("symbol", "--symbol"),
+            Flag("full", "--full"),
+            Flag("raw", "--raw"),
+        ],
+    },
+    ToolArgs { tool: "codeq_imports", command: "imports", args: &[Pos("path"), Num("limit", "--limit")] },
+    ToolArgs { tool: "codeq_importers", command: "importers", args: &[Req("query"), Num("limit", "--limit")] },
+    ToolArgs {
+        tool: "codeq_implementors",
+        command: "implementors",
+        args: &[Req("name"), Str("relation", "--relation"), Str("path", "--path"), Num("limit", "--limit")],
+    },
+    ToolArgs {
+        tool: "codeq_supertypes",
+        command: "supertypes",
+        args: &[Req("name"), Str("relation", "--relation"), Str("path", "--path"), Num("limit", "--limit")],
+    },
+    ToolArgs {
+        tool: "codeq_unused",
+        command: "unused",
+        args: &[
+            Pos("path"),
+            Str("kind", "--kind"),
+            Flag("include_tests", "--include-tests"),
+            Num("limit", "--limit"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_entrypoints",
+        command: "entrypoints",
+        args: &[Pos("path"), Flag("include_tests", "--include-tests"), Num("limit", "--limit")],
+    },
+    ToolArgs {
+        tool: "codeq_tree",
+        command: "tree",
+        args: &[
+            Pos("path"),
+            Num("depth", "--depth"),
+            Num("min_symbols", "--min-symbols"),
+            Str("language", "--language"),
+            Flag("files", "--files"),
+            Num("limit", "--limit"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_hotspots",
+        command: "hotspots",
+        args: &[
+            Pos("path"),
+            Str("kind", "--kind"),
+            Str("language", "--language"),
+            Flag("calls", "--calls"),
+            Num("min_refs", "--min-refs"),
+            Num("limit", "--limit"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_api",
+        command: "api",
+        args: &[
+            Pos("path"),
+            Str("kind", "--kind"),
+            Str("compare_to", "--compare-to"),
+            Num("limit", "--limit"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_deps",
+        command: "deps",
+        args: &[
+            Bare("file"),
+            Num("depth", "--depth"),
+            Flag("cycles", "--cycles"),
+            Flag("external", "--external"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_astgrep",
+        command: "astgrep",
+        // `language` is this flag's value, not a positional — it must stay
+        // attached to `--language`, ahead of the `--` separator.
+        args: &[Req("pattern"), StrReq("language", "--language"), Str("path", "--path"), Num("limit", "--limit")],
+    },
+    ToolArgs {
+        tool: "codeq_clones",
+        command: "clones",
+        args: &[
+            Str("path", "--path"),
+            Str("kind", "--kind"),
+            Num("min_nodes", "--min-nodes"),
+            Flag("include_tests", "--include-tests"),
+            Num("limit", "--limit"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_tests",
+        command: "tests",
+        args: &[Req("name"), Str("path", "--path"), Num("limit", "--limit")],
+    },
+    ToolArgs {
+        tool: "codeq_changed",
+        command: "changed",
+        args: &[Str("compare_to", "--compare-to"), Flag("symbols", "--symbols"), Num("limit", "--limit")],
+    },
+    ToolArgs {
+        tool: "codeq_affected",
+        command: "affected",
+        args: &[Str("compare_to", "--compare-to"), Num("depth", "--depth"), Num("limit", "--limit")],
+    },
+    ToolArgs {
+        tool: "codeq_context",
+        command: "context",
+        args: &[
+            Custom(context_symbols),
+            Flag("changed", "--changed"),
+            Str("compare_to", "--compare-to"),
+            Str("path", "--path"),
+            Flag("expand", "--expand"),
+            Flag("resolved", "--resolved"),
+            Flag("no_text", "--no-text"),
+            Flag("plan", "--plan"),
+            Num("max_tokens", "--max-tokens"),
+        ],
+    },
+    ToolArgs {
+        tool: "codeq_files",
+        command: "files",
+        args: &[Pos("pattern"), Str("language", "--language"), Num("limit", "--limit")],
+    },
+    ToolArgs {
+        tool: "codeq_graph",
+        command: "graph",
+        args: &[
+            Str("relation", "--relation"),
+            Str("path", "--path"),
+            Str("language", "--language"),
+            Flag("mermaid", "--mermaid"),
+            Num("limit", "--limit"),
+        ],
+    },
+    ToolArgs { tool: "codeq_capabilities", command: "capabilities", args: &[] },
+];
+
+/// Either form of an explore target: a name, or a position that resolves to
+/// one. `at` wins when both are sent, matching the CLI, where they conflict.
+fn explore_target(a: &Value, args: &mut Vec<String>, pos: &mut Vec<String>) -> Option<()> {
+    match s(a, "at") {
+        Some(at) => {
+            args.push("--at".into());
+            args.push(at.into());
+        }
+        None => pos.push(s(a, "name")?.into()),
+    }
+    Some(())
+}
+
+/// `symbols` may be an array or a comma string.
+fn context_symbols(a: &Value, args: &mut Vec<String>, _pos: &mut Vec<String>) -> Option<()> {
+    if let Some(arr) = a.get("symbols").and_then(|v| v.as_array()) {
+        let joined: Vec<&str> = arr.iter().filter_map(|x| x.as_str()).collect();
+        if !joined.is_empty() {
+            args.push("--symbols".into());
+            args.push(joined.join(","));
+        }
+    } else {
+        opt(args, a, "symbols", "--symbols");
+    }
+    Some(())
+}
+
 /// Map an MCP tool name + arguments to codeq CLI arguments.
 fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
+    let spec = TOOL_ARGS.iter().find(|t| t.tool == tool)?;
     // Flags accumulate in `args`; caller-supplied *values* go to `pos` and are
     // emitted after a `--` separator. Without it a value that happens to start
     // with a dash is read as a flag by the CLI's parser: `pattern: "--json"` —
     // an entirely ordinary thing to search a codebase for — failed as "required
     // argument not provided", and `symbol: "--help"` printed the help page and
     // exited 0, handing an agent the help text as a successful answer.
-    let mut args: Vec<String> = Vec::new();
+    let mut args: Vec<String> = vec![spec.command.into()];
     let mut pos: Vec<String> = Vec::new();
-    match tool {
-        "codeq_map" => {
-            args.push("map".into());
-            optn(&mut args, a, "limit", "--limit");
-            flag(&mut args, a, "totals", "--totals");
-        }
-        "codeq_search" => {
-            args.push("search".into());
-            pos.push(s(a, "pattern")?.into());
-            flag(&mut args, a, "fixed", "--fixed");
-            flag(&mut args, a, "ignore_case", "-i");
-            flag(&mut args, a, "word", "-w");
-            opt(&mut args, a, "path", "--path");
-            opt(&mut args, a, "language", "--language");
-            opt(&mut args, a, "in", "--in");
-            optn(&mut args, a, "context", "-C");
-            optn(&mut args, a, "before", "-B");
-            optn(&mut args, a, "after", "-A");
-            flag(&mut args, a, "files_with_matches", "-l");
-            flag(&mut args, a, "count", "-c");
-            optn(&mut args, a, "limit", "--limit");
-            if let Some(globs) = a.get("glob").and_then(|v| v.as_array()) {
-                for g in globs.iter().filter_map(|g| g.as_str()) {
-                    args.push("-g".into());
+    for arg in spec.args {
+        match arg {
+            Req(k) => pos.push(s(a, k)?.into()),
+            Pos(k) => pos.extend(s(a, k).map(String::from)),
+            BareReq(k) => args.push(s(a, k)?.into()),
+            Bare(k) => args.extend(s(a, k).map(String::from)),
+            Str(k, f) => opt(&mut args, a, k, f),
+            StrReq(k, f) => {
+                args.push((*f).into());
+                args.push(s(a, k)?.into());
+            }
+            Num(k, f) => optn(&mut args, a, k, f),
+            Flag(k, f) => flag(&mut args, a, k, f),
+            Each(k, f) => {
+                let items = a.get(k).and_then(|v| v.as_array());
+                for g in items.into_iter().flatten().filter_map(|g| g.as_str()) {
+                    args.push((*f).into());
                     args.push(g.into());
                 }
             }
+            Custom(f) => f(a, &mut args, &mut pos)?,
         }
-        "codeq_symbols" => {
-            args.push("symbols".into());
-            if let Some(p) = s(a, "pattern") {
-                pos.push(p.into());
-            }
-            opt(&mut args, a, "kind", "--kind");
-            opt(&mut args, a, "owner", "--owner");
-            opt(&mut args, a, "language", "--language");
-            opt(&mut args, a, "path", "--path");
-            flag(&mut args, a, "signatures", "--signatures");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_definitions" => {
-            args.push("definitions".into());
-            pos.push(s(a, "symbol")?.into());
-            opt(&mut args, a, "path", "--path");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_references" => {
-            args.push("references".into());
-            pos.push(s(a, "name")?.into());
-            opt(&mut args, a, "path", "--path");
-            opt(&mut args, a, "language", "--language");
-            optn(&mut args, a, "limit", "--limit");
-            flag(&mut args, a, "resolved", "--resolved");
-            flag(&mut args, a, "calls", "--calls");
-            opt(&mut args, a, "on", "--on");
-        }
-        "codeq_callers" => {
-            args.push("callers".into());
-            pos.push(s(a, "name")?.into());
-            opt(&mut args, a, "path", "--path");
-            optn(&mut args, a, "depth", "--depth");
-            flag(&mut args, a, "resolved", "--resolved");
-            flag(&mut args, a, "calls", "--calls");
-            opt(&mut args, a, "on", "--on");
-            flag(&mut args, a, "examples", "--examples");
-        }
-        "codeq_callees" => {
-            args.push("callees".into());
-            pos.push(s(a, "name")?.into());
-            opt(&mut args, a, "path", "--path");
-            optn(&mut args, a, "depth", "--depth");
-            flag(&mut args, a, "resolved", "--resolved");
-            flag(&mut args, a, "examples", "--examples");
-        }
-        "codeq_about" => {
-            args.push("about".into());
-            pos.push(s(a, "name")?.into());
-            opt(&mut args, a, "path", "--path");
-        }
-        "codeq_explore" => {
-            args.push("explore".into());
-            // Either form: a name, or a position that resolves to one. `at`
-            // wins when both are sent, matching the CLI, where they conflict.
-            match a.get("at").and_then(|v| v.as_str()) {
-                Some(at) => {
-                    args.push("--at".into());
-                    args.push(at.into());
-                }
-                None => pos.push(s(a, "name")?.into()),
-            }
-            opt(&mut args, a, "path", "--path");
-            optn(&mut args, a, "max_tokens", "--max-tokens");
-        }
-        "codeq_callpath" => {
-            args.push("callpath".into());
-            pos.push(s(a, "from")?.into());
-            pos.push(s(a, "to")?.into());
-            optn(&mut args, a, "max_depth", "--max-depth");
-            opt(&mut args, a, "path", "--path");
-        }
-        "codeq_members" => {
-            args.push("members".into());
-            args.push(s(a, "name")?.into());
-            opt(&mut args, a, "path", "--path");
-            opt(&mut args, a, "kind", "--kind");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_untested" => {
-            args.push("untested".into());
-            if let Some(v) = s(a, "path") {
-                args.push(v.into());
-            }
-            opt(&mut args, a, "kind", "--kind");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_outline" => {
-            args.push("outline".into());
-            pos.push(s(a, "file")?.into());
-            flag(&mut args, a, "docs", "--docs");
-        }
-        "codeq_at" => {
-            args.push("at".into());
-            pos.push(s(a, "location")?.into());
-        }
-        "codeq_read" => {
-            args.push("read".into());
-            pos.push(s(a, "file")?.into());
-            opt(&mut args, a, "lines", "--lines");
-            opt(&mut args, a, "symbol", "--symbol");
-            flag(&mut args, a, "full", "--full");
-            flag(&mut args, a, "raw", "--raw");
-        }
-        "codeq_imports" => {
-            args.push("imports".into());
-            if let Some(p) = s(a, "path") {
-                pos.push(p.into());
-            }
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_importers" => {
-            args.push("importers".into());
-            pos.push(s(a, "query")?.into());
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_implementors" => {
-            args.push("implementors".into());
-            pos.push(s(a, "name")?.into());
-            opt(&mut args, a, "relation", "--relation");
-            opt(&mut args, a, "path", "--path");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_supertypes" => {
-            args.push("supertypes".into());
-            pos.push(s(a, "name")?.into());
-            opt(&mut args, a, "relation", "--relation");
-            opt(&mut args, a, "path", "--path");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_unused" => {
-            args.push("unused".into());
-            if let Some(p) = s(a, "path") {
-                pos.push(p.into());
-            }
-            opt(&mut args, a, "kind", "--kind");
-            flag(&mut args, a, "include_tests", "--include-tests");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_entrypoints" => {
-            args.push("entrypoints".into());
-            if let Some(p) = s(a, "path") {
-                pos.push(p.into());
-            }
-            flag(&mut args, a, "include_tests", "--include-tests");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_tree" => {
-            args.push("tree".into());
-            if let Some(p) = s(a, "path") {
-                pos.push(p.into());
-            }
-            optn(&mut args, a, "depth", "--depth");
-            optn(&mut args, a, "min_symbols", "--min-symbols");
-            opt(&mut args, a, "language", "--language");
-            flag(&mut args, a, "files", "--files");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_hotspots" => {
-            args.push("hotspots".into());
-            if let Some(p) = s(a, "path") {
-                pos.push(p.into());
-            }
-            opt(&mut args, a, "kind", "--kind");
-            opt(&mut args, a, "language", "--language");
-            flag(&mut args, a, "calls", "--calls");
-            optn(&mut args, a, "min_refs", "--min-refs");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_api" => {
-            args.push("api".into());
-            if let Some(p) = s(a, "path") {
-                pos.push(p.into());
-            }
-            opt(&mut args, a, "kind", "--kind");
-            opt(&mut args, a, "compare_to", "--compare-to");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_deps" => {
-            args.push("deps".into());
-            if let Some(f) = s(a, "file") {
-                args.push(f.into());
-            }
-            optn(&mut args, a, "depth", "--depth");
-            flag(&mut args, a, "cycles", "--cycles");
-            flag(&mut args, a, "external", "--external");
-        }
-        "codeq_astgrep" => {
-            args.push("astgrep".into());
-            pos.push(s(a, "pattern")?.into());
-            // `language` is this flag's value, not a positional — it must stay
-            // attached to `--language`, ahead of the `--` separator.
-            args.push("--language".into());
-            args.push(s(a, "language")?.into());
-            opt(&mut args, a, "path", "--path");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_clones" => {
-            args.push("clones".into());
-            opt(&mut args, a, "path", "--path");
-            opt(&mut args, a, "kind", "--kind");
-            optn(&mut args, a, "min_nodes", "--min-nodes");
-            flag(&mut args, a, "include_tests", "--include-tests");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_tests" => {
-            args.push("tests".into());
-            pos.push(s(a, "name")?.into());
-            opt(&mut args, a, "path", "--path");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_changed" => {
-            args.push("changed".into());
-            opt(&mut args, a, "compare_to", "--compare-to");
-            flag(&mut args, a, "symbols", "--symbols");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_affected" => {
-            args.push("affected".into());
-            opt(&mut args, a, "compare_to", "--compare-to");
-            optn(&mut args, a, "depth", "--depth");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_context" => {
-            args.push("context".into());
-            // symbols may be an array or a comma string.
-            if let Some(arr) = a.get("symbols").and_then(|v| v.as_array()) {
-                let joined: Vec<&str> = arr.iter().filter_map(|x| x.as_str()).collect();
-                if !joined.is_empty() {
-                    args.push("--symbols".into());
-                    args.push(joined.join(","));
-                }
-            } else {
-                opt(&mut args, a, "symbols", "--symbols");
-            }
-            flag(&mut args, a, "changed", "--changed");
-            opt(&mut args, a, "compare_to", "--compare-to");
-            opt(&mut args, a, "path", "--path");
-            flag(&mut args, a, "expand", "--expand");
-            flag(&mut args, a, "resolved", "--resolved");
-            flag(&mut args, a, "no_text", "--no-text");
-            flag(&mut args, a, "plan", "--plan");
-            optn(&mut args, a, "max_tokens", "--max-tokens");
-        }
-        "codeq_files" => {
-            args.push("files".into());
-            if let Some(p) = s(a, "pattern") {
-                pos.push(p.into());
-            }
-            opt(&mut args, a, "language", "--language");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_graph" => {
-            args.push("graph".into());
-            opt(&mut args, a, "relation", "--relation");
-            opt(&mut args, a, "path", "--path");
-            opt(&mut args, a, "language", "--language");
-            flag(&mut args, a, "mermaid", "--mermaid");
-            optn(&mut args, a, "limit", "--limit");
-        }
-        "codeq_capabilities" => args.push("capabilities".into()),
-        _ => return None,
     }
     // `--` ends flag parsing, so every caller-supplied value after it is taken
     // literally however it starts.
