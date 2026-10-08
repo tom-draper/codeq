@@ -372,7 +372,12 @@ fn parse_and_write(
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
-        .clamp(1, 8);
+        .clamp(1, 8)
+        // Every worker constructs the full multi-language extractor. On a
+        // small cold index, that setup can cost more than parsing the files;
+        // keep at least 32 files per worker so tiny repositories do not pay
+        // for a pool of mostly-idle extractors.
+        .min(work.len().div_ceil(32).max(1));
     let chunk = work.len().div_ceil(workers).max(1);
     let (res_tx, res_rx) = std::sync::mpsc::sync_channel::<Parsed>(256);
     std::thread::scope(|scope| -> Result<u64> {
