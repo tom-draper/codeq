@@ -356,67 +356,63 @@ pub fn cmd_graph(
     s.emit_noted(edges, note)
 }
 
+/// One `impls` edge as a result row. The row *is* the other end of the edge, so
+/// its key is `name` (ROW_KEY_RULE): which side that is — implementor or
+/// supertype — is already said by the command you ran and by `relation`.
 #[derive(Serialize)]
-struct ImplementorRow {
-    /// The implementing/deriving type.
-    // ROW_KEY_RULE: the row *is* this type, so the key is `name`. The side of
-    // the relation is already said by the command you ran and by `relation`;
-    // spelling it `subtype` here only cost consumers a per-command special case.
-    #[serde(rename = "name")]
-    subtype: String,
-    /// How it relates: "implements", "extends", or "references" (a SQL foreign key).
-    relation: String,
-    path: String,
-    line: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    language: Option<String>,
-}
-
-#[derive(Serialize)]
-struct SupertypeRow {
-    /// The trait / interface / base class this type extends or implements.
-    // ROW_KEY_RULE: the row *is* this type, so the key is `name`. The side of
-    // the relation is already said by the command you ran and by `relation`;
-    // spelling it `supertype` here only cost consumers a per-command special case.
-    #[serde(rename = "name")]
-    supertype: String,
-    /// How it relates: "implements", "extends", or "references" (a SQL foreign key).
-    relation: String,
-    path: String,
-    line: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    language: Option<String>,
-}
-
-/// One `impls` edge, before it is presented under either command's field names.
 struct ImplEdge {
+    /// The implementing/deriving type, or the trait / interface / base class.
+    #[serde(rename = "name")]
     other: String,
+    /// How it relates: "implements", "extends", or "references" (a SQL foreign key).
     relation: String,
     path: String,
     line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
+}
+
+/// Which end of an `impls` edge the argument names.
+#[derive(Clone, Copy)]
+enum Direction {
+    /// `implementors T`: the subtypes of `T`.
+    Implementors,
+    /// `supertypes T`: what `T` extends or implements.
+    Supertypes,
+}
+
+impl Direction {
+    /// `(column returned, column matched against the argument)`.
+    fn columns(self) -> (&'static str, &'static str) {
+        match self {
+            Direction::Implementors => ("subtype", "supertype"),
+            Direction::Supertypes => ("supertype", "subtype"),
+        }
+    }
+
+    /// What an empty result is the absence of.
+    fn empty_label(self) -> &'static str {
+        match self {
+            Direction::Implementors => "implementors or subtypes",
+            Direction::Supertypes => "supertypes (it extends nothing)",
+        }
+    }
 }
 
 /// The `impls` edges touching `name`, read in one direction.
 ///
 /// `implementors` and `supertypes` are the same query with `subtype` and
-/// `supertype` swapped — which is why they were, letter for letter, the same
-/// function written twice. They still present different field names (`subtype`
-/// vs `supertype`), because that is the output contract, so only the query is
-/// shared and each command names its own result.
+/// `supertype` swapped, so they share it and differ only in `direction`.
 fn impl_edges(
     s: &Session,
-    select: &str,
-    matched: &str,
+    direction: Direction,
     name: &str,
     relation: Option<&str>,
     path: Option<&str>,
     limit: usize,
 ) -> Result<Vec<ImplEdge>> {
-    debug_assert!(
-        matches!(select, "subtype" | "supertype") && matches!(matched, "subtype" | "supertype"),
-        "columns are fixed, never caller input"
-    );
+    // Column names, never caller input.
+    let (select, matched) = direction.columns();
     let filters = Filters::new().eq("relation", relation).like("path", path);
     // A supertype is stored as written, so a namespaced base (`React.Component`,
     // Python's `abc.ABC`) is stored dotted — and nobody asks for it that way. Match
@@ -458,27 +454,7 @@ pub fn cmd_implementors(
     limit: usize,
     out: Out,
 ) -> Result<()> {
-    let s = Session::open(cwd, false, out)?;
-    let data: Vec<ImplementorRow> =
-        impl_edges(&s, "subtype", "supertype", name, relation, path, limit)?
-            .into_iter()
-            .map(|e| ImplementorRow {
-                subtype: e.other,
-                relation: e.relation,
-                path: e.path,
-                line: e.line,
-                language: e.language,
-            })
-            .collect();
-    let note = note_if_empty_feat(
-        &s,
-        &data,
-        name,
-        "implementors or subtypes",
-        path,
-        Some("relations"),
-    )?;
-    s.emit_noted(data, note)
+    cmd_impl_edges(cwd, Direction::Implementors, name, relation, path, limit, out)
 }
 
 /// `supertypes <type>` — the traits / interfaces / base classes a type extends
@@ -493,25 +469,20 @@ pub fn cmd_supertypes(
     limit: usize,
     out: Out,
 ) -> Result<()> {
+    cmd_impl_edges(cwd, Direction::Supertypes, name, relation, path, limit, out)
+}
+
+fn cmd_impl_edges(
+    cwd: &Path,
+    direction: Direction,
+    name: &str,
+    relation: Option<&str>,
+    path: Option<&str>,
+    limit: usize,
+    out: Out,
+) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let data: Vec<SupertypeRow> =
-        impl_edges(&s, "supertype", "subtype", name, relation, path, limit)?
-            .into_iter()
-            .map(|e| SupertypeRow {
-                supertype: e.other,
-                relation: e.relation,
-                path: e.path,
-                line: e.line,
-                language: e.language,
-            })
-            .collect();
-    let note = note_if_empty_feat(
-        &s,
-        &data,
-        name,
-        "supertypes (it extends nothing)",
-        path,
-        Some("relations"),
-    )?;
+    let data = impl_edges(&s, direction, name, relation, path, limit)?;
+    let note = note_if_empty_feat(&s, &data, name, direction.empty_label(), path, Some("relations"))?;
     s.emit_noted(data, note)
 }
