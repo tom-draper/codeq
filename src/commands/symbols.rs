@@ -20,17 +20,19 @@ struct SymbolRow {
     owner: Option<String>,
 }
 
-pub fn cmd_symbols(
-    cwd: &Path,
-    pattern: Option<&str>,
-    kind: Option<&str>,
-    owner: Option<&str>,
-    language: Option<&str>,
-    path: Option<&str>,
-    signatures: bool,
-    limit: usize,
-    out: Out,
-) -> Result<()> {
+/// Arguments of `symbols`.
+pub struct SymbolsArgs<'a> {
+    pub pattern: Option<&'a str>,
+    pub kind: Option<&'a str>,
+    pub owner: Option<&'a str>,
+    pub language: Option<&'a str>,
+    pub path: Option<&'a str>,
+    pub signatures: bool,
+    pub limit: usize,
+}
+
+pub fn cmd_symbols(cwd: &Path, args: SymbolsArgs, out: Out) -> Result<()> {
+    let SymbolsArgs { pattern, kind, owner, language, path, signatures, limit } = args;
     let s = Session::open(cwd, false, out)?;
 
     let mut sql = String::from(
