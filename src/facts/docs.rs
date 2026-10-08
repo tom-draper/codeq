@@ -383,10 +383,12 @@ pub(super) fn rst_facts(src: &[u8]) -> Extraction {
                     facts.push(line_fact(
                         "import",
                         &module,
-                        *start + indent,
-                        *start + indent + t.len(),
-                        i + 1,
-                        i + 1,
+                        LineSpan {
+                            start_byte: *start + indent,
+                            end_byte: *start + indent + t.len(),
+                            start_line: i + 1,
+                            end_line: i + 1,
+                        },
                         String::new(),
                         "lines/rst",
                     ));
@@ -430,10 +432,12 @@ pub(super) fn rst_facts(src: &[u8]) -> Extraction {
         facts.push(line_fact(
             "heading",
             &head.name,
-            head.start,
-            end_byte,
-            head.line + 1,
-            end_line,
+            LineSpan {
+                start_byte: head.start,
+                end_byte: end_byte,
+                start_line: head.line + 1,
+                end_line: end_line,
+            },
             cap(&collapse_ws(lines[head.line].2), MAX_SIG),
             "lines/rst",
         ));
@@ -466,10 +470,12 @@ fn collect_rst_links(raw: &str, line_start: usize, line_no: usize, facts: &mut V
         facts.push(line_fact(
             "import",
             &module,
-            line_start + at,
-            line_start + at + target.len(),
-            line_no,
-            line_no,
+            LineSpan {
+                start_byte: line_start + at,
+                end_byte: line_start + at + target.len(),
+                start_line: line_no,
+                end_line: line_no,
+            },
             String::new(),
             "lines/rst",
         ));
@@ -572,10 +578,12 @@ pub(super) fn jinja_facts(src: &[u8]) -> Extraction {
                     facts.push(line_fact(
                         "import",
                         target,
-                        start + 2 + offset,
-                        start + 2 + offset + target.len(),
-                        line,
-                        line,
+                        LineSpan {
+                            start_byte: start + 2 + offset,
+                            end_byte: start + 2 + offset + target.len(),
+                            start_line: line,
+                            end_line: line,
+                        },
                         String::new(),
                         "lines/jinja",
                     ));
@@ -606,10 +614,12 @@ pub(super) fn jinja_facts(src: &[u8]) -> Extraction {
                     facts.push(line_fact(
                         entry.kind,
                         &entry.name,
-                        entry.start,
-                        end,
-                        entry.line,
-                        line,
+                        LineSpan {
+                            start_byte: entry.start,
+                            end_byte: end,
+                            start_line: entry.line,
+                            end_line: line,
+                        },
                         entry.signature,
                         "lines/jinja",
                     ));
@@ -624,10 +634,12 @@ pub(super) fn jinja_facts(src: &[u8]) -> Extraction {
         facts.push(line_fact(
             entry.kind,
             &entry.name,
-            entry.start,
-            src.len(),
-            entry.line,
-            eof_line,
+            LineSpan {
+                start_byte: entry.start,
+                end_byte: src.len(),
+                start_line: entry.line,
+                end_line: eof_line,
+            },
             entry.signature,
             "lines/jinja",
         ));
@@ -659,16 +671,16 @@ fn line_number(src: &[u8], offset: usize) -> usize {
         + 1
 }
 
-fn line_fact(
-    kind: &str,
-    name: &str,
+/// Where a line-oriented fact sits: byte range and 1-based line range.
+struct LineSpan {
     start_byte: usize,
     end_byte: usize,
     start_line: usize,
     end_line: usize,
-    signature: String,
-    source: &str,
-) -> Fact {
+}
+
+fn line_fact(kind: &str, name: &str, span: LineSpan, signature: String, source: &str) -> Fact {
+    let LineSpan { start_byte, end_byte, start_line, end_line } = span;
     Fact {
         kind: kind.to_string(),
         is_derived: false,
