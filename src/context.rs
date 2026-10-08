@@ -149,9 +149,64 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         ));
     }
 
+    // `defs` holds the seeds first (indices 0..seed_count), then any expansion
+    // neighbours appended.
+    let (modes, mut defs) = load_seeds(db, repo, req)?;
+    let seed_count = defs.len();
+
+    let mut file_cache: HashMap<String, Option<String>> = HashMap::new();
+
+    // Read seed chunk texts (needed for expansion regardless of include_text).
+    let mut seed_text: HashMap<usize, String> = HashMap::new();
+    for i in 0..seed_count {
+        if let Some(t) = chunk_text(&repo.root, &defs[i], &mut file_cache) {
+            seed_text.insert(i, t);
+        }
+    }
+
+    if req.expand {
+        let neighbors = expansion_neighbors(db, req, &defs[..seed_count], &seed_text)?;
+        defs.extend(neighbors);
+    }
+
+    let filled = fill_budget(db, repo, req, &defs, seed_count, seed_text, &mut file_cache);
+
+    let seeds: Vec<String> = {
+        let mut s: Vec<String> = defs[..seed_count].iter().map(|d| d.name.clone()).collect();
+        s.sort();
+        s.dedup();
+        s
+    };
+
+    let plan = req.plan.then(|| Plan {
+        modes,
+        seeds,
+        expansion: if req.expand {
+            "one-hop: syntax calls first, then lexical references in seed chunks"
+        } else {
+            "disabled"
+        },
+        order: "seeds first, then referenced defs; each group by path+line; a chunk over budget is skipped, not reordered",
+    });
+
+    Ok(ContextResult {
+        plan,
+        budget: Budget {
+            max_tokens: req.max_tokens,
+            used_tokens: filled.used,
+            tokenizer: TOKENIZER,
+        },
+        chunks: filled.chunks,
+        omitted: filled.omitted,
+        omitted_truncated: filled.omitted_truncated,
+    })
+}
+
+/// The seed definitions the request names, in deterministic path+line order,
+/// and which seed modes were active.
+fn load_seeds(db: &Db, repo: &Repo, req: &Request) -> Result<(Vec<&'static str>, Vec<Def>)> {
     // Load only the definitions we actually need, via the facts(name)/facts(path)
-    // indexes — never a full scan of every definition. `defs` holds the seeds
-    // first (indices 0..seed_count), then any expansion neighbours appended.
+    // indexes — never a full scan of every definition.
     let mut modes: Vec<&'static str> = Vec::new();
     let mut defs: Vec<Def> = Vec::new();
     let mut seen: HashSet<(String, usize)> = HashSet::new(); // (path, start_byte)
@@ -189,110 +244,120 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         defs.retain(|d| d.path.contains(prefix.as_str()));
     }
 
-    // Everything loaded so far is a seed. Deterministic order.
     defs.sort_by(|a, b| (a.path.as_str(), a.start_line).cmp(&(b.path.as_str(), b.start_line)));
-    let seed_count = defs.len();
+    Ok((modes, defs))
+}
 
-    let mut file_cache: HashMap<String, Option<String>> = HashMap::new();
-
-    // Read seed chunk texts (needed for expansion regardless of include_text).
-    let mut seed_text: HashMap<usize, String> = HashMap::new();
-    for i in 0..seed_count {
-        if let Some(t) = chunk_text(&repo.root, &defs[i], &mut file_cache) {
-            seed_text.insert(i, t);
-        }
+/// One-hop expansion from the seeds: syntax-derived calls first, then the
+/// existing lexical identifiers as a conservative supplement for types,
+/// constants and opaque grammars. Both resolve through the facts(name) index,
+/// never a full scan.
+fn expansion_neighbors(
+    db: &Db,
+    req: &Request,
+    seeds: &[Def],
+    seed_text: &HashMap<usize, String>,
+) -> Result<Vec<Def>> {
+    let mut calls = called_names(db, seeds)?;
+    let mut syntax_names = calls.names();
+    let mut lexical: HashSet<String> = HashSet::new();
+    for t in seed_text.values() {
+        collect_identifiers(t, &mut lexical);
     }
+    let seed_names: HashSet<&str> = seeds.iter().map(|d| d.name.as_str()).collect();
+    calls.unscoped.retain(|r| !seed_names.contains(r.as_str()));
+    calls.scoped.retain(|r, _| !seed_names.contains(r.as_str()));
+    syntax_names.retain(|r| !seed_names.contains(r.as_str()));
+    lexical.retain(|r| !seed_names.contains(r.as_str()) && !syntax_names.contains(r));
+    let seed_keys: HashSet<(String, usize)> =
+        seeds.iter().map(|d| (d.path.clone(), d.start_byte)).collect();
 
-    // One-hop expansion: syntax-derived calls first, then the existing lexical
-    // identifiers as a conservative supplement for types, constants and opaque
-    // grammars. Both resolve through the facts(name) index, never a full scan.
-    if req.expand {
-        let mut calls = called_names(db, &defs[..seed_count])?;
-        let mut syntax_names = calls.names();
-        let mut lexical: HashSet<String> = HashSet::new();
-        for t in seed_text.values() {
-            collect_identifiers(t, &mut lexical);
+    let mut neighbors: Vec<Def> = Vec::new();
+    let mut added: HashSet<(String, usize)> = HashSet::new();
+    // Expansion is by name, so a seed mentioning `new` or `open` pulls in
+    // every same-named definition in the repo and spends the budget on code
+    // the seed cannot even call. `--resolved` keeps only definitions living
+    // in a file the seeds reach through imports — the same import-graph
+    // heuristic `--resolved` already applies to callers/callees, reused
+    // rather than reinvented. Still a heuristic: it narrows a superset.
+    let reach: Option<HashSet<String>> = if req.resolved {
+        let seed_files: HashSet<String> = seeds.iter().map(|d| d.path.clone()).collect();
+        let graph = crate::commands::load_dep_graph(db)?;
+        let mut r = seed_files.clone();
+        for f in &seed_files {
+            for reached in graph.reachable_from(f) {
+                r.insert(reached.to_string());
+            }
         }
-        let seed_names: HashSet<&str> = defs[..seed_count].iter().map(|d| d.name.as_str()).collect();
-        calls.unscoped.retain(|r| !seed_names.contains(r.as_str()));
-        calls.scoped.retain(|r, _| !seed_names.contains(r.as_str()));
-        syntax_names.retain(|r| !seed_names.contains(r.as_str()));
-        lexical.retain(|r| !seed_names.contains(r.as_str()) && !syntax_names.contains(r));
-        let seed_keys: HashSet<(String, usize)> = defs[..seed_count]
-            .iter()
-            .map(|d| (d.path.clone(), d.start_byte))
-            .collect();
-
-        let mut neighbors: Vec<Def> = Vec::new();
-        let mut added: HashSet<(String, usize)> = HashSet::new();
-        // Expansion is by name, so a seed mentioning `new` or `open` pulls in
-        // every same-named definition in the repo and spends the budget on code
-        // the seed cannot even call. `--resolved` keeps only definitions living
-        // in a file the seeds reach through imports — the same import-graph
-        // heuristic `--resolved` already applies to callers/callees, reused
-        // rather than reinvented. Still a heuristic: it narrows a superset.
-        let reach: Option<HashSet<String>> = if req.resolved {
-            let seed_files: HashSet<String> =
-                defs[..seed_count].iter().map(|d| d.path.clone()).collect();
-            let graph = crate::commands::load_dep_graph(db)?;
-            let mut r = seed_files.clone();
-            for f in &seed_files {
-                for reached in graph.reachable_from(f) {
-                    r.insert(reached.to_string());
+        Some(r)
+    } else {
+        None
+    };
+    let mut add_group = |
+        names: HashSet<String>,
+        only_in: Option<&HashMap<String, HashSet<String>>>
+    | -> Result<()> {
+        let mut names: Vec<String> = names.into_iter().collect();
+        names.sort();
+        let mut group = defs_by_column(db, "name", &names)?;
+        group.sort_by(|a, b| {
+            (a.name.as_str(), a.path.as_str(), a.start_line)
+                .cmp(&(b.name.as_str(), b.path.as_str(), b.start_line))
+        });
+        for d in group {
+            if let Some(paths) = only_in.and_then(|targets| targets.get(&d.name)) {
+                if !paths.contains(&d.path) {
+                    continue;
                 }
             }
-            Some(r)
-        } else {
-            None
-        };
-        let mut add_group = |
-            names: HashSet<String>,
-            only_in: Option<&HashMap<String, HashSet<String>>>
-        | -> Result<()> {
-            let mut names: Vec<String> = names.into_iter().collect();
-            names.sort();
-            let mut group = defs_by_column(db, "name", &names)?;
-            group.sort_by(|a, b| {
-                (a.name.as_str(), a.path.as_str(), a.start_line)
-                    .cmp(&(b.name.as_str(), b.path.as_str(), b.start_line))
-            });
-            for d in group {
-                if let Some(paths) = only_in.and_then(|targets| targets.get(&d.name)) {
-                    if !paths.contains(&d.path) {
-                        continue;
-                    }
-                }
-                if let Some(r) = &reach {
-                    if !r.contains(&d.path) {
-                        continue;
-                    }
-                }
-                let key = (d.path.clone(), d.start_byte);
-                if !seed_keys.contains(&key) && added.insert(key) {
-                    neighbors.push(d);
+            if let Some(r) = &reach {
+                if !r.contains(&d.path) {
+                    continue;
                 }
             }
-            Ok(())
-        };
-        // A module-qualified syntax call is more specific than a bare name:
-        // `context::build()` can be tied to the direct `context` import, while
-        // an unqualified `build()` deliberately remains a conservative superset.
-        let scoped_names = calls.scoped.keys().cloned().collect();
-        add_group(scoped_names, Some(&calls.scoped))?;
-        add_group(calls.unscoped, None)?;
-        add_group(lexical, None)?;
-        neighbors.truncate(MAX_NEIGHBORS);
-        defs.extend(neighbors);
-    }
+            let key = (d.path.clone(), d.start_byte);
+            if !seed_keys.contains(&key) && added.insert(key) {
+                neighbors.push(d);
+            }
+        }
+        Ok(())
+    };
+    // A module-qualified syntax call is more specific than a bare name:
+    // `context::build()` can be tied to the direct `context` import, while
+    // an unqualified `build()` deliberately remains a conservative superset.
+    let scoped_names = calls.scoped.keys().cloned().collect();
+    add_group(scoped_names, Some(&calls.scoped))?;
+    add_group(calls.unscoped, None)?;
+    add_group(lexical, None)?;
+    neighbors.truncate(MAX_NEIGHBORS);
+    Ok(neighbors)
+}
 
-    // Candidate list in rank order: seeds, then referenced neighbours.
+/// What the token budget kept and dropped.
+struct Filled {
+    chunks: Vec<Chunk>,
+    omitted: Vec<Omitted>,
+    omitted_truncated: bool,
+    used: u64,
+}
+
+/// Budget fill over the candidates in rank order (seeds, then referenced
+/// neighbours): include while it fits; a chunk that overflows is recorded as
+/// omitted, and we keep trying smaller later chunks.
+fn fill_budget(
+    db: &Db,
+    repo: &Repo,
+    req: &Request,
+    defs: &[Def],
+    seed_count: usize,
+    mut seed_text: HashMap<usize, String>,
+    file_cache: &mut HashMap<String, Option<String>>,
+) -> Filled {
     let candidates: Vec<(usize, &'static str)> = (0..seed_count)
         .map(|i| (i, "seed"))
         .chain((seed_count..defs.len()).map(|i| (i, "referenced")))
         .collect();
 
-    // Budget fill: include in rank order while it fits; a chunk that overflows
-    // is recorded as omitted, and we keep trying smaller later chunks.
     let mut chunks = Vec::new();
     let mut omitted = Vec::new();
     let mut omitted_truncated = false;
@@ -301,7 +366,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         let d = &defs[i];
         let mut text = seed_text
             .remove(&i)
-            .or_else(|| chunk_text(&repo.root, d, &mut file_cache));
+            .or_else(|| chunk_text(&repo.root, d, file_cache));
         let bytes = d.end_byte.saturating_sub(d.start_byte) as u64;
         let mut est = bytes.div_ceil(4).max(1);
 
@@ -344,36 +409,12 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
             reduced,
         });
     }
-
-    let seeds: Vec<String> = {
-        let mut s: Vec<String> = defs[..seed_count].iter().map(|d| d.name.clone()).collect();
-        s.sort();
-        s.dedup();
-        s
-    };
-
-    let plan = req.plan.then(|| Plan {
-        modes,
-        seeds,
-        expansion: if req.expand {
-            "one-hop: syntax calls first, then lexical references in seed chunks"
-        } else {
-            "disabled"
-        },
-        order: "seeds first, then referenced defs; each group by path+line; a chunk over budget is skipped, not reordered",
-    });
-
-    Ok(ContextResult {
-        plan,
-        budget: Budget {
-            max_tokens: req.max_tokens,
-            used_tokens: used,
-            tokenizer: TOKENIZER,
-        },
+    Filled {
         chunks,
         omitted,
         omitted_truncated,
-    })
+        used,
+    }
 }
 
 /// A definition to include in an `explore` bundle, already located by (name,
