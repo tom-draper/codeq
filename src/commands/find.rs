@@ -418,21 +418,23 @@ struct ReferencesResult {
     truncated: bool,
 }
 
+/// Arguments of `references`.
+pub struct ReferencesArgs<'a> {
+    pub name: &'a str,
+    pub path: Option<&'a str>,
+    pub language: Option<&'a str>,
+    pub limit: usize,
+    pub resolved: bool,
+    pub call_only: bool,
+    pub qualifier: Option<&'a str>,
+}
+
 /// `references <name>` — word-boundary occurrences of an exact symbol name,
 /// each annotated with its enclosing definition, and definition sites flagged.
 /// These are *textual* references (not type-resolved) — honest and deterministic,
 /// but far more precise than a substring grep.
-pub fn cmd_references(
-    cwd: &Path,
-    name: &str,
-    path: Option<&str>,
-    language: Option<&str>,
-    limit: usize,
-    resolved: bool,
-    call_only: bool,
-    qualifier: Option<&str>,
-    out: Out,
-) -> Result<()> {
+pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> {
+    let ReferencesArgs { name, path, language, limit, resolved, call_only, qualifier } = args;
     let per_file = out.max_per_file;
     let s = Session::open(cwd, false, out)?;
 

@@ -558,18 +558,20 @@ struct CalleeHop {
 /// Safety bound on a transitive walk so a hot symbol can't blow up.
 const HOP_CAP: usize = 2000;
 
-pub fn cmd_callers(
-    cwd: &Path,
-    name: &str,
-    path: Option<&str>,
-    depth: usize,
-    resolved: bool,
-    call_only: bool,
-    qualifier: Option<&str>,
-    examples: bool,
-    limit: usize,
-    out: Out,
-) -> Result<()> {
+/// Arguments of `callers`.
+pub struct CallersArgs<'a> {
+    pub name: &'a str,
+    pub path: Option<&'a str>,
+    pub depth: usize,
+    pub resolved: bool,
+    pub call_only: bool,
+    pub qualifier: Option<&'a str>,
+    pub examples: bool,
+    pub limit: usize,
+}
+
+pub fn cmd_callers(cwd: &Path, args: CallersArgs, out: Out) -> Result<()> {
+    let CallersArgs { name, path, depth, resolved, call_only, qualifier, examples, limit } = args;
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
         let mut callers = callers_of(&s, name, path, call_only, qualifier, examples)?;
@@ -635,17 +637,19 @@ pub fn cmd_callers(
     s.emit_noted(hops, note)
 }
 
+/// Arguments of `callees`.
+pub struct CalleesArgs<'a> {
+    pub name: &'a str,
+    pub path: Option<&'a str>,
+    pub depth: usize,
+    pub resolved: bool,
+    pub examples: bool,
+    pub limit: usize,
+}
+
 /// `callees <name>` — what this symbol references (by name).
-pub fn cmd_callees(
-    cwd: &Path,
-    name: &str,
-    path: Option<&str>,
-    depth: usize,
-    resolved: bool,
-    examples: bool,
-    limit: usize,
-    out: Out,
-) -> Result<()> {
+pub fn cmd_callees(cwd: &Path, args: CalleesArgs, out: Out) -> Result<()> {
+    let CalleesArgs { name, path, depth, resolved, examples, limit } = args;
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
         let mut rows = callees_of(&s, name, path, resolved, examples)?;

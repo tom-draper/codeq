@@ -256,6 +256,16 @@ fn for_each_ident(body: &str, mut f: impl FnMut(usize, &str)) {
     }
 }
 
+/// Arguments of `hotspots`.
+pub struct HotspotsArgs<'a> {
+    pub path: Option<&'a str>,
+    pub kind: Option<&'a str>,
+    pub language: Option<&'a str>,
+    pub calls_only: bool,
+    pub min_refs: i64,
+    pub limit: usize,
+}
+
 /// `hotspots [<path>]` — definitions ranked by how many times their name appears
 /// in code: the inverse of `unused`, and the "what is load-bearing here?" view for
 /// a file or repo you've just met. Asked for by an external user who had `unused`
@@ -276,16 +286,8 @@ fn for_each_ident(body: &str, mut f: impl FnMut(usize, &str)) {
 /// not "this definition has N callers" — `callers NAME --calls` is the precise
 /// question. `--kind`/`--path`/`--language` scope what is reported; the count is
 /// always repo-wide.
-pub fn cmd_hotspots(
-    cwd: &Path,
-    path: Option<&str>,
-    kind: Option<&str>,
-    language: Option<&str>,
-    calls_only: bool,
-    min_refs: i64,
-    limit: usize,
-    out: Out,
-) -> Result<()> {
+pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
+    let HotspotsArgs { path, kind, language, calls_only, min_refs, limit } = args;
     let s = Session::open(cwd, false, out)?;
 
     // The definitions to rank. Scoped for *reporting* only — the count below is

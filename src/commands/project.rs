@@ -195,6 +195,16 @@ struct TreeRow {
     languages: String,
 }
 
+/// Arguments of `tree`.
+pub struct TreeArgs<'a> {
+    pub path: Option<&'a str>,
+    pub language: Option<&'a str>,
+    pub depth: usize,
+    pub min_symbols: i64,
+    pub files_too: bool,
+    pub limit: usize,
+}
+
 /// `tree [<path>]` — the repo's directory shape, annotated with what each
 /// directory contains and folded to a depth.
 ///
@@ -212,16 +222,8 @@ struct TreeRow {
 ///   * counts aggregate from everything below, so folding at `--depth` summarises
 ///     rather than truncates — the token budget is bounded by depth, not by repo
 ///     size.
-pub fn cmd_tree(
-    cwd: &Path,
-    path: Option<&str>,
-    language: Option<&str>,
-    depth: usize,
-    min_symbols: i64,
-    files_too: bool,
-    limit: usize,
-    out: Out,
-) -> Result<()> {
+pub fn cmd_tree(cwd: &Path, args: TreeArgs, out: Out) -> Result<()> {
+    let TreeArgs { path, language, depth, min_symbols, files_too, limit } = args;
     let s = Session::open(cwd, false, out)?;
 
     // Definitions per file, so a directory can report the code it holds.
