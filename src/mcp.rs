@@ -150,10 +150,6 @@ enum Arg {
     Req(&'static str),
     /// Optional positional value, emitted after `--`.
     Pos(&'static str),
-    /// Required positional value placed with the flags, ahead of any `--`.
-    BareReq(&'static str),
-    /// Optional positional value placed with the flags, ahead of any `--`.
-    Bare(&'static str),
     /// `--flag value` when the string key is present.
     Str(&'static str, &'static str),
     /// `--flag value`, and the call is invalid without it.
@@ -289,7 +285,7 @@ const TOOL_ARGS: &[ToolArgs] = &[
         tool: "codeq_members",
         command: "members",
         args: &[
-            BareReq("name"),
+            Req("name"),
             Str("path", "--path"),
             Str("kind", "--kind"),
             Num("limit", "--limit"),
@@ -298,7 +294,7 @@ const TOOL_ARGS: &[ToolArgs] = &[
     ToolArgs {
         tool: "codeq_untested",
         command: "untested",
-        args: &[Bare("path"), Str("kind", "--kind"), Num("limit", "--limit")],
+        args: &[Pos("path"), Str("kind", "--kind"), Num("limit", "--limit")],
     },
     ToolArgs {
         tool: "codeq_outline",
@@ -408,7 +404,7 @@ const TOOL_ARGS: &[ToolArgs] = &[
         tool: "codeq_deps",
         command: "deps",
         args: &[
-            Bare("file"),
+            Pos("file"),
             Num("depth", "--depth"),
             Flag("cycles", "--cycles"),
             Flag("external", "--external"),
@@ -544,8 +540,6 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         match arg {
             Req(k) => pos.push(s(a, k)?.into()),
             Pos(k) => pos.extend(s(a, k).map(String::from)),
-            BareReq(k) => args.push(s(a, k)?.into()),
-            Bare(k) => args.extend(s(a, k).map(String::from)),
             Str(k, f) => opt(&mut args, a, k, f),
             StrReq(k, f) => {
                 args.push((*f).into());
@@ -699,4 +693,25 @@ fn tools() -> Value {
             "Every explicit type or schema relation in the repository as an edge list. relation filters to implements, extends, or references; mermaid emits a graph LR document. This is not a call graph: use callers or callees for a call relationship rooted at a symbol. Go's structural interfaces have no explicit relation edge.",
             json!({ "relation": str_, "path": str_, "language": str_, "mermaid": bool_, "limit": int_ }), &[]),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every tool whose primary value is a positional must put it after `--`, so a
+    /// value that starts with a dash is read as a literal and not as a flag.
+    #[test]
+    fn positionals_follow_the_separator() {
+        for (tool, key) in [
+            ("codeq_members", "name"),
+            ("codeq_untested", "path"),
+            ("codeq_deps", "file"),
+        ] {
+            let args = build_args(tool, &json!({ key: "--help" })).unwrap();
+            let sep = args.iter().position(|a| a == "--").expect(tool);
+            assert_eq!(args[sep + 1..], ["--help"], "{tool}: {args:?}");
+            assert!(!args[..sep].contains(&"--help".to_string()), "{tool}: {args:?}");
+        }
+    }
 }
