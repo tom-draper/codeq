@@ -15,6 +15,9 @@ use anyhow::{Context, Result};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, Query, QueryCursor};
 
+mod queries;
+use queries::*;
+
 /// Cap signatures/docs so a pathological declaration can't blow the budget.
 const MAX_SIG: usize = 200;
 const MAX_DOC: usize = 240;
@@ -3152,397 +3155,45 @@ fn cap(s: &str, max: usize) -> String {
 
 /// Each pattern binds `@name` (the identifier), one `@<kind>` capture on the
 /// whole definition node, and optionally `@body` (stripped from signatures).
-const RUST_QUERY: &str = r#"
-(function_item name: (identifier) @name body: (block) @body) @function
-; A trait method declaration has no body, so the pattern above misses it — yet it
-; is the whole point of the trait, and what `implementors` sends you looking for.
-(function_signature_item name: (identifier) @name) @method
-(struct_item name: (type_identifier) @name) @struct
-(enum_item name: (type_identifier) @name) @enum
-(union_item name: (type_identifier) @name) @union
-(trait_item name: (type_identifier) @name body: (declaration_list) @body) @trait
-(mod_item name: (identifier) @name) @module
-(const_item name: (identifier) @name) @constant
-(static_item name: (identifier) @name) @constant
-(type_item name: (type_identifier) @name) @typealias
-(macro_definition name: (identifier) @name) @macro
 
-; Members. `field` and `variant` carry an `owner` (the enclosing type), because
-; member names collide constantly across types and mean little alone.
-(field_declaration name: (field_identifier) @name) @field
-(enum_variant name: (identifier) @name) @variant
-
-; Raw syntactic imports: name is the module path as written in source. A direct
-; `use crate::util::make as m` also records `m` as the local binding, so call and
-; context expansion can connect `m()` to `make` in util rather than treating it
-; as an unrelated name. Braced use lists keep the whole declaration as one raw
-; import for now: their per-item prefixes need a separate path reconstruction.
-(use_declaration argument: [
-  (identifier)
-  (scoped_identifier)
-  (scoped_use_list)
-  (use_list)
-  (use_wildcard)
-  (crate)
-  (self)
-  (super)
-] @name) @import
-(use_declaration argument: (use_as_clause path: (_) @name alias: (identifier) @binding)) @import
-; An external `mod foo;` (no inline body) pulls in another file's module — a
-; file-level dependency edge, so treat it as an import for reachability. Inline
-; `mod foo { … }` (has a body) is not a separate file, so exclude it via `!body`.
-(mod_item name: (identifier) @name !body) @import
-; Members: struct/union fields and enum variants. Contained in their parent's
-; byte range, which is how `members` and `outline` recover the relationship.
-(field_declaration name: (field_identifier) @name) @field
-(enum_variant name: (identifier) @name) @variant
-"#;
-
-const PYTHON_QUERY: &str = r#"
-(function_definition name: (identifier) @name body: (block) @body) @function
-(class_definition name: (identifier) @name body: (block) @body) @class
-
-; Raw syntactic imports.
-(import_statement (dotted_name) @name) @import
-(import_statement (aliased_import (dotted_name) @name alias: (identifier) @binding)) @import
-; `from X import a, b [as c]` — capture the module and each imported name; the
-; extractor combines them into qualified `X.a` imports so the name (which the
-; bare module string drops) resolves to its defining file.
-(import_from_statement
-  module_name: (dotted_name) @from_module
-  name: (dotted_name (identifier) @from_name))
-(import_from_statement
-  module_name: (dotted_name) @from_module
-  name: (aliased_import name: (dotted_name (identifier) @from_name) alias: (identifier) @binding))
-; `from X import *` (wildcard) and relative `from . import x` — keep the coarse
-; module string (no specific name to qualify with).
-(import_from_statement module_name: (dotted_name) @name (wildcard_import)) @import
-(import_from_statement module_name: (relative_import) @name) @import
-
-; Members. Python declares attributes by assigning them, so both the class-body
-; form and `self.x = …` count; the latter is guarded on its receiver so
-; `other.x = 1` (mutating somebody else's object) is not a declaration.
-; `@field` sits on the *assignment*, not on the class: the owner is resolved by
-; walking up from the fact's own node, so capturing the class would look for the
-; class's own parent and find no type at all.
-(class_definition
-  body: (block (expression_statement (assignment left: (identifier) @name) @field)))
-(assignment left: (attribute object: (identifier) @guard attribute: (identifier) @name)) @field
-
-; A module-scope binding is a definition, exactly as it is in JS/TS. `DATA_DIR =
-; Path(...) / "data"`, a 52-entry `alias` dict, `ADULT_ONLY_FEATURES`, and every
-; settings constant in every Python project were indexed as *nothing*:
-; `definitions DATA_DIR` answered "no symbol named", with the message documented
-; to mean "you misspelled it", while `references` could see the assignment fine.
-; It degraded quietly rather than failing — `explore` returned an empty focus and
-; no source at all, and `outline` on a constants module listed its functions and
-; omitted the dict that is the point of the file.
-;
-; The two neighbouring cases were already handled, which is what makes this an
-; oversight rather than a decision: JS module-scope bindings are definitions (the
-; docs argue it at length) and Python *class-body* assignments are already
-; extracted as fields. Assignment extraction existed; it just never ran at module
-; scope.
-;
-; Anchored to `(module …)` so only module scope counts — matching every
-; `assignment` would bury the index in locals. Destructuring (`a, b = ...`) binds
-; several names at one site and is excluded by `left: (identifier)`; an augmented
-; assignment (`x += 1`) is a different node and never a declaration.
-; `right:`, not `value:` — Python's `assignment` names its fields left/type/right,
-; and the annotated form `X: int = 5` is the same node with a `type` as well, so
-; one pattern covers both. A bare annotation (`X: int`, no value) has no `right`
-; and is deliberately not matched: it declares a type, not a binding.
-(module
-  (expression_statement
-    (assignment left: (identifier) @name right: (_) @val)) @constant)
-"#;
 
 /// JavaScript definitions and ES imports. Node types here also exist in the
 /// TypeScript grammar, so this compiles against JS, TS, and TSX. `name: (_)`
 /// avoids depending on grammar-specific identifier node types.
-const JS_QUERY: &str = r#"
-(function_declaration name: (_) @name body: (statement_block) @body) @function
-(generator_function_declaration name: (_) @name body: (statement_block) @body) @function
-(class_declaration name: (_) @name body: (class_body) @body) @class
-(method_definition name: (_) @name body: (statement_block) @body) @method
-(variable_declarator name: (_) @name value: (arrow_function body: (_) @body)) @function
-(variable_declarator name: (_) @name value: (function_expression body: (_) @body)) @function
-
-; A top-level binding is a definition in its own right. The two patterns above
-; only see a *directly* function-valued one, and a great deal of JS/TS that is
-; conceptually a definition is not written that way: a React component wrapped in
-; `memo(…)` or `forwardRef(…)`, a `styled.div\`…\``, a `createContext(…)`, a
-; router from `express.Router()`, or a plain `export const VERSION = '1.0'`. All
-; of those were invisible to every symbol command.
-;
-; Anchored to `(program …)` so only module-scope bindings count — matching every
-; `variable_declarator` would bury the index in loop counters and locals.
-; Destructuring (`const { a } = …`) is excluded by `name: (identifier)`: it binds
-; several names at one site and none of them is declared there.
-;
-; `@val` is the bound value. The extractor uses it to drop the match when the
-; value is already captured as `@function` above, and to keep the signature
-; readable when it spans several lines.
-(program
-  (lexical_declaration
-    (variable_declarator name: (identifier) @name value: (_) @val)) @constant)
-(program
-  (variable_declaration
-    (variable_declarator name: (identifier) @name value: (_) @val)) @constant)
-(program
-  (export_statement
-    (lexical_declaration
-      (variable_declarator name: (identifier) @name value: (_) @val)) @constant))
-(program
-  (export_statement
-    (variable_declaration
-      (variable_declarator name: (identifier) @name value: (_) @val)) @constant))
-
-; Pre-ES6 JavaScript declares a method by assigning to a property —
-; `proto.use = function use(fn) {…}`, `Thing.prototype.render = function () {…}`,
-; `exports.helper = function () {…}` — and none of it was a definition. Express's
-; entire router API (`proto.param`/`handle`/`process_params`/`use`/`route`) was
-; invisible to `symbols`, and that is also why a call at that scope had no
-; enclosing definition for a `callers` row to name: the row came back blank.
-;
-; Module scope only, the same rule the `@constant` patterns above follow — a
-; `this.x = function(){}` in a constructor, or any local object literal, would
-; otherwise bury the index.
-;
-; The name is the property (`use`), not the path to it (`proto.use`): it is what
-; the call site writes, and it is the choice made for a schema-qualified SQL
-; table too. Common property names therefore collide across files — scope with
-; `--path`, as with any name-based lookup.
-(program
-  (expression_statement
-    (assignment_expression
-      left: (member_expression property: (property_identifier) @name)
-      right: (function_expression body: (statement_block) @body)) @method))
-(program
-  (expression_statement
-    (assignment_expression
-      left: (member_expression property: (property_identifier) @name)
-      right: (generator_function body: (statement_block) @body)) @method))
-(program
-  (expression_statement
-    (assignment_expression
-      left: (member_expression property: (property_identifier) @name)
-      right: (arrow_function body: (_) @body)) @method))
-
-; ES module imports and re-exports (raw module string, quotes stripped).
-(import_statement source: (string (string_fragment) @name)) @import
-(export_statement source: (string (string_fragment) @name)) @import
-; Named imports `import { a, b [as c] } from './x'` — qualified `./x.a` per name
-; (the source name, not the alias, picks the exporting file) so the imported
-; binding resolves. The coarse module capture above still covers default/namespace.
-(import_statement
-  (import_clause (named_imports (import_specifier name: (identifier) @from_name)))
-  source: (string (string_fragment) @from_module))
-(import_statement
-  (import_clause (named_imports (import_specifier name: (identifier) @from_name alias: (identifier) @binding)))
-  source: (string (string_fragment) @from_module))
-; CommonJS require("x") — a call, not a syntactic import, so it's guarded by the
-; callee name (`require`) via the @guard handling in `extract`.
-(call_expression
-  function: (identifier) @guard
-  arguments: (arguments . (string (string_fragment) @name))) @import
-"#;
 
 /// JavaScript-only definitions, appended to `JS_QUERY` for .js/.jsx.
 ///
 /// A class field is `field_definition` in the JavaScript grammar but
 /// `public_field_definition` in TypeScript's, so it cannot live in the shared
 /// query: a node type absent from a grammar fails the whole query to compile.
-const JS_EXTRA: &str = r#"
-(field_definition property: (property_identifier) @name) @field
-(field_definition property: (private_property_identifier) @name) @field
-"#;
 
 /// TypeScript-only definitions, appended to `JS_QUERY` for TS and TSX.
-const TS_EXTRA: &str = r#"
-(interface_declaration name: (_) @name) @interface
-(type_alias_declaration name: (_) @name) @type
-(enum_declaration name: (_) @name) @enum
-; Typed class fields, interface properties, and enum members.
-(public_field_definition name: (property_identifier) @name) @field
-(property_signature name: (property_identifier) @name) @field
-(enum_assignment name: (property_identifier) @name) @variant
-; A member with no initialiser is the bare identifier, not an `enum_assignment`,
-; so matching only the assignment form indexed `enum E { X = 1 }` and left the
-; commoner `enum E { A, B }` with no members at all.
-(enum_body (property_identifier) @name @variant)
-"#;
 
 /// Go definitions and imports.
-const GO_QUERY: &str = r#"
-(function_declaration name: (identifier) @name body: (block) @body) @function
-(method_declaration name: (field_identifier) @name body: (block) @body) @method
-(type_declaration (type_spec name: (type_identifier) @name type: (struct_type)) @struct)
-(type_declaration (type_spec name: (type_identifier) @name type: (interface_type)) @interface)
-(type_declaration (type_spec name: (type_identifier) @name type: (type_identifier)) @type)
-(type_declaration (type_alias name: (type_identifier) @name) @type)
-(import_spec path: (interpreted_string_literal) @name) @import
-; Struct fields. Embedded fields (no name) carry no identifier, so are skipped.
-(field_declaration name: (field_identifier) @name) @field
-"#;
 
-const GO_SPANS: &str = r#"
-(comment) @comment
-(interpreted_string_literal) @string
-(raw_string_literal) @string
-"#;
 
 /// Java definitions and imports.
-const JAVA_QUERY: &str = r#"
-(class_declaration name: (identifier) @name body: (class_body) @body) @class
-(interface_declaration name: (identifier) @name body: (interface_body) @body) @interface
-(enum_declaration name: (identifier) @name body: (enum_body) @body) @enum
-(record_declaration name: (identifier) @name) @record
-(method_declaration name: (identifier) @name body: (block) @body) @method
-(method_declaration name: (identifier) @name !body) @method
-(constructor_declaration name: (identifier) @name body: (constructor_body) @body) @method
-(import_declaration (scoped_identifier) @name) @import
-; Fields and enum constants.
-(field_declaration declarator: (variable_declarator name: (identifier) @name)) @field
-(enum_constant name: (identifier) @name) @variant
-"#;
 
-const JAVA_SPANS: &str = r#"
-(line_comment) @comment
-(block_comment) @comment
-(string_literal) @string
-(character_literal) @string
-"#;
 
 /// Ruby definitions and `require`/`require_relative` imports. Ruby has no import
 /// statement — `require "x"` is a plain method call — so imports are captured as
 /// calls guarded by the method name (see the `@guard` handling in `extract`).
 /// Ruby method/class bodies aren't a strippable field here, so signatures are
 /// the whole declaration, capped.
-const RUBY_QUERY: &str = r#"
-(method name: (_) @name) @method
-(singleton_method name: (_) @name) @method
-(class name: (_) @name) @class
-(module name: (_) @name) @module
-(call
-  method: (identifier) @guard
-  arguments: (argument_list . (string (string_content) @name))) @import
 
-; `attr_accessor :a, :b` — Ruby declares fields through a method call, so each
-; symbol argument becomes a field. Guarded on the attr_* family.
-(call
-  method: (identifier) @guard
-  arguments: (argument_list (simple_symbol) @name)) @field
-"#;
-
-const RUBY_SPANS: &str = r#"
-(comment) @comment
-(string) @string
-"#;
 
 /// C definitions and #include directives. Declarator nesting means some forms
 /// (e.g. pointer-returning functions) need their own pattern.
-const C_QUERY: &str = r#"
-(function_definition declarator: (function_declarator declarator: (identifier) @name) body: (compound_statement) @body) @function
-(function_definition declarator: (pointer_declarator declarator: (function_declarator declarator: (identifier) @name)) body: (compound_statement) @body) @function
-(struct_specifier name: (type_identifier) @name body: (field_declaration_list) @body) @struct
-(enum_specifier name: (type_identifier) @name body: (enumerator_list) @body) @enum
-(preproc_include path: (system_lib_string) @name) @import
-(preproc_include path: (string_literal) @name) @import
-; Struct/union fields, including pointer declarators (`char *b`).
-(field_declaration declarator: (field_identifier) @name) @field
-(field_declaration declarator: (pointer_declarator declarator: (field_identifier) @name)) @field
-(enumerator name: (identifier) @name) @variant
-"#;
 
-const C_SPANS: &str = r#"
-(comment) @comment
-(string_literal) @string
-(char_literal) @string
-"#;
 
 /// C++ (a superset of C): add classes, namespaces, and member functions.
-const CPP_QUERY: &str = r#"
-(function_definition declarator: (function_declarator declarator: (identifier) @name) body: (compound_statement) @body) @function
-(function_definition declarator: (pointer_declarator declarator: (function_declarator declarator: (identifier) @name)) body: (compound_statement) @body) @function
-(function_definition declarator: (function_declarator declarator: (field_identifier) @name) body: (compound_statement) @body) @method
-(function_definition declarator: (function_declarator declarator: (qualified_identifier) @name) body: (compound_statement) @body) @method
-; Declaration-only members (the norm in headers): method/constructor prototypes
-; with no body. Without these, a header-only class exposes none of its methods.
-(field_declaration declarator: (function_declarator declarator: (field_identifier) @name)) @method
-(field_declaration declarator: (function_declarator declarator: (identifier) @name)) @method
-; Free-function prototypes at file scope (also headers).
-(declaration declarator: (function_declarator declarator: (identifier) @name)) @function
-(class_specifier name: (type_identifier) @name body: (field_declaration_list) @body) @class
-(struct_specifier name: (type_identifier) @name body: (field_declaration_list) @body) @struct
-(enum_specifier name: (type_identifier) @name body: (enumerator_list) @body) @enum
-(namespace_definition name: (namespace_identifier) @name body: (declaration_list) @body) @namespace
-(preproc_include path: (system_lib_string) @name) @import
-(preproc_include path: (string_literal) @name) @import
-(field_declaration declarator: (field_identifier) @name) @field
-(field_declaration declarator: (pointer_declarator declarator: (field_identifier) @name)) @field
-(enumerator name: (identifier) @name) @variant
-"#;
 
-const CPP_SPANS: &str = r#"
-(comment) @comment
-(string_literal) @string
-(char_literal) @string
-(raw_string_literal) @string
-"#;
 
 /// C#.
-const CSHARP_QUERY: &str = r#"
-(class_declaration name: (identifier) @name body: (_) @body) @class
-(interface_declaration name: (identifier) @name body: (_) @body) @interface
-(struct_declaration name: (identifier) @name body: (_) @body) @struct
-(enum_declaration name: (identifier) @name body: (_) @body) @enum
-(record_declaration name: (identifier) @name) @record
-(method_declaration name: (identifier) @name body: (block) @body) @method
-(constructor_declaration name: (identifier) @name body: (block) @body) @method
-(namespace_declaration name: (_) @name body: (_) @body) @namespace
-(using_directive (identifier) @name) @import
-(using_directive (qualified_name) @name) @import
-; Fields, auto/expression properties, and enum members.
-(field_declaration (variable_declaration (variable_declarator (identifier) @name))) @field
-(property_declaration name: (identifier) @name) @field
-(enum_member_declaration name: (identifier) @name) @variant
-"#;
 
-const CSHARP_SPANS: &str = r#"
-(comment) @comment
-(string_literal) @string
-(character_literal) @string
-"#;
 
 /// PHP (the `<?php` variant).
-const PHP_QUERY: &str = r#"
-(function_definition name: (name) @name body: (compound_statement) @body) @function
-(method_declaration name: (name) @name body: (compound_statement) @body) @method
-(class_declaration name: (name) @name body: (declaration_list) @body) @class
-(interface_declaration name: (name) @name body: (declaration_list) @body) @interface
-(trait_declaration name: (name) @name body: (declaration_list) @body) @trait
-(enum_declaration name: (name) @name) @enum
-(namespace_use_clause (qualified_name) @name) @import
-(property_declaration (property_element (variable_name (name) @name))) @field
-(enum_case name: (name) @name) @variant
-; File inclusion (require/include and their _once variants) with a static string
-; path — PHP's other import mechanism. Both single-quoted (string) and
-; double-quoted (encapsed_string) forms; quotes stripped like other imports.
-(require_expression [(string) (encapsed_string)] @name) @import
-(require_once_expression [(string) (encapsed_string)] @name) @import
-(include_expression [(string) (encapsed_string)] @name) @import
-(include_once_expression [(string) (encapsed_string)] @name) @import
-; Typed and untyped properties, and enum cases.
-(property_declaration (property_element (variable_name (name) @name))) @field
-(enum_case name: (name) @name) @variant
-"#;
 
-const PHP_SPANS: &str = r#"
-(comment) @comment
-(string) @string
-(encapsed_string) @string
-"#;
 
 /// Syntactic class of a byte position, for `search --in`. Extracted at index
 /// time and stored in the `spans` table, so `search --in` is a lookup, not a
@@ -3570,24 +3221,8 @@ impl Span {
     }
 }
 
-const RUST_SPANS: &str = r#"
-(line_comment) @comment
-(block_comment) @comment
-(string_literal) @string
-(raw_string_literal) @string
-(char_literal) @string
-"#;
 
-const PYTHON_SPANS: &str = r#"
-(comment) @comment
-(string) @string
-"#;
 
-const JS_SPANS: &str = r#"
-(comment) @comment
-(string) @string
-(template_string) @string
-"#;
 
 // ---------------------------------------------------------------------------
 // Type-relation queries: `@sub` is the implementing/deriving type, `@implements`
@@ -3595,314 +3230,49 @@ const JS_SPANS: &str = r#"
 // inheritance) have none. Grammar-specific; kept minimal and verified by tests.
 // ---------------------------------------------------------------------------
 
-const RUST_REL: &str = r#"
-(impl_item trait: (_) @implements type: (_) @sub)
-"#;
 
-const PYTHON_REL: &str = r#"
-(class_definition
-  name: (identifier) @sub
-  superclasses: (argument_list [(identifier) (attribute)] @extends))
-"#;
 
-const JS_REL: &str = r#"
-(class_declaration name: (identifier) @sub (class_heritage (identifier) @extends))
-(class_declaration name: (identifier) @sub (class_heritage (member_expression) @extends))
-"#;
 
-const TS_REL: &str = r#"
-(class_declaration
-  name: (type_identifier) @sub
-  (class_heritage (extends_clause value: (identifier) @extends)))
-; A namespaced base class — `extends React.Component`, the shape every React
-; class component is written in. The value is a `member_expression`, not an
-; identifier, so the pattern above sees nothing and the class came back with no
-; supertypes at all. The supertype is stored dotted, as written; `implementors`
-; also matches on the last segment so `implementors Component` still finds it.
-(class_declaration
-  name: (type_identifier) @sub
-  (class_heritage (extends_clause value: (member_expression) @extends)))
-(class_declaration
-  name: (type_identifier) @sub
-  (class_heritage (implements_clause (type_identifier) @implements)))
-; `implements ns.Iface` and `implements Iface<T>`.
-(class_declaration
-  name: (type_identifier) @sub
-  (class_heritage (implements_clause (nested_type_identifier) @implements)))
-(class_declaration
-  name: (type_identifier) @sub
-  (class_heritage (implements_clause (generic_type (type_identifier) @implements))))
-(class_declaration
-  name: (type_identifier) @sub
-  (class_heritage (implements_clause (generic_type (nested_type_identifier) @implements))))
-(interface_declaration
-  name: (type_identifier) @sub
-  (extends_type_clause (type_identifier) @extends))
-(interface_declaration
-  name: (type_identifier) @sub
-  (extends_type_clause (nested_type_identifier) @extends))
-(interface_declaration
-  name: (type_identifier) @sub
-  (extends_type_clause (generic_type (type_identifier) @extends)))
-"#;
 
 const GO_REL: &str = "";
 
-const JAVA_REL: &str = r#"
-(class_declaration name: (identifier) @sub (superclass (type_identifier) @extends))
-(class_declaration
-  name: (identifier) @sub
-  (super_interfaces (type_list (type_identifier) @implements)))
-(interface_declaration
-  name: (identifier) @sub
-  (extends_interfaces (type_list (type_identifier) @extends)))
-"#;
 
-const RUBY_REL: &str = r#"
-(class name: (constant) @sub superclass: (superclass (constant) @extends))
-"#;
 
 const C_REL: &str = "";
 
-const CPP_REL: &str = r#"
-(class_specifier name: (type_identifier) @sub (base_class_clause (type_identifier) @extends))
-(struct_specifier name: (type_identifier) @sub (base_class_clause (type_identifier) @extends))
-"#;
 
-const CSHARP_REL: &str = r#"
-(class_declaration name: (identifier) @sub (base_list (identifier) @extends))
-(interface_declaration name: (identifier) @sub (base_list (identifier) @extends))
-"#;
 
-const PHP_REL: &str = r#"
-(class_declaration name: (name) @sub (base_clause (name) @extends))
-(class_declaration name: (name) @sub (class_interface_clause (name) @implements))
-(interface_declaration name: (name) @sub (base_clause (name) @extends))
-"#;
 
 // Bash: functions only (source/. includes are plain commands, not captured).
-const BASH_QUERY: &str = r#"
-; `source ./lib.sh` and `. ./lib.sh` — a command, guarded on its name.
-(command
-  name: (command_name (word) @guard)
-  argument: (word) @name) @import
-
-(function_definition name: (word) @name body: (_) @body) @function
-"#;
-const BASH_SPANS: &str = r#"
-(comment) @comment
-(string) @string
-(raw_string) @string
-(ansi_c_string) @string
-(translated_string) @string
-"#;
 
 // Lua: named functions, incl. `M.f` (@function) and `obj:m` (@method). `require`
 // is a plain call, so imports aren't captured.
-const LUA_QUERY: &str = r#"
-(function_declaration name: (identifier) @name body: (block) @body) @function
-(function_declaration name: (dot_index_expression) @name body: (block) @body) @function
-(function_declaration name: (method_index_expression) @name body: (block) @body) @method
-
-; `require("mod")` is a call, not syntax, so it is guarded on the callee name the
-; same way Ruby's `require` is.
-(function_call
-  name: (identifier) @guard
-  arguments: (arguments . (string (string_content) @name))) @import
-"#;
-const LUA_SPANS: &str = r#"
-(comment) @comment
-(string) @string
-"#;
 
 // Scala: defs, classes/objects/traits/enums, type aliases, and imports.
-const SCALA_REL: &str = r#"
-; `class A extends B with C` — the extends clause lists every ancestor.
-(class_definition name: (identifier) @sub
-  (extends_clause (type_identifier) @extends))
-(trait_definition name: (identifier) @sub
-  (extends_clause (type_identifier) @extends))
-(object_definition name: (identifier) @sub
-  (extends_clause (type_identifier) @extends))
-"#;
 
-const SCALA_QUERY: &str = r#"
-(function_definition name: (identifier) @name body: (_) @body) @function
-(function_definition name: (identifier) @name !body) @function
-(function_declaration name: (identifier) @name) @function
-(class_definition name: (identifier) @name body: (_) @body) @class
-(class_definition name: (identifier) @name !body) @class
-(object_definition name: (identifier) @name body: (_) @body) @class
-(object_definition name: (identifier) @name !body) @class
-(trait_definition name: (identifier) @name body: (_) @body) @trait
-(trait_definition name: (identifier) @name !body) @trait
-(enum_definition name: (identifier) @name) @enum
-(type_definition name: (identifier) @name) @type
-(import_declaration path: (_) @name) @import
-; `val`/`var` members and case-class parameters (which are fields).
-(val_definition pattern: (identifier) @name) @field
-(var_definition pattern: (identifier) @name) @field
-(class_parameter name: (identifier) @name) @field
-(val_declaration name: (identifier) @name) @field
-(var_declaration name: (identifier) @name) @field
-(simple_enum_case name: (identifier) @name) @variant
-"#;
-const SCALA_SPANS: &str = r#"
-(comment) @comment
-(block_comment) @comment
-(string) @string
-(interpolated_string) @string
-"#;
 
 // Kotlin: classes/objects/functions and imports. The grammar exposes no body
 // field, so signatures are the (capped) declaration, like Ruby.
-const KOTLIN_REL: &str = r#"
-; `class A : B(), C` — a delegation specifier is a base class or interface;
-; Kotlin does not distinguish them syntactically, so both read as `extends`.
-(class_declaration name: (identifier) @sub
-  (delegation_specifiers (delegation_specifier
-    (constructor_invocation (user_type (identifier) @extends)))))
-(class_declaration name: (identifier) @sub
-  (delegation_specifiers (delegation_specifier
-    (user_type (identifier) @extends))))
-"#;
 
-const KOTLIN_QUERY: &str = r#"
-(class_declaration name: (_) @name) @class
-(object_declaration name: (_) @name) @class
-(function_declaration name: (_) @name) @function
-(import [(identifier) (qualified_identifier)] @name) @import
-; `val`/`var` properties and primary-constructor parameters.
-(property_declaration (variable_declaration (identifier) @name)) @field
-(class_parameter (identifier) @name) @field
-"#;
-const KOTLIN_SPANS: &str = r#"
-(line_comment) @comment
-(block_comment) @comment
-(string_literal) @string
-"#;
 
 // Swift: functions, class/struct/enum/actor (all `class_declaration`), protocols,
 // and imports. `name:` is pinned to the identifier node because a
 // `function_declaration` also exposes its return type under a `name` field.
-const SWIFT_REL: &str = r#"
-; `class A: B, C` — a base class and a protocol look the same here.
-(class_declaration name: (type_identifier) @sub
-  (inheritance_specifier (user_type (type_identifier) @extends)))
-"#;
 
-const SWIFT_QUERY: &str = r#"
-(function_declaration name: (simple_identifier) @name body: (function_body) @body) @function
-(function_declaration name: (simple_identifier) @name !body) @function
-(protocol_function_declaration name: (simple_identifier) @name) @method
-(class_declaration name: (type_identifier) @name body: (class_body) @body) @class
-(class_declaration name: (type_identifier) @name !body) @class
-(protocol_declaration name: (type_identifier) @name body: (protocol_body) @body) @interface
-(protocol_declaration name: (type_identifier) @name !body) @interface
-(import_declaration (identifier) @name) @import
-; Stored properties (`var`/`let` in a type body).
-(property_declaration (pattern (simple_identifier) @name)) @field
-"#;
-const SWIFT_SPANS: &str = r#"
-(comment) @comment
-(multiline_comment) @comment
-(line_string_literal) @string
-(multi_line_string_literal) @string
-"#;
 
 // Dart: top-level functions, methods, classes/mixins/enums, and imports.
-const DART_REL: &str = r#"
-; `class A extends B implements C` — the two *are* distinguishable.
-(class_declaration name: (identifier) @sub
-  (superclass (type (type_identifier) @extends)))
-(class_declaration name: (identifier) @sub
-  (interfaces (type (type_identifier) @implements)))
-"#;
 
-const DART_QUERY: &str = r#"
-(function_declaration signature: (function_signature name: (identifier) @name) body: (function_body) @body) @function
-(method_declaration (method_signature (function_signature name: (identifier) @name)) body: (function_body) @body) @method
-(class_declaration name: (identifier) @name body: (class_body) @body) @class
-(mixin_declaration name: (identifier) @name body: (class_body) @body) @class
-(enum_declaration name: (identifier) @name body: (_) @body) @enum
-(library_import (import_specification uri: (configurable_uri (uri (string_literal) @name)))) @import
-(class_member (declaration (initialized_identifier_list
-  (initialized_identifier name: (identifier) @name)))) @field
-(class_member (declaration (static_final_declaration_list
-  (static_final_declaration name: (identifier) @name)))) @field
-(enum_constant name: (identifier) @name) @variant
-"#;
-const DART_SPANS: &str = r#"
-(comment) @comment
-(string_literal) @string
-"#;
 
 // Zig: functions, and the `const X = struct/enum/union {…}` type idiom.
-const ZIG_QUERY: &str = r#"
-; `@import("std")` — a builtin call, guarded on the builtin's name.
-(builtin_function
-  (builtin_identifier) @guard
-  (arguments (string (string_content) @name))) @import
-
-(function_declaration name: (identifier) @name body: (block) @body) @function
-(variable_declaration (identifier) @name (struct_declaration)) @struct
-(variable_declaration (identifier) @name (enum_declaration)) @enum
-(variable_declaration (identifier) @name (union_declaration)) @union
-(container_field name: (identifier) @name) @field
-"#;
-const ZIG_SPANS: &str = r#"
-(comment) @comment
-(string) @string
-"#;
 
 // Solidity: contracts/interfaces/libraries, functions, modifiers, structs, enums,
 // events, and imports.
-const SOLIDITY_REL: &str = r#"
-; `contract A is B, C` — Solidity has no separate implements form.
-(contract_declaration name: (identifier) @sub
-  (inheritance_specifier (user_defined_type (identifier) @extends)))
-"#;
 
-const SOLIDITY_QUERY: &str = r#"
-(contract_declaration name: (identifier) @name body: (contract_body) @body) @class
-(interface_declaration name: (identifier) @name body: (contract_body) @body) @interface
-(library_declaration name: (identifier) @name body: (contract_body) @body) @class
-(function_definition name: (identifier) @name body: (_) @body) @function
-(function_definition name: (identifier) @name !body) @function
-(modifier_definition name: (identifier) @name) @function
-(struct_declaration name: (identifier) @name) @struct
-(enum_declaration name: (identifier) @name) @enum
-(event_definition name: (identifier) @name) @type
-(import_directive source: (string) @name) @import
-; Contract state variables, and enum values.
-(state_variable_declaration name: (identifier) @name) @field
-; A Solidity `enum_value` is itself the identifier leaf, not a wrapper, so the
-; name and the definition are the same node.
-(constant_variable_declaration name: (identifier) @name) @field
-(struct_member name: (identifier) @name) @field
-(enum_value) @name @variant
-"#;
-const SOLIDITY_SPANS: &str = r#"
-(comment) @comment
-(string) @string
-"#;
 
 // Elixir: modules and functions. These are macro `call`s (`defmodule`/`def`/
 // `defp`), so the `def*` keyword is captured as a `@guard` that `extract` filters
 // on (an ordinary call like `import Foo` is rejected). `defmodule` names an
 // `alias`; `def`/`defp` name the inner call's (or bare) identifier.
-const ELIXIR_QUERY: &str = r#"
-; `alias Foo.Bar`, `import Baz`, `use Mod` — macro calls, like the def* family.
-(call target: (identifier) @guard (arguments (alias) @name)) @import
-
-(call target: (identifier) @guard (arguments (alias) @name)) @module
-(call target: (identifier) @guard (arguments (call target: (identifier) @name))) @function
-(call target: (identifier) @guard (arguments (identifier) @name)) @function
-"#;
-const ELIXIR_SPANS: &str = r#"
-(comment) @comment
-(string) @string
-"#;
 
 // Svelte markup. Everything a `<script>` block declares comes from the nested
 // JS/TS pass in `extract_svelte`; what the *markup* itself defines is a
@@ -3910,17 +3280,10 @@ const ELIXIR_SPANS: &str = r#"
 // `{@render name(…)}`, so the (textual) call graph links the two. The grammar
 // exposes no body field, so a snippet's signature is its whole declaration
 // capped, like Ruby's and Kotlin's.
-const SVELTE_QUERY: &str = r#"
-(snippet_statement (snippet_start (snippet_name) @name)) @function
-"#;
 // Markup comments and literal attribute values. `<script>`/`<style>` contents
 // are each a single opaque token here: script spans come from the nested JS/TS
 // pass, while CSS in `<style>` stays unclassified (no CSS grammar), so a comment
 // inside `<style>` reads as code to `search --in`.
-const SVELTE_SPANS: &str = r#"
-(comment) @comment
-(quoted_attribute_value) @string
-"#;
 
 // Vue single-file components. Unlike Svelte's `{#snippet}`, a Vue `<template>`
 // declares nothing nameable — every definition comes from the nested `<script>`
@@ -3937,110 +3300,25 @@ const VUE_QUERY: &str = "";
 // because it spells expressions with braces (`on:click={handleClick}`), which
 // are never quoted values. `{{ interpolation }}` holds code and stays
 // unclassified; `<style>` is opaque, as in Svelte.
-const VUE_SPANS: &str = r#"
-(comment) @comment
-(attribute (quoted_attribute_value) @string)
-"#;
 
 // CSS. Rules are not "definitions" in the usual sense, but "where is `.primary`
 // styled?" is a real question with an exact answer, so a class/id selector and a
 // named at-rule are captured. The bigger win is spans: `<style>` inside a Svelte
 // or Vue component was previously opaque, so CSS comments read as code.
-const CSS_QUERY: &str = r#"
-(rule_set (selectors (class_selector (class_name) @name))) @type
-(rule_set (selectors (id_selector (id_name) @name))) @type
-(keyframes_statement (keyframes_name) @name) @type
-(import_statement (string_value) @name) @import
-"#;
-const CSS_SPANS: &str = r#"
-(comment) @comment
-(string_value) @string
-"#;
 
 // PowerShell: functions and classes, the Bash counterpart codeq was missing.
-const POWERSHELL_QUERY: &str = r#"
-(function_statement (function_name) @name) @function
-(class_statement (simple_name) @name) @class
-(class_method_definition (simple_name) @name) @method
-"#;
-const POWERSHELL_SPANS: &str = r#"
-(comment) @comment
-(string_literal) @string
-(expandable_string_literal) @string
-(expandable_here_string_literal) @string
-"#;
 
 // Protobuf: the interface between services in a polyglot repo, so a message name
 // is often the one symbol that crosses language boundaries.
-const PROTO_QUERY: &str = r#"
-(message (message_name) @name) @class
-(enum (enum_name) @name) @enum
-(service (service_name) @name) @interface
-(rpc (rpc_name) @name) @method
-(field (identifier) @name) @field
-(enum_field (identifier) @name) @variant
-(import (string) @name) @import
-"#;
-const PROTO_SPANS: &str = r#"
-(comment) @comment
-(string) @string
-"#;
 
 // GraphQL: schema types and their fields.
-const GRAPHQL_QUERY: &str = r#"
-(object_type_definition (name) @name) @type
-(interface_type_definition (name) @name) @interface
-(input_object_type_definition (name) @name) @type
-(enum_type_definition (name) @name) @enum
-(scalar_type_definition (name) @name) @type
-(union_type_definition (name) @name) @type
-(directive_definition (name) @name) @function
-(field_definition (name) @name) @field
-(enum_value_definition (enum_value) @name) @variant
-"#;
 // `type User implements Node & Timestamped`. The grammar nests
 // `implements_interfaces` left-recursively rather than listing siblings, so
 // `A & B & C` is `II(II(II(A), B), C)` and a single pattern binds only the
 // outermost. One pattern per nesting level therefore, which covers up to five
 // interfaces on a type — a stated bound rather than a silent truncation, and
 // past anything real schemas do.
-const GRAPHQL_REL: &str = r#"
-(object_type_definition
-  (name) @sub
-  (implements_interfaces (named_type (name) @implements)))
-(interface_type_definition
-  (name) @sub
-  (implements_interfaces (named_type (name) @implements)))
-(object_type_definition
-  (name) @sub
-  (implements_interfaces (implements_interfaces (named_type (name) @implements))))
-(interface_type_definition
-  (name) @sub
-  (implements_interfaces (implements_interfaces (named_type (name) @implements))))
-(object_type_definition
-  (name) @sub
-  (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements)))))
-(interface_type_definition
-  (name) @sub
-  (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements)))))
-(object_type_definition
-  (name) @sub
-  (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements))))))
-(interface_type_definition
-  (name) @sub
-  (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements))))))
-(object_type_definition
-  (name) @sub
-  (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements)))))))
-(interface_type_definition
-  (name) @sub
-  (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (implements_interfaces (named_type (name) @implements)))))))
-"#;
 
-const GRAPHQL_SPANS: &str = r#"
-(comment) @comment
-(string_value) @string
-"#;
 
 // SQL. A schema is the one part of a polyglot repo that every language talks to,
 // and `.sql` was indexed as searchable text with no definitions at all — so
@@ -4052,26 +3330,11 @@ const GRAPHQL_SPANS: &str = r#"
 // clause, so an unanchored pattern names each definition several times over. `.`
 // after the introducing keyword (or at the start of the child list) pins the
 // capture to the one that is the declaration's own name.
-const SQL_QUERY: &str = r#"
-(create_table (keyword_table) . (object_reference) @name) @table
-(create_view (keyword_view) . (object_reference) @name) @view
-(create_materialized_view (keyword_view) . (object_reference) @name) @view
-(create_index (identifier) @name) @index
-(create_trigger (keyword_trigger) . (object_reference) @name) @trigger
-(create_function (keyword_function) . (object_reference) @name (function_body)? @body) @function
-(create_type (keyword_type) . (object_reference) @name) @type
-(create_schema (identifier) @name) @module
-(column_definition name: (_) @name) @field
-"#;
 
 // `marginalia` is this grammar's name for a `/* … */` block comment; `comment` is
 // the `--` line form. String spans are *not* here: the grammar gives every scalar
 // the same `literal` node, so a query cannot tell `'admin'` from `42` — see
 // `sql_extras`.
-const SQL_SPANS: &str = r#"
-(comment) @comment
-(marginalia) @comment
-"#;
 
 // Foreign keys — the one genuinely structural edge a schema has, and the reason
 // to index SQL beyond finding declarations. Deliberately *not* `implements` or
@@ -4086,17 +3349,6 @@ const SQL_SPANS: &str = r#"
 // the `CREATE`, and an `ALTER TABLE … ADD CONSTRAINT` afterwards. Missing the
 // third would lose exactly the foreign keys a migrations directory adds later,
 // which is the same trap `ALTER TABLE … ADD COLUMN` set for members.
-const SQL_REL: &str = r#"
-(create_table (keyword_table) . (object_reference) @sub
-  (column_definitions
-    (column_definition (keyword_references) . (object_reference) @references)))
-(create_table (keyword_table) . (object_reference) @sub
-  (column_definitions
-    (constraints (constraint (keyword_references) . (object_reference) @references))))
-(alter_table (keyword_table) . (object_reference) @sub
-  (add_constraint
-    (constraint (keyword_references) . (object_reference) @references)))
-"#;
 
 /// Remove delimiter syntax from a SQL identifier while preserving its spelling.
 /// The Sequel grammar exposes quoted identifiers with their delimiters, and its
@@ -4327,11 +3579,6 @@ fn unqualify(name: &str) -> String {
 // there are. `variable "region"` is named by its only label; `resource
 // "aws_s3_bucket" "logs"` is named by its last and typed by its first. Hence the
 // derivation below rather than a query, as with Svelte's component fact.
-const HCL_SPANS: &str = r#"
-(comment) @comment
-(string_lit) @string
-(heredoc_template) @string
-"#;
 
 /// The first descendant of `node` with the given kind, breadth-first.
 fn first_descendant<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
