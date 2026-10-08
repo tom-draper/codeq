@@ -177,7 +177,11 @@ struct ToolArgs {
 }
 
 const TOOL_ARGS: &[ToolArgs] = &[
-    ToolArgs { tool: "codeq_map", command: "map", args: &[Num("limit", "--limit"), Flag("totals", "--totals")] },
+    ToolArgs {
+        tool: "codeq_map",
+        command: "map",
+        args: &[Num("limit", "--limit"), Flag("totals", "--totals")],
+    },
     ToolArgs {
         tool: "codeq_search",
         command: "search",
@@ -214,7 +218,11 @@ const TOOL_ARGS: &[ToolArgs] = &[
     ToolArgs {
         tool: "codeq_definitions",
         command: "definitions",
-        args: &[Req("symbol"), Str("path", "--path"), Num("limit", "--limit")],
+        args: &[
+            Req("symbol"),
+            Str("path", "--path"),
+            Num("limit", "--limit"),
+        ],
     },
     ToolArgs {
         tool: "codeq_references",
@@ -253,16 +261,29 @@ const TOOL_ARGS: &[ToolArgs] = &[
             Flag("examples", "--examples"),
         ],
     },
-    ToolArgs { tool: "codeq_about", command: "about", args: &[Req("name"), Str("path", "--path")] },
+    ToolArgs {
+        tool: "codeq_about",
+        command: "about",
+        args: &[Req("name"), Str("path", "--path")],
+    },
     ToolArgs {
         tool: "codeq_explore",
         command: "explore",
-        args: &[Custom(explore_target), Str("path", "--path"), Num("max_tokens", "--max-tokens")],
+        args: &[
+            Custom(explore_target),
+            Str("path", "--path"),
+            Num("max_tokens", "--max-tokens"),
+        ],
     },
     ToolArgs {
         tool: "codeq_callpath",
         command: "callpath",
-        args: &[Req("from"), Req("to"), Num("max_depth", "--max-depth"), Str("path", "--path")],
+        args: &[
+            Req("from"),
+            Req("to"),
+            Num("max_depth", "--max-depth"),
+            Str("path", "--path"),
+        ],
     },
     ToolArgs {
         tool: "codeq_members",
@@ -279,8 +300,16 @@ const TOOL_ARGS: &[ToolArgs] = &[
         command: "untested",
         args: &[Bare("path"), Str("kind", "--kind"), Num("limit", "--limit")],
     },
-    ToolArgs { tool: "codeq_outline", command: "outline", args: &[Req("file"), Flag("docs", "--docs")] },
-    ToolArgs { tool: "codeq_at", command: "at", args: &[Req("location")] },
+    ToolArgs {
+        tool: "codeq_outline",
+        command: "outline",
+        args: &[Req("file"), Flag("docs", "--docs")],
+    },
+    ToolArgs {
+        tool: "codeq_at",
+        command: "at",
+        args: &[Req("location")],
+    },
     ToolArgs {
         tool: "codeq_read",
         command: "read",
@@ -292,17 +321,35 @@ const TOOL_ARGS: &[ToolArgs] = &[
             Flag("raw", "--raw"),
         ],
     },
-    ToolArgs { tool: "codeq_imports", command: "imports", args: &[Pos("path"), Num("limit", "--limit")] },
-    ToolArgs { tool: "codeq_importers", command: "importers", args: &[Req("query"), Num("limit", "--limit")] },
+    ToolArgs {
+        tool: "codeq_imports",
+        command: "imports",
+        args: &[Pos("path"), Num("limit", "--limit")],
+    },
+    ToolArgs {
+        tool: "codeq_importers",
+        command: "importers",
+        args: &[Req("query"), Num("limit", "--limit")],
+    },
     ToolArgs {
         tool: "codeq_implementors",
         command: "implementors",
-        args: &[Req("name"), Str("relation", "--relation"), Str("path", "--path"), Num("limit", "--limit")],
+        args: &[
+            Req("name"),
+            Str("relation", "--relation"),
+            Str("path", "--path"),
+            Num("limit", "--limit"),
+        ],
     },
     ToolArgs {
         tool: "codeq_supertypes",
         command: "supertypes",
-        args: &[Req("name"), Str("relation", "--relation"), Str("path", "--path"), Num("limit", "--limit")],
+        args: &[
+            Req("name"),
+            Str("relation", "--relation"),
+            Str("path", "--path"),
+            Num("limit", "--limit"),
+        ],
     },
     ToolArgs {
         tool: "codeq_unused",
@@ -317,7 +364,11 @@ const TOOL_ARGS: &[ToolArgs] = &[
     ToolArgs {
         tool: "codeq_entrypoints",
         command: "entrypoints",
-        args: &[Pos("path"), Flag("include_tests", "--include-tests"), Num("limit", "--limit")],
+        args: &[
+            Pos("path"),
+            Flag("include_tests", "--include-tests"),
+            Num("limit", "--limit"),
+        ],
     },
     ToolArgs {
         tool: "codeq_tree",
@@ -368,7 +419,12 @@ const TOOL_ARGS: &[ToolArgs] = &[
         command: "astgrep",
         // `language` is this flag's value, not a positional — it must stay
         // attached to `--language`, ahead of the `--` separator.
-        args: &[Req("pattern"), StrReq("language", "--language"), Str("path", "--path"), Num("limit", "--limit")],
+        args: &[
+            Req("pattern"),
+            StrReq("language", "--language"),
+            Str("path", "--path"),
+            Num("limit", "--limit"),
+        ],
     },
     ToolArgs {
         tool: "codeq_clones",
@@ -389,12 +445,20 @@ const TOOL_ARGS: &[ToolArgs] = &[
     ToolArgs {
         tool: "codeq_changed",
         command: "changed",
-        args: &[Str("compare_to", "--compare-to"), Flag("symbols", "--symbols"), Num("limit", "--limit")],
+        args: &[
+            Str("compare_to", "--compare-to"),
+            Flag("symbols", "--symbols"),
+            Num("limit", "--limit"),
+        ],
     },
     ToolArgs {
         tool: "codeq_affected",
         command: "affected",
-        args: &[Str("compare_to", "--compare-to"), Num("depth", "--depth"), Num("limit", "--limit")],
+        args: &[
+            Str("compare_to", "--compare-to"),
+            Num("depth", "--depth"),
+            Num("limit", "--limit"),
+        ],
     },
     ToolArgs {
         tool: "codeq_context",
@@ -414,7 +478,11 @@ const TOOL_ARGS: &[ToolArgs] = &[
     ToolArgs {
         tool: "codeq_files",
         command: "files",
-        args: &[Pos("pattern"), Str("language", "--language"), Num("limit", "--limit")],
+        args: &[
+            Pos("pattern"),
+            Str("language", "--language"),
+            Num("limit", "--limit"),
+        ],
     },
     ToolArgs {
         tool: "codeq_graph",
@@ -427,7 +495,11 @@ const TOOL_ARGS: &[ToolArgs] = &[
             Num("limit", "--limit"),
         ],
     },
-    ToolArgs { tool: "codeq_capabilities", command: "capabilities", args: &[] },
+    ToolArgs {
+        tool: "codeq_capabilities",
+        command: "capabilities",
+        args: &[],
+    },
 ];
 
 /// Either form of an explore target: a name, or a position that resolves to
