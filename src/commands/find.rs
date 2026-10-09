@@ -317,7 +317,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     } else {
         Some(GlobFilter::build(args.globs)?)
     };
-    let accept = (glob.is_some() || !args.paths.is_empty()).then(|| {
+    let accept = (glob.is_some() || !args.paths.is_empty()).then_some({
         move |p: &str| {
             glob.as_ref().is_none_or(|gf| gf.accepts(p))
                 && (args.paths.is_empty() || args.paths.iter().any(|q| p.contains(q.as_str())))

@@ -229,6 +229,7 @@ pub fn render_data_text(data: &Value) -> String {
 /// - object with several arrays (`about`, `map`) → each under a `# key` header;
 /// - object of scalars → `key: value` lines (the same tail the branch above
 ///   uses, so a scalar-only payload needs no special case).
+///
 /// Did this result stop at `--limit`? Commands that truncate say so with a
 /// `truncated: true` sibling of their row array; the text renderer drops scalars
 /// next to a single row list, so it is read here instead and reported on stderr.

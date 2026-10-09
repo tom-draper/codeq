@@ -158,8 +158,8 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
 
     // Read seed chunk texts (needed for expansion regardless of include_text).
     let mut seed_text: HashMap<usize, String> = HashMap::new();
-    for i in 0..seed_count {
-        if let Some(t) = chunk_text(&repo.root, &defs[i], &mut file_cache) {
+    for (i, def) in defs.iter().take(seed_count).enumerate() {
+        if let Some(t) = chunk_text(&repo.root, def, &mut file_cache) {
             seed_text.insert(i, t);
         }
     }
@@ -178,7 +178,7 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
         s
     };
 
-    let plan = req.plan.then(|| Plan {
+    let plan = req.plan.then_some(Plan {
         modes,
         seeds,
         expansion: if req.expand {
