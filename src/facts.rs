@@ -2517,16 +2517,6 @@ impl Span {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Type-relation queries: `@sub` is the implementing/deriving type, `@implements`
-// / `@extends` the trait/interface/base. Go (structural typing) and C (no
-// inheritance) have none. Grammar-specific; kept minimal and verified by tests.
-// ---------------------------------------------------------------------------
-
-const GO_REL: &str = "";
-
-const C_REL: &str = "";
-
 // Bash: functions only (source/. includes are plain commands, not captured).
 
 // Lua: named functions, incl. `M.f` (@function) and `obj:m` (@method). `require`
@@ -2564,11 +2554,6 @@ const C_REL: &str = "";
 // pass, while CSS in `<style>` stays unclassified (no CSS grammar), so a comment
 // inside `<style>` reads as code to `search --in`.
 
-// Vue single-file components. Unlike Svelte's `{#snippet}`, a Vue `<template>`
-// declares nothing nameable — every definition comes from the nested `<script>`
-// pass (both `<script>` and `<script setup>`, which is just a second block) and
-// from the file's own `component` fact. Hence an empty definition query.
-const VUE_QUERY: &str = "";
 // Markup comments and literal attribute values. The `(attribute …)` scope is
 // load-bearing and the one real divergence from Svelte: Vue puts JavaScript in
 // *quoted* directive values (`@click="handleClick"`, `:prop="expr"`, `v-if="c"`),

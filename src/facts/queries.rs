@@ -36,6 +36,7 @@ pub(super) const TS_REL: &str = include_str!("../../queries/ts.rel.scm");
 
 pub(super) const GO_QUERY: &str = include_str!("../../queries/go.scm");
 pub(super) const GO_SPANS: &str = include_str!("../../queries/go.spans.scm");
+// Go (structural typing) and C (no inheritance) have no type-relation query.
 pub(super) const GO_REL: &str = "";
 
 pub(super) const JAVA_QUERY: &str = include_str!("../../queries/java.scm");
