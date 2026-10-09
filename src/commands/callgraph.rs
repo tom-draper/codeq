@@ -264,145 +264,179 @@ pub(super) fn callees_of(
     resolved: bool,
     examples: bool,
 ) -> Result<Vec<Callee>> {
-    let targets: Vec<(String, usize, usize)> = {
-        let mut sql = String::from(
-            "SELECT path, start_byte, end_byte FROM facts WHERE name = ?1 AND kind <> 'import'",
-        );
-        let like = path.map(|p| format!("%{}%", escape_like_literal(p)));
-        let mut params: Vec<&dyn rusqlite::ToSql> = vec![&name];
-        if let Some(l) = &like {
-            sql.push_str(" AND path LIKE ?2 ESCAPE '\\'");
-            params.push(l);
-        }
-        let mut st = s.db.conn.prepare(&sql)?;
-        let rows = st.query_map(params.as_slice(), |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)? as usize,
-                r.get::<_, i64>(2)? as usize,
-            ))
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-    };
+    let targets = definition_ranges(s, name, path)?;
     if targets.is_empty() {
         return Ok(Vec::new());
     }
-
-    // Names called inside the target body/bodies. Under `--examples` each also
-    // gets the call as written and the line it sits on, recorded here while the
-    // body is in hand. The receiver comes from the parse tree rather than from
-    // walking bytes backwards: `calls_in` already resolved `subprocess.run` to
-    // callee `run` on receiver `subprocess`, which is both cheaper and correct
-    // for chained or whitespace-separated receivers.
-    let mut idents: HashSet<String> = HashSet::new();
-    let mut sites: HashMap<String, (String, i64)> = HashMap::new();
-    // For a call such as `context::build()`, retain the target file of the
-    // imported `context` module. A receiver is only trusted when it exactly
-    // names a direct import; ordinary value receivers and unknown modules keep
-    // the established name-based superset.
-    let graph = load_dep_graph(&s.db)?;
-    let mut module_targets: HashMap<String, Vec<Option<HashSet<String>>>> = HashMap::new();
-    {
-        let mut body_stmt =
-            s.db.conn
-                .prepare("SELECT body FROM content_fts WHERE path = ?1")?;
-        let mut calls_stmt = s.db.conn.prepare(
-            "SELECT start_byte, name, receiver FROM calls
-             WHERE path = ?1 AND start_byte >= ?2 AND start_byte < ?3
-             ORDER BY start_byte",
-        )?;
-        let mut span_stmt = s.db.conn.prepare(
-            "SELECT start_byte, end_byte FROM spans WHERE path = ?1 ORDER BY start_byte",
-        )?;
-        for (path, sb, eb) in &targets {
-            let body: Option<String> = body_stmt.query_row([path], |r| r.get(0)).ok();
-            let Some(b) = body else { continue };
-            let Some(slice) = b.get(*sb..(*eb).min(b.len())) else {
-                continue;
-            };
-            // Prefer the syntax-derived callsites collected during indexing: they
-            // know exactly which identifiers are called, without reparsing this
-            // file for every `callees` query. Unsupported/opaque grammars keep
-            // the existing textual fallback below.
-            let lang = language_for(path).unwrap_or("");
-            if crate::callsite::supports_syntax_calls(lang) {
-                let rows =
-                    calls_stmt.query_map(rusqlite::params![path, *sb as i64, *eb as i64], |r| {
-                        Ok((
-                            r.get::<_, i64>(0)? as usize,
-                            r.get::<_, String>(1)?,
-                            r.get::<_, Option<String>>(2)?,
-                        ))
-                    })?;
-                for row in rows {
-                    let (off, word, recv) = row?;
-                    let lookup = if recv.is_none() {
-                        graph
-                            .source_name_for_binding(path, &word)
-                            .unwrap_or(&word)
-                            .to_string()
-                    } else {
-                        word.clone()
-                    };
-                    let targets = recv
-                        .as_deref()
-                        .map(|receiver| {
-                            graph
-                                .direct_targets_for_receiver(path, receiver)
-                                .into_iter()
-                                .map(str::to_string)
-                                .collect::<HashSet<_>>()
-                        })
-                        .filter(|targets| !targets.is_empty());
-                    let targets = targets.or_else(|| {
-                        let targets = graph
-                            .direct_targets_for_receiver(path, &word)
-                            .into_iter()
-                            .map(str::to_string)
-                            .collect::<HashSet<_>>();
-                        (!targets.is_empty()).then_some(targets)
-                    });
-                    // An empty target set is no evidence: it may be an external
-                    // module or a value receiver. Represent that as `None` so
-                    // candidate filtering remains conservative.
-                    module_targets
-                        .entry(lookup.clone())
-                        .or_default()
-                        .push(targets);
-                    if examples {
-                        let expr = match &recv {
-                            Some(r) => format!("{r}.{word}"),
-                            None => word.clone(),
-                        };
-                        let line = b[..off.min(b.len())]
-                            .bytes()
-                            .filter(|c| *c == b'\n')
-                            .count() as i64
-                            + 1;
-                        sites.entry(lookup.clone()).or_insert((expr, line));
-                    }
-                    idents.insert(lookup);
-                }
-                continue;
-            }
-            // No grammar for this language: fall back to the identifier scan,
-            // still skipping comment and string spans.
-            let prose: Vec<(usize, usize)> = span_stmt
-                .query_map([path], |r| {
-                    Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize))
-                })?
-                .collect::<std::result::Result<_, _>>()?;
-            collect_idents(slice, *sb, &prose, &mut idents);
-        }
-    }
-    idents.remove(name);
-    if idents.is_empty() {
+    let mut called = scan_called_names(s, &targets, examples)?;
+    called.idents.remove(name);
+    if called.idents.is_empty() {
         return Ok(Vec::new());
     }
+    let mut out = callee_definitions(s, name, &called)?;
+    if resolved {
+        keep_reachable(s, &targets, &mut out)?;
+    }
+    out.sort_by(|a, b| {
+        (a.name.as_str(), a.path.as_str(), a.line).cmp(&(b.name.as_str(), b.path.as_str(), b.line))
+    });
+    Ok(out)
+}
 
-    // Look up only the referenced names via the facts(name) index, in chunks to
-    // stay under SQLite's bound-parameter limit — instead of scanning every fact.
-    let ident_list: Vec<&String> = idents.iter().collect();
+/// `(path, start_byte, end_byte)` of each definition of `name`, optionally
+/// scoped to files whose path contains `path`.
+fn definition_ranges(
+    s: &Session,
+    name: &str,
+    path: Option<&str>,
+) -> Result<Vec<(String, usize, usize)>> {
+    let mut sql = String::from(
+        "SELECT path, start_byte, end_byte FROM facts WHERE name = ?1 AND kind <> 'import'",
+    );
+    let like = path.map(|p| format!("%{}%", escape_like_literal(p)));
+    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&name];
+    if let Some(l) = &like {
+        sql.push_str(" AND path LIKE ?2 ESCAPE '\\'");
+        params.push(l);
+    }
+    let mut st = s.db.conn.prepare(&sql)?;
+    let rows = st.query_map(params.as_slice(), |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)? as usize,
+            r.get::<_, i64>(2)? as usize,
+        ))
+    })?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// What the bodies of a symbol call.
+struct CalledNames {
+    /// Names called inside the target body/bodies.
+    idents: HashSet<String>,
+    /// Under `--examples`, each name's call as written and the line it sits on,
+    /// recorded while the body is in hand.
+    sites: HashMap<String, (String, i64)>,
+    /// For a call such as `context::build()`, the target file of the imported
+    /// `context` module. A receiver is only trusted when it exactly names a
+    /// direct import; ordinary value receivers and unknown modules keep the
+    /// established name-based superset.
+    module_targets: HashMap<String, Vec<Option<HashSet<String>>>>,
+}
+
+/// The name a syntax call is looked up under, and the files it is pinned to when
+/// its receiver (or, for a bare call, the called name itself) is a direct import.
+fn resolve_syntax_call(
+    graph: &deps::Graph,
+    path: &str,
+    word: &str,
+    receiver: Option<&str>,
+) -> (String, Option<HashSet<String>>) {
+    let lookup = if receiver.is_none() {
+        graph.source_name_for_binding(path, word).unwrap_or(word).to_string()
+    } else {
+        word.to_string()
+    };
+    let pinned = receiver
+        .map(|receiver| {
+            graph
+                .direct_targets_for_receiver(path, receiver)
+                .into_iter()
+                .map(str::to_string)
+                .collect::<HashSet<_>>()
+        })
+        .filter(|targets| !targets.is_empty());
+    let pinned = pinned.or_else(|| {
+        let targets = graph
+            .direct_targets_for_receiver(path, word)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<HashSet<_>>();
+        (!targets.is_empty()).then_some(targets)
+    });
+    (lookup, pinned)
+}
+
+/// Names called inside the target body/bodies. The receiver comes from the parse
+/// tree rather than from walking bytes backwards: `calls_in` already resolved
+/// `subprocess.run` to callee `run` on receiver `subprocess`, which is both
+/// cheaper and correct for chained or whitespace-separated receivers.
+fn scan_called_names(
+    s: &Session,
+    targets: &[(String, usize, usize)],
+    examples: bool,
+) -> Result<CalledNames> {
+    let mut called = CalledNames {
+        idents: HashSet::new(),
+        sites: HashMap::new(),
+        module_targets: HashMap::new(),
+    };
+    let graph = load_dep_graph(&s.db)?;
+    let mut body_stmt = s.db.conn.prepare("SELECT body FROM content_fts WHERE path = ?1")?;
+    let mut calls_stmt = s.db.conn.prepare(
+        "SELECT start_byte, name, receiver FROM calls
+         WHERE path = ?1 AND start_byte >= ?2 AND start_byte < ?3
+         ORDER BY start_byte",
+    )?;
+    let mut span_stmt = s.db.conn.prepare(
+        "SELECT start_byte, end_byte FROM spans WHERE path = ?1 ORDER BY start_byte",
+    )?;
+    for (path, sb, eb) in targets {
+        let body: Option<String> = body_stmt.query_row([path], |r| r.get(0)).ok();
+        let Some(b) = body else { continue };
+        let Some(slice) = b.get(*sb..(*eb).min(b.len())) else {
+            continue;
+        };
+        // Prefer the syntax-derived callsites collected during indexing: they
+        // know exactly which identifiers are called, without reparsing this
+        // file for every `callees` query. Unsupported/opaque grammars keep
+        // the existing textual fallback below.
+        let lang = language_for(path).unwrap_or("");
+        if crate::callsite::supports_syntax_calls(lang) {
+            let rows = calls_stmt.query_map(rusqlite::params![path, *sb as i64, *eb as i64], |r| {
+                Ok((
+                    r.get::<_, i64>(0)? as usize,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (off, word, recv) = row?;
+                let (lookup, pinned) = resolve_syntax_call(&graph, path, &word, recv.as_deref());
+                // An empty target set is no evidence: it may be an external
+                // module or a value receiver. `pinned` is `None` then, so
+                // candidate filtering remains conservative.
+                called.module_targets.entry(lookup.clone()).or_default().push(pinned);
+                if examples {
+                    let expr = match &recv {
+                        Some(r) => format!("{r}.{word}"),
+                        None => word.clone(),
+                    };
+                    let line = b[..off.min(b.len())].bytes().filter(|c| *c == b'\n').count() as i64 + 1;
+                    called.sites.entry(lookup.clone()).or_insert((expr, line));
+                }
+                called.idents.insert(lookup);
+            }
+            continue;
+        }
+        // No grammar for this language: fall back to the identifier scan,
+        // still skipping comment and string spans.
+        let prose: Vec<(usize, usize)> = span_stmt
+            .query_map([path], |r| {
+                Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize))
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        collect_idents(slice, *sb, &prose, &mut called.idents);
+    }
+    Ok(called)
+}
+
+/// The definitions of the called names, other than `name` itself, that the call
+/// evidence allows. Looks up only the referenced names via the facts(name)
+/// index, in chunks to stay under SQLite's bound-parameter limit — instead of
+/// scanning every fact.
+fn callee_definitions(s: &Session, name: &str, called: &CalledNames) -> Result<Vec<Callee>> {
+    let ident_list: Vec<&String> = called.idents.iter().collect();
     let mut seen: HashSet<(String, String, i64)> = HashSet::new();
     let mut out = Vec::new();
     for chunk in ident_list.chunks(500) {
@@ -424,13 +458,13 @@ pub(super) fn callees_of(
         })?;
         for row in rows {
             let (n, k, p, l) = row?;
-            let allowed = module_targets.get(&n).is_none_or(|calls| {
+            let allowed = called.module_targets.get(&n).is_none_or(|calls| {
                 calls
                     .iter()
                     .any(|targets| targets.as_ref().is_none_or(|targets| targets.contains(&p)))
             });
             if n != name && allowed && seen.insert((n.clone(), p.clone(), l)) {
-                let site = sites.get(&n);
+                let site = called.sites.get(&n);
                 out.push(Callee {
                     name: n,
                     kind: k,
@@ -443,48 +477,51 @@ pub(super) fn callees_of(
             }
         }
     }
-    // Import-scoped resolution: a genuine callee's definition should live in a
-    // file `name`'s own file can reach through imports (or the same file). Unlike
-    // the name-based Resolver used for callers, here the anchor is fixed — `name`'s
-    // definition file(s) — so we can prune by each callee's *specific* def-file
-    // reachability, dropping unrelated same-named definitions in unreachable files
-    // (the documented callees over-match). Heuristic, like all import resolution:
-    // it can't tell which same-named def you meant if several sit in reachable
-    // files, so it narrows a superset rather than pinpointing.
-    if resolved {
-        let target_files: HashSet<String> = targets.iter().map(|(p, _, _)| p.clone()).collect();
-        let graph = load_dep_graph(&s.db)?;
-        let mut reach: HashSet<String> = target_files.clone();
-        for tf in &target_files {
-            for r in graph.reachable_from(tf) {
-                reach.insert(r.to_string());
-            }
-        }
-        out.retain(|c| reach.contains(&c.path));
-        // How many reachable files define each callee name: >1 is the residual
-        // over-match this filter narrows but cannot resolve, and saying so is the
-        // difference between "this is the definition" and "one of these is".
-        let mut reachable_defs: HashMap<&str, usize> = HashMap::new();
-        for c in &out {
-            *reachable_defs.entry(c.name.as_str()).or_default() += 1;
-        }
-        let tags: Vec<&'static str> = out
-            .iter()
-            .map(|c| {
-                via_of(
-                    target_files.contains(&c.path),
-                    reachable_defs.get(c.name.as_str()).copied().unwrap_or(0),
-                )
-            })
-            .collect();
-        for (c, tag) in out.iter_mut().zip(tags) {
-            c.via = Some(tag.to_string());
+    Ok(out)
+}
+
+/// Import-scoped resolution: a genuine callee's definition should live in a
+/// file `name`'s own file can reach through imports (or the same file). Unlike
+/// the name-based Resolver used for callers, here the anchor is fixed — `name`'s
+/// definition file(s) — so we can prune by each callee's *specific* def-file
+/// reachability, dropping unrelated same-named definitions in unreachable files
+/// (the documented callees over-match). Heuristic, like all import resolution:
+/// it can't tell which same-named def you meant if several sit in reachable
+/// files, so it narrows a superset rather than pinpointing.
+fn keep_reachable(
+    s: &Session,
+    targets: &[(String, usize, usize)],
+    out: &mut Vec<Callee>,
+) -> Result<()> {
+    let target_files: HashSet<String> = targets.iter().map(|(p, _, _)| p.clone()).collect();
+    let graph = load_dep_graph(&s.db)?;
+    let mut reach: HashSet<String> = target_files.clone();
+    for tf in &target_files {
+        for r in graph.reachable_from(tf) {
+            reach.insert(r.to_string());
         }
     }
-    out.sort_by(|a, b| {
-        (a.name.as_str(), a.path.as_str(), a.line).cmp(&(b.name.as_str(), b.path.as_str(), b.line))
-    });
-    Ok(out)
+    out.retain(|c| reach.contains(&c.path));
+    // How many reachable files define each callee name: >1 is the residual
+    // over-match this filter narrows but cannot resolve, and saying so is the
+    // difference between "this is the definition" and "one of these is".
+    let mut reachable_defs: HashMap<&str, usize> = HashMap::new();
+    for c in out.iter() {
+        *reachable_defs.entry(c.name.as_str()).or_default() += 1;
+    }
+    let tags: Vec<&'static str> = out
+        .iter()
+        .map(|c| {
+            via_of(
+                target_files.contains(&c.path),
+                reachable_defs.get(c.name.as_str()).copied().unwrap_or(0),
+            )
+        })
+        .collect();
+    for (c, tag) in out.iter_mut().zip(tags) {
+        c.via = Some(tag.to_string());
+    }
+    Ok(())
 }
 
 /// Identifiers in call position within `text`, skipping any that fall inside a
