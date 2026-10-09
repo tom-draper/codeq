@@ -257,7 +257,41 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
     let conn = &s.db.conn;
     let cap = if limit == 0 { 1_000_000 } else { limit };
 
-    let totals = MapTotals {
+    let totals = map_totals(conn)?;
+    let mut languages = map_languages(conn)?;
+    let data_note = committed_data(conn, &languages, &totals)?;
+    languages.truncate(cap);
+
+    let note = unindexed_note(conn, &languages, &totals);
+    // The `(unknown)` note cannot see the other way a repo misleads: a
+    // committed vendor bundle *is* source, *is* parsed, and *does* produce
+    // symbols — so it costs nothing in index size and quietly owns every
+    // symbol-ranking command. On one dashboard repo three files held 5,507 of
+    // 7,558 symbols, and `hotspots` — the command for meeting an unfamiliar
+    // codebase — answered `function t refs=45993`.
+    let note = append_note(note, generated_files(conn, totals.symbols)?);
+    let note = append_note(note, data_note);
+
+    // Everything above is aggregate queries; everything below scans rows. Stop
+    // here when only the totals were asked for.
+    if totals_only {
+        return s.emit_noted(MapSummary { totals, languages }, note);
+    }
+
+    let (directories, manifests) = directories_and_manifests(conn, cap)?;
+    let data = RepoMap {
+        totals,
+        languages,
+        directories,
+        manifests,
+        imports_by_module: imports_by_module(conn, cap)?,
+        definitions_by_file: definitions_by_file(conn, cap)?,
+    };
+    s.emit_noted(data, note)
+}
+
+fn map_totals(conn: &rusqlite::Connection) -> Result<MapTotals> {
+    Ok(MapTotals {
         files: conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?,
         bytes: conn.query_row("SELECT COALESCE(SUM(size_bytes),0) FROM files", [], |r| {
             r.get(0)
@@ -272,37 +306,37 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
             [],
             |r| r.get(0),
         )?,
-    };
+    })
+}
 
-    // Languages: file/byte counts merged with symbol counts.
+/// Languages: file/byte counts merged with symbol counts, most files first.
+fn map_languages(conn: &rusqlite::Connection) -> Result<Vec<MapLang>> {
     let mut langs: BTreeMap<String, (i64, i64, i64)> = BTreeMap::new();
-    {
-        let mut st = conn.prepare(
-            "SELECT COALESCE(language,'(unknown)'), COUNT(*), COALESCE(SUM(size_bytes),0)
-             FROM files GROUP BY language",
-        )?;
-        let rows = st.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, i64>(2)?,
-            ))
-        })?;
-        for row in rows {
-            let (l, f, b) = row?;
-            let e = langs.entry(l).or_default();
-            e.0 += f;
-            e.1 += b;
-        }
-        let mut st = conn.prepare(
-            "SELECT COALESCE(language,'(unknown)'), COUNT(*)
-             FROM facts WHERE kind <> 'import' GROUP BY language",
-        )?;
-        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-        for row in rows {
-            let (l, c) = row?;
-            langs.entry(l).or_default().2 += c;
-        }
+    let mut st = conn.prepare(
+        "SELECT COALESCE(language,'(unknown)'), COUNT(*), COALESCE(SUM(size_bytes),0)
+         FROM files GROUP BY language",
+    )?;
+    let rows = st.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (l, f, b) = row?;
+        let e = langs.entry(l).or_default();
+        e.0 += f;
+        e.1 += b;
+    }
+    let mut st = conn.prepare(
+        "SELECT COALESCE(language,'(unknown)'), COUNT(*)
+         FROM facts WHERE kind <> 'import' GROUP BY language",
+    )?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (l, c) = row?;
+        langs.entry(l).or_default().2 += c;
     }
     let mut languages: Vec<MapLang> = langs
         .into_iter()
@@ -314,130 +348,119 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
         })
         .collect();
     languages.sort_by(|a, b| b.files.cmp(&a.files).then(a.language.cmp(&b.language)));
-    let data_note = committed_data(conn, &languages, &totals)?;
-    languages.truncate(cap);
+    Ok(languages)
+}
 
-    // A repo can be mostly things codeq cannot index — 2,108 flag PNGs against 12
-    // Python files, in the case that prompted this. The `(unknown)` language row
-    // states that accurately and still reads like a gap in coverage rather than
-    // "this repo is mostly images", so say it in words when it dominates. A note,
-    // not a new field: it is guidance for reading the number, which is exactly
-    // what the note channel is for.
-    let unindexed = languages
+/// A repo can be mostly things codeq cannot index — 2,108 flag PNGs against 12
+/// Python files, in the case that prompted this. The `(unknown)` language row
+/// states that accurately and still reads like a gap in coverage rather than
+/// "this repo is mostly images", so say it in words when it dominates. A note,
+/// not a new field: it is guidance for reading the number, which is exactly
+/// what the note channel is for.
+fn unindexed_note(
+    conn: &rusqlite::Connection,
+    languages: &[MapLang],
+    totals: &MapTotals,
+) -> Option<String> {
+    let (files, bytes) = languages
         .iter()
         .find(|l| l.language == "(unknown)")
-        .map(|l| (l.files, l.bytes));
-    let note = unindexed.and_then(|(files, bytes)| {
-        let majority = files * 2 > totals.files || bytes * 2 > totals.bytes;
-        if !majority {
-            return None;
-        }
-        // Name the extensions rather than the category. "Assets, data or
-        // binaries" was a guess, and on a Business Central repo it was wrong in
-        // the direction that costs most: 31 of the 33 files were `.al`, the
-        // entire source of the project, described to its author as data and
-        // implicitly proposed for `.codeqignore`. The extension is a fact, and
-        // it tells a geospatial dump and an unsupported language apart without
-        // codeq having to know which it is looking at.
-        let exts = unindexed_extensions(conn).unwrap_or_default();
-        let what = if exts.is_empty() {
-            String::new()
-        } else {
-            format!(" — codeq has no grammar for {}", exts.join(", "))
-        };
-        Some(format!(
-            "{files} of {} files ({} of {}) carry no symbols{what}; \
-             `--language` on `tree`/`files` scopes to code",
-            totals.files,
-            human_bytes(bytes),
-            human_bytes(totals.bytes),
-        ))
-    });
-
-    // The `(unknown)` note above cannot see the other way a repo misleads: a
-    // committed vendor bundle *is* source, *is* parsed, and *does* produce
-    // symbols — so it costs nothing in index size and quietly owns every
-    // symbol-ranking command. On one dashboard repo three files held 5,507 of
-    // 7,558 symbols, and `hotspots` — the command for meeting an unfamiliar
-    // codebase — answered `function t refs=45993`.
-    let note = match generated_files(conn, totals.symbols)? {
-        Some(extra) => Some(match note {
-            Some(n) => format!("{n}\n{extra}"),
-            None => extra,
-        }),
-        None => note,
-    };
-    let note = match data_note {
-        Some(extra) => Some(match note {
-            Some(n) => format!("{n}\n{extra}"),
-            None => extra,
-        }),
-        None => note,
-    };
-
-    // Everything above is aggregate queries; everything below scans rows. Stop
-    // here when only the totals were asked for.
-    if totals_only {
-        return s.emit_noted(MapSummary { totals, languages }, note);
+        .map(|l| (l.files, l.bytes))?;
+    let majority = files * 2 > totals.files || bytes * 2 > totals.bytes;
+    if !majority {
+        return None;
     }
-
-    // Imports grouped by module (raw string), counted by distinct importing file.
-    let imports_by_module: Vec<ModuleImports> = {
-        let mut st = conn.prepare(
-            "SELECT name, COUNT(DISTINCT path) c FROM facts
-             WHERE kind = 'import' AND is_derived = 0 AND name IS NOT NULL
-             GROUP BY name ORDER BY c DESC, name LIMIT ?1",
-        )?;
-        let rows = st.query_map([cap as i64], |r| {
-            Ok(ModuleImports {
-                module: r.get(0)?,
-                importers: r.get(1)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    // Name the extensions rather than the category. "Assets, data or
+    // binaries" was a guess, and on a Business Central repo it was wrong in
+    // the direction that costs most: 31 of the 33 files were `.al`, the
+    // entire source of the project, described to its author as data and
+    // implicitly proposed for `.codeqignore`. The extension is a fact, and
+    // it tells a geospatial dump and an unsupported language apart without
+    // codeq having to know which it is looking at.
+    let exts = unindexed_extensions(conn).unwrap_or_default();
+    let what = if exts.is_empty() {
+        String::new()
+    } else {
+        format!(" — codeq has no grammar for {}", exts.join(", "))
     };
+    Some(format!(
+        "{files} of {} files ({} of {}) carry no symbols{what}; \
+         `--language` on `tree`/`files` scopes to code",
+        totals.files,
+        human_bytes(bytes),
+        human_bytes(totals.bytes),
+    ))
+}
 
-    // Definitions grouped by file.
-    let definitions_by_file: Vec<FileDefs> = {
-        let mut st = conn.prepare(
-            "SELECT facts.path, COUNT(*) c, files.size_bytes
-             FROM facts JOIN files ON files.path = facts.path
-             WHERE facts.kind <> 'import'
-             GROUP BY facts.path ORDER BY c DESC, facts.path LIMIT ?1",
-        )?;
-        let rows = st.query_map([cap as i64], |r| {
-            Ok(FileDefs {
-                path: r.get(0)?,
-                definitions: r.get(1)?,
-                bytes: r.get(2)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-    };
+/// Add a further line to a note, if there is one.
+fn append_note(note: Option<String>, extra: Option<String>) -> Option<String> {
+    match extra {
+        Some(extra) => Some(match note {
+            Some(n) => format!("{n}\n{extra}"),
+            None => extra,
+        }),
+        None => note,
+    }
+}
 
-    // Directories + manifests: one scan of file paths.
+/// Imports grouped by module (raw string), counted by distinct importing file.
+fn imports_by_module(conn: &rusqlite::Connection, cap: usize) -> Result<Vec<ModuleImports>> {
+    let mut st = conn.prepare(
+        "SELECT name, COUNT(DISTINCT path) c FROM facts
+         WHERE kind = 'import' AND is_derived = 0 AND name IS NOT NULL
+         GROUP BY name ORDER BY c DESC, name LIMIT ?1",
+    )?;
+    let rows = st.query_map([cap as i64], |r| {
+        Ok(ModuleImports {
+            module: r.get(0)?,
+            importers: r.get(1)?,
+        })
+    })?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Definitions grouped by file.
+fn definitions_by_file(conn: &rusqlite::Connection, cap: usize) -> Result<Vec<FileDefs>> {
+    let mut st = conn.prepare(
+        "SELECT facts.path, COUNT(*) c, files.size_bytes
+         FROM facts JOIN files ON files.path = facts.path
+         WHERE facts.kind <> 'import'
+         GROUP BY facts.path ORDER BY c DESC, facts.path LIMIT ?1",
+    )?;
+    let rows = st.query_map([cap as i64], |r| {
+        Ok(FileDefs {
+            path: r.get(0)?,
+            definitions: r.get(1)?,
+            bytes: r.get(2)?,
+        })
+    })?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Top-level directories with their file and symbol counts, and the project
+/// manifests: one scan of file paths.
+fn directories_and_manifests(
+    conn: &rusqlite::Connection,
+    cap: usize,
+) -> Result<(Vec<DirStat>, Vec<String>)> {
     let mut dir_files: BTreeMap<String, (i64, i64)> = BTreeMap::new();
     let mut manifests: Vec<String> = Vec::new();
-    {
-        let mut st = conn.prepare("SELECT path, size_bytes FROM files")?;
-        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-        for row in rows {
-            let (path, size) = row?;
-            let e = dir_files.entry(top_dir(&path)).or_default();
-            e.0 += 1;
-            e.1 += size;
-            if is_manifest(&path) {
-                manifests.push(path);
-            }
+    let mut st = conn.prepare("SELECT path, size_bytes FROM files")?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (path, size) = row?;
+        let e = dir_files.entry(top_dir(&path)).or_default();
+        e.0 += 1;
+        e.1 += size;
+        if is_manifest(&path) {
+            manifests.push(path);
         }
     }
     let mut dir_syms: BTreeMap<String, i64> = BTreeMap::new();
-    {
-        let mut st = conn.prepare("SELECT path FROM facts WHERE kind <> 'import'")?;
-        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
-        for row in rows {
-            *dir_syms.entry(top_dir(&row?)).or_default() += 1;
-        }
+    let mut st = conn.prepare("SELECT path FROM facts WHERE kind <> 'import'")?;
+    let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+    for row in rows {
+        *dir_syms.entry(top_dir(&row?)).or_default() += 1;
     }
     let mut directories: Vec<DirStat> = dir_files
         .into_iter()
@@ -454,16 +477,7 @@ pub fn cmd_map(cwd: &Path, limit: usize, totals_only: bool, out: Out) -> Result<
     directories.truncate(cap);
     manifests.sort();
     manifests.truncate(cap);
-
-    let data = RepoMap {
-        totals,
-        languages,
-        directories,
-        manifests,
-        imports_by_module,
-        definitions_by_file,
-    };
-    s.emit_noted(data, note)
+    Ok((directories, manifests))
 }
 
 /// The first path component, or "(root)" for top-level files.
