@@ -105,36 +105,81 @@ fn tool_error(msg: String) -> Value {
 // --- tool table, derived from the clap definitions ---------------------------
 //
 // The CLI is the one place an argument is declared. Each MCP tool is a clap
-// subcommand: its input schema, its required list and the argv it runs are all
+// subcommand: its input schema, its required list, and the argv it runs are all
 // read from that subcommand's arguments, so a new flag appears over MCP without
-// a second edit. What clap cannot say lives in the small tables below, and the
+// a second edit. What clap cannot say lives in the override table below, and the
 // per-tool prose an agent reads is hand-written in `TOOL_DESCRIPTIONS`.
 
-/// Arguments the CLI has that the MCP tool does not offer, by subcommand (clap
-/// ids). `stdin` has no pipe to read over MCP, `paths` repeats `path`, and
-/// `explain` is a separate mode with no pattern. The rest are gaps rather than
-/// decisions: `resolved` on `about`/`explore` and `limit` on `callers`/`callees`
-/// work on the CLI and are simply not in the tool descriptions yet.
-const HIDDEN: &[(&str, &[&str])] = &[
-    ("about", &["resolved"]),
-    ("astgrep", &["explain"]),
-    ("callees", &["limit"]),
-    ("callers", &["limit"]),
-    ("explore", &["resolved"]),
-    ("search", &["paths", "stdin"]),
+#[derive(Clone, Copy)]
+struct ToolOverrides {
+    /// CLI arguments that MCP does not offer. `stdin` has no pipe to read over
+    /// MCP, `paths` repeats `path`, and `explain` is a separate mode with no
+    /// pattern. The remaining entries are unexposed CLI features.
+    hidden: &'static [&'static str],
+    /// Arguments MCP requires even though Clap leaves them optional.
+    required: &'static [&'static str],
+    /// Allowed values for otherwise free-form string arguments.
+    choices: &'static [(&'static str, &'static [&'static str])],
+    /// Groups of which exactly one argument is sent, with the first winning.
+    one_of: &'static [&'static str],
+}
+
+const EMPTY_TOOL_OVERRIDES: ToolOverrides = ToolOverrides {
+    hidden: &[],
+    required: &[],
+    choices: &[],
+    one_of: &[],
+};
+
+/// MCP-specific behavior that Clap cannot express. Keeping each command's
+/// exceptions together makes the remaining adapter metadata reviewable.
+const TOOL_OVERRIDES: &[(&str, ToolOverrides)] = &[
+    (
+        "about",
+        ToolOverrides {
+            hidden: &["resolved"],
+            ..EMPTY_TOOL_OVERRIDES
+        },
+    ),
+    (
+        "astgrep",
+        ToolOverrides {
+            hidden: &["explain"],
+            required: &["pattern", "language"],
+            ..EMPTY_TOOL_OVERRIDES
+        },
+    ),
+    (
+        "callees",
+        ToolOverrides {
+            hidden: &["limit"],
+            ..EMPTY_TOOL_OVERRIDES
+        },
+    ),
+    (
+        "callers",
+        ToolOverrides {
+            hidden: &["limit"],
+            ..EMPTY_TOOL_OVERRIDES
+        },
+    ),
+    (
+        "explore",
+        ToolOverrides {
+            hidden: &["resolved"],
+            one_of: &["at", "name"],
+            ..EMPTY_TOOL_OVERRIDES
+        },
+    ),
+    (
+        "search",
+        ToolOverrides {
+            hidden: &["paths", "stdin"],
+            choices: &[("in", &["code", "comments", "strings"])],
+            ..EMPTY_TOOL_OVERRIDES
+        },
+    ),
 ];
-
-/// Arguments the tool requires although clap leaves them optional (astgrep's
-/// `--explain` mode makes them optional on the command line only).
-const REQUIRED: &[(&str, &[&str])] = &[("astgrep", &["pattern", "language"])];
-
-/// Allowed values for a free-form string argument.
-const CHOICES: &[(&str, &str, &[&str])] = &[("search", "in", &["code", "comments", "strings"])];
-
-/// Groups of which exactly one key is sent, the first present winning. An
-/// explore target is a name or a position; both together is the CLI's conflict,
-/// settled here in `at`'s favour.
-const ONE_OF: &[(&str, &[&str])] = &[("explore", &["at", "name"])];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -187,12 +232,12 @@ fn tool_def(name: &'static str, description: &'static str, root: &clap::Command)
         .get_subcommands()
         .find(|c| c.get_name() == command)
         .unwrap_or_else(|| panic!("MCP tool {name} has no CLI subcommand"));
-    let hidden = table_entry(HIDDEN, command).copied().unwrap_or(&[]);
-    let required = table_entry(REQUIRED, command).copied().unwrap_or(&[]);
-    let one_of = table_entry(ONE_OF, command).copied().unwrap_or(&[]);
+    let overrides = table_entry(TOOL_OVERRIDES, command)
+        .copied()
+        .unwrap_or(EMPTY_TOOL_OVERRIDES);
     let params = sub
         .get_arguments()
-        .filter(|a| !a.is_global_set() && !hidden.contains(&a.get_id().as_str()))
+        .filter(|a| !a.is_global_set() && !overrides.hidden.contains(&a.get_id().as_str()))
         .map(|a| {
             let id = a.get_id().as_str();
             let key = match a.get_long() {
@@ -202,12 +247,13 @@ fn tool_def(name: &'static str, description: &'static str, root: &clap::Command)
             Param {
                 flag: a.get_long().map(|l| format!("--{l}")),
                 kind: kind_of(a),
-                required: (a.is_required_set() || required.contains(&key.as_str()))
-                    && !one_of.contains(&key.as_str()),
-                choices: CHOICES
+                required: (a.is_required_set() || overrides.required.contains(&key.as_str()))
+                    && !overrides.one_of.contains(&key.as_str()),
+                choices: overrides
+                    .choices
                     .iter()
-                    .find(|(c, k, _)| *c == command && *k == key)
-                    .map_or(&[], |(_, _, v)| *v),
+                    .find(|(choice_key, _)| *choice_key == key)
+                    .map_or(&[], |(_, choices)| *choices),
                 key,
             }
         })
@@ -217,7 +263,7 @@ fn tool_def(name: &'static str, description: &'static str, root: &clap::Command)
         command: sub.get_name().to_string(),
         description,
         params,
-        one_of,
+        one_of: overrides.one_of,
     }
 }
 
@@ -513,6 +559,17 @@ mod tests {
         cli.sort();
         tools.sort();
         assert_eq!(tools, cli);
+    }
+
+    #[test]
+    fn every_override_names_a_cli_subcommand() {
+        let root = <crate::Cli as clap::CommandFactory>::command();
+        for (command, _) in TOOL_OVERRIDES {
+            assert!(
+                root.get_subcommands().any(|subcommand| subcommand.get_name() == *command),
+                "override names an unknown subcommand: {command}"
+            );
+        }
     }
 
     /// An explore target is a name or a position, `at` winning; neither is invalid.

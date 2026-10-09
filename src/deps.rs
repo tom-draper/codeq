@@ -584,9 +584,10 @@ impl Graph {
             .binding_names
             .iter()
             .flat_map(|(path, bindings)| {
-                bindings.iter().filter_map(move |(binding, name)| {
-                    (name == source).then(|| (path.clone(), binding.clone()))
-                })
+                bindings
+                    .iter()
+                    .filter(|(_, name)| *name == source)
+                    .map(move |(binding, _)| (path.clone(), binding.clone()))
             })
             .collect();
         out.sort_unstable();

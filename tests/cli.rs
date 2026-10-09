@@ -2203,7 +2203,7 @@ fn offsets_stay_aligned_when_a_file_is_not_valid_utf8() {
     // names the wrong definition (or none).
     let f = Fixture::new();
     let mut src: Vec<u8> = b"// ".to_vec();
-    src.extend(std::iter::repeat(0xE9u8).take(16)); // latin-1 'e-acute': invalid UTF-8
+    src.extend(std::iter::repeat_n(0xE9u8, 16)); // latin-1 'e-acute': invalid UTF-8
     src.extend_from_slice(
         b"\nfn alpha() { helper(); }\nfn bravo() { let b = 2; }\n\
           fn charlie() { let c = 3; }\nfn helper() {}\n",
@@ -4840,7 +4840,7 @@ fn context_respects_token_budget() {
     // omitted is skipped when empty.
     assert!(d
         .get("omitted")
-        .map_or(true, |o| o.as_array().unwrap().is_empty()));
+        .is_none_or(|o| o.as_array().unwrap().is_empty()));
 
     // Starve the budget: the explicitly-requested seeds are still returned — you
     // asked for them, and dropping the very symbol you named is worse than
@@ -8401,9 +8401,8 @@ fn group_hoists_the_path_and_keeps_line_and_col() {
                 .is_ok(),
             "grouped row should start with a line number: {line}"
         );
-        assert_eq!(
+        assert!(
             line.matches(':').count() >= 2,
-            true,
             "grouped row dropped col: {line}"
         );
     }

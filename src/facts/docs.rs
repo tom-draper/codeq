@@ -434,17 +434,19 @@ pub(super) fn rst_facts(src: &[u8]) -> Extraction {
             &head.name,
             LineSpan {
                 start_byte: head.start,
-                end_byte: end_byte,
+                end_byte,
                 start_line: head.line + 1,
-                end_line: end_line,
+                end_line,
             },
             cap(&collapse_ws(lines[head.line].2), MAX_SIG),
             "lines/rst",
         ));
     }
-    let spans = (!src.is_empty())
-        .then(|| vec![(0, src.len(), Span::Comment)])
-        .unwrap_or_default();
+    let spans = if src.is_empty() {
+        Vec::new()
+    } else {
+        vec![(0, src.len(), Span::Comment)]
+    };
     facts.sort_by_key(|f| (f.start_byte, f.end_byte));
     (facts, spans, Vec::new())
 }
@@ -644,9 +646,11 @@ pub(super) fn jinja_facts(src: &[u8]) -> Extraction {
             "lines/jinja",
         ));
     }
-    let spans = (!src.is_empty())
-        .then(|| vec![(0, src.len(), Span::Comment)])
-        .unwrap_or_default();
+    let spans = if src.is_empty() {
+        Vec::new()
+    } else {
+        vec![(0, src.len(), Span::Comment)]
+    };
     facts.sort_by_key(|f| (f.start_byte, f.end_byte));
     (facts, spans, Vec::new())
 }

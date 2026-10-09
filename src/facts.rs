@@ -267,7 +267,7 @@ impl LangSpec {
         &self,
         root: Node,
         src: &[u8],
-    ) -> (Vec<Fact>, Vec<(usize, usize, Span)>, Vec<Relation>) {
+    ) -> Extraction {
         let mut facts = Vec::new();
         {
             let mut cursor = QueryCursor::new();
@@ -2456,40 +2456,6 @@ fn cap(s: &str, max: usize) -> String {
     let truncated: String = s.chars().take(max).collect();
     format!("{truncated}…")
 }
-
-/// Each pattern binds `@name` (the identifier), one `@<kind>` capture on the
-/// whole definition node, and optionally `@body` (stripped from signatures).
-
-/// JavaScript definitions and ES imports. Node types here also exist in the
-/// TypeScript grammar, so this compiles against JS, TS, and TSX. `name: (_)`
-/// avoids depending on grammar-specific identifier node types.
-
-/// JavaScript-only definitions, appended to `JS_QUERY` for .js/.jsx.
-///
-/// A class field is `field_definition` in the JavaScript grammar but
-/// `public_field_definition` in TypeScript's, so it cannot live in the shared
-/// query: a node type absent from a grammar fails the whole query to compile.
-
-/// TypeScript-only definitions, appended to `JS_QUERY` for TS and TSX.
-
-/// Go definitions and imports.
-
-/// Java definitions and imports.
-
-/// Ruby definitions and `require`/`require_relative` imports. Ruby has no import
-/// statement — `require "x"` is a plain method call — so imports are captured as
-/// calls guarded by the method name (see the `@guard` handling in `extract`).
-/// Ruby method/class bodies aren't a strippable field here, so signatures are
-/// the whole declaration, capped.
-
-/// C definitions and #include directives. Declarator nesting means some forms
-/// (e.g. pointer-returning functions) need their own pattern.
-
-/// C++ (a superset of C): add classes, namespaces, and member functions.
-
-/// C#.
-
-/// PHP (the `<?php` variant).
 
 /// Syntactic class of a byte position, for `search --in`. Extracted at index
 /// time and stored in the `spans` table, so `search --in` is a lookup, not a

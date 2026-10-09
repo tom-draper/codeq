@@ -116,7 +116,7 @@ fn parse_one(
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
-                previous_health.map(|h| h.0).flatten(),
+                previous_health.and_then(|h| h.0),
                 previous_health.is_some_and(|h| h.1),
             )
         };
