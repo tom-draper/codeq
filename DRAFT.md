@@ -4,12 +4,13 @@
 
 ## Implementation Status
 
-This document is the **design rationale** — why codeq is shaped the way it is. It does
+This document is the **design rationale**. It explains why codeq is shaped the way it is. It does
 not track what ships, and deliberately no longer tries: the inventory that used to live
 here went stale by roughly an order of magnitude (it still claimed six commands, two
-languages and 29 tests long after those numbers had passed 30, 25 and 150). For what
-exists today, ask the tool — `codeq capabilities` is generated from the CLI parser, so
-it cannot drift — or read [README.md](./README.md).
+languages and 29 tests long after those numbers had passed 30, 25 and 150). The v1
+proposal below records the constraints that shaped the tool. The roadmap near the end is
+the current plan. For what exists today, ask the tool. `codeq capabilities` is generated
+from the CLI parser, so it cannot drift. You can also read [README.md](./README.md).
 
 Parts of `src/facts.rs` and `src/context.rs` cite this file for the reasoning behind
 the fact model and the context-assembly constraints; those sections are the point of
@@ -220,10 +221,10 @@ Initial full-index targets should be treated as benchmark goals, not promises:
 
 The CLI should be small enough that agents can discover and use it reliably.
 
-The list below is broader than the narrowness the rest of this document preaches. Treat it as tiered, not flat, or it reads as a v1 promise the roadmap does not keep:
+The list below is broader than the narrowness the rest of this document preaches. Treat it as tiered, not flat, or it reads as a v1 promise the project does not make:
 
 - **Proving set (build first):** `index`, `files`, `changed`, `symbols`, `definitions`, `imports`/`importers`, `context`. If these are fast, fresh, structured, and reliable, agents already have a better primitive than shell pipelines. Everything else is unproven until these land.
-- **Project facts** (`routes`, `sql`, `tests`, `configs`, `docker`, `migrations`): deferred to Milestone 4 and gated behind confidence reporting. They are the most valuable-looking and the most likely to become a maintenance trap; their presence in this list must not imply v1 coverage.
+- **Project facts** (`routes`, `sql`, `tests`, `configs`, `docker`, `migrations`): add these only when a real task shows a stable syntax pattern and the extractor can state its confidence. They are valuable and prone to becoming a maintenance trap, so their presence in this list does not promise coverage.
 - **Discovery** (`capabilities`, `schema`, `status`): cheap, and worth having early because they make the rest self-describing to agents.
 
 The roadmap, not this list, defines sequencing.
@@ -583,63 +584,58 @@ Real repositories matter more than synthetic fixtures:
 
 ## Roadmap
 
-### Milestone 1: Useful Core
+The first version is built. The next work should make its existing answers more
+trustworthy, easier to ship, and demonstrably worth using. `codeq capabilities` and the
+README remain the source of truth for the command inventory.
 
-- Rust CLI
-- SQLite index
-- ignore-aware file inventory
-- Git-aware changed files
-- JSON envelope
-- freshness checks
-- tests for filesystem edge cases
+### Make language support a contract
 
-### Milestone 2: Symbols and Imports
+Each supported language needs a fixture that covers the facts `capabilities` advertises,
+plus a real-repository probe that can catch parser changes and common source forms. Add a
+language or fact kind only with both. When a command cannot answer because the language
+lacks that fact, keep reporting that limit rather than returning an empty list that looks
+like evidence of absence.
 
-- Tree-sitter parser registry
-- bundled parsers for 3 to 5 languages
-- symbol extraction
-- definitions and exports
-- imports and importers
-- schema documentation
+### Measure the index under real repository conditions
 
-### Milestone 3: Agent Context
+Keep the benchmark corpus pinned and record cold indexing, no-op refreshes, small edits,
+large branch changes, memory use, and concurrent invocations separately. Publish the
+environment with each result. A warm query number does not describe a short-lived agent
+process, and a small-edit result does not describe a checkout that changes thousands of
+files. Turn regressions in the supported scenarios into repeatable checks.
 
-- syntax-aware chunking
-- token counting
-- changed-symbol context
-- `codeq context` command
-- relevance and budget controls
-- JSONL streaming for large outputs
+### Make distribution repeatable
 
-### Milestone 4: Project Facts
+Add continuous integration for formatting, linting, unit tests, CLI tests, and the
+real-repository harness. Publish supported binaries and verify installation on each target
+platform. Version the CLI, index schema, MCP tools, and result envelope deliberately, so
+an upgrade either preserves an index or rebuilds it with a clear explanation.
 
-- declarative query packs
-- env var extraction
-- tests/configs/docker/migrations
-- initial route extraction for a few common frameworks
-- SQL extraction with confidence reporting
+### Improve resolution only when the result stays explainable
 
-## Later Work
+Keep name-based facts as the default. Extend exact module and import-alias resolution
+where syntax and repository layout provide enough evidence. If a future type checker or
+language-server adapter supplies stronger resolution, label the source and confidence of
+each result. Do not turn a heuristic into an unqualified answer.
 
-These are valuable, but should not distract from v1:
+### Earn new project facts from real tasks
 
-```bash
-codeq callers <symbol>
-codeq references <symbol>
-codeq implementations <interface>
-codeq duplicates
-codeq impact <path>
-codeq query "kind = 'function' AND path LIKE 'src/auth/%'"
-```
+Routes, configuration, migrations, environment variables, and framework conventions are
+worth indexing only after repeated agent work shows a stable syntax pattern. Add each fact
+with a declared scope, an extraction source, conservative empty-result behavior, and
+fixtures from the framework it targets. Project-local query packs remain deferred until
+they have an explicit trust model and resource limits.
 
-Potential future directions:
+## Deferred work
 
-- type-aware analysis for selected languages
-- optional LSP integration
-- optional watch daemon
-- plugin API
-- remote cache
-- vector embeddings as an optional layer over deterministic facts
+These ideas need a concrete user problem and a design that preserves the deterministic
+contract before they enter the roadmap:
+
+- type-aware analysis or optional language-server integration
+- a watch process for long-lived workspaces
+- project-local or third-party query packs
+- a remote cache
+- embeddings or other ranking systems
 
 ## How We Know We Are Winning
 
