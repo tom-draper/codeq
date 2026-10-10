@@ -6598,3 +6598,15 @@ From the audit above. `search` now takes `-e` (repeatable), `-o`, `-v`, `-L`,
 match, which is exactly what the trigram prefilter discards, so both bypass it.
 `read` takes `path:A-B`, `path:N`, comma or repeated ranges, and several files
 in one call; line numbers are `N<TAB>` instead of a six-wide column.
+
+## 2026-10-10 — text rows carried a column and a tag nobody could use
+
+From the audit above. A text row was `path:line:col: text  [symbol]`. No command
+takes a column as input, so it was three or four bytes on every row; and on the
+line that declares a symbol the tag repeated the line (`pub retries: u32
+[retries]`). Text now omits the column unless `--fields` names it, and omits the
+tag on a declaration line (JSON keeps both, and gains `decl`). Re-measured here
+against `rg -n`: `TODO` +9%, `Session` +18%, `max_per_file` -13%, `fn \w+_note`
++1%, where the audit had +11% to +44%; `--group` is now 14% under `rg --heading`.
+What remains is the tag itself, which is the point of the command. `explore`
+defaulted to a 16,000-token budget, 55 KB for `cmd_search`; it is now 4,000.
