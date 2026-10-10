@@ -6565,3 +6565,27 @@ both and was right. `definition_at` now drops a field written inside its
 owner's header, on the owner's first line, before taking the leaves, so the
 line resolves to the class; a parameter on a line of its own is unaffected. The
 harness accepts the owning type for a parameter sampled on that line.
+
+## 2026-10-10 — audit: where grep and sed still beat codeq for an agent
+
+Measured on this repo against `rg`/`sed`. Flat `search` costs
+11–44% more bytes than `rg -n` for identical hits (`:col:` plus the `[symbol]`
+suffix; repeating the symbol on its own declaration line is most of it), and
+`--group` is larger than `rg --heading`. The MCP tools return the JSON envelope,
+which is 1.8–2.4x `rg`, and expose none of `--group`/`--max-per-file`/`--fields`;
+an unknown argument (`paths`) was ignored and the search ran repo-wide.
+`search PAT <path>` on a file outside the index (`/etc/hostname`,
+`target/.rustc_info.json`) exits 0 with no rows and no note. `explore` defaults
+to a 16k-token budget (55 KB for `cmd_search`). `read` rejects `file:A-B`,
+several ranges and several files; `search` rejects `-e`, `-o`, `-v`, `-F`, `-U`,
+`-t` and `--files-without-match`, each as an exit-2 round trip.
+
+Fixed from that list: the MCP tools return the text form with the stderr notes
+appended, reject an undeclared or mistyped argument, and offer `paths` plus
+`fields`/`group`/`max_per_file` on `search`, `references` and `astgrep`. A
+positional path outside the index is searched from disk and noted, and one that
+is nowhere is named as a dead filter. Found on the way: the MCP schema typed
+every integer as a string in release builds only, because clap keeps a value
+type's name in debug builds alone and `kind_of` matched on it — so the debug
+test suite could not see it. The row format, the `explore` budget and the
+missing grep/sed flags are still open.
