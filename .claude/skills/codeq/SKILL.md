@@ -51,6 +51,8 @@ refresh the index — every command auto-refreshes changed files first.
 
 **Understand a file without reading all of it**
 - `codeq read <file>` — the file with long function bodies folded to signatures.
+  Slices: `codeq read a.rs:40-80 b.rs:12,90-95` reads several ranges of several
+  files in one call (the `sed -n 'A,Bp'` you would otherwise run per slice).
   For every source byte without display prefixes, use `codeq read <file> --raw`;
   `--full` unfolds but keeps line numbers.
 - `codeq outline <file>` — just the definitions and their nesting.
