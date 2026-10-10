@@ -77,18 +77,21 @@ fn initialize_result(params: Option<&Value>) -> Value {
 fn call_tool(params: Option<&Value>, exe: &Path, cwd: &Path) -> Value {
     let params = params.cloned().unwrap_or_else(|| json!({}));
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
 
     let cli_args = match build_args(name, &args) {
-        Some(a) => a,
-        None => return tool_error(format!("unknown tool: {name}")),
+        Ok(a) => a,
+        Err(e) => return tool_error(e),
     };
 
-    // MCP is a programmatic consumer, so request structured JSON (the CLI now
-    // defaults to compact text for direct/agent use).
-    match Command::new(exe).arg("--json").args(&cli_args).current_dir(cwd).output() {
+    // The caller is a model paying per token, so it gets the CLI's compact text
+    // rather than the JSON envelope: the same rows at roughly half the bytes.
+    match Command::new(exe).args(&cli_args).current_dir(cwd).output() {
         Ok(o) if o.status.success() => {
-            json!({ "content": [{ "type": "text", "text": String::from_utf8_lossy(&o.stdout) }] })
+            json!({ "content": [{ "type": "text", "text": tool_text(&o.stdout, &o.stderr) }] })
         }
         Ok(o) => tool_error(format!(
             "codeq error: {}",
@@ -96,6 +99,26 @@ fn call_tool(params: Option<&Value>, exe: &Path, cwd: &Path) -> Value {
         )),
         Err(e) => tool_error(format!("failed to run codeq: {e}")),
     }
+}
+
+/// A successful call's text: the rows, then the notes. The CLI keeps notes on
+/// stderr so a pipe sees only rows, but over MCP there is one channel, and a
+/// note is what says a result stopped at the limit or why it is empty.
+fn tool_text(stdout: &[u8], stderr: &[u8]) -> String {
+    let mut text = String::from_utf8_lossy(stdout).into_owned();
+    let notes = String::from_utf8_lossy(stderr);
+    let notes = notes.trim();
+    if !notes.is_empty() {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(notes);
+    }
+    if text.trim().is_empty() {
+        // An empty string reads as a tool that failed to answer.
+        text = "(no results)".into();
+    }
+    text
 }
 
 fn tool_error(msg: String) -> Value {
@@ -113,9 +136,13 @@ fn tool_error(msg: String) -> Value {
 #[derive(Clone, Copy)]
 struct ToolOverrides {
     /// CLI arguments that MCP does not offer. `stdin` has no pipe to read over
-    /// MCP, `paths` repeats `path`, and `explain` is a separate mode with no
-    /// pattern. The remaining entries are unexposed CLI features.
+    /// MCP and `explain` is a separate mode with no pattern. The remaining
+    /// entries are unexposed CLI features.
     hidden: &'static [&'static str],
+    /// Global output flags this tool offers. Opt-in per tool, because a global
+    /// on every tool is schema every session pays for: these go on the tools
+    /// whose results are long row lists.
+    globals: &'static [&'static str],
     /// Arguments MCP requires even though Clap leaves them optional.
     required: &'static [&'static str],
     /// Allowed values for otherwise free-form string arguments.
@@ -126,10 +153,15 @@ struct ToolOverrides {
 
 const EMPTY_TOOL_OVERRIDES: ToolOverrides = ToolOverrides {
     hidden: &[],
+    globals: &[],
     required: &[],
     choices: &[],
     one_of: &[],
 };
+
+/// The flags that shrink a long row list: fewer columns, the path hoisted onto
+/// a header, a cap on rows per file.
+const ROW_GLOBALS: &[&str] = &["fields", "group", "max_per_file"];
 
 /// MCP-specific behavior that Clap cannot express. Keeping each command's
 /// exceptions together makes the remaining adapter metadata reviewable.
@@ -145,6 +177,7 @@ const TOOL_OVERRIDES: &[(&str, ToolOverrides)] = &[
         "astgrep",
         ToolOverrides {
             hidden: &["explain"],
+            globals: ROW_GLOBALS,
             required: &["pattern", "language"],
             ..EMPTY_TOOL_OVERRIDES
         },
@@ -172,9 +205,17 @@ const TOOL_OVERRIDES: &[(&str, ToolOverrides)] = &[
         },
     ),
     (
+        "references",
+        ToolOverrides {
+            globals: ROW_GLOBALS,
+            ..EMPTY_TOOL_OVERRIDES
+        },
+    ),
+    (
         "search",
         ToolOverrides {
-            hidden: &["paths", "stdin"],
+            hidden: &["stdin"],
+            globals: ROW_GLOBALS,
             choices: &[("in", &["code", "comments", "strings"])],
             ..EMPTY_TOOL_OVERRIDES
         },
@@ -218,11 +259,23 @@ fn kind_of(arg: &clap::Arg) -> Kind {
     match arg.get_action() {
         ArgAction::SetTrue => Kind::Bool,
         ArgAction::Append => Kind::List,
-        // clap does not expose a parser's output type except by its debug name.
-        _ => match format!("{:?}", arg.get_value_parser().type_id()).as_str() {
-            "usize" | "u64" | "i64" => Kind::Int,
-            _ => Kind::Text,
-        },
+        // Compared as type ids, not by debug name: clap only keeps the name in
+        // debug builds, so matching on it made every integer a string in the
+        // release binary while the tests, built in debug, saw integers.
+        _ => {
+            use std::any::TypeId;
+            let id = arg.get_value_parser().type_id();
+            let ints = [
+                TypeId::of::<usize>(),
+                TypeId::of::<u64>(),
+                TypeId::of::<i64>(),
+            ];
+            if ints.iter().any(|t| id == *t) {
+                Kind::Int
+            } else {
+                Kind::Text
+            }
+        }
     }
 }
 
@@ -238,6 +291,10 @@ fn tool_def(name: &'static str, description: &'static str, root: &clap::Command)
     let params = sub
         .get_arguments()
         .filter(|a| !a.is_global_set() && !overrides.hidden.contains(&a.get_id().as_str()))
+        .chain(
+            root.get_arguments()
+                .filter(|a| overrides.globals.contains(&a.get_id().as_str())),
+        )
         .map(|a| {
             let id = a.get_id().as_str();
             let key = match a.get_long() {
@@ -308,13 +365,37 @@ fn tools() -> Value {
     Value::Array(list)
 }
 
-fn str_arg<'a>(a: &'a Value, k: &str) -> Option<&'a str> {
-    a.get(k).and_then(|v| v.as_str())
-}
-
-/// Map an MCP tool name + arguments to codeq CLI arguments.
-fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
-    let def = tool_defs().iter().find(|t| t.name == tool)?;
+/// Map an MCP tool name + arguments to codeq CLI arguments, or say what is
+/// wrong with them.
+///
+/// Every argument must be one the tool declares and of the declared type. An
+/// unknown key used to be dropped: `paths: ["src/a.rs"]` on a tool without
+/// `paths` ran the search repo-wide and returned it as the answer to a scoped
+/// question. A filter that silently does not apply is worse than an error.
+fn build_args(tool: &str, a: &Value) -> Result<Vec<String>, String> {
+    let def = tool_defs()
+        .iter()
+        .find(|t| t.name == tool)
+        .ok_or_else(|| format!("unknown tool: {tool}"))?;
+    let empty = serde_json::Map::new();
+    let given = match a {
+        Value::Object(m) => m,
+        Value::Null => &empty,
+        _ => return Err(format!("{tool}: arguments must be an object")),
+    };
+    let unknown: Vec<&str> = given
+        .keys()
+        .map(String::as_str)
+        .filter(|k| !def.params.iter().any(|p| p.key == *k))
+        .collect();
+    if !unknown.is_empty() {
+        let known: Vec<&str> = def.params.iter().map(|p| p.key.as_str()).collect();
+        return Err(format!(
+            "{tool}: unknown argument(s) {}; it takes: {}",
+            unknown.join(", "),
+            known.join(", ")
+        ));
+    }
     // Flags accumulate in `args`; caller-supplied *values* go to `pos` and are
     // emitted after a `--` separator. Without it a value that happens to start
     // with a dash is read as a flag by the CLI's parser: `pattern: "--json"` —
@@ -323,37 +404,56 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
     // exited 0, handing an agent the help text as a successful answer.
     let mut args: Vec<String> = vec![def.command.clone()];
     let mut pos: Vec<String> = Vec::new();
+    let present = |k: &str| given.get(k).is_some_and(|v| !v.is_null());
     let chosen = if def.one_of.is_empty() {
         None
     } else {
-        Some(*def.one_of.iter().find(|k| str_arg(a, k).is_some())?)
+        Some(
+            *def.one_of
+                .iter()
+                .find(|k| present(k))
+                .ok_or_else(|| format!("{tool}: one of {} is required", def.one_of.join(", ")))?,
+        )
+    };
+    // A scalar as the CLI wants it. A number where a string is declared (or the
+    // reverse) is accepted: clients disagree about which to send, and the CLI
+    // parses the text either way.
+    let scalar = |v: &Value| match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
     };
     for p in &def.params {
         if def.one_of.contains(&p.key.as_str()) && chosen != Some(p.key.as_str()) {
             continue;
         }
-        let value = match p.kind {
+        let Some(v) = given.get(&p.key).filter(|v| !v.is_null()) else {
+            if p.required {
+                return Err(format!("{tool}: missing required argument: {}", p.key));
+            }
+            continue;
+        };
+        let wrong = |want: &str| format!("{tool}: {} must be {want}, got {v}", p.key);
+        let values = match p.kind {
             Kind::Bool => {
-                if a.get(&p.key).and_then(|v| v.as_bool()).unwrap_or(false) {
+                if v.as_bool().ok_or_else(|| wrong("a boolean"))? {
                     args.extend(p.flag.clone());
                 }
                 continue;
             }
-            Kind::Int => a.get(&p.key).and_then(|v| v.as_i64()).map(|n| vec![n.to_string()]),
-            Kind::Text => str_arg(a, &p.key).map(|v| vec![v.to_string()]),
-            Kind::List => match a.get(&p.key) {
-                Some(Value::Array(items)) => Some(
-                    items.iter().filter_map(|v| v.as_str()).map(String::from).collect(),
-                ),
-                Some(Value::String(one)) => Some(vec![one.clone()]),
-                _ => None,
-            },
-        };
-        let Some(values) = value else {
-            if p.required {
-                return None;
+            Kind::Int => {
+                let n = scalar(v).filter(|s| s.parse::<i64>().is_ok());
+                vec![n.ok_or_else(|| wrong("an integer"))?]
             }
-            continue;
+            Kind::Text => vec![scalar(v).ok_or_else(|| wrong("a string"))?],
+            Kind::List => match v {
+                Value::Array(items) => items
+                    .iter()
+                    .map(scalar)
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| wrong("an array of strings"))?,
+                one => vec![scalar(one).ok_or_else(|| wrong("an array of strings"))?],
+            },
         };
         match &p.flag {
             Some(flag) => {
@@ -371,7 +471,7 @@ fn build_args(tool: &str, a: &Value) -> Option<Vec<String>> {
         args.push("--".into());
         args.extend(pos);
     }
-    Some(args)
+    Ok(args)
 }
 
 /// What each tool tells an agent about itself. Hand-written: this is the prose
@@ -388,7 +488,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_search",
-        "Search file contents. Regex by default (same engine as ripgrep); set fixed for a literal. Each match is annotated with its enclosing definition. Superset of grep: -A/-B/-C context, files_with_matches, count, and 'in' (code|comments|strings) which grep can't do. In markdown, fenced code blocks count as strings and prose as comments, so 'in' separates documented examples from the text around them.",
+        "Search file contents. Regex by default (same engine as ripgrep); set fixed for a literal. Each match is annotated with its enclosing definition. Superset of grep: -A/-B/-C context, files_with_matches, count, and 'in' (code|comments|strings) which grep can't do. paths scopes it like grep's positional paths, and a path the index does not hold (gitignored output, a log, a file outside the repo) is searched from disk. On a broad pattern, max_per_file with group returns the shape of the result for a fraction of the tokens. In markdown, fenced code blocks count as strings and prose as comments, so 'in' separates documented examples from the text around them.",
     ),
     (
         "codeq_symbols",
@@ -579,6 +679,6 @@ mod tests {
         assert_eq!(both, ["explore", "--at", "a.rs:3"]);
         let name = build_args("codeq_explore", &json!({ "name": "f" })).unwrap();
         assert_eq!(name, ["explore", "--", "f"]);
-        assert!(build_args("codeq_explore", &json!({})).is_none());
+        assert!(build_args("codeq_explore", &json!({})).is_err());
     }
 }

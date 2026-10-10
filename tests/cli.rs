@@ -4388,11 +4388,15 @@ fn mcp_server_handshake_and_tool_call() {
     assert_eq!(msgs[0]["result"]["protocolVersion"], "2025-06-18");
     assert!(msgs[1]["result"]["tools"].as_array().unwrap().len() >= 10);
 
-    // The tool result carries codeq's JSON output.
+    // The tool result carries codeq's compact text, not the JSON envelope: the
+    // caller is a model paying per token.
     let text = msgs[2]["result"]["content"][0]["text"].as_str().unwrap();
-    let data: Value = serde_json::from_str(text).unwrap();
-    assert_eq!(data["data"][0]["name"], "target");
-    assert_eq!(data["data"][0]["kind"], "function");
+    assert!(text.starts_with("a.rs:1:"), "{text}");
+    assert!(text.contains("fn target()"), "{text}");
+    assert!(
+        !text.contains("\"schema\""),
+        "JSON envelope returned: {text}"
+    );
 }
 
 #[test]
@@ -4508,11 +4512,11 @@ fn mcp_treats_flag_like_arguments_as_literals() {
         r["isError"].as_bool() != Some(true),
         "search treated --json as a flag: {r}"
     );
-    let data: Value = serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
+    let text = r["content"][0]["text"].as_str().unwrap();
     assert_eq!(
-        data["data"]["matches"].as_array().unwrap().len(),
+        text.lines().filter(|l| l.starts_with("a.rs:1:")).count(),
         1,
-        "{data}"
+        "{text}"
     );
 
     // `--help` is a symbol name with no definition, not a request for help.
@@ -4522,8 +4526,13 @@ fn mcp_treats_flag_like_arguments_as_literals() {
         !text.contains("Usage:"),
         "help text returned as a result: {text}"
     );
-    let data: Value = serde_json::from_str(text).unwrap();
-    assert!(data["data"].as_array().unwrap().is_empty(), "{data}");
+    assert!(
+        !text.contains("a.rs:"),
+        "a row for a name with no definition: {text}"
+    );
+    // An empty result's explanation is on stderr in the CLI; over MCP it has to
+    // arrive in the one channel there is.
+    assert!(text.contains("no symbol named '--help'"), "{text}");
 
     // astgrep still works: its `language` is a flag value, not a positional.
     let r = &msgs[3]["result"];
@@ -4543,7 +4552,10 @@ fn mcp_context_forwards_path_and_no_text_flags() {
     use std::process::{Command as PCommand, Stdio};
 
     let f = Fixture::new();
-    f.write("a.rs", "fn target() {}\nfn caller() { target(); }\n");
+    f.write(
+        "a.rs",
+        "fn target() {\n    let marker_body = 1;\n}\nfn caller() { target(); }\n",
+    );
 
     let mut child = PCommand::cargo_bin("codeq")
         .unwrap()
@@ -4588,16 +4600,14 @@ fn mcp_context_forwards_path_and_no_text_flags() {
         "tool errored: {call:?}"
     );
     let text = call["result"]["content"][0]["text"].as_str().unwrap();
-    let data: Value = serde_json::from_str(text).unwrap();
-    let chunks = data["data"]["chunks"].as_array().expect("chunks array");
     // --path a.rs kept the seed; --no-text dropped its source text.
     assert!(
-        chunks.iter().any(|c| c["name"] == "target"),
-        "seed missing: {chunks:?}"
+        text.contains("a.rs:1: function target"),
+        "seed missing: {text}"
     );
     assert!(
-        chunks.iter().all(|c| c.get("text").is_none()),
-        "no_text was not forwarded — source text leaked: {chunks:?}"
+        !text.contains("marker_body"),
+        "no_text was not forwarded — source text leaked: {text}"
     );
 }
 
@@ -4629,21 +4639,166 @@ fn mcp_context_forwards_resolved_expansion() {
     let text = reply["result"]["content"][0]["text"]
         .as_str()
         .expect("tool text");
-    let data: Value = serde_json::from_str(text).unwrap();
-    let paths: Vec<&str> = data["data"]["chunks"]
+    assert!(
+        text.contains("helper.rs:"),
+        "reachable definition missing: {text}"
+    );
+    assert!(
+        !text.contains("other.rs:"),
+        "resolved was not forwarded: {text}"
+    );
+}
+
+/// One MCP tool call against a fixture: `(is_error, text)`.
+fn mcp_call(f: &Fixture, tool: &str, arguments: Value) -> (bool, String) {
+    use std::io::Write;
+    use std::process::{Command as PCommand, Stdio};
+
+    let mut child = PCommand::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": tool, "arguments": arguments }
+    });
+    writeln!(child.stdin.take().unwrap(), "{req}").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let result = &reply["result"];
+    (
+        result["isError"].as_bool() == Some(true),
+        result["content"][0]["text"]
+            .as_str()
+            .expect("tool text")
+            .to_string(),
+    )
+}
+
+/// An argument the tool does not declare is an error, not a no-op. `paths` on a
+/// tool without it used to be dropped, so a scoped question was answered with a
+/// repo-wide search and nothing said the scope had not applied.
+#[test]
+fn mcp_rejects_arguments_a_tool_does_not_declare() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn target() {}\n");
+    f.write("b.rs", "fn other() { target(); }\n");
+
+    let (err, text) = mcp_call(
+        &f,
+        "codeq_search",
+        serde_json::json!({ "pattern": "target", "pathz": ["a.rs"] }),
+    );
+    assert!(err, "unknown argument accepted: {text}");
+    assert!(text.contains("pathz") && text.contains("paths"), "{text}");
+
+    let (err, text) = mcp_call(
+        &f,
+        "codeq_search",
+        serde_json::json!({ "pattern": "target", "limit": true }),
+    );
+    assert!(err && text.contains("limit must be an integer"), "{text}");
+
+    let (err, text) = mcp_call(&f, "codeq_search", serde_json::json!({}));
+    assert!(
+        err && text.contains("missing required argument: pattern"),
+        "{text}"
+    );
+
+    // A number and its string spelling are the same request.
+    for limit in [serde_json::json!(1), serde_json::json!("1")] {
+        let (err, text) = mcp_call(
+            &f,
+            "codeq_search",
+            serde_json::json!({ "pattern": "target", "limit": limit }),
+        );
+        assert!(!err, "{text}");
+        assert_eq!(
+            text.lines().filter(|l| !l.starts_with('#')).count(),
+            1,
+            "{text}"
+        );
+        // The truncation note is on stderr in the CLI; MCP has one channel.
+        assert!(text.contains("stopped at --limit"), "{text}");
+    }
+}
+
+/// The scope and the token-saving output flags are reachable over MCP.
+#[test]
+fn mcp_search_takes_paths_and_row_flags() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn target() {}\nfn again() { target(); target2(); }\n",
+    );
+    f.write("b.rs", "fn other() { target(); }\n");
+
+    let (err, text) = mcp_call(
+        &f,
+        "codeq_search",
+        serde_json::json!({ "pattern": "target", "paths": ["a.rs"] }),
+    );
+    assert!(
+        !err && text.contains("a.rs:1:") && !text.contains("b.rs"),
+        "{text}"
+    );
+
+    let (err, text) = mcp_call(
+        &f,
+        "codeq_search",
+        serde_json::json!({ "pattern": "target", "group": true, "max_per_file": 1 }),
+    );
+    assert!(!err, "{text}");
+    assert!(text.contains("a.rs (1 of 2)"), "grouped and capped: {text}");
+
+    let (_, text) = mcp_call(
+        &f,
+        "codeq_search",
+        serde_json::json!({ "pattern": "zzz_absent" }),
+    );
+    assert_eq!(text, "(no results)");
+}
+
+/// The schema is built from clap's argument types, and clap only keeps a type's
+/// *name* in debug builds — so this is checked on type ids. In the release
+/// binary every integer was advertised as a string.
+#[test]
+fn mcp_schema_types_integers() {
+    use std::io::Write;
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    let mut child = PCommand::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/list"}}"#
+    )
+    .unwrap();
+    let out = child.wait_with_output().unwrap();
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let search = reply["result"]["tools"]
         .as_array()
         .unwrap()
         .iter()
-        .filter_map(|chunk| chunk["path"].as_str())
-        .collect();
-    assert!(
-        paths.contains(&"helper.rs"),
-        "reachable definition missing: {data}"
-    );
-    assert!(
-        !paths.contains(&"other.rs"),
-        "resolved was not forwarded: {data}"
-    );
+        .find(|t| t["name"] == "codeq_search")
+        .unwrap();
+    let props = &search["inputSchema"]["properties"];
+    assert_eq!(props["limit"]["type"], "integer");
+    assert_eq!(props["max_per_file"]["type"], "integer");
+    assert_eq!(props["paths"]["type"], "array");
 }
 
 /// A positional path the index does not hold is searched from disk rather than

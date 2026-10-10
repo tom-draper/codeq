@@ -375,9 +375,10 @@ which apply to every command:
 - **An empty result explains itself.** "No results" is ambiguous between no such
   symbol, no such relation, and a filter that removed everything, so codeq says
   which, with a near-miss suggestion when the name looks mistyped. The note goes to
-  stderr in text mode and into the envelope's `note` field under `--json` (the MCP
-  server captures only stdout). It is diagnostic, never data: `data` stays empty and
-  the exit status stays 0.
+  stderr in text mode and into the envelope's `note` field under `--json`. The MCP
+  server returns the text form and has one channel, so it appends the notes after
+  the rows. It is diagnostic, never data: `data` stays empty and the exit status
+  stays 0.
 
 **JSON.** Every result is `{"schema": "codeq.result.v2", "data": ...}`. Facts carry byte
 ranges, 1-based line and column ranges, an extraction source (e.g. `treesitter/rust`),
