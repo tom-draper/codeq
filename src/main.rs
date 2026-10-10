@@ -377,7 +377,11 @@ enum Command {
         resolved: bool,
         /// Approximate token budget for the included source (the definition is
         /// always included; callers and callees fill the rest).
-        #[arg(long, default_value_t = 16000)]
+        ///
+        /// The default is sized for a first look: the definition and its nearest
+        /// neighbours. What did not fit is listed under `omitted`, so raise this
+        /// when that list holds something you need.
+        #[arg(long, default_value_t = 4000)]
         max_tokens: u64,
     },
     /// Word-boundary references to an exact symbol name, with enclosing symbol.

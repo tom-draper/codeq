@@ -30,7 +30,8 @@ benchmarks — not as a step you run before querying.
 - **Understand or change one symbol (start here):** `codeq explore NAME` — one call
   returns its definition + callers + callees *and* the verbatim source of that whole
   neighbourhood, budgeted and grouped by file (each source block tagged focus/caller/
-  callee). Replaces the `about` → `read` → `read` sequence; `--max-tokens` caps it (the
+  callee). Replaces the `about` → `read` → `read` sequence; `--max-tokens` caps it (default
+  4000, sized for a first look — raise it when `omitted` lists something you need; the
   definition is always kept, the rest fill the budget, drops are listed under `omitted`).
   It also reports the focus file's `imports` — what is already in scope at the edit
   site, so a proposed call isn't to something the file can't see. The focus block
