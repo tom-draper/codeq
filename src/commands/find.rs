@@ -317,13 +317,6 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     } else {
         Some(GlobFilter::build(args.globs)?)
     };
-    let accept = (glob.is_some() || !args.paths.is_empty()).then_some({
-        move |p: &str| {
-            glob.as_ref().is_none_or(|gf| gf.accepts(p))
-                && (args.paths.is_empty() || args.paths.iter().any(|q| p.contains(q.as_str())))
-        }
-    });
-    let path_accept = accept.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
 
     let out_mode = if args.files_with_matches {
         OutMode::Files
@@ -359,15 +352,90 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
 
     let s = Session::open(cwd, false, out)?;
     let scoped = args.path.is_some() || !args.paths.is_empty() || args.language.is_some();
-    let data = run_search(
-        &s.db.conn,
-        &re,
-        match_query.as_deref(),
-        args.path,
-        args.language,
-        path_accept,
-        &opts,
-    )?;
+
+    // A positional is a path substring over the index. One that selects no
+    // indexed file is either a real path the index does not hold — gitignored
+    // build output, a log, a file outside the repository — or a mistake. grep
+    // would search the first, so codeq does too, from disk; either way the
+    // caller is told, because an empty answer here used to read as "no match"
+    // when the pattern had never been run.
+    let mut paths: Vec<String> = Vec::new();
+    let mut unindexed: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let mut missing: Vec<&str> = Vec::new();
+    let root = s
+        .repo
+        .root
+        .canonicalize()
+        .unwrap_or_else(|_| s.repo.root.clone());
+    let mut indexed =
+        s.db.conn
+            .prepare("SELECT EXISTS(SELECT 1 FROM files WHERE instr(path, ?1) > 0)")?;
+    for given in args.paths {
+        // A path that exists inside the repository is matched by its
+        // repo-relative form, so `./src`, an absolute path and a path given
+        // from a subdirectory all select what they name.
+        let on_disk = cwd.join(given).canonicalize().ok();
+        let rel = on_disk
+            .as_deref()
+            .and_then(|p| p.strip_prefix(&root).ok())
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| given.clone());
+        if indexed.query_row([&rel], |r| r.get::<_, bool>(0))? {
+            paths.push(rel);
+        } else if let Some(p) = on_disk {
+            unindexed.push((given.clone(), p));
+        } else {
+            missing.push(given);
+        }
+    }
+    drop(indexed);
+
+    let skip_index = !args.paths.is_empty() && paths.is_empty();
+    let accept = (glob.is_some() || !args.paths.is_empty()).then_some({
+        |p: &str| {
+            glob.as_ref().is_none_or(|gf| gf.accepts(p))
+                && (args.paths.is_empty() || paths.iter().any(|q| p.contains(q.as_str())))
+        }
+    });
+    let path_accept = accept.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
+    let (mut acc, stopped) = if skip_index {
+        (search::ScanAcc::default(), false)
+    } else {
+        run_search_acc(
+            &s.db.conn,
+            &re,
+            match_query.as_deref(),
+            args.path,
+            args.language,
+            path_accept,
+            &opts,
+        )?
+    };
+    // Nothing was parsed for these files, so `--in` has no spans to classify
+    // with and `--language` no language to compare: both exclude them.
+    let classified = in_filter != InFilter::Any || args.language.is_some();
+    if !stopped && !classified {
+        scan_unindexed(&unindexed, &re, &opts, &mut acc);
+    }
+    let data = acc.finish_for(&opts);
+    let quoted = |ps: &mut dyn Iterator<Item = &str>| {
+        ps.map(|p| format!("'{p}'")).collect::<Vec<_>>().join(", ")
+    };
+    let mut path_notes: Vec<String> = Vec::new();
+    if !unindexed.is_empty() {
+        let which = quoted(&mut unindexed.iter().map(|(l, _)| l.as_str()));
+        path_notes.push(if classified {
+            format!("{which} not in the index (ignored or outside the repo), so --in/--language cannot apply — not searched")
+        } else {
+            format!("{which} not in the index (ignored or outside the repo) — searched from disk, without [symbol]")
+        });
+    }
+    if !missing.is_empty() {
+        path_notes.push(format!(
+            "{} matches no indexed file and no path on disk — the pattern was never run there",
+            quoted(&mut missing.iter().copied())
+        ));
+    }
     // A bare pattern miss stays silent — an empty `search zzz` is unambiguous and
     // a note on every one would be noise. What is ambiguous is a *filter* that
     // selected no file: then the pattern never ran, and "no matches" is a
@@ -396,6 +464,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     } else {
         None
     };
+    let note = note.or((!path_notes.is_empty()).then(|| path_notes.join("; ")));
     s.emit_noted(data, note)
 }
 

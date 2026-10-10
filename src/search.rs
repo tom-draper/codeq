@@ -5,11 +5,14 @@
 //! index. Commands in [`crate::commands`] drive it; it depends only on a
 //! `rusqlite::Connection`, not the whole session.
 //!
-//! [`scan_stdin`] is the one exception: it scans a buffer piped in on stdin
-//! rather than the index, so codeq can also stand in for grep in a pipeline.
-//! It shares [`scan_doc`] with the indexed path, so both answer identically.
+//! Two exceptions scan something other than the index: [`scan_stdin`] a buffer
+//! piped in on stdin, so codeq can stand in for grep in a pipeline, and
+//! [`scan_unindexed`] a path the caller named that the index does not hold.
+//! Both share [`scan_doc`] with the indexed path, so all three answer
+//! identically.
 
 use std::io::{IsTerminal, Read};
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 use regex_syntax::hir::literal::{ExtractKind, Extractor as LiteralExtractor};
@@ -449,7 +452,22 @@ pub(crate) fn run_search(
     path_accept: Option<&dyn Fn(&str) -> bool>,
     opts: &ScanOpts,
 ) -> Result<SearchData> {
-    let cap = if opts.limit == 0 {
+    let (acc, _) = run_search_acc(
+        conn,
+        re,
+        like,
+        path_filter,
+        language_filter,
+        path_accept,
+        opts,
+    )?;
+    Ok(acc.finish_for(opts))
+}
+
+/// How many hits a scan collects before stopping: one past `--limit`, so the
+/// result can say it was truncated.
+fn scan_cap(opts: &ScanOpts) -> usize {
+    if opts.limit == 0 {
         usize::MAX
     } else if opts.out == OutMode::Matches && opts.per_file.is_some() {
         // Per-file capping needs the rest of the final file to report its true
@@ -457,7 +475,22 @@ pub(crate) fn run_search(
         opts.limit
     } else {
         opts.limit.saturating_add(1)
-    };
+    }
+}
+
+/// [`run_search`] without the final step, for a caller with more documents to
+/// scan into the same result ([`scan_unindexed`]). The flag is true when the
+/// scan stopped at the limit, so there is nothing left to add.
+pub(crate) fn run_search_acc(
+    conn: &rusqlite::Connection,
+    re: &regex::Regex,
+    like: Option<&[String]>,
+    path_filter: Option<&str>,
+    language_filter: Option<&str>,
+    path_accept: Option<&dyn Fn(&str) -> bool>,
+    opts: &ScanOpts,
+) -> Result<(ScanAcc, bool)> {
+    let cap = scan_cap(opts);
     let filtering = opts.in_filter != InFilter::Any;
 
     let patterns = like.filter(|l| !l.is_empty());
@@ -483,6 +516,7 @@ pub(crate) fn run_search(
     let mut span_stmt = conn.prepare(SPANS_SQL)?;
 
     let mut acc = ScanAcc::default();
+    let mut stopped = false;
 
     let mut fts_stmt = conn.prepare(&sql)?;
     let mut rows = fts_stmt.query(params.as_slice())?;
@@ -552,15 +586,75 @@ pub(crate) fn run_search(
             cap,
             &mut acc,
         ) {
+            stopped = true;
             break 'outer;
         }
     }
+    drop(rows);
+    drop(fts_stmt);
 
-    Ok(acc.finish(
-        opts.out,
-        opts.limit,
-        opts.out == OutMode::Matches && opts.per_file.is_some(),
-    ))
+    Ok((acc, stopped))
+}
+
+/// Scan files that are on disk but not in the index — gitignored build output,
+/// a log, a path outside the repository — into `acc`. `(label, path)` pairs: the
+/// label is the path as the caller wrote it, which is what each row reports.
+///
+/// A directory is walked with every ignore rule off, since being ignored is why
+/// it is here. Nothing was parsed, so rows carry no enclosing symbol and the
+/// caller must not have asked for `--in`. Binary and unreadable files are
+/// skipped, as the index skips them.
+pub(crate) fn scan_unindexed(
+    targets: &[(String, PathBuf)],
+    re: &regex::Regex,
+    opts: &ScanOpts,
+    acc: &mut ScanAcc,
+) {
+    let cap = scan_cap(opts);
+    let scan_file = |label: &str, path: &Path, acc: &mut ScanAcc| -> bool {
+        let Ok(bytes) = std::fs::read(path) else {
+            return false;
+        };
+        if crate::index::looks_binary(&bytes) {
+            return false;
+        }
+        let body = String::from_utf8_lossy(&bytes);
+        scan_doc(
+            label,
+            None,
+            &body,
+            &[],
+            None,
+            &mut |_| Vec::new(),
+            re,
+            opts,
+            cap,
+            acc,
+        )
+    };
+    for (label, path) in targets {
+        if path.is_file() {
+            if scan_file(label, path, acc) {
+                return;
+            }
+            continue;
+        }
+        let walk = ignore::WalkBuilder::new(path)
+            .standard_filters(false)
+            .sort_by_file_name(|a, b| a.cmp(b))
+            .filter_entry(|e| e.file_name() != ".git" && e.file_name() != ".codeq")
+            .build();
+        for entry in walk.flatten() {
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
+                continue;
+            }
+            let rest = entry.path().strip_prefix(path).unwrap_or(entry.path());
+            let shown = Path::new(label).join(rest);
+            if scan_file(&shown.to_string_lossy(), entry.path(), acc) {
+                return;
+            }
+        }
+    }
 }
 
 /// Results accumulated across the documents a scan visits.
@@ -577,6 +671,16 @@ pub(crate) struct ScanAcc {
 }
 
 impl ScanAcc {
+    /// [`ScanAcc::finish`] with the arguments a plain search derives from its
+    /// options.
+    pub(crate) fn finish_for(self, opts: &ScanOpts) -> SearchData {
+        self.finish(
+            opts.out,
+            opts.limit,
+            opts.out == OutMode::Matches && opts.per_file.is_some(),
+        )
+    }
+
     pub(crate) fn finish(
         mut self,
         out: OutMode,

@@ -4646,6 +4646,61 @@ fn mcp_context_forwards_resolved_expansion() {
     );
 }
 
+/// A positional path the index does not hold is searched from disk rather than
+/// answered with a silent nothing, which read as "no match" for a pattern that
+/// had never been run.
+#[test]
+fn search_reads_a_named_path_the_index_does_not_hold() {
+    let f = Fixture::new();
+    f.write(".codeqignore", "build/\n");
+    f.write("src/a.rs", "fn target() {}\n");
+    f.write("build/out.log", "first\nerror: target missing\n");
+    f.write("build/deep/more.log", "target again\n");
+
+    // Ignored, so not indexed and not in an unscoped search.
+    let all = String::from_utf8(f.raw(&["search", "target"]).stdout).unwrap();
+    assert!(!all.contains("build/"), "{all}");
+
+    let out = f.raw(&["search", "target", "build/out.log"]);
+    let (text, note) = (
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    );
+    assert_eq!(text, "build/out.log:2:7: error: target missing\n");
+    assert!(note.contains("'build/out.log' not in the index"), "{note}");
+
+    // A directory is walked, and composes with an indexed scope.
+    let out = f.raw(&["search", "-l", "target", "build", "src"]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(text, "src/a.rs\nbuild/deep/more.log\nbuild/out.log\n");
+
+    // Nothing was parsed, so `--in` cannot classify the file: said, not guessed.
+    let out = f.raw(&["search", "target", "build/out.log", "--in", "code"]);
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8(out.stderr)
+        .unwrap()
+        .contains("not searched"));
+
+    // A path that is nowhere is a dead filter, and is named as one.
+    let out = f.raw(&["search", "target", "nowhere"]);
+    assert!(out.stdout.is_empty());
+    let note = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        note.contains("'nowhere' matches no indexed file and no path on disk"),
+        "{note}"
+    );
+
+    // A path inside the repo keeps its symbols however it is spelled.
+    let abs = f.path().join("src/a.rs");
+    for spelled in ["./src/a.rs", abs.to_str().unwrap()] {
+        let text = String::from_utf8(f.raw(&["search", "target", spelled]).stdout).unwrap();
+        assert_eq!(
+            text, "src/a.rs:1:3: fn target() {}  [target]\n",
+            "{spelled}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Map (factual aggregation, no opinion)
 // ---------------------------------------------------------------------------
