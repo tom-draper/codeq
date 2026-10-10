@@ -7,7 +7,10 @@ reads and grep, and log any friction in [DOGFOOD.md](./DOGFOOD.md).
 Build with `cargo build` → run `./target/debug/codeq` from the repo root
 (`--release` for benchmarking). Output defaults to compact grep-style text
 (`path:line:col: payload`); pass `--json` for the `codeq.result.v2` envelope
-(what the MCP server and programmatic consumers use).
+(what programmatic consumers use). The MCP server returns the text form, with
+the stderr notes appended after the rows: its caller is a model paying per
+token, and the envelope is about twice the bytes for the same rows. It rejects
+an argument a tool does not declare rather than dropping it.
 
 **Never run `codeq index` for correctness — every query auto-refreshes first.**
 Each command opens the index and reruns the git-free freshness check (changed/
