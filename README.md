@@ -293,7 +293,9 @@ whole structure (imports, signatures, docstrings) cheaply, then open only what y
           ... 6 lines (34-39)
 ```
 
-- `codeq read <file> --lines 24-31` for a verbatim, line-numbered slice.
+- `codeq read <file> --lines 24-31` for a verbatim, line-numbered slice. Several
+  ranges are `--lines 24-31,80-90`, and a range can ride on the path — `codeq read
+  a.rs:24-31 b.rs:12` — so several slices of several files are one call.
 - `codeq read <file> --symbol discover` for one named definition, verbatim.
 - `codeq read <file> --raw --symbol discover` for exact bytes with no line prefixes, ready
   to drop into an edit.
