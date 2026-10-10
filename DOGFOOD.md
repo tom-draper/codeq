@@ -6589,3 +6589,12 @@ every integer as a string in release builds only, because clap keeps a value
 type's name in debug builds alone and `kind_of` matched on it — so the debug
 test suite could not see it. The row format, the `explore` budget and the
 missing grep/sed flags are still open.
+
+## 2026-10-10 — grep and sed conventions that cost an exit-2 round trip
+
+From the audit above. `search` now takes `-e` (repeatable), `-o`, `-v`, `-L`,
+`-F`, `-t`/`--type` and `-U` (a no-op: matching was already cross-line), and
+`codeq grep` is an alias. `-v` and `-L` want the files a pattern does *not*
+match, which is exactly what the trigram prefilter discards, so both bypass it.
+`read` takes `path:A-B`, `path:N`, comma or repeated ranges, and several files
+in one call; line numbers are `N<TAB>` instead of a six-wide column.
