@@ -40,9 +40,10 @@ benchmarks — not as a step you run before querying.
     through imports (`about` takes it too). Measured on a Go/TS repo: 391 lines
     to 109.
   - **From a position, not a name:** `codeq explore --at <file>:<line>` explores
-    whatever definition encloses that line (innermost wins). For turning a stack
-    frame, a diff hunk or a search hit straight into its neighbourhood, instead of
-    `at` to get the name and then `explore`. The position scopes the lookup too, so
+    whatever definition encloses that line (innermost wins; a constructor parameter
+    on a class's own header line is part of the header, so that line is the class).
+    For turning a stack frame, a diff hunk or a search hit straight into its
+    neighbourhood, instead of `at` to get the name and then `explore`. The position scopes the lookup too, so
     a common name can't drag in same-named definitions from other files. A line
     between definitions is an empty result with a note, not an error.
 - **A type's members:** fields, properties and enum variants are facts too, tagged with

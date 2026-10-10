@@ -293,8 +293,9 @@ pub fn cmd_explore(
 ///
 /// Shared by `at` and `explore --at`: "which symbol is this line in" is one
 /// question, and it should not have two implementations that can disagree.
-/// Innermost wins (smallest byte range), so a line inside a method resolves to
-/// the method rather than the type that contains it.
+/// Innermost wins, so a line inside a method resolves to the method rather than
+/// the type that contains it. A constructor parameter on the type's own header
+/// line is part of that header, so the line resolves to the type.
 fn definition_at(s: &Session, location: &str) -> Result<AtPosition> {
     let (path, line_str) = location
         .rsplit_once(':')
@@ -310,15 +311,38 @@ fn definition_at(s: &Session, location: &str) -> Result<AtPosition> {
     // row silently answered about `app` when the question was about `response`,
     // which `at` (which returns all five) already knew better than to do.
     let mut stmt = s.db.conn.prepare(
-        "SELECT name, start_byte, end_byte
+        "SELECT name, start_byte, end_byte, kind, start_line, signature, owner
          FROM facts
          WHERE kind <> 'import' AND path = ?1
            AND start_line <= ?2 AND end_line >= ?2
          ORDER BY start_byte ASC, name ASC",
     )?;
-    let covering: Vec<(String, i64, i64)> = stmt
-        .query_map((&rel, line), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+    let all: Vec<Covering> = stmt
+        .query_map((&rel, line), |r| {
+            Ok(Covering {
+                name: r.get(0)?,
+                start: r.get(1)?,
+                end: r.get(2)?,
+                kind: r.get(3)?,
+                start_line: r.get(4)?,
+                signature: r.get(5)?,
+                owner: r.get(6)?,
+            })
+        })?
         .collect::<std::result::Result<_, _>>()?;
+
+    // A member written inside its type's *header* is part of the line that
+    // declares the type, not a definition nested in it: Kotlin and Scala
+    // primary-constructor parameters are `field` facts owned by the class and
+    // sit on its first line. Counted as leaves, `class ProtocolException(message:
+    // String)` resolved to `message` — and `explore` then pulled in every other
+    // `message` in the file, answering about a different thing than the class
+    // the line is for. Dropped before the leaves are taken, so the type is the
+    // answer unless something else on the line is genuinely inside it.
+    let covering: Vec<&Covering> = all
+        .iter()
+        .filter(|d| !declared_in_header(d, &all))
+        .collect();
 
     // The *leaves*: definitions covering the line that do not contain another
     // one. Containment, not span size — the first attempt ranked by span and
@@ -326,16 +350,57 @@ fn definition_at(s: &Session, location: &str) -> Result<AtPosition> {
     // line resolved to `red` because it has the fewest characters. Four disjoint
     // enumerators are equally innermost; only the enum around them is an
     // ancestor, and that is what containment says and span does not.
-    let contains = |a: &(String, i64, i64), b: &(String, i64, i64)| {
-        a.1 <= b.1 && a.2 >= b.2 && (a.1 != b.1 || a.2 != b.2)
-    };
     let mut names: Vec<String> = covering
         .iter()
-        .filter(|d| !covering.iter().any(|other| contains(d, other)))
-        .map(|(n, _, _)| n.clone())
+        .filter(|d| !covering.iter().any(|other| d.contains(other)))
+        .map(|d| d.name.clone())
         .collect();
     names.dedup();
     Ok(AtPosition { rel, line, names })
+}
+
+/// A fact whose span covers the queried line, with just what `definition_at`
+/// needs to decide which of them is innermost.
+struct Covering {
+    name: String,
+    start: i64,
+    end: i64,
+    kind: String,
+    start_line: i64,
+    signature: Option<String>,
+    owner: Option<String>,
+}
+
+impl Covering {
+    /// Strict containment: `self` encloses `other` and is not the same span.
+    fn contains(&self, other: &Covering) -> bool {
+        self.start <= other.start
+            && self.end >= other.end
+            && (self.start != other.start || self.end != other.end)
+    }
+}
+
+/// Whether `d` is a field written inside the header of the type that owns it,
+/// on that type's first line — a constructor parameter, as opposed to a member
+/// in the body. Read off the owner's stored signature, which for a container is
+/// the whole declaration: the header is what precedes the first `{`, and a
+/// parameter's own text is in it where a body member's is not. A header spread
+/// over several lines puts each parameter on a line of its own, where it is
+/// the innermost definition and is not affected.
+fn declared_in_header(d: &Covering, all: &[Covering]) -> bool {
+    if d.kind != "field" {
+        return false;
+    }
+    let (Some(owner), Some(sig)) = (d.owner.as_deref(), d.signature.as_deref()) else {
+        return false;
+    };
+    all.iter().any(|t| {
+        t.name == owner
+            && t.start_line == d.start_line
+            && t.contains(d)
+            && declaration_header(&t.kind, t.signature.clone())
+                .is_some_and(|head| head.contains(sig))
+    })
 }
 
 /// What a `<file>:<line>` resolved to: the innermost definitions covering it.

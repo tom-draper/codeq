@@ -6552,3 +6552,16 @@ the note's file count treated `_` as a SQL wildcard. `search not-present
 --path a_b` over a repo containing only `pkg/acb.rs` therefore stayed silent.
 The diagnostic now escapes `LIKE` metacharacters, and a focused CLI regression
 covers it.
+
+## 2026-10-10 — `explore --at` on a class header resolved to its constructor parameter
+
+Extending the differential corpus to Kotlin and Scala (okio, os-lib) failed
+`explore-at-matches-at` on `expect class ProtocolException(message: String)`
+and `case class ClassLoader(cl: …)`. A primary-constructor parameter is a
+`field` fact owned by the class and sits on the class's own line, so by
+containment it was the innermost definition: the line resolved to `message`,
+and `explore` then pulled in every other `message` in the file. `at` listed
+both and was right. `definition_at` now drops a field written inside its
+owner's header, on the owner's first line, before taking the leaves, so the
+line resolves to the class; a parameter on a line of its own is unaffected. The
+harness accepts the owning type for a parameter sampled on that line.

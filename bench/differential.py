@@ -258,7 +258,7 @@ def sample_symbols(path):
     instances in a repo is still sampled instead of being rounded away by a kind
     with a thousand.
     """
-    p = _run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,line,end_line", "--limit", "0"], path)
+    p = _run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,line,end_line,owner", "--limit", "0"], path)
     try:
         data = json.loads(p)["data"]
     except (ValueError, KeyError):
@@ -363,8 +363,16 @@ def invariant_battery(path):
             # the invariant is "resolves to the symbol, or explains why it can't"
             # — not "always resolves".
             refused = "declares" in (env.get("note") or "")
+            # A constructor parameter (Kotlin, Scala) is a field written on its
+            # class's own line, so that line is the class's: asking about the
+            # parameter resolves to the type that owns it, on that same line.
+            owner = sym.get("owner")
+            resolves_to_owner = bool(owner) and any(
+                d.get("name") == owner and d.get("path") == F and d.get("line") == L0
+                for d in focus)
             rec("explore", "explore-at-matches-at",
-                refused or any(d.get("name") == S and d.get("path") == F for d in focus))
+                refused or resolves_to_owner
+                or any(d.get("name") == S and d.get("path") == F for d in focus))
 
         # `astgrep --explain` returns a tree that actually covers the line asked
         # about — the command exists so a pattern can be written from real node

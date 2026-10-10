@@ -8457,6 +8457,50 @@ fn explore_at_picks_the_innermost_definition() {
 }
 
 #[test]
+fn explore_at_a_header_line_resolves_to_the_type_not_its_constructor_parameter() {
+    // A Kotlin primary-constructor parameter is a `field` owned by the class and
+    // sits on the class's own line. It is a leaf by containment, so the line
+    // resolved to `message` — and `explore` then pulled in every other `message`
+    // in the file. Found by the differential harness on okio and os-lib.
+    let f = Fixture::new();
+    f.write(
+        "e.kt",
+        "class Other {\n    val message: String = \"\"\n}\n\
+         class Boom(message: String) : Exception(message)\n\
+         class Wide(val a: Int, val b: Int) {\n    fun run() {}\n}\n",
+    );
+
+    // `at` is unchanged: it lists everything covering the line, innermost first.
+    let at = f.run(&["at", "e.kt:4"]);
+    let names: Vec<_> = at["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names, ["message", "Boom"], "{at}");
+
+    // `explore --at` answers about the class, and only the class: not `message`
+    // and not the unrelated `message` field of `Other`.
+    let v = f.run(&["explore", "--at", "e.kt:4", "--max-tokens", "400"]);
+    let focus = v["data"]["focus"].as_array().unwrap();
+    assert_eq!(focus.len(), 1, "{v}");
+    assert_eq!(focus[0]["name"], "Boom", "{v}");
+
+    // Two header parameters used to tie as leaves and refuse; the line is the
+    // class's, so it resolves.
+    let v = f.run(&["explore", "--at", "e.kt:5", "--max-tokens", "400"]);
+    let focus = v["data"]["focus"].as_array().unwrap();
+    assert_eq!(focus.len(), 1, "{v}");
+    assert_eq!(focus[0]["name"], "Wide", "{v}");
+
+    // A member in the body is still the innermost definition on its own line.
+    let v = f.run(&["explore", "--at", "e.kt:2", "--max-tokens", "400"]);
+    assert_eq!(v["data"]["focus"][0]["name"], "message", "{v}");
+    assert_eq!(v["data"]["focus"][0]["line"], 2, "{v}");
+}
+
+#[test]
 fn explore_at_a_position_with_no_definition_says_so() {
     // A blank line between definitions is a real empty answer, not a bad
     // argument, so it gets a note rather than an error.
