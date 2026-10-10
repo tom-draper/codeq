@@ -259,7 +259,8 @@ impl GlobFilter {
 /// Options for the `search` command surface, kept in a struct so the CLI can
 /// grow without a huge argument list.
 pub struct SearchArgs<'a> {
-    pub pattern: &'a str,
+    /// One or more patterns, OR'd — grep's `-e A -e B`.
+    pub patterns: &'a [String],
     /// Positional paths, as grep takes them: `codeq search TODO src`. Matched as
     /// path substrings (the same rule as `path`), OR'd together.
     pub paths: &'a [String],
@@ -273,6 +274,9 @@ pub struct SearchArgs<'a> {
     pub before: usize,
     pub after: usize,
     pub files_with_matches: bool,
+    pub files_without_match: bool,
+    pub only_matching: bool,
+    pub invert: bool,
     pub count: bool,
     pub limit: usize,
     /// Search a buffer piped in on stdin instead of the repository index.
@@ -285,11 +289,30 @@ pub struct SearchArgs<'a> {
 /// no catastrophic backtracking); `--fixed` for a literal string. A strict
 /// superset of grep: same regex engine, plus structure grep cannot see.
 pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
-    let expr = if args.fixed {
-        regex::escape(args.pattern)
-    } else {
-        args.pattern.to_string()
+    // Several patterns are one alternation, each branch grouped so its own `|`
+    // or anchors stay inside it.
+    let branch = |p: &String| if args.fixed { regex::escape(p) } else { p.clone() };
+    let expr = match args.patterns {
+        [one] => branch(one),
+        many => many.iter().map(|p| format!("(?:{})", branch(p))).collect::<Vec<_>>().join("|"),
     };
+    if args.only_matching && (args.before > 0 || args.after > 0) {
+        return Err(anyhow!("-o reports the match alone; it takes no context lines"));
+    }
+    // ripgrep's type names, for a caller with `-t py` in their fingers.
+    let language = args.language.map(|l| match l {
+        "py" => "python",
+        "js" => "javascript",
+        "ts" => "typescript",
+        "rs" => "rust",
+        "rb" => "ruby",
+        "md" => "markdown",
+        "sh" => "bash",
+        "kt" => "kotlin",
+        "cs" => "csharp",
+        other => other,
+    });
+    let args = SearchArgs { language, ..args };
     // Match line-by-line semantics like grep/ripgrep: the scan runs over each
     // whole file body, so `^`/`$` must anchor to line boundaries, not the start
     // and end of the buffer. Without this, `^use` matches only a file that
@@ -304,10 +327,9 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     // whole literal, a regex by its required literals. Either may be None (no
     // usable >=3-char literal), in which case we scan every body — still from
     // the index, never the filesystem, and always correct.
-    let match_query = if args.fixed {
-        like_of(args.pattern)
-    } else {
-        regex_prefilter(args.pattern)
+    let match_query = match args.patterns {
+        [one] if args.fixed => like_of(one),
+        _ => regex_prefilter(&expr),
     };
     // `--glob` and grep-style positional paths both become per-row path
     // predicates for the streaming scan, AND'd together: `-g` says which files
@@ -318,7 +340,9 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         Some(GlobFilter::build(args.globs)?)
     };
 
-    let out_mode = if args.files_with_matches {
+    let out_mode = if args.files_without_match {
+        OutMode::FilesWithout
+    } else if args.files_with_matches {
         OutMode::Files
     } else if args.count {
         OutMode::Count
@@ -340,6 +364,8 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         qualifier: None,
         identifier_boundary: args.word,
         per_file: out.max_per_file,
+        only_matching: args.only_matching,
+        invert: args.invert,
     };
 
     // Piped input never touches the index: no repo discovery, no refresh, no
@@ -531,6 +557,8 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         qualifier: qualifier.map(str::to_string),
         identifier_boundary: true,
         per_file,
+        only_matching: false,
+        invert: false,
     };
     let (mut hits, mut truncated) = match run_search(
         &s.db.conn,
