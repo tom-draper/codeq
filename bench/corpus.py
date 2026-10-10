@@ -66,6 +66,18 @@ REPOS = [
     # php
     ("guzzle",   "https://github.com/guzzle/guzzle",            "7.8.1",               "php"),
     ("monolog",  "https://github.com/Seldaek/monolog",          "3.6.0",               "php"),
+    # kotlin
+    ("okio",     "https://github.com/square/okio",              "3.9.1",               "kotlin"),
+    # swift
+    ("alamofire", "https://github.com/Alamofire/Alamofire",     "5.9.1",               "swift"),
+    # scala
+    ("os-lib",   "https://github.com/com-lihaoyi/os-lib",       "0.10.7",              "scala"),
+    # tsx
+    ("cmdk",     "https://github.com/pacocoursey/cmdk",         "v1.1.1",              "tsx"),
+    # markdown
+    ("rust-book", "https://github.com/rust-lang/book",          "trpl-v0.3.0",         "markdown"),
+    # sql
+    ("pgvector", "https://github.com/pgvector/pgvector",        "v0.7.4",              "sql"),
 ]
 
 
