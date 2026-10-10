@@ -384,6 +384,11 @@ benchmarks — not as a step you run before querying.
     not regex), `-i`, `-w`, `-g '*.rs' -g '!tests/'` (repeatable include/exclude
     globs), `-l` (paths only), `-c` (counts), `-B`/`-A`/`-C`, `--path`, `--language`,
     `--limit` (default 100 — raise it or pass 0 before concluding "no more hits").
+    Also `-e A -e B` (several patterns, OR'd), `-o` (the match alone, a row per
+    occurrence), `-v` (lines that do not match), `-L` (files with no match), `-F`
+    (same as `--fixed`), `-t py` (same as `--language`, with ripgrep's short
+    names). `-U` is accepted and does nothing: a pattern already matches across
+    lines, reported at its first. `codeq grep` is `codeq search`.
   - **And grep's calling convention:** `codeq search TODO src/a.rs docs` — paths
     positionally, after the pattern. Each is a path *substring* (same rule as
     `--path`), so a directory scopes everything under it and a bare filename finds

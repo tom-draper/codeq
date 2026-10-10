@@ -4330,6 +4330,63 @@ fn read_takes_ranges_on_the_path_and_several_files() {
     assert!(out.is_empty() && err.contains("nope.txt"), "{out}{err}");
 }
 
+/// grep's flags mean in `search` what they mean in grep, so the command an
+/// agent already knows is not an exit-2 round trip.
+#[test]
+fn search_takes_greps_flags() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn alpha() {}\nfn beta() { alpha(); alpha2(); }\n// a.b\n");
+    f.write("b.py", "def gamma():\n    pass\n");
+    let search = |args: &[&str]| {
+        let mut argv = vec!["search"];
+        argv.extend(args);
+        let out = f.raw(&argv);
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    // -e: several patterns OR'd, every positional then a path.
+    let out = search(&["-e", "gamma", "-e", "beta"]);
+    assert!(out.contains("a.rs:2:") && out.contains("b.py:1:"), "{out}");
+    assert_eq!(search(&["-e", "gamma", "-e", "beta", "a.rs"]).lines().count(), 1);
+    // An alternation inside one -e stays inside it.
+    assert_eq!(search(&["-e", "^fn alpha|^def", "-e", "pass$"]).lines().count(), 3);
+
+    // -o: the match alone, a row per occurrence.
+    assert_eq!(
+        search(&["-o", "alpha\\w*", "a.rs", "--fields", "line,text"]),
+        "1: alpha\n2: alpha\n2: alpha2\n"
+    );
+
+    // -v: the lines that do not match; -c counts those lines.
+    assert_eq!(search(&["-v", "alpha", "a.rs", "--fields", "line,text"]), "3: // a.b\n");
+    assert_eq!(search(&["-v", "-c", "alpha", "a.rs"]), "a.rs: count=1\n");
+
+    // -L: files with no match — including the ones a literal prefilter skips.
+    assert_eq!(search(&["-L", "alpha"]), "b.py\n");
+    assert_eq!(search(&["-l", "alpha"]), "a.rs\n");
+
+    // -F is --fixed: `a.b` literally, not `a` any `b`.
+    assert_eq!(search(&["-F", "a.b"]).lines().count(), 1);
+    assert_eq!(search(&["a.b"]).lines().count(), 1);
+    assert_eq!(search(&["-F", "a.a"]).lines().count(), 0);
+
+    // -t takes ripgrep's short type names; --type is the same flag.
+    assert_eq!(search(&["-t", "py", "-l", "."]), "b.py\n");
+    assert_eq!(search(&["--type", "rust", "-l", "."]), "a.rs\n");
+
+    // -U is accepted: a pattern already matches across lines.
+    assert!(search(&["-U", "\\{\\}\\s+fn beta"]).starts_with("a.rs:1:"));
+
+    // `codeq grep` is `codeq search`.
+    let out = f.raw(&["grep", "-l", "gamma"]);
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "b.py\n");
+
+    // -o has no line to give context around.
+    let out = f.raw(&["search", "-o", "alpha", "-C", "1"]);
+    assert!(!out.status.success());
+}
+
 /// The text output contract (README "Output contract"): plain ASCII rows, no
 /// decoration, no prose, one row per line. Guards against decorative drift.
 #[test]

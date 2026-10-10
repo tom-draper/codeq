@@ -92,6 +92,8 @@ pub(crate) enum OutMode {
     Matches,
     Files,
     Count,
+    /// grep's `-L`: the files with no match. Reported as `files`, like `-l`.
+    FilesWithout,
 }
 
 /// Restrict matches by the syntactic class of their position.
@@ -188,6 +190,20 @@ pub(crate) struct ScanOpts {
     /// the whole repo instead surveys the first `limit/3` files and reports their
     /// partial counts as totals.
     pub(crate) per_file: Option<usize>,
+    /// grep's `-o`: a row per occurrence carrying only the matched text, where
+    /// the default is a row per line carrying the line.
+    pub(crate) only_matching: bool,
+    /// grep's `-v`: the lines the pattern does *not* match.
+    pub(crate) invert: bool,
+}
+
+impl ScanOpts {
+    /// Whether a file with no occurrence of the pattern can still contribute.
+    /// Then the literal prefilter — which keeps only files that could match —
+    /// would drop exactly the files being asked for, so it must not be used.
+    pub(crate) fn wants_non_matching(&self) -> bool {
+        self.invert || self.out == OutMode::FilesWithout
+    }
 }
 
 /// Languages whose lexer allows `$` *inside an identifier*, so `$ZodError` and
@@ -493,7 +509,7 @@ pub(crate) fn run_search_acc(
     let cap = scan_cap(opts);
     let filtering = opts.in_filter != InFilter::Any;
 
-    let patterns = like.filter(|l| !l.is_empty());
+    let patterns = like.filter(|l| !l.is_empty() && !opts.wants_non_matching());
     let mut sql = String::from("SELECT path, language, body FROM content_fts");
     if let Some(pats) = patterns {
         let clause = (1..=pats.len())
@@ -690,7 +706,7 @@ impl ScanAcc {
         let cap = if limit == 0 { usize::MAX } else { limit };
         let mut truncated = self.truncated;
         match out {
-            OutMode::Files => {
+            OutMode::Files | OutMode::FilesWithout => {
                 if self.files.len() > cap {
                     self.files.truncate(cap);
                     truncated = true;
@@ -762,9 +778,16 @@ pub(crate) fn scan_doc(
     // in Files mode — skips the full-body newline scan.
     let mut starts: Option<Vec<usize>> = None;
 
+    if opts.invert {
+        return scan_inverted(path, body, load_defs, opts, cap, acc, |m| {
+            bounded(m) && accept(m.start())
+        }, re);
+    }
+
     match opts.out {
-        OutMode::Files => {
-            if re.find_iter(body).any(|m| bounded(&m) && accept(m.start())) {
+        OutMode::Files | OutMode::FilesWithout => {
+            let found = re.find_iter(body).any(|m| bounded(&m) && accept(m.start()));
+            if found == (opts.out == OutMode::Files) {
                 acc.files.push(path.to_string());
                 if acc.files.len() >= cap {
                     acc.truncated = true;
@@ -850,7 +873,7 @@ pub(crate) fn scan_doc(
                 }
                 let s = starts.get_or_insert_with(|| line_starts_of(body));
                 let line_idx = s.partition_point(|&x| x <= off) - 1;
-                if line_idx == last_line {
+                if line_idx == last_line && !opts.only_matching {
                     continue; // one row per line
                 }
                 last_line = line_idx;
@@ -864,7 +887,11 @@ pub(crate) fn scan_doc(
                     symbol: enclosing.map(|d| d.name.clone()),
                     receiver: calls.and_then(|m| m.get(&off).cloned()).flatten(),
                     kind: enclosing.map(|d| d.kind.clone()),
-                    text: line_text(body, s, line_idx),
+                    text: if opts.only_matching {
+                        cap_str(m.as_str().lines().next().unwrap_or(""), MAX_LINE)
+                    } else {
+                        line_text(body, s, line_idx)
+                    },
                     before: context_lines(body, s, line_idx.saturating_sub(opts.before)..line_idx),
                     after: context_lines(body, s, (line_idx + 1)..(line_idx + 1 + opts.after)),
                 });
@@ -889,6 +916,88 @@ pub(crate) fn scan_doc(
             if stop {
                 return true;
             }
+        }
+    }
+    false
+}
+
+/// `-v`: report the lines of `body` that hold no accepted match. A line is the
+/// unit, as in grep, so `-c` counts those lines and `-l`/`-L` ask whether the
+/// file has any.
+#[allow(clippy::too_many_arguments)]
+fn scan_inverted(
+    path: &str,
+    body: &str,
+    load_defs: &mut dyn FnMut(&str) -> Vec<FileDef>,
+    opts: &ScanOpts,
+    cap: usize,
+    acc: &mut ScanAcc,
+    accepted: impl Fn(&regex::Match<'_>) -> bool,
+    re: &regex::Regex,
+) -> bool {
+    let starts = line_starts_of(body);
+    // A trailing newline ends the last line; it does not start an empty one.
+    let n = if body.ends_with('\n') { starts.len() - 1 } else { starts.len() };
+    let mut matched = vec![false; starts.len()];
+    for m in re.find_iter(body).filter(|m| accepted(m)) {
+        // A match spanning lines takes every line it touches out of the result.
+        let first = starts.partition_point(|&x| x <= m.start()) - 1;
+        let last = starts.partition_point(|&x| x < m.end().max(m.start() + 1)) - 1;
+        matched[first..=last].iter_mut().for_each(|b| *b = true);
+    }
+    let free = (0..n).filter(|&i| !matched[i]);
+    match opts.out {
+        OutMode::Files | OutMode::FilesWithout => {
+            if (free.count() > 0) == (opts.out == OutMode::Files) {
+                acc.files.push(path.to_string());
+                if acc.files.len() >= cap {
+                    acc.truncated = true;
+                    return true;
+                }
+            }
+        }
+        OutMode::Count => {
+            let count = free.count();
+            if count > 0 {
+                acc.counts.push(FileCount { path: path.to_string(), count });
+                if acc.counts.len() >= cap {
+                    acc.truncated = true;
+                    return true;
+                }
+            }
+        }
+        OutMode::Matches => {
+            let mut defs: Option<Vec<FileDef>> = None;
+            let mut kept_here = 0usize;
+            let mut stop = false;
+            for i in free {
+                let d = defs.get_or_insert_with(|| load_defs(path));
+                let enclosing = innermost(d, starts[i]);
+                acc.hits.push(Hit {
+                    path: path.to_string(),
+                    line: i + 1,
+                    col: 0,
+                    symbol: enclosing.map(|d| d.name.clone()),
+                    receiver: None,
+                    kind: enclosing.map(|d| d.kind.clone()),
+                    text: line_text(body, &starts, i),
+                    before: Vec::new(),
+                    after: Vec::new(),
+                });
+                // The same two budgets as the ordinary scan: see there.
+                if opts.per_file.is_none_or(|n| kept_here < n) {
+                    kept_here += 1;
+                    acc.kept += 1;
+                    if acc.kept >= cap {
+                        acc.truncated = true;
+                        if opts.per_file.is_none() {
+                            return true;
+                        }
+                        stop = true;
+                    }
+                }
+            }
+            return stop;
         }
     }
     false
