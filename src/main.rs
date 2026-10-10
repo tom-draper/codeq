@@ -566,11 +566,15 @@ enum Command {
     /// Read a file, folding long function bodies so you expand only what you
     /// need (text output, not JSON).
     Read {
-        /// File to read (repo-relative path or basename).
-        file: String,
-        /// Show only these lines, verbatim (e.g. 40-80).
-        #[arg(long)]
-        lines: Option<String>,
+        /// File(s) to read (repo-relative path or basename). A range can ride on
+        /// the path — `a.rs:40-80`, `a.rs:12`, `a.rs:5-9,80-90` — so several
+        /// slices of several files are one call.
+        #[arg(required = true)]
+        file: Vec<String>,
+        /// Show only these lines, verbatim (e.g. 40-80). Repeatable, or
+        /// comma-separated: 40-80,120-130.
+        #[arg(long, value_delimiter = ',')]
+        lines: Vec<String>,
         /// Show only the definition(s) with this name, verbatim.
         #[arg(long)]
         symbol: Option<String>,
@@ -1117,7 +1121,7 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
         } => commands::cmd_read(
             cwd,
             &file,
-            lines.as_deref(),
+            &lines,
             symbol.as_deref(),
             full,
             raw,

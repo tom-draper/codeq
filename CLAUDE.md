@@ -150,6 +150,13 @@ benchmarks — not as a step you run before querying.
   to signatures; read this instead of ingesting a whole large file.
 - **Read one definition / range (verbatim, line-numbered):**
   `codeq read <file> --symbol NAME` · `codeq read <file> --lines A-B`
+  - **Several slices are one call.** A range can ride on the path, the way a
+    search row or a stack frame prints it: `codeq read a.rs:40-80 b.rs:12
+    c.rs:5-9,80-90`. `--lines` repeats and takes commas too. Several files each
+    get a `# path` header; ranges of one file are separated by grep's `--`.
+    `--raw` stays one file and one range, since it is one exact block.
+  - Line numbers are `N<TAB>line`, not a padded column: 16% fewer bytes on a
+    40-line slice, and the same form `cat -n` and most editors' tools print.
 - **Grab a symbol's source to edit it:** add `--raw` — exact bytes, no
   line-number prefixes, no folding, addressed by name. Its output drops straight
   into the Edit tool's `old_string`, so you skip the grep-for-the-line →
