@@ -14,7 +14,7 @@ pub(super) struct Caller {
     pub(super) path: String,
     pub(super) line: usize,
     /// The call site's column and source line — populated only under `--examples`,
-    /// which turns a caller row into a usage example: `path:line:col:` the actual
+    /// which turns a caller row into a usage example: `path:line:` the actual
     /// call expression (one representative site per caller).
     #[serde(skip_serializing_if = "Option::is_none")]
     col: Option<usize>,

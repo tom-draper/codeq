@@ -6,8 +6,11 @@ reads and grep, and log any friction in [DOGFOOD.md](./DOGFOOD.md).
 
 Build with `cargo build` → run `./target/debug/codeq` from the repo root
 (`--release` for benchmarking). Output defaults to compact grep-style text
-(`path:line:col: payload`); pass `--json` for the `codeq.result.v2` envelope
-(what programmatic consumers use). The MCP server returns the text form, with
+(`path:line: payload`); pass `--json` for the `codeq.result.v2` envelope
+(what programmatic consumers use). Text rows carry no column — nothing takes one
+as input, so it was bytes on every row; `--fields …,col` or `--json` has it. A
+match on the line that declares its enclosing symbol carries no `[symbol]` tag
+(the line already names it; JSON marks it `decl`). The MCP server returns the text form, with
 the stderr notes appended after the rows: its caller is a model paying per
 token, and the envelope is about twice the bytes for the same rows. It rejects
 an argument a tool does not declare rather than dropping it.
@@ -18,7 +21,7 @@ added/removed files get reparsed, schema-version bumps trigger a rebuild) *befor
 answering, so a query always reflects the current tree — even right after an edit.
 The refresh count appears as `reindexed_files` in the `index` block under
 `--json`/`--meta`. In text mode a real reparse prints `# codeq: reindexed N
-file(s)` on **stderr** — so stdout stays pure `path:line:col:` rows and a pipe
+file(s)` on **stderr** — so stdout stays pure `path:line:` rows and a pipe
 never sees it, but the terminal is not silent. Freshness is keyed on the content
 hash, so a bare `touch` reparses nothing and prints nothing; only a real edit
 does. `index` exists
@@ -90,7 +93,7 @@ benchmarks — not as a step you run before querying.
 - **The whole relation graph:** `codeq graph [--relation references|implements|
   extends] [--language L]` — every type edge in the repo as `from -> to`, not one
   node's neighbours. `--mermaid` emits a renderable `graph LR` document (a
-  document, not rows — it leaves the `path:line:col:` contract on purpose, like
+  document, not rows — it leaves the `path:line:` contract on purpose, like
   `read --raw`). Relations only, and **deliberately not calls**: a relation edge
   is read off the parse tree (`impl T for X`, a SQL `REFERENCES`) so the graph is
   exact, whereas the call graph is name-based and every hop compounds the
@@ -228,7 +231,7 @@ benchmarks — not as a step you run before querying.
       those apart needs name resolution codeq doesn't do. So when a name is both a
       method and a free function, read `on=` and decide — don't expect codeq to.
     - `--examples` (callers) — surface the actual call expression at each site (one
-      representative per caller): the row becomes `path:line:col:` the source line,
+      representative per caller): the row becomes `path:line:` the source line,
       so one command answers "who calls it *and how*". For every call *line* rather
       than one per caller, use `references NAME --calls`. Composes with the filters.
   - **`callees` is already call-position only** (a bare mention of a name isn't a
@@ -462,7 +465,7 @@ benchmarks — not as a step you run before querying.
 - **`--group`** hoists the repeated path onto a `path (count)` header instead of
   prefixing every row with it, and the count saves counting lines. **Opt-in on
   purpose, and worth understanding before reaching for it:** the default flat
-  `path:line:col:` form is *self-describing*, so any single row still names its
+  `path:line:` form is *self-describing*, so any single row still names its
   file after being piped, grepped, or quoted on its own — grouping trades that
   away. Use it when you'll read the whole result; keep the default when you'll
   slice it. Never inferred from whether stdout is a terminal, and it has no

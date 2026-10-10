@@ -63,7 +63,7 @@ struct Cli {
     /// Group text rows under a `path (count)` header instead of repeating the
     /// path on every line.
     ///
-    /// Off by default on purpose: the flat `path:line:col:` form is
+    /// Off by default on purpose: the flat `path:line:` form is
     /// self-describing, so any single line stays meaningful after being piped,
     /// grepped, or quoted on its own. Grouping trades that away for fewer
     /// repeated bytes, so ask for it explicitly. Never inferred from whether
@@ -265,7 +265,7 @@ enum Command {
         #[arg(long, value_name = "RECV")]
         on: Option<String>,
         /// Show the actual call expression at each site (one representative example
-        /// per caller): the row becomes `path:line:col:` the source line. For every
+        /// per caller): the row becomes `path:line:` the source line. For every
         /// call site instead of one per caller, use `references NAME --calls`.
         #[arg(long)]
         examples: bool,
@@ -795,7 +795,7 @@ enum Command {
         language: Option<String>,
         /// Emit a Mermaid `graph LR` document instead of edge rows.
         ///
-        /// A document, not rows: this leaves the `path:line:col:` contract on
+        /// A document, not rows: this leaves the `path:line:` contract on
         /// purpose, as `read --raw` does, because the point is to paste it
         /// somewhere it renders.
         #[arg(long)]
