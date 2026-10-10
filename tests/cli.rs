@@ -9448,6 +9448,70 @@ fn sql_escaped_identifier_delimiters_are_unescaped_without_parse_errors() {
 }
 
 #[test]
+fn sql_statement_the_grammar_lacks_does_not_hide_the_definitions_after_it() {
+    // A PostgreSQL extension script is full of statements the grammar has no
+    // rule for, and starts with a psql meta-command. An `OPERATOR CLASS` with
+    // `FOR ORDER BY` and `FUNCTION n` entries makes recovery wrap everything
+    // after it in a single ERROR, so on pgvector's own install script 73 of 110
+    // functions had no definition. Each statement is parsed on its own now.
+    let f = Fixture::new();
+    f.write(
+        "ext/install.sql",
+        "\\echo Use \"CREATE EXTENSION x\" to load this file. \\quit\n\
+         CREATE FUNCTION before_fn(vector) RETURNS vector\n\
+         \tAS 'MODULE_PATHNAME' LANGUAGE C;\n\
+         CREATE OPERATOR CLASS sparsevec_l1_ops\n\
+         \tFOR TYPE sparsevec USING hnsw AS\n\
+         \tOPERATOR 1 <+> (sparsevec, sparsevec) FOR ORDER BY float_ops,\n\
+         \tFUNCTION 1 l1_distance(sparsevec, sparsevec),\n\
+         \tFUNCTION 3 hnsw_sparsevec_support(internal);\n\
+         CREATE FUNCTION body_fn() RETURNS int AS $$ SELECT 1; SELECT 2; $$ LANGUAGE sql;\n\
+         CREATE FUNCTION after_fn(vector) RETURNS vector\n\
+         \tAS 'MODULE_PATHNAME' LANGUAGE C;\n\
+         CREATE TABLE after_t (id integer);\n",
+    );
+
+    let defs = |name: &str| f.run(&["definitions", name]);
+    for (name, line) in [
+        ("before_fn", 2),
+        ("body_fn", 9),
+        ("after_fn", 10),
+        ("after_t", 12),
+    ] {
+        let v = defs(name);
+        assert_eq!(
+            v["data"][0]["line"], line,
+            "{name} is missing or misplaced: {v}"
+        );
+    }
+    // Nothing inside the unsupported statement is mistaken for a definition.
+    for ghost in ["sparsevec_l1_ops", "l1_distance", "float_ops"] {
+        assert!(
+            defs(ghost)["data"].as_array().unwrap().is_empty(),
+            "{ghost} should not be a definition"
+        );
+    }
+
+    // The unsupported statement is still reported, not hidden.
+    let health = f.run(&["files", "install.sql"]);
+    assert!(
+        health["data"][0]["parse_errors"].as_u64().unwrap() > 0,
+        "{health}"
+    );
+
+    // String spans survive per-statement parsing: the literals on either side
+    // of the unsupported statement are strings, so `--in strings` finds both.
+    let s = f.run(&["search", "MODULE_PATHNAME", "--in", "strings"]);
+    let lines: Vec<_> = s["data"]["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["line"].as_i64().unwrap())
+        .collect();
+    assert!(lines.contains(&3) && lines.contains(&11), "{lines:?}");
+}
+
+#[test]
 fn escaped_language_identifiers_resolve_by_their_semantic_names() {
     let f = Fixture::new();
     f.write(

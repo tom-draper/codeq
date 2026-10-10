@@ -6610,3 +6610,27 @@ against `rg -n`: `TODO` +9%, `Session` +18%, `max_per_file` -13%, `fn \w+_note`
 +1%, where the audit had +11% to +44%; `--group` is now 14% under `rg --heading`.
 What remains is the tag itself, which is the point of the command. `explore`
 defaulted to a 16,000-token budget, 55 KB for `cmd_search`; it is now 4,000.
+
+## 2026-10-10 — one unsupported SQL statement hid every definition after it
+
+Running the differential corpus on pgvector reported 47 of its 48 `.sql` files
+with parse errors, and `sql/vector.sql` had 37 of its 110 `CREATE FUNCTION`s
+indexed. The grammar has no rule for `CREATE OPERATOR`, `CREATE CAST` or
+`CREATE OPERATOR CLASS`, and an operator class with `FOR ORDER BY` and
+`FUNCTION n` entries made tree-sitter recovery wrap the rest of the file in one
+ERROR, so every later `create_function` lost its structure. Minimal case: that
+one statement followed by any `CREATE FUNCTION`.
+
+A file with errors is now parsed statement by statement (the parser restricted
+to each statement's byte range, so offsets are unchanged) and the result is kept
+when fewer source bytes sit inside ERRORs. `vector.sql` indexes all 110
+functions. `parse_errors` goes *up* (77 to 282 there): each unsupported
+statement now reports its own errors instead of one node swallowing them, so
+read it as a count of statements codeq could not understand, not as health
+getting worse. The error count is a poor yardstick between two parses, which is
+why acceptance compares error extent in bytes.
+
+What is still not understood: `CREATE OPERATOR`/`CAST`/`OPERATOR CLASS`, and
+`SELECT`s using extension operators (`<->`, `<#>`). None is a definition codeq
+models. A `CREATE TABLE t (val vector(3))` still indexes the table and column;
+only the signature loses the type's `(3)`.

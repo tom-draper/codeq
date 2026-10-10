@@ -13,7 +13,7 @@
 
 use anyhow::{Context, Result};
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Node, Parser, Query, QueryCursor};
+use tree_sitter::{Node, Parser, Point, Query, QueryCursor, Range};
 
 mod docs;
 use docs::{jinja_facts, markdown_facts, rst_facts};
@@ -170,6 +170,16 @@ pub struct Extractor {
     graphql: LangSpec,
     sql: LangSpec,
 }
+
+/// A SQL script parsed statement by statement: facts, spans and relations as
+/// `harvest` returns them, then the ERROR node count and the bytes inside them.
+type SqlStatements = (
+    Vec<Fact>,
+    Vec<(usize, usize, Span)>,
+    Vec<Relation>,
+    usize,
+    usize,
+);
 
 struct LangSpec {
     parser: Parser,
@@ -669,6 +679,27 @@ fn error_nodes(root: Node) -> usize {
     count
 }
 
+/// How many source bytes sit inside an ERROR node, outermost nodes only. The
+/// count of error nodes is a poor yardstick between two parses of one file: a
+/// parser that gives up on one statement and wraps the rest of the file in a
+/// single ERROR reports *fewer* errors than one that fails three small
+/// statements, while understanding far less.
+fn error_extent(root: Node) -> usize {
+    let mut bytes = 0;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.is_error() {
+            bytes += node.end_byte() - node.start_byte();
+            continue;
+        }
+        if node.has_error() {
+            let mut cursor = node.walk();
+            stack.extend(node.children(&mut cursor));
+        }
+    }
+    bytes
+}
+
 /// `has_error` is a cached tree property, so clean files avoid a second full
 /// tree walk. Count individual recovery nodes only when the parser reports one.
 fn parse_health(root: Node) -> ParseHealth {
@@ -716,6 +747,66 @@ fn repair_rust_closure_trailing_commas(src: &[u8]) -> Option<Vec<u8>> {
 }
 
 impl Extractor {
+    /// Parse a SQL script one statement at a time. Each statement is parsed with
+    /// the parser restricted to its own byte range, so nodes keep their offsets in
+    /// the whole file and an unparseable statement stays an ERROR of its own
+    /// instead of swallowing its successors. Returns the error node count and the
+    /// bytes inside errors; `None` if a parse fails outright.
+    fn extract_sql_by_statement(
+        &mut self,
+        parse_src: &[u8],
+        src: &[u8],
+    ) -> Option<SqlStatements> {
+        let line_starts: Vec<usize> = std::iter::once(0)
+            .chain(
+                parse_src
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| **b == b'\n')
+                    .map(|(i, _)| i + 1),
+            )
+            .collect();
+        let point = |byte: usize| {
+            let row = line_starts.partition_point(|&l| l <= byte) - 1;
+            Point::new(row, byte - line_starts[row])
+        };
+        let mut facts = Vec::new();
+        let mut spans = Vec::new();
+        let mut rels = Vec::new();
+        let mut errors = 0;
+        let mut extent = 0;
+        let mut complete = true;
+        for (start, end) in sql_statement_ranges(parse_src) {
+            let range = Range {
+                start_byte: start,
+                end_byte: end,
+                start_point: point(start),
+                end_point: point(end),
+            };
+            if self.sql.parser.set_included_ranges(&[range]).is_err() {
+                complete = false;
+                break;
+            }
+            let Some(tree) = self.sql.parser.parse(parse_src, None) else {
+                complete = false;
+                break;
+            };
+            let root = tree.root_node();
+            let (f, sp, r) = self.sql.harvest(root, src);
+            let (extra_facts, extra_spans) = sql_extras(root, src);
+            facts.extend(f);
+            facts.extend(extra_facts);
+            spans.extend(sp);
+            spans.extend(extra_spans);
+            rels.extend(r);
+            errors += parse_health(root).errors;
+            extent += error_extent(root);
+        }
+        // The parser is shared across files: leave it parsing the whole input.
+        let _ = self.sql.parser.set_included_ranges(&[]);
+        complete.then_some((facts, spans, rels, errors, extent))
+    }
+
     pub fn new() -> Result<Extractor> {
         Ok(Extractor {
             rust: LangSpec::new(
@@ -1012,16 +1103,47 @@ impl Extractor {
                     None => return ((Vec::new(), Vec::new(), Vec::new()), None),
                 };
                 let root = tree.root_node();
-                let (mut facts, mut spans, rels) = self.sql.harvest(root, src);
-                let (extra_facts, extra_spans) = sql_extras(root, src);
-                facts.extend(extra_facts);
-                spans.extend(extra_spans);
+                let (mut facts, mut spans, rels, health) = {
+                    // A statement the grammar does not know (`CREATE OPERATOR`,
+                    // `CREATE CAST`, a psql `\echo`) is recovered from by
+                    // wrapping *everything after it* in one ERROR, so on a
+                    // PostgreSQL extension script the first one costs every
+                    // definition below it. Parse each statement on its own
+                    // instead, and keep that only when the parser understood
+                    // more of the file.
+                    let whole_extent = error_extent(root);
+                    let isolated = root
+                        .has_error()
+                        .then(|| self.extract_sql_by_statement(parse_src, src))
+                        .flatten()
+                        .filter(|(.., extent)| *extent < whole_extent);
+                    match isolated {
+                        Some((facts, spans, rels, errors, _)) => (
+                            facts,
+                            spans,
+                            rels,
+                            ParseHealth {
+                                errors,
+                                recovered: true,
+                            },
+                        ),
+                        None => {
+                            let (facts, spans, rels) = self.sql.harvest(root, src);
+                            let (extra_facts, extra_spans) = sql_extras(root, src);
+                            let mut facts = facts;
+                            let mut spans = spans;
+                            facts.extend(extra_facts);
+                            spans.extend(extra_spans);
+                            (facts, spans, rels, parse_health(root))
+                        }
+                    }
+                };
                 spans.sort_by_key(|(s, _, _)| *s);
                 for f in &mut facts {
                     f.name = unqualify(&f.name);
                     f.owner = f.owner.as_deref().map(unqualify);
                 }
-                ((facts, spans, rels), Some(parse_health(root)))
+                ((facts, spans, rels), Some(health))
             }
             // Single-file component formats: markup wrapping the real code. Both
             // grammars name the nodes the same way, so one path serves both —
@@ -2605,6 +2727,80 @@ fn unquote_sql_identifier(name: &str) -> String {
     };
     let delimiter = close as char;
     inner.replace(escaped, &delimiter.to_string())
+}
+
+/// The byte ranges of a SQL script's statements, in order, each ending at its
+/// terminating `;` (or at end of input). Comments, quoted strings and
+/// identifiers, and `$tag$ … $tag$` bodies are skipped over, so a `;` inside one
+/// does not end a statement. A psql meta-command (`\echo …`, `\quit`) runs to the
+/// end of its line and is not SQL, so it is left out of every range.
+fn sql_statement_ranges(src: &[u8]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    let push = |out: &mut Vec<(usize, usize)>, start: usize, end: usize| {
+        if src[start..end].iter().any(|b| !b.is_ascii_whitespace()) {
+            out.push((start, end));
+        }
+    };
+    while i < src.len() {
+        match src[i] {
+            b'-' if src.get(i + 1) == Some(&b'-') => {
+                while i < src.len() && src[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if src.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i < src.len() && src.get(i..i + 2) != Some(b"*/") {
+                    i += 1;
+                }
+                i = (i + 2).min(src.len());
+            }
+            quote @ (b'\'' | b'"' | b'`') => {
+                i += 1;
+                // A doubled delimiter closes and reopens the quote, so the plain
+                // scan to the next delimiter handles `''` and `""` unchanged.
+                while i < src.len() && src[i] != quote {
+                    i += 1;
+                }
+                i = (i + 1).min(src.len());
+            }
+            b'$' => {
+                // `$tag$` / `$$` opens a body; `$1` is a parameter, not a quote.
+                let mut j = i + 1;
+                while j < src.len() && (src[j].is_ascii_alphanumeric() || src[j] == b'_') {
+                    j += 1;
+                }
+                let tag_is_name = j == i + 1 || !src[i + 1].is_ascii_digit();
+                if src.get(j) == Some(&b'$') && tag_is_name {
+                    let delim = &src[i..=j];
+                    let mut k = j + 1;
+                    while k < src.len() && src.get(k..k + delim.len()) != Some(delim) {
+                        k += 1;
+                    }
+                    i = (k + delim.len()).min(src.len());
+                } else {
+                    i += 1;
+                }
+            }
+            b'\\' => {
+                push(&mut out, start, i);
+                while i < src.len() && src[i] != b'\n' {
+                    i += 1;
+                }
+                start = i;
+            }
+            b';' => {
+                i += 1;
+                push(&mut out, start, i);
+                start = i;
+            }
+            _ => i += 1,
+        }
+    }
+    push(&mut out, start, src.len());
+    out
 }
 
 /// Make the SQL grammar accept common escaped identifier delimiters without
