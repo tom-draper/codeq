@@ -17,4 +17,4 @@
 (create_function (keyword_function) . (object_reference) @name (function_body)? @body) @function
 (create_type (keyword_type) . (object_reference) @name) @type
 (create_schema (identifier) @name) @module
-(column_definition . (identifier) @name) @field
+(column_definition name: (_) @name) @field

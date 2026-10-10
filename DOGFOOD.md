@@ -6552,3 +6552,16 @@ the note's file count treated `_` as a SQL wildcard. `search not-present
 --path a_b` over a repo containing only `pkg/acb.rs` therefore stayed silent.
 The diagnostic now escapes `LIKE` metacharacters, and a focused CLI regression
 covers it.
+
+## 2026-10-10 — quoted SQL column names were lost in the query move
+
+`sql_quoted_column_names_keep_their_names_and_source_spelling` and
+`sql_escaped_identifier_delimiters_are_unescaped_without_parse_errors` had been
+failing since `58d8910` moved the tree-sitter queries into `queries/*.scm`. The
+move transcribed the SQL column pattern from an older revision:
+`(column_definition . (identifier) @name)` instead of `(column_definition name:
+(_) @name)`. The grammar gives a double-quoted column a `literal` node and a
+T-SQL bracket column something the first-child anchor does not match, so
+`"select"` and `[bracket]` columns vanished from `members` and `outline`. The
+original pattern is restored. All 68 other query files were compared against
+their pre-move constants and match.
