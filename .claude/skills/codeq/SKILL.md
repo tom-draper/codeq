@@ -16,17 +16,19 @@ use `api`/`read`/`explore` instead.** That is where the savings are, and they ar
 **When grep is fine:** flat text lookup that returns a set of lines, and finding an
 exact anchor before an `Edit`. Measured on a Python repo 2026-08-16: against a full read
 of a 1,636-line file, `codeq read` cut output 77% and `codeq api` cut it 86% — but on
-lookups returning the *identical* lines, codeq ran 17–50% larger, because `path:line:col:`
-prefixes and `[symbol]` suffixes cost more than they save. Reaching for codeq there is a
-net loss. (Numbers are from one repo with long files; the direction holds, the magnitude
-shrinks on many-small-files codebases.)
+lookups returning the *identical* lines, codeq ran 17–50% larger, because the column
+and the `[symbol]` suffix on every row cost more than they saved. Rows no longer carry
+the column, nor the tag on the line that declares the symbol: re-measured on codeq's own
+repo 2026-10-10, four searches ran from 13% smaller to 18% larger than `rg -n`. So flat
+lookup is now roughly a wash, not a win — the remaining cost is the `[symbol]` tag, which
+is also the reason to use it.
 
 Still reach for `codeq search` over grep when *which definition contains this hit* is
 part of the question — the `[symbol]` annotation is something grep cannot produce.
 
 ## Invoking
 Run `codeq <command> [args]` from anywhere in the repo. Output is compact
-`path:line:col: text` (grep-style). **Empty output means "no results"** — it's a valid
+`path:line: text` (grep-style). **Empty output means "no results"** — it's a valid
 answer, not an error. Add `--json` for structured output. You never need to build or
 refresh the index — every command auto-refreshes changed files first.
 

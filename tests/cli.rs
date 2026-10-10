@@ -4223,19 +4223,24 @@ fn text_is_the_default_output_json_is_opt_in() {
         "grep-style row missing: {text}"
     );
 
-    // Search text is `path:line:col: text`, like ripgrep, plus codeq's
+    // Search text is `path:line: text`, like `grep -n`, plus codeq's
     // differentiator: the enclosing symbol annotated as `[name]`.
+    f.write("b.rs", "fn gamma() {\n    delta();\n}\n");
+    let so = f.raw(&["search", "delta"]);
+    assert_eq!(String::from_utf8_lossy(&so.stdout), "b.rs:2: delta();  [gamma]\n");
+    // The line that declares the symbol already names it, so the tag would
+    // only repeat the line.
     let so = f.raw(&["search", "beta"]);
-    let s = String::from_utf8_lossy(&so.stdout);
-    assert!(s.contains("a.rs:2:"), "search text row missing: {s}");
-    assert!(
-        s.contains("fn beta() {}"),
-        "search text payload missing: {s}"
-    );
-    assert!(
-        s.trim_end().ends_with("[beta]"),
-        "enclosing symbol annotation missing: {s}"
-    );
+    assert_eq!(String::from_utf8_lossy(&so.stdout), "a.rs:2: fn beta() {}\n");
+    // The column is still a fact: asked for, it is there, and JSON always has it.
+    let so = f.raw(&["search", "delta", "--fields", "path,line,col,text"]);
+    assert_eq!(String::from_utf8_lossy(&so.stdout), "b.rs:2:4: delta();\n");
+    let so = f.raw(&["--json", "search", "beta"]);
+    let v: Value = serde_json::from_slice(&so.stdout).unwrap();
+    let hit = &v["data"]["matches"][0];
+    assert_eq!(hit["col"], 3);
+    assert_eq!(hit["symbol"], "beta");
+    assert_eq!(hit["decl"], true);
 
     // --json restores the structured envelope.
     let jo = f.raw(&["--json", "symbols"]);
@@ -4921,7 +4926,7 @@ fn search_reads_a_named_path_the_index_does_not_hold() {
         String::from_utf8(out.stdout).unwrap(),
         String::from_utf8(out.stderr).unwrap(),
     );
-    assert_eq!(text, "build/out.log:2:7: error: target missing\n");
+    assert_eq!(text, "build/out.log:2: error: target missing\n");
     assert!(note.contains("'build/out.log' not in the index"), "{note}");
 
     // A directory is walked, and composes with an indexed scope.
@@ -4950,7 +4955,7 @@ fn search_reads_a_named_path_the_index_does_not_hold() {
     for spelled in ["./src/a.rs", abs.to_str().unwrap()] {
         let text = String::from_utf8(f.raw(&["search", "target", spelled]).stdout).unwrap();
         assert_eq!(
-            text, "src/a.rs:1:3: fn target() {}  [target]\n",
+            text, "src/a.rs:1: fn target() {}\n",
             "{spelled}"
         );
     }
@@ -8670,7 +8675,7 @@ fn capabilities_lists_every_extractable_language() {
 }
 
 #[test]
-fn group_hoists_the_path_and_keeps_line_and_col() {
+fn group_hoists_the_path_and_keeps_the_row() {
     // Flat output stays the default because every line is self-describing: an
     // agent that greps one line out of a result must still know its file.
     // --group trades that away deliberately, so it has to be asked for.
@@ -8687,8 +8692,9 @@ fn group_hoists_the_path_and_keeps_line_and_col() {
     }
 
     let grouped = String::from_utf8(f.raw(&["search", "target", "--group"]).stdout).unwrap();
-    // Header carries the path and the group size; rows keep line:col so grouped
-    // output is never less precise than flat, only less repetitive.
+    // Header carries the path and the group size; a grouped row is the flat row
+    // minus its path, so grouped output is never less precise than flat, only
+    // less repetitive.
     assert!(
         grouped.contains("a.rs (2)\n"),
         "missing counted header: {grouped}"
@@ -8712,10 +8718,17 @@ fn group_hoists_the_path_and_keeps_line_and_col() {
             "grouped row should start with a line number: {line}"
         );
         assert!(
-            line.matches(':').count() >= 2,
-            "grouped row dropped col: {line}"
+            flat.lines().any(|f| f.ends_with(&format!(":{line}"))),
+            "grouped row is not a flat row minus its path: {line}"
         );
     }
+    // Which holds for the column too, when it is asked for.
+    let fields = ["--fields", "path,line,col,text"];
+    let grouped = f.raw(&[&["search", "target", "--group"][..], &fields].concat());
+    assert!(
+        String::from_utf8(grouped.stdout).unwrap().contains("\n1:11: fn one()"),
+        "grouped row dropped a requested col"
+    );
 }
 
 #[test]

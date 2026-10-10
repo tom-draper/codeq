@@ -39,6 +39,10 @@ pub(crate) struct Hit {
     pub(crate) receiver: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) kind: Option<String>,
+    /// True when this line is where `symbol` is declared, so the line already
+    /// names it. Text output leaves the `[symbol]` tag off such a row.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) decl: bool,
     /// The matched line, trailing whitespace trimmed and capped.
     pub(crate) text: String,
     /// Context lines before the match (with -B/-C), nearest last.
@@ -887,6 +891,9 @@ pub(crate) fn scan_doc(
                     symbol: enclosing.map(|d| d.name.clone()),
                     receiver: calls.and_then(|m| m.get(&off).cloned()).flatten(),
                     kind: enclosing.map(|d| d.kind.clone()),
+                    decl: enclosing.is_some_and(|d| {
+                        s.partition_point(|&x| x <= d.start_byte) - 1 == line_idx
+                    }),
                     text: if opts.only_matching {
                         cap_str(m.as_str().lines().next().unwrap_or(""), MAX_LINE)
                     } else {
@@ -980,6 +987,7 @@ fn scan_inverted(
                     symbol: enclosing.map(|d| d.name.clone()),
                     receiver: None,
                     kind: enclosing.map(|d| d.kind.clone()),
+                    decl: false,
                     text: line_text(body, &starts, i),
                     before: Vec::new(),
                     after: Vec::new(),
