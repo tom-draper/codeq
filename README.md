@@ -164,7 +164,7 @@ written to `bench/results/` (committed, so the trend lives in git).
 
 ## Commands
 
-Run any command inside a repo. Default output is compact text (`path:line:col: payload`,
+Run any command inside a repo. Default output is compact text (`path:line: payload`,
 grep style); add `--json` for the structured envelope.
 
 Understand a symbol in one call:
@@ -350,8 +350,13 @@ result. Start with `codeq_map` to orient.
 
 The default output is compact grep-style text; `--json` gives the envelope.
 
-**Text.** One result per line, `path:line:col: payload`, and nothing else. The rules,
+**Text.** One result per line, `path:line: payload`, and nothing else. The rules,
 which apply to every command:
+
+- **No column unless asked.** Nothing takes a column as input, so a row carries
+  `path:line:` and `--fields path,line,col,text` (or `--json`) brings it back. A
+  match on the line that declares its enclosing symbol carries no `[symbol]` tag,
+  since the line already names it.
 
 - **No decoration.** No box drawing, dividers, banners, colour, or arrow glyphs. The
   only structural marker is `# <key>` above each list when a result has several

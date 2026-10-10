@@ -260,7 +260,7 @@ pub fn cmd_graph(
     };
 
     if mermaid {
-        // A document, not rows — so it deliberately leaves the `path:line:col:`
+        // A document, not rows — so it deliberately leaves the `path:line:`
         // contract rather than pretending to honour it, the way `read --raw`
         // does. Printed directly: the point is to paste it somewhere it renders.
         let mut ids: BTreeMap<&str, String> = BTreeMap::new();

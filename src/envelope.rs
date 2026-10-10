@@ -185,6 +185,13 @@ impl<T: Serialize> Envelope<T> {
                 available.join(",")
             );
         }
+        // The column is in the data and under `--json`; text leaves it out
+        // unless `--fields` asks. Nothing takes a column as input — `at`,
+        // `explore --at` and `read` all address a line — so on every row it was
+        // bytes an agent paid for and could not use.
+        if !r.fields.is_some_and(|f| f.iter().any(|k| k == "col")) {
+            drop_col(&mut data);
+        }
         let mut s = String::new();
         render_value(&data, r.group, &truncated, &mut s);
         print!("{s}");
@@ -217,14 +224,28 @@ impl<T: Serialize> Envelope<T> {
 /// Render a bare `data` value as codeq's compact text output, for commands that
 /// don't flow through [`Envelope`] (e.g. `capabilities`, which is session-less).
 pub fn render_data_text(data: &Value) -> String {
+    let mut data = data.clone();
+    drop_col(&mut data);
     let mut s = String::new();
-    render_value(data, false, &BTreeMap::new(), &mut s);
+    render_value(&data, false, &BTreeMap::new(), &mut s);
     s
+}
+
+/// Remove `col` from every row, wherever the rows sit in `data`.
+fn drop_col(data: &mut Value) {
+    match data {
+        Value::Array(items) => items.iter_mut().for_each(drop_col),
+        Value::Object(map) => {
+            map.remove("col");
+            map.values_mut().for_each(drop_col);
+        }
+        _ => {}
+    }
 }
 
 /// Render a `data` payload as compact, deterministic, grep-style text.
 ///
-/// - array of rows → one `path:line:col: payload` line each;
+/// - array of rows → one `path:line: payload` line each;
 /// - object with a single primary array (`matches`, `references`, …) → its rows;
 /// - object with several arrays (`about`, `map`) → each under a `# key` header;
 /// - object of scalars → `key: value` lines (the same tail the branch above
@@ -409,7 +430,7 @@ fn render_rows(rows: &[Value], group: bool, truncated: &BTreeMap<String, usize>,
     }
 }
 
-/// One result row → `path:line:col: payload`, indented by `depth` for outlines.
+/// One result row → `path:line: payload`, indented by `depth` for outlines.
 fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     let o = match row {
         Value::Object(m) => m,
@@ -423,9 +444,8 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     let int_of = |k: &str| o.get(k).and_then(|v| v.as_i64());
 
     // Under a group header the path is already stated, so the row carries only
-    // `line:col` — but it keeps the column, which the pathless fallback below
-    // drops. Losing `col` here would make grouped output strictly less precise
-    // than flat, and the two must carry the same facts.
+    // the line — and the column when `--fields` kept one, exactly as a flat row
+    // does. Grouped and flat output must carry the same facts.
     let mut loc = String::new();
     if let Some(p) = str_of("path") {
         // One key, per ROW_KEY_RULE. This used to fall back to `start_line`,
@@ -460,6 +480,9 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
     // (drop the trailing ": " so the header reads cleanly above the block). For
     // `context` chunks the `reason` (seed vs referenced/changed) is the point of
     // --expand, so surface it in the header.
+    // A row on the line that declares its enclosing symbol already names it:
+    // `pub retries: u32  [retries]` says the same thing twice.
+    let tag = str_of("symbol").filter(|_| o.get("decl").and_then(|v| v.as_bool()) != Some(true));
     if let Some(t) = str_of("text") {
         if t.contains('\n') {
             let reason = str_of("reason")
@@ -471,7 +494,7 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
             // and silently lost the `[symbol]` the docs promise on *every*
             // match. Whether a pattern happens to span a line is not a reason to
             // answer a different question.
-            let enclosing = str_of("symbol")
+            let enclosing = tag
                 .map(|s| format!("  [{s}]"))
                 .unwrap_or_default();
             out.push_str(&format!(
@@ -482,7 +505,7 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
         }
         // codeq's differentiator over grep: annotate the match with the symbol
         // it sits inside, so an agent needn't a follow-up `at` to place it.
-        let enclosing = str_of("symbol")
+        let enclosing = tag
             .map(|s| format!("  [{s}]"))
             .unwrap_or_default();
         // The receiver a call is made on. Shown rather than used to filter: a
