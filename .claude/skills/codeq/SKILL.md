@@ -173,7 +173,9 @@ refresh the index — every command auto-refreshes changed files first.
   `--fixed`, `-i`, `-w`, `-g '*.rs' -g '!tests/'` (repeatable globs), `-l`, `-c`,
   `-B`/`-A`/`-C`, `--path`, `--language`, `--limit` — and grep's calling
   convention, `codeq search TODO src/a.rs docs`, where each positional path is a
-  substring (a directory scopes under it) and several are OR'd. **`--limit` defaults to 100**,
+  substring (a directory scopes under it) and several are OR'd. A path the index
+  does not hold (gitignored output, a log, a file outside the repo) is searched
+  from disk, with a note and without `[symbol]`. **`--limit` defaults to 100**,
   and a result that hit it says `stopped at --limit` on stderr — raise it (or
   pass 0) for the rest. Other commands cap too, and the defaults differ:
   `files`/`symbols`/`members`/`imports`/`untested` at 200, `hotspots` at 30. All

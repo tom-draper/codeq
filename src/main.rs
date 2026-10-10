@@ -654,6 +654,11 @@ enum Command {
         /// directory scopes everything under it and a bare filename finds that
         /// file wherever it lives. Several are OR'd, which is what a shell glob
         /// (`src/*.rs`) expands to. Composes with `--path` and `-g` by AND.
+        ///
+        /// A path that selects no indexed file but exists on disk — gitignored
+        /// build output, a log, a file outside the repository — is searched
+        /// from disk instead, with a note saying so. Those rows carry no
+        /// `[symbol]`, and `--in`/`--language` skip them.
         paths: Vec<String>,
         /// Treat the pattern as a literal string, not a regex.
         #[arg(long)]

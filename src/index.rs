@@ -711,7 +711,7 @@ fn file_stat_key(path: &std::path::Path) -> Option<(i64, i64, i64)> {
     ))
 }
 
-fn looks_binary(bytes: &[u8]) -> bool {
+pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
     let n = bytes.len().min(8192);
     bytes[..n].contains(&0)
 }

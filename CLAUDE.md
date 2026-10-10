@@ -379,6 +379,12 @@ benchmarks — not as a step you run before querying.
     `--path`), so a directory scopes everything under it and a bare filename finds
     that file wherever it lives; several are OR'd, which is what a shell glob
     expands to. Composes with `--path`/`-g` by AND.
+  - **A named path the index does not hold is searched from disk.** `codeq search
+    error target/build.log` or `codeq search root /etc/passwd` — gitignored
+    output, a log, a file outside the repo. A note says so, the rows carry no
+    `[symbol]`, and `--in`/`--language` skip them (nothing was parsed). A
+    positional that is neither indexed nor on disk is named as a dead filter
+    instead of returning a silent nothing.
   - **Piped input:** `CMD | codeq search PAT --stdin` scans the pipe instead of the
     index, so codeq replaces grep in a pipeline too (no repo or index needed). Add
     `--language rust` to also get `--in` and the enclosing `[symbol]` on each match.
