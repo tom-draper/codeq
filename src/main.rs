@@ -649,9 +649,11 @@ enum Command {
         limit: usize,
     },
     /// Content search; each match annotated with its enclosing definition.
+    #[command(alias = "grep", alias = "rg")]
     Search {
         /// Pattern to search for (regex by default).
-        pattern: String,
+        #[arg(required_unless_present = "regexp")]
+        pattern: Option<String>,
         /// Files or directories to search, like grep: `codeq search TODO src`.
         ///
         /// Each is matched the way `--path` is — as a path *substring* — so a
@@ -664,9 +666,23 @@ enum Command {
         /// from disk instead, with a note saying so. Those rows carry no
         /// `[symbol]`, and `--in`/`--language` skip them.
         paths: Vec<String>,
+        /// A pattern, repeatable: `-e A -e B` matches either, as in grep. With
+        /// it every positional is a path.
+        #[arg(long, short = 'e', value_name = "PATTERN")]
+        regexp: Vec<String>,
         /// Treat the pattern as a literal string, not a regex.
-        #[arg(long)]
+        #[arg(long, short = 'F', alias = "fixed-strings")]
         fixed: bool,
+        /// Print only the matched text, one row per occurrence (grep's -o).
+        #[arg(long, short = 'o')]
+        only_matching: bool,
+        /// Print the lines that do NOT match (grep's -v).
+        #[arg(long, short = 'v')]
+        invert_match: bool,
+        /// Accepted for grep/ripgrep compatibility and has no effect: a pattern
+        /// already matches across lines (`foo\s+bar`), reported at its first.
+        #[arg(long, short = 'U', hide = true)]
+        multiline: bool,
         /// Case-insensitive matching.
         #[arg(long, short = 'i')]
         ignore_case: bool,
@@ -676,8 +692,9 @@ enum Command {
         /// Restrict to paths containing this substring.
         #[arg(long)]
         path: Option<String>,
-        /// Restrict to a language.
-        #[arg(long)]
+        /// Restrict to a language. `-t`/`--type` are accepted for ripgrep
+        /// compatibility, with its short names (`py`, `js`, `ts`, `rs`).
+        #[arg(long, short = 't', alias = "type")]
         language: Option<String>,
         /// Include/exclude glob (repeatable); prefix ! to exclude, e.g. -g '*.rs' -g '!tests/'.
         #[arg(long, short = 'g')]
@@ -697,6 +714,9 @@ enum Command {
         /// Output only the paths of files containing a match.
         #[arg(long = "files-with-matches", short = 'l')]
         files_with_matches: bool,
+        /// Output only the paths of files with no match (grep's -L).
+        #[arg(long = "files-without-match", short = 'L', conflicts_with = "files_with_matches")]
+        files_without_match: bool,
         /// Output the count of matching lines per file.
         #[arg(long, short = 'c')]
         count: bool,
@@ -1155,8 +1175,13 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
         },
         Command::Search {
             pattern,
-            paths,
+            mut paths,
+            regexp,
             fixed,
+            only_matching,
+            invert_match,
+            multiline: _,
+            files_without_match,
             ignore_case,
             word,
             path,
@@ -1170,11 +1195,22 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             count,
             limit,
             stdin,
-        } => commands::cmd_search(
+        } => {
+            // With `-e`, the first positional is a path like the rest.
+            let patterns = if regexp.is_empty() {
+                pattern.into_iter().collect()
+            } else {
+                paths.splice(0..0, pattern);
+                regexp
+            };
+            commands::cmd_search(
             cwd,
             commands::SearchArgs {
-                pattern: &pattern,
+                patterns: &patterns,
                 paths: &paths,
+                files_without_match,
+                only_matching,
+                invert: invert_match,
                 fixed,
                 ignore_case,
                 word,
@@ -1190,7 +1226,8 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
                 stdin,
             },
             out,
-        ),
+        )
+        }
         Command::Context {
             symbols,
             changed,

@@ -214,8 +214,11 @@ const TOOL_OVERRIDES: &[(&str, ToolOverrides)] = &[
     (
         "search",
         ToolOverrides {
-            hidden: &["stdin"],
+            // `regexp` is `pattern` again (an alternation says the same) and
+            // `multiline` is a no-op kept for grep's `-U`.
+            hidden: &["stdin", "regexp", "multiline"],
             globals: ROW_GLOBALS,
+            required: &["pattern"],
             choices: &[("in", &["code", "comments", "strings"])],
             ..EMPTY_TOOL_OVERRIDES
         },
