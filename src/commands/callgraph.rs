@@ -92,6 +92,8 @@ pub(super) fn callers_of(
         qualifier: qualifier.map(str::to_string),
         identifier_boundary: true,
         per_file: None,
+        only_matching: false,
+        invert: false,
     };
     let mut hits = match run_search(
         &s.db.conn,

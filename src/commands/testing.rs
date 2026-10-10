@@ -144,6 +144,8 @@ pub(super) fn test_sites(
         qualifier: None,
         identifier_boundary: true,
         per_file: None,
+        only_matching: false,
+        invert: false,
     };
     let hits = match run_search(
         &s.db.conn,
