@@ -109,17 +109,72 @@ pub(crate) const MIN_FOLD: usize = 4;
 /// plus a marker with the exact hidden line range, so an agent grasps a large
 /// file's whole shape cheaply and expands only what it needs. `--lines A-B` and
 /// `--symbol NAME` return verbatim, line-numbered slices to read or edit.
+///
+/// Several files, and several ranges of one, are a single call: `read a.rs:10-40
+/// b.rs:5-9,80-90`. That is the shape of the `sed -n 'A,Bp'` an agent would
+/// otherwise run once per slice, and a round trip costs more than its bytes.
 pub fn cmd_read(
     cwd: &Path,
-    file: &str,
-    lines: Option<&str>,
+    files: &[String],
+    lines: &[String],
     symbol: Option<&str>,
     full: bool,
     raw: bool,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let rel = resolve_file(&s, file)?;
+    let flag_ranges = lines.iter().map(parse_range).collect::<Result<Vec<_>>>()?;
+    let mut targets: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
+    for arg in files {
+        targets.push(match resolve_file(&s, arg) {
+            Ok(rel) => (rel, Vec::new()),
+            // Not a file as written: `path:A-B`, the form a search row, a stack
+            // frame and a compiler error all print. The whole argument is tried
+            // first, so a real file with a colon in its name still wins.
+            Err(e) => match arg.rsplit_once(':').and_then(|(f, spec)| {
+                let ranges = spec.split(',').map(parse_range).collect::<Result<Vec<_>>>().ok()?;
+                Some((f, ranges))
+            }) {
+                Some((f, ranges)) => (resolve_file(&s, f)?, ranges),
+                None => return Err(e),
+            },
+        });
+    }
+    if targets.len() > 1 && (!flag_ranges.is_empty() || symbol.is_some()) {
+        return Err(anyhow!(
+            "--lines/--symbol address one file; with several, write the range on each: a.rs:10-40 b.rs:5-9"
+        ));
+    }
+    if raw && targets.len() > 1 {
+        return Err(anyhow!("--raw yields one exact block; it takes one file"));
+    }
+    let many = targets.len() > 1;
+    for (i, (rel, inline)) in targets.iter().enumerate() {
+        if many {
+            // One blank line between files, and a header naming each.
+            if i > 0 {
+                println!();
+            }
+            println!("# {rel}");
+        }
+        let ranges = if inline.is_empty() { &flag_ranges } else { inline };
+        if !inline.is_empty() && !flag_ranges.is_empty() {
+            return Err(anyhow!("a range was given twice: on the path and with --lines"));
+        }
+        read_one(&s, rel, ranges, symbol, full, raw)?;
+    }
+    Ok(())
+}
+
+fn read_one(
+    s: &Session,
+    rel: &str,
+    ranges: &[(usize, usize)],
+    symbol: Option<&str>,
+    full: bool,
+    raw: bool,
+) -> Result<()> {
+    let rel = rel.to_string();
     let bytes =
         std::fs::read(s.repo.root.join(&rel)).map_err(|e| anyhow!("cannot read {rel}: {e}"))?;
     // Match the index: drop a leading UTF-8 BOM so line/column numbering here
@@ -143,10 +198,20 @@ pub fn cmd_read(
         Ok(())
     };
 
-    // Verbatim line range.
-    if let Some(spec) = lines {
-        let (a, b) = parse_range(spec)?;
-        show(a, b)?;
+    // Verbatim line ranges.
+    if !ranges.is_empty() {
+        // `--raw` is one exact block for an editor's old_string; two ranges
+        // concatenated would be text that exists nowhere in the file.
+        if raw && ranges.len() > 1 {
+            return Err(anyhow!("--raw yields one exact block; it takes one range"));
+        }
+        for (i, (a, b)) in ranges.iter().enumerate() {
+            // grep's separator between non-adjacent blocks.
+            if i > 0 {
+                println!("--");
+            }
+            show(*a, *b)?;
+        }
         return Ok(());
     }
 
@@ -247,10 +312,10 @@ pub fn cmd_read(
     Ok(())
 }
 
-fn parse_range(spec: &str) -> Result<(usize, usize)> {
-    let (a, b) = spec
-        .split_once('-')
-        .ok_or_else(|| anyhow!("--lines must be A-B, e.g. 40-80"))?;
+fn parse_range(spec: impl AsRef<str>) -> Result<(usize, usize)> {
+    let spec = spec.as_ref();
+    // A bare number is that one line: `a.rs:42`, as a search row prints it.
+    let (a, b) = spec.split_once('-').unwrap_or((spec, spec));
     let a: usize = a
         .trim()
         .parse()
@@ -265,7 +330,7 @@ fn parse_range(spec: &str) -> Result<(usize, usize)> {
 fn print_range(lines: &[&str], a: usize, b: usize) {
     for i in a.max(1)..=b {
         if let Some(l) = lines.get(i - 1) {
-            println!("{i:6}  {l}");
+            println!("{i}\t{l}");
         }
     }
 }
@@ -295,9 +360,9 @@ fn print_folded(lines: &[&str], folded: &[bool]) {
             let count = i - start;
             // Range printed in the exact syntax `--lines` accepts, so the marker
             // is a copy-pasteable next command rather than something to retype.
-            println!("        ... {count} lines ({}-{})", start + 1, i);
+            println!("\t... {count} lines ({}-{})", start + 1, i);
         } else {
-            println!("{:6}  {}", i + 1, lines[i]);
+            println!("{}\t{}", i + 1, lines[i]);
             i += 1;
         }
     }

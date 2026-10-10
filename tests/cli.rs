@@ -4282,9 +4282,52 @@ fn read_folds_bodies_and_expands_verbatim() {
     let sym = String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "big"]).stdout).unwrap();
     assert!(sym.contains("let v5"), "symbol body verbatim: {sym}");
     assert!(
-        sym.contains("2  fn big()"),
+        sym.contains("2\tfn big()"),
         "line-numbered from the def start: {sym}"
     );
+}
+
+/// The `sed -n 'A,Bp'` an agent runs once per slice is one `read`: a range rides
+/// on the path, several ranges on one path, and several paths in one call.
+#[test]
+fn read_takes_ranges_on_the_path_and_several_files() {
+    let f = Fixture::new();
+    let lines = |tag: &str| (1..=9).map(|i| format!("{tag}{i}\n")).collect::<String>();
+    f.write("a.txt", &lines("a"));
+    f.write("b.txt", &lines("b"));
+    let read = |args: &[&str]| {
+        let mut argv = vec!["read"];
+        argv.extend(args);
+        let out = f.raw(&argv);
+        (String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+    };
+
+    // `path:A-B`, and `path:N` as a search row prints it.
+    assert_eq!(read(&["a.txt:2-3"]).0, "2\ta2\n3\ta3\n");
+    assert_eq!(read(&["a.txt:4"]).0, "4\ta4\n");
+    // Several ranges, however they are written, with grep's `--` between.
+    let two = "2\ta2\n--\n8\ta8\n9\ta9\n";
+    assert_eq!(read(&["a.txt:2,8-9"]).0, two);
+    assert_eq!(read(&["a.txt", "--lines", "2,8-9"]).0, two);
+    assert_eq!(read(&["a.txt", "--lines", "2", "--lines", "8-9"]).0, two);
+    // Several files: each named, each with its own range (or none).
+    assert_eq!(
+        read(&["a.txt:1", "b.txt:9"]).0,
+        "# a.txt\n1\ta1\n\n# b.txt\n9\tb9\n"
+    );
+
+    // `--raw` is one exact block, so it refuses to concatenate two.
+    assert_eq!(read(&["a.txt:2-3", "--raw"]).0, "a2\na3\n");
+    let (out, err) = read(&["a.txt:2,8", "--raw"]);
+    assert!(out.is_empty() && err.contains("one range"), "{out}{err}");
+    let (out, err) = read(&["a.txt", "b.txt", "--raw"]);
+    assert!(out.is_empty() && err.contains("one file"), "{out}{err}");
+    // A flag range cannot say which of several files it means.
+    let (out, err) = read(&["a.txt", "b.txt", "--lines", "1-2"]);
+    assert!(out.is_empty() && err.contains("a.rs:10-40"), "{out}{err}");
+    // A missing file fails the call rather than printing the files that exist.
+    let (out, err) = read(&["a.txt:1", "nope.txt:1"]);
+    assert!(out.is_empty() && err.contains("nope.txt"), "{out}{err}");
 }
 
 /// The text output contract (README "Output contract"): plain ASCII rows, no
@@ -5711,7 +5754,7 @@ fn read_raw_emits_exact_bytes_ready_for_edit() {
     let numbered =
         String::from_utf8(f.raw(&["read", "a.rs", "--symbol", "helper"]).stdout).unwrap();
     assert!(
-        numbered.contains("  2  fn helper"),
+        numbered.starts_with("2\tfn helper"),
         "default should be line-numbered: {numbered:?}"
     );
 
