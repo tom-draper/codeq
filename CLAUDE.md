@@ -150,6 +150,12 @@ benchmarks — not as a step you run before querying.
     once by construction, so reporting them is noise, not a finding. Tables,
     views, columns and functions are reported normally.
   - `CREATE PROCEDURE` is not in the grammar and yields nothing.
+  - **A statement the grammar lacks is an error of its own, not of the file.**
+    `CREATE OPERATOR`, `CREATE CAST`, `CREATE OPERATOR CLASS` and psql meta-commands
+    (`\echo`, `\quit`) have no rule, so a PostgreSQL extension script is full of
+    them. A file that does not parse cleanly is parsed statement by statement, so
+    the definitions after one are still indexed. `files` reports `parse_errors`
+    and `parse_recovered` for it; the unsupported statements yield no definitions.
 - **Understand a file cheaply:** `codeq read <file>` — folds long function bodies
   to signatures; read this instead of ingesting a whole large file.
 - **Read one definition / range (verbatim, line-numbered):**
