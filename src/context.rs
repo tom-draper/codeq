@@ -72,7 +72,7 @@ pub struct ContextResult {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     omitted: Vec<Omitted>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    omitted_truncated: bool,
+    pub(crate) omitted_truncated: bool,
 }
 
 impl ContextResult {
