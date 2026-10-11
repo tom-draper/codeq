@@ -263,7 +263,7 @@ pub fn cmd_explore(
             path: c.path.clone(),
             role: "callee",
             forced: false,
-            start_byte: None,
+            start_byte: Some(c.start_byte),
         });
     }
 

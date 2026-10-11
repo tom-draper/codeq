@@ -12294,3 +12294,68 @@ fn astgrep_source_marks_a_capped_budget_omission_list() {
     assert_eq!(out["data"]["omitted"].as_array().unwrap().len(), 50);
     assert_eq!(out["data"]["omitted_truncated"], true);
 }
+
+#[test]
+fn rust_associated_calls_select_the_impl_owner_and_exact_source() {
+    let f = Fixture::new();
+    f.write(
+        "types.rs",
+        "pub struct Selected;\nimpl Selected { pub fn new() { selected_body(); } }\n\
+        pub struct Other;\nimpl Other { pub fn new() { unrelated_body(); } }\n\
+        fn new() { unrelated_free(); }\n",
+    );
+    f.write(
+        "app.rs",
+        "use crate::types::Selected as Choice;\nfn run() { Choice::new(); }\n",
+    );
+    let r = f.run(&["explore", "run"]);
+    let callees = r["data"]["callees"].as_array().unwrap();
+    assert_eq!(callees.len(), 1, "{r}");
+    assert_eq!(callees[0]["line"], 2);
+    let source = r["data"]["source"].as_array().unwrap();
+    let text: String = source.iter().filter_map(|c| c["text"].as_str()).collect();
+    assert!(text.contains("selected_body()"), "{r}");
+    assert!(!text.contains("unrelated_body()"), "{r}");
+    assert!(!text.contains("unrelated_free()"), "{r}");
+}
+
+#[test]
+fn rust_associated_call_constraints_union_and_unknown_receivers_stay_conservative() {
+    let f = Fixture::new();
+    f.write(
+        "app.rs",
+        "struct A; struct B;\nimpl A { fn new() {} }\nimpl B { fn new() {} }\n\
+        fn both() { A::new(); B::new(); }\n\
+        fn unknown(value: Unknown) { value.new(); }\n\
+        fn mixed(value: Unknown) { A::new(); value.new(); }\n\
+        fn capital_value(A: Unknown) { A.new(); }\n\
+        type Alias = A;\nfn alias() { Alias::new(); }\n",
+    );
+    for name in ["both", "unknown", "mixed", "alias", "capital_value"] {
+        assert_eq!(
+            f.run(&["callees", name])["data"].as_array().unwrap().len(),
+            2,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn rust_impl_owners_handle_generics_traits_and_nested_helpers() {
+    let f = Fixture::new();
+    f.write(
+        "app.rs",
+        "struct A<T>(T); struct B;\n\
+        impl<T> A<T> { fn new() { fn nested() {} } }\n\
+        impl Default for B { fn default() -> Self { B } }\n\
+        fn run() { A::new(); B::default(); }\n",
+    );
+    let r = f.run(&["symbols", "", "--owner", "A"]);
+    let names = field_set(&r, "name");
+    assert!(names.contains(&"new".to_string()), "{r}");
+    assert!(!names.contains(&"nested".to_string()), "{r}");
+    assert_eq!(
+        f.run(&["callees", "run"])["data"].as_array().unwrap().len(),
+        2
+    );
+}

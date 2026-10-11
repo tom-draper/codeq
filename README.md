@@ -196,6 +196,8 @@ Find and understand a symbol:
 
 Trace relationships (matched by name):
 - `codeq callers <name>` and `codeq callees <name>` show who calls it and what it calls.
+  Rust associated calls such as `Session::open()` use indexed `impl` owners and imported
+  type aliases to narrow candidates. Calls on values remain conservative.
   `--depth N` walks the tree; `callers --examples` prints the actual call line at each site.
 - `codeq references <name>` lists every use, each tagged with its enclosing definition.
 - `codeq callpath <from> <to>` finds the shortest call chain between two symbols.

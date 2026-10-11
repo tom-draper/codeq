@@ -101,7 +101,8 @@ use rusqlite::Connection;
 // hashing the query constants is the obvious form — but it would cover only the
 // query-driven half. A visibility rule or an attribute reader is ordinary Rust
 // and would slip through, while the mechanism looked complete. Not yet solved.
-pub const SCHEMA_VERSION: i64 = 45;
+// v46 records Rust impl owners for qualifier-aware callee selection.
+pub const SCHEMA_VERSION: i64 = 46;
 
 /// Below this many free pages (1 MiB at the default page size) compaction is
 /// not worth a rewrite, whatever share of a small index they are.
