@@ -12003,6 +12003,30 @@ fn the_content_index_costs_less_than_the_text_it_covers() {
 }
 
 #[test]
+fn indexing_a_file_is_linear_in_its_definitions() {
+    // The root of a Python file is a `module` node, the kind Ruby gives
+    // `module Foo`, so every definition asked the *file* for its type name:
+    // a scan of all top-level children, once per definition. 10,000 functions
+    // took about 45 s in this build and 20,000 about 200 s; linear, it is 2 s.
+    // The bound is loose enough for a loaded machine and still far below the
+    // quadratic cost.
+    let f = Fixture::new();
+    let source: String = (0..10_000)
+        .map(|i| format!("def fn_{i}(a, b):\n    return fn_{}(a, b)\n\n", i / 2))
+        .collect();
+    f.write("big.py", &source);
+
+    let started = std::time::Instant::now();
+    let symbols = f.run(&["symbols", "fn_9999"]);
+    let elapsed = started.elapsed();
+    assert_eq!(field_set(&symbols, "name"), ["fn_9999"]);
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "indexing 10,000 definitions took {elapsed:?}"
+    );
+}
+
+#[test]
 fn removing_content_shrinks_the_index_file() {
     // SQLite parks deleted pages on a free list and never returns them, so an
     // index only grew: a real one was 5.3 GB with 3.1 GB of it free.
