@@ -1806,6 +1806,16 @@ const TYPE_KINDS: &[&str] = &[
     "create_type",
 ];
 
+/// Whether `n` declares a type. Kind alone is not enough, because the list is
+/// shared across grammars and one grammar's type is another's file: Ruby's
+/// `module Foo` and the root of every Python file are both a `module` node. A
+/// file is not a type, and asking one for its name scans all of its top-level
+/// children. That happened once per definition, which made a Python file of N
+/// definitions cost N² to index.
+fn is_type_node(n: Node) -> bool {
+    TYPE_KINDS.contains(&n.kind()) && n.parent().is_some()
+}
+
 /// The trait a definition exists to satisfy, when the grammar states it outright.
 ///
 /// Rust only, and deliberately: `impl Trait for X { … }` says that *every*
@@ -1841,7 +1851,7 @@ fn implemented_trait(lang: &str, node: Node, src: &[u8]) -> Option<String> {
 fn enclosing_type_visibility(lang: &str, node: Node, src: &[u8]) -> Option<String> {
     let mut cur = node.parent();
     while let Some(n) = cur {
-        if TYPE_KINDS.contains(&n.kind()) {
+        if is_type_node(n) {
             let name = type_name_of(lang, n, src)?;
             return visibility_of(lang, &name, n, src);
         }
@@ -1881,7 +1891,7 @@ fn type_name_of(lang: &str, n: Node, src: &[u8]) -> Option<String> {
 fn enclosed_by_private_type(lang: &str, node: Node, src: &[u8]) -> bool {
     let mut cur = node.parent();
     while let Some(n) = cur {
-        if TYPE_KINDS.contains(&n.kind()) {
+        if is_type_node(n) {
             if let Some(name) = type_name_of(lang, n, src) {
                 if visibility_of(lang, &name, n, src).as_deref() == Some("private") {
                     return true;
@@ -2190,7 +2200,7 @@ fn owner_of(lang: &str, kind: &str, node: Node, src: &[u8]) -> Option<String> {
     }
     let mut cur = node.parent();
     while let Some(n) = cur {
-        if TYPE_KINDS.contains(&n.kind()) {
+        if is_type_node(n) {
             // `name:` where the grammar has it; else the first identifier-ish
             // child, which is where the rest put it.
             if let Some(t) = n
