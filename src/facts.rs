@@ -11,6 +11,8 @@
 //! - `doc`: the leading doc comment (`///` in Rust) or docstring (first string
 //!   in a Python body), collapsed and capped.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, Point, Query, QueryCursor, Range};
@@ -139,36 +141,9 @@ pub struct ParseHealth {
 /// cleanly.
 pub type Extracted = (Extraction, Option<ParseHealth>);
 
+#[derive(Default)]
 pub struct Extractor {
-    rust: LangSpec,
-    python: LangSpec,
-    javascript: LangSpec,
-    typescript: LangSpec,
-    tsx: LangSpec,
-    go: LangSpec,
-    java: LangSpec,
-    ruby: LangSpec,
-    c: LangSpec,
-    cpp: LangSpec,
-    csharp: LangSpec,
-    php: LangSpec,
-    bash: LangSpec,
-    lua: LangSpec,
-    scala: LangSpec,
-    kotlin: LangSpec,
-    swift: LangSpec,
-    dart: LangSpec,
-    zig: LangSpec,
-    elixir: LangSpec,
-    solidity: LangSpec,
-    svelte: LangSpec,
-    vue: LangSpec,
-    css: LangSpec,
-    hcl: LangSpec,
-    powershell: LangSpec,
-    proto: LangSpec,
-    graphql: LangSpec,
-    sql: LangSpec,
+    languages: HashMap<String, LangSpec>,
 }
 
 /// A SQL script parsed statement by statement: facts, spans and relations as
@@ -746,17 +721,13 @@ fn repair_rust_closure_trailing_commas(src: &[u8]) -> Option<Vec<u8>> {
     repaired
 }
 
-impl Extractor {
+impl LangSpec {
     /// Parse a SQL script one statement at a time. Each statement is parsed with
     /// the parser restricted to its own byte range, so nodes keep their offsets in
     /// the whole file and an unparseable statement stays an ERROR of its own
     /// instead of swallowing its successors. Returns the error node count and the
     /// bytes inside errors; `None` if a parse fails outright.
-    fn extract_sql_by_statement(
-        &mut self,
-        parse_src: &[u8],
-        src: &[u8],
-    ) -> Option<SqlStatements> {
+    fn extract_sql_by_statement(&mut self, parse_src: &[u8], src: &[u8]) -> Option<SqlStatements> {
         let line_starts: Vec<usize> = std::iter::once(0)
             .chain(
                 parse_src
@@ -783,16 +754,16 @@ impl Extractor {
                 start_point: point(start),
                 end_point: point(end),
             };
-            if self.sql.parser.set_included_ranges(&[range]).is_err() {
+            if self.parser.set_included_ranges(&[range]).is_err() {
                 complete = false;
                 break;
             }
-            let Some(tree) = self.sql.parser.parse(parse_src, None) else {
+            let Some(tree) = self.parser.parse(parse_src, None) else {
                 complete = false;
                 break;
             };
             let root = tree.root_node();
-            let (f, sp, r) = self.sql.harvest(root, src);
+            let (f, sp, r) = self.harvest(root, src);
             let (extra_facts, extra_spans) = sql_extras(root, src);
             facts.extend(f);
             facts.extend(extra_facts);
@@ -803,13 +774,18 @@ impl Extractor {
             extent += error_extent(root);
         }
         // The parser is shared across files: leave it parsing the whole input.
-        let _ = self.sql.parser.set_included_ranges(&[]);
+        let _ = self.parser.set_included_ranges(&[]);
         complete.then_some((facts, spans, rels, errors, extent))
     }
+}
 
-    pub fn new() -> Result<Extractor> {
-        Ok(Extractor {
-            rust: LangSpec::new(
+impl Extractor {
+    fn load(&mut self, language: &str) -> Result<()> {
+        if self.languages.contains_key(language) {
+            return Ok(());
+        }
+        let spec = match language {
+            "rust" => LangSpec::new(
                 tree_sitter_rust::LANGUAGE.into(),
                 RUST_QUERY,
                 RUST_SPANS,
@@ -817,7 +793,7 @@ impl Extractor {
                 "treesitter/rust",
                 "rust",
             )?,
-            python: LangSpec::new(
+            "python" => LangSpec::new(
                 tree_sitter_python::LANGUAGE.into(),
                 PYTHON_QUERY,
                 PYTHON_SPANS,
@@ -825,7 +801,7 @@ impl Extractor {
                 "treesitter/python",
                 "python",
             )?,
-            javascript: LangSpec::new(
+            "javascript" => LangSpec::new(
                 tree_sitter_javascript::LANGUAGE.into(),
                 &format!("{JS_QUERY}\n{JS_EXTRA}"),
                 JS_SPANS,
@@ -833,7 +809,7 @@ impl Extractor {
                 "treesitter/javascript",
                 "javascript",
             )?,
-            typescript: LangSpec::new(
+            "typescript" => LangSpec::new(
                 tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
                 &format!("{JS_QUERY}\n{TS_EXTRA}"),
                 JS_SPANS,
@@ -841,7 +817,7 @@ impl Extractor {
                 "treesitter/typescript",
                 "typescript",
             )?,
-            tsx: LangSpec::new(
+            "tsx" => LangSpec::new(
                 tree_sitter_typescript::LANGUAGE_TSX.into(),
                 &format!("{JS_QUERY}\n{TS_EXTRA}"),
                 JS_SPANS,
@@ -849,7 +825,7 @@ impl Extractor {
                 "treesitter/tsx",
                 "tsx",
             )?,
-            go: LangSpec::new(
+            "go" => LangSpec::new(
                 tree_sitter_go::LANGUAGE.into(),
                 GO_QUERY,
                 GO_SPANS,
@@ -857,7 +833,7 @@ impl Extractor {
                 "treesitter/go",
                 "go",
             )?,
-            java: LangSpec::new(
+            "java" => LangSpec::new(
                 tree_sitter_java::LANGUAGE.into(),
                 JAVA_QUERY,
                 JAVA_SPANS,
@@ -865,7 +841,7 @@ impl Extractor {
                 "treesitter/java",
                 "java",
             )?,
-            ruby: LangSpec::new(
+            "ruby" => LangSpec::new(
                 tree_sitter_ruby::LANGUAGE.into(),
                 RUBY_QUERY,
                 RUBY_SPANS,
@@ -873,7 +849,7 @@ impl Extractor {
                 "treesitter/ruby",
                 "ruby",
             )?,
-            c: LangSpec::new(
+            "c" => LangSpec::new(
                 tree_sitter_c::LANGUAGE.into(),
                 C_QUERY,
                 C_SPANS,
@@ -881,7 +857,7 @@ impl Extractor {
                 "treesitter/c",
                 "c",
             )?,
-            cpp: LangSpec::new(
+            "cpp" => LangSpec::new(
                 tree_sitter_cpp::LANGUAGE.into(),
                 CPP_QUERY,
                 CPP_SPANS,
@@ -889,7 +865,7 @@ impl Extractor {
                 "treesitter/cpp",
                 "cpp",
             )?,
-            csharp: LangSpec::new(
+            "csharp" => LangSpec::new(
                 tree_sitter_c_sharp::LANGUAGE.into(),
                 CSHARP_QUERY,
                 CSHARP_SPANS,
@@ -897,7 +873,7 @@ impl Extractor {
                 "treesitter/csharp",
                 "csharp",
             )?,
-            php: LangSpec::new(
+            "php" => LangSpec::new(
                 tree_sitter_php::LANGUAGE_PHP.into(),
                 PHP_QUERY,
                 PHP_SPANS,
@@ -905,7 +881,7 @@ impl Extractor {
                 "treesitter/php",
                 "php",
             )?,
-            bash: LangSpec::new(
+            "bash" => LangSpec::new(
                 tree_sitter_bash::LANGUAGE.into(),
                 BASH_QUERY,
                 BASH_SPANS,
@@ -913,7 +889,7 @@ impl Extractor {
                 "treesitter/bash",
                 "bash",
             )?,
-            lua: LangSpec::new(
+            "lua" => LangSpec::new(
                 tree_sitter_lua::LANGUAGE.into(),
                 LUA_QUERY,
                 LUA_SPANS,
@@ -921,7 +897,7 @@ impl Extractor {
                 "treesitter/lua",
                 "lua",
             )?,
-            scala: LangSpec::new(
+            "scala" => LangSpec::new(
                 tree_sitter_scala::LANGUAGE.into(),
                 SCALA_QUERY,
                 SCALA_SPANS,
@@ -929,7 +905,7 @@ impl Extractor {
                 "treesitter/scala",
                 "scala",
             )?,
-            kotlin: LangSpec::new(
+            "kotlin" => LangSpec::new(
                 tree_sitter_kotlin_ng::LANGUAGE.into(),
                 KOTLIN_QUERY,
                 KOTLIN_SPANS,
@@ -937,7 +913,7 @@ impl Extractor {
                 "treesitter/kotlin",
                 "kotlin",
             )?,
-            swift: LangSpec::new(
+            "swift" => LangSpec::new(
                 tree_sitter_swift::LANGUAGE.into(),
                 SWIFT_QUERY,
                 SWIFT_SPANS,
@@ -945,7 +921,7 @@ impl Extractor {
                 "treesitter/swift",
                 "swift",
             )?,
-            dart: LangSpec::new(
+            "dart" => LangSpec::new(
                 tree_sitter_dart::LANGUAGE.into(),
                 DART_QUERY,
                 DART_SPANS,
@@ -953,7 +929,7 @@ impl Extractor {
                 "treesitter/dart",
                 "dart",
             )?,
-            zig: LangSpec::new(
+            "zig" => LangSpec::new(
                 tree_sitter_zig::LANGUAGE.into(),
                 ZIG_QUERY,
                 ZIG_SPANS,
@@ -961,7 +937,7 @@ impl Extractor {
                 "treesitter/zig",
                 "zig",
             )?,
-            elixir: LangSpec::new(
+            "elixir" => LangSpec::new(
                 tree_sitter_elixir::LANGUAGE.into(),
                 ELIXIR_QUERY,
                 ELIXIR_SPANS,
@@ -969,7 +945,7 @@ impl Extractor {
                 "treesitter/elixir",
                 "elixir",
             )?,
-            solidity: LangSpec::new(
+            "solidity" => LangSpec::new(
                 tree_sitter_solidity::LANGUAGE.into(),
                 SOLIDITY_QUERY,
                 SOLIDITY_SPANS,
@@ -977,7 +953,7 @@ impl Extractor {
                 "treesitter/solidity",
                 "solidity",
             )?,
-            svelte: LangSpec::new(
+            "svelte" => LangSpec::new(
                 tree_sitter_svelte_ng::LANGUAGE.into(),
                 SVELTE_QUERY,
                 SVELTE_SPANS,
@@ -985,7 +961,7 @@ impl Extractor {
                 "treesitter/svelte",
                 "svelte",
             )?,
-            vue: LangSpec::new(
+            "vue" => LangSpec::new(
                 tree_sitter_vue_next::LANGUAGE.into(),
                 VUE_QUERY,
                 VUE_SPANS,
@@ -993,7 +969,7 @@ impl Extractor {
                 "treesitter/vue",
                 "vue",
             )?,
-            css: LangSpec::new(
+            "css" => LangSpec::new(
                 tree_sitter_css::LANGUAGE.into(),
                 CSS_QUERY,
                 CSS_SPANS,
@@ -1001,7 +977,7 @@ impl Extractor {
                 "treesitter/css",
                 "css",
             )?,
-            hcl: LangSpec::new(
+            "hcl" => LangSpec::new(
                 tree_sitter_hcl::LANGUAGE.into(),
                 "",
                 HCL_SPANS,
@@ -1009,7 +985,7 @@ impl Extractor {
                 "treesitter/hcl",
                 "hcl",
             )?,
-            powershell: LangSpec::new(
+            "powershell" => LangSpec::new(
                 tree_sitter_powershell::LANGUAGE.into(),
                 POWERSHELL_QUERY,
                 POWERSHELL_SPANS,
@@ -1017,7 +993,7 @@ impl Extractor {
                 "treesitter/powershell",
                 "powershell",
             )?,
-            proto: LangSpec::new(
+            "proto" => LangSpec::new(
                 tree_sitter_proto::LANGUAGE.into(),
                 PROTO_QUERY,
                 PROTO_SPANS,
@@ -1025,7 +1001,7 @@ impl Extractor {
                 "treesitter/proto",
                 "proto",
             )?,
-            graphql: LangSpec::new(
+            "graphql" => LangSpec::new(
                 tree_sitter_graphql::LANGUAGE.into(),
                 GRAPHQL_QUERY,
                 GRAPHQL_SPANS,
@@ -1033,7 +1009,7 @@ impl Extractor {
                 "treesitter/graphql",
                 "graphql",
             )?,
-            sql: LangSpec::new(
+            "sql" => LangSpec::new(
                 tree_sitter_sequel::LANGUAGE.into(),
                 SQL_QUERY,
                 SQL_SPANS,
@@ -1041,55 +1017,47 @@ impl Extractor {
                 "treesitter/sql",
                 "sql",
             )?,
-        })
+            _ => return Ok(()),
+        };
+        self.languages.insert(language.to_string(), spec);
+        Ok(())
     }
 
-    /// One parse per file yields definition facts and comment/string spans.
-    /// Unsupported languages yield nothing (not an error). `path` is only
-    /// consulted by languages whose file *is* a definition (Svelte components).
-    pub fn extract(&mut self, language: &str, path: &str, src: &[u8]) -> Extracted {
+    /// Compile each language's queries on first use, then reuse its parser.
+    /// Query errors propagate to the caller instead of publishing an empty index.
+    pub fn extract(&mut self, language: &str, path: &str, src: &[u8]) -> Result<Extracted> {
         match language {
-            "rust" => self.rust.extract(src),
-            "python" => self.python.extract(src),
-            "javascript" => self.javascript.extract(src),
-            "typescript" => self.typescript.extract(src),
-            "tsx" => self.tsx.extract(src),
-            "go" => self.go.extract(src),
-            "java" => self.java.extract(src),
-            "ruby" => self.ruby.extract(src),
-            "c" => self.c.extract(src),
-            "cpp" => self.cpp.extract(src),
-            "csharp" => self.csharp.extract(src),
-            "php" => self.php.extract(src),
-            "bash" => self.bash.extract(src),
-            "lua" => self.lua.extract(src),
-            "scala" => self.scala.extract(src),
-            "kotlin" => self.kotlin.extract(src),
-            "swift" => self.swift.extract(src),
-            "dart" => self.dart.extract(src),
-            "zig" => self.zig.extract(src),
-            "elixir" => self.elixir.extract(src),
-            "solidity" => self.solidity.extract(src),
-            "markdown" => (markdown_facts(src), None),
-            "rst" => (rst_facts(src), None),
-            "jinja" => (jinja_facts(src), None),
-            "css" => self.css.extract(src),
-            // Derived rather than queried — see `hcl_facts`.
+            "markdown" => return Ok((markdown_facts(src), None)),
+            "rst" => return Ok((rst_facts(src), None)),
+            "jinja" => return Ok((jinja_facts(src), None)),
+            _ => {}
+        }
+        self.load(language)?;
+        if matches!(language, "svelte" | "vue") {
+            self.load("javascript")?;
+            self.load("typescript")?;
+            let [Some(markup), Some(javascript), Some(typescript)] = self
+                .languages
+                .get_disjoint_mut([language, "javascript", "typescript"])
+            else {
+                unreachable!("component parsers were just loaded");
+            };
+            return Ok(extract_component(markup, javascript, typescript, path, src));
+        }
+        let Some(spec) = self.languages.get_mut(language) else {
+            return Ok(((Vec::new(), Vec::new(), Vec::new()), None));
+        };
+        Ok(match language {
             "hcl" => {
-                let tree = match self.hcl.parser.parse(src, None) {
+                let tree = match spec.parser.parse(src, None) {
                     Some(t) => t,
-                    None => return ((Vec::new(), Vec::new(), Vec::new()), None),
+                    None => return Ok(((Vec::new(), Vec::new(), Vec::new()), None)),
                 };
                 let root = tree.root_node();
-                let (mut facts, spans, rels) = self.hcl.harvest(root, src);
+                let (mut facts, spans, rels) = spec.harvest(root, src);
                 facts.extend(hcl_facts(root, src));
                 ((facts, spans, rels), Some(parse_health(root)))
             }
-            "powershell" => self.powershell.extract(src),
-            "proto" => self.proto.extract(src),
-            "graphql" => self.graphql.extract(src),
-            // Query plus a code pass — see `sql_extras` and `unqualify` for the
-            // three things a query cannot do here.
             "sql" => {
                 // tree-sitter-sequel does not accept doubled delimiters inside
                 // quoted identifiers and does not parse T-SQL bracket quoting.
@@ -1098,9 +1066,9 @@ impl Extractor {
                 // the untouched source below.
                 let repaired = repair_sql_identifier_escapes(src);
                 let parse_src = repaired.as_deref().unwrap_or(src);
-                let tree = match self.sql.parser.parse(parse_src, None) {
+                let tree = match spec.parser.parse(parse_src, None) {
                     Some(t) => t,
-                    None => return ((Vec::new(), Vec::new(), Vec::new()), None),
+                    None => return Ok(((Vec::new(), Vec::new(), Vec::new()), None)),
                 };
                 let root = tree.root_node();
                 let (mut facts, mut spans, rels, health) = {
@@ -1114,7 +1082,7 @@ impl Extractor {
                     let whole_extent = error_extent(root);
                     let isolated = root
                         .has_error()
-                        .then(|| self.extract_sql_by_statement(parse_src, src))
+                        .then(|| spec.extract_sql_by_statement(parse_src, src))
                         .flatten()
                         .filter(|(.., extent)| *extent < whole_extent);
                     match isolated {
@@ -1128,7 +1096,7 @@ impl Extractor {
                             },
                         ),
                         None => {
-                            let (facts, spans, rels) = self.sql.harvest(root, src);
+                            let (facts, spans, rels) = spec.harvest(root, src);
                             let (extra_facts, extra_spans) = sql_extras(root, src);
                             let mut facts = facts;
                             let mut spans = spans;
@@ -1145,26 +1113,8 @@ impl Extractor {
                 }
                 ((facts, spans, rels), Some(health))
             }
-            // Single-file component formats: markup wrapping the real code. Both
-            // grammars name the nodes the same way, so one path serves both —
-            // disjoint field borrows let the markup and nested extractors be
-            // held mutably at once.
-            "svelte" => extract_component(
-                &mut self.svelte,
-                &mut self.javascript,
-                &mut self.typescript,
-                path,
-                src,
-            ),
-            "vue" => extract_component(
-                &mut self.vue,
-                &mut self.javascript,
-                &mut self.typescript,
-                path,
-                src,
-            ),
-            _ => ((Vec::new(), Vec::new(), Vec::new()), None),
-        }
+            _ => spec.extract(src),
+        })
     }
 }
 
@@ -3204,4 +3154,27 @@ fn shape_of(node: Node) -> (Option<String>, i64) {
         return (None, count as i64);
     }
     (Some(h.finalize().to_hex()[..16].to_string()), count as i64)
+}
+
+#[cfg(test)]
+mod extractor_tests {
+    use super::Extractor;
+
+    #[test]
+    fn one_extractor_handles_alternating_languages_and_new_source() {
+        let mut extractor = Extractor::default();
+        for (language, source, expected) in [
+            ("python", "def first():\n    pass\n", "first"),
+            ("rust", "pub fn second() {}", "second"),
+            ("python", "def third():\n    pass\n", "third"),
+            ("rust", "pub fn fourth() {}", "fourth"),
+        ] {
+            let ((facts, _, _), health) = extractor
+                .extract(language, "sample", source.as_bytes())
+                .unwrap();
+            let names: Vec<_> = facts.iter().map(|fact| fact.name.as_str()).collect();
+            assert_eq!(names, [expected]);
+            assert_eq!(health.unwrap().errors, 0);
+        }
+    }
 }

@@ -10,6 +10,34 @@ Five harnesses, increasing in scope:
 | `completion.py` | **many repos, token-to-completion** | tokens + tool calls an agent burns to finish realistic tasks, codeq vs chained rg/sed/cat |
 | `textmode.py` | **default (text) output faithfulness** | text output carries the same facts as `--json` (locators, counts, `-C` context, no raw-JSON dumps) |
 
+## Refresh query latency (`refresh_perf.py`)
+
+Compare two release binaries with seven alternating runs per side and one discarded
+warmup. The script verifies complete definition rows and the number of refreshed
+files. It exits on command failures or incorrect results.
+
+```sh
+python3 bench/refresh_perf.py /tmp/codeq-before target/release/codeq --repo /path/to/codeq
+```
+
+The fixtures contain one or 128 Python files. `--repo` also measures an edit to
+`bench/bench.py` in two copies of the repository's tracked files. Timings include
+process startup, refresh, database writes, and definition output. Cold means a
+missing index with warm filesystem caches. The repository scenario measures an
+existing index after a single-file edit, then an unchanged query.
+
+[The lazy-language results](results/refresh_lazy_languages_20261011.json) compare
+main at `e87a446` with parsers and queries initialized on first use. On the
+210-file source snapshot, the edited query fell from a median of 1094.83 ms to
+27.34 ms, about 40 times faster. The seven-run ranges were 1066.23 to 1112.46 ms
+before and 26.22 to 29.78 ms after. Unchanged queries stayed near 3 to 4 ms.
+
+A separate baseline profile attributed 94.65% of 131 CPU samples to Tree-sitter
+query compilation functions. Each worker previously compiled all 29 parser
+variants. The new extractor compiles languages as it encounters them and reuses
+their parsers. The improvement depends on the languages needed and the amount of
+source to parse. This is not a general estimate for large repository rebuilds.
+
 ## Text-mode faithfulness (`textmode.py`)
 
 `differential.py`/`completion.py` only exercise `--json`, so the *text renderer* —

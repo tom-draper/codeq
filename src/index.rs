@@ -71,8 +71,10 @@ fn parse_one(
     size: i64,
     mtime_ns: i64,
     ctime_ns: i64,
-) -> Option<Parsed> {
-    let mut bytes = std::fs::read(abs).ok()?;
+) -> Result<Option<Parsed>> {
+    let Ok(mut bytes) = std::fs::read(abs) else {
+        return Ok(None);
+    };
     // Strip a leading UTF-8 BOM so line-1 anchors match and byte offsets align.
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         bytes.drain(..3);
@@ -100,7 +102,7 @@ fn parse_one(
             // either way.
             let text = String::from_utf8_lossy(&bytes).into_owned();
             let ((f, s, r), health) = match language {
-                Some(lang) => extractor.extract(lang, rel, text.as_bytes()),
+                Some(lang) => extractor.extract(lang, rel, text.as_bytes())?,
                 None => ((Vec::new(), Vec::new(), Vec::new()), None),
             };
             let calls = language
@@ -123,7 +125,7 @@ fn parse_one(
             )
         };
 
-    Some(Parsed {
+    Ok(Some(Parsed {
         rel: rel.to_string(),
         size,
         mtime_ns,
@@ -140,7 +142,7 @@ fn parse_one(
         calls,
         parse_errors,
         parse_recovered,
-    })
+    }))
 }
 
 /// A file the walk found changed (or new): relative path, absolute path, then
@@ -370,19 +372,13 @@ fn parse_and_write(
     now: i64,
     parse_failures: &AtomicU64,
 ) -> Result<u64> {
-    // Worker-local extractors keep their parsers thread-confined. Do not build a
-    // separate validation extractor here: constructing one compiles every
-    // language's three queries, then the workers immediately compile the same
-    // set again. A malformed query is still fatal in the worker below, before it
-    // can write partial index content.
+    // Worker-local extractors compile only the languages they encounter.
+    // A malformed query remains fatal, rolling back the refresh transaction.
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
         .clamp(1, 8)
-        // Every worker constructs the full multi-language extractor. On a
-        // small cold index, that setup can cost more than parsing the files;
-        // keep at least 32 files per worker so tiny repositories do not pay
-        // for a pool of mostly-idle extractors.
+        // Keep at least 32 files per worker to amortize parser/query setup.
         .min(work.len().div_ceil(32).max(1));
     let chunk = work.len().div_ceil(workers).max(1);
     let (res_tx, res_rx) = std::sync::mpsc::sync_channel::<Parsed>(256);
@@ -390,29 +386,20 @@ fn parse_and_write(
         for c in work.chunks(chunk) {
             let sender = res_tx.clone();
             scope.spawn(move || {
-                // Building the extractor compiles every language's queries, so
-                // it fails only when one of them is malformed — a programming
-                // error, identical for every worker and every file. Returning
-                // quietly meant the workers sent nothing, the writer stored
-                // nothing, and the whole index came back *empty and reporting
-                // itself fresh*: a broken query in one language silently
-                // zeroed all 28. Make it loud.
-                let mut ex = match Extractor::new() {
-                    Ok(e) => e,
-                    Err(e) => {
-                        eprintln!("codeq: fact extraction unavailable: {e:#}");
-                        std::process::exit(1);
-                    }
-                };
+                let mut ex = Extractor::default();
                 for (rel, abs, size, mtime, ctime) in c {
                     match parse_one(existing, &mut ex, rel, abs, *size, *mtime, *ctime) {
-                        Some(p) => {
+                        Ok(Some(p)) => {
                             if sender.send(p).is_err() {
                                 return; // writer went away (error) — stop
                             }
                         }
-                        None => {
+                        Ok(None) => {
                             parse_failures.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            eprintln!("codeq: fact extraction unavailable: {e:#}");
+                            std::process::exit(1);
                         }
                     }
                 }
