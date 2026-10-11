@@ -36,14 +36,20 @@ When looking for code to understand or change, request definitions or source
 ```sh
 codeq search 'retry|backoff' --symbols --path src
 codeq search 'retry|backoff' --source --path src --max-tokens 3000
+codeq astgrep '$X.unwrap()' --language rust --source --max-tokens 3000
 ```
 
-`--symbols` and `--source` rank by matching-line count, descending; ties use path
-and position. `--limit` counts definitions in these modes. Source is budgeted in
+`search --symbols` and `search --source` rank by matching-line count, descending;
+ties use path and position. `--limit` counts definitions in these modes. Source is budgeted in
 that order; definitions that do not fit are listed under `omitted`. Hit frequency
 is a navigation heuristic, not a claim of semantic relevance. Matches outside
 indexed definitions are excluded from these modes; use ordinary `search` for
 module-level code, imports and unsupported file types.
+
+`astgrep --source` returns enclosing definitions ranked by structural match count,
+with `--limit` counting definitions. Several matches in one definition produce one
+source block. Matches outside indexed definitions are reported in a note; ordinary
+`astgrep` returns those exact matches.
 
 If you already have `file:line`, read its enclosing definition directly:
 

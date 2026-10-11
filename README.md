@@ -232,6 +232,9 @@ Search:
   with ties broken by path and position. Both `--limit` and the source budget use
   that order, so a file's alphabetical position cannot crowd out stronger matches.
 - `codeq astgrep '<pattern>' --language <lang>` matches over the syntax tree, e.g. `'$X.unwrap()'`.
+  Add `--source` to read each matching enclosing definition once in the same call.
+  Definitions rank by structural match count before `--limit` and `--max-tokens` apply.
+  Budget omissions and matches outside indexed definitions are explicit.
 
 Repo state:
 - `codeq changed --compare-to <ref>` lists files changed vs a git ref (`--symbols` for the
