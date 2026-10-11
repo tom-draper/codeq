@@ -11836,3 +11836,42 @@ fn an_undefined_name_does_not_guess_why_it_is_undefined() {
         String::from_utf8_lossy(&f.raw(&["definitions", "zzznotanything"]).stderr).to_string();
     assert!(typo.contains("no symbol named"), "{typo}");
 }
+
+/// Deterministic prose-like filler: enough distinct trigrams, repeated often
+/// enough, that a positional trigram index dwarfs the text it covers.
+fn filler_text(bytes: usize) -> String {
+    let mut out = String::with_capacity(bytes + 16);
+    let mut state: u64 = 0x2545_F491_4F6C_DD1D;
+    while out.len() < bytes {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        out.push_str(&format!("w{:x} ", (state >> 33) % 4096));
+        if state % 11 == 0 {
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn index_bytes(f: &Fixture) -> u64 {
+    std::fs::metadata(f.path().join(".codeq/index.db"))
+        .unwrap()
+        .len()
+}
+
+#[test]
+fn the_content_index_costs_less_than_the_text_it_covers() {
+    // The trigram index is only ever a LIKE prefilter, so it stores which files
+    // hold a trigram and not where. With positions it was twice the size of the
+    // source on a C repo and the bulk of every index.db.
+    let f = Fixture::new();
+    let text = filler_text(1 << 20);
+    f.write("notes.txt", &text);
+
+    let hits = f.run(&["search", "w7ff", "--limit", "0"]);
+    assert!(!hits["data"]["matches"].as_array().unwrap().is_empty());
+    // The stored body is one copy; everything else must fit in the second.
+    let (index, source) = (index_bytes(&f), text.len() as u64);
+    assert!(index < source * 2, "index {index} B for {source} B of text");
+}

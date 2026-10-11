@@ -101,7 +101,7 @@ use rusqlite::Connection;
 // hashing the query constants is the obvious form — but it would cover only the
 // query-driven half. A visibility rule or an attribute reader is ordinary Rust
 // and would slip through, while the mechanism looked complete. Not yet solved.
-pub const SCHEMA_VERSION: i64 = 42;
+pub const SCHEMA_VERSION: i64 = 43;
 
 pub struct Db {
     pub conn: Connection,
@@ -287,19 +287,16 @@ impl Db {
             "#,
         )?;
 
-        // Full-text content index using the trigram tokenizer, which lets
-        // SQLite accelerate `LIKE '%literal%'` on any substring of >= 3 chars.
-        // We prefilter with LIKE (not FTS `MATCH`, which silently drops matches
-        // for many substrings) by a regex's required literals (Zoekt/csearch
-        // style), not just token/word queries. Case-insensitive so it's a safe
-        // superset for both case-sensitive and -i searches (the real matcher
-        // confirms).
-        self.conn.execute_batch(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
-                 path UNINDEXED, language UNINDEXED, body,
-                 tokenize = 'trigram case_sensitive 0'
-             );",
-        )?;
+        // An index from an older schema may carry a `content_fts` built with
+        // different options, which `CREATE … IF NOT EXISTS` would keep. Drop it:
+        // the version change below empties it anyway, and a drop hands its
+        // pages back at once where a row-by-row delete writes tombstones first.
+        let prev = self.get_meta("schema_version")?;
+        if prev.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
+            self.conn
+                .execute_batch("DROP TABLE IF EXISTS content_fts;")?;
+        }
+        self.create_fts()?;
 
         // Best-effort column additions for indexes created before these fields
         // existed. Errors (column already present) are expected and ignored.
@@ -348,16 +345,37 @@ impl Db {
 
         // On a schema version change, wipe derived data so the next refresh
         // rebuilds everything (including the FTS index) from scratch.
-        let prev = self.get_meta("schema_version")?;
         if prev.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
             self.conn.execute("DELETE FROM files", [])?; // cascades to facts
-            let _ = self.conn.execute("DELETE FROM content_fts", []);
+
             // Clear the dir cache too: an empty `files` table against a populated
             // `dirs` cache would look "fresh" and skip the rebuild walk.
             let _ = self.conn.execute("DELETE FROM dirs", []);
             let _ = self.set_meta("last_indexed_at", "0");
         }
         self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
+        Ok(())
+    }
+
+    /// Full-text content index using the trigram tokenizer, which lets SQLite
+    /// accelerate `LIKE '%literal%'` on any substring of >= 3 chars. We
+    /// prefilter with LIKE (not FTS `MATCH`, which silently drops matches for
+    /// many substrings) by a regex's required literals (Zoekt/csearch style),
+    /// not just token/word queries. Case-insensitive so it's a safe superset
+    /// for both case-sensitive and -i searches (the real matcher confirms).
+    ///
+    /// `detail=none` keeps only which rows hold each trigram, not where. LIKE
+    /// never needed the positions — SQLite re-checks every candidate row
+    /// against the stored body — and they were most of the database: 30.7 MB
+    /// of a 66 MB index on redis, 1.5 GB on a repo of committed geodata, against
+    /// 2.5 MB and 5.4 MB without them.
+    fn create_fts(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
+                 path UNINDEXED, language UNINDEXED, body,
+                 tokenize = 'trigram case_sensitive 0', detail = none
+             );",
+        )?;
         Ok(())
     }
 
