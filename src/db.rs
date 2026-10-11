@@ -103,6 +103,10 @@ use rusqlite::Connection;
 // and would slip through, while the mechanism looked complete. Not yet solved.
 pub const SCHEMA_VERSION: i64 = 43;
 
+/// Below this many free pages (1 MiB at the default page size) compaction is
+/// not worth a rewrite, whatever share of a small index they are.
+const COMPACT_MIN_FREE_PAGES: i64 = 256;
+
 pub struct Db {
     pub conn: Connection,
     /// The `.codeq` directory; reserved for status/cleanup commands.
@@ -377,6 +381,43 @@ impl Db {
              );",
         )?;
         Ok(())
+    }
+
+    /// Empty the content index for a full rebuild. Dropped and recreated, not
+    /// `DELETE`d: FTS5 deletes row by row, writing a tombstone per row into an
+    /// index that is about to be thrown away, where a drop frees its pages.
+    pub fn reset_fts(&self) -> Result<()> {
+        self.conn
+            .execute_batch("DROP TABLE IF EXISTS content_fts;")?;
+        self.create_fts()
+    }
+
+    /// Give free pages back to the filesystem once they are a real share of the
+    /// file. SQLite never shrinks a database on its own — deleted rows leave
+    /// pages on a free list — so an index only ever grew: one measured 5.3 GB
+    /// held 3.1 GB of nothing. Thresholded because `VACUUM` rewrites every live
+    /// page: at a quarter free it reclaims at least a third of what it copies,
+    /// and a steady trickle of edits never reaches it.
+    ///
+    /// Best-effort throughout. A failure here (another process mid-read, a full
+    /// disk) leaves a correct index that is merely larger than it need be.
+    pub fn compact_if_bloated(&self) {
+        let pragma = |name: &str| -> i64 {
+            self.conn
+                .query_row(&format!("PRAGMA {name}"), [], |r| r.get(0))
+                .unwrap_or(0)
+        };
+        let (pages, free) = (pragma("page_count"), pragma("freelist_count"));
+        if free < COMPACT_MIN_FREE_PAGES || free * 4 < pages {
+            return;
+        }
+        if self.conn.execute_batch("VACUUM;").is_ok() {
+            // In WAL mode the rewrite lands in the log; the main file only
+            // shrinks, and the log only empties, at a checkpoint.
+            let _ = self
+                .conn
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+        }
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {

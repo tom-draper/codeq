@@ -11875,3 +11875,20 @@ fn the_content_index_costs_less_than_the_text_it_covers() {
     let (index, source) = (index_bytes(&f), text.len() as u64);
     assert!(index < source * 2, "index {index} B for {source} B of text");
 }
+
+#[test]
+fn removing_content_shrinks_the_index_file() {
+    // SQLite parks deleted pages on a free list and never returns them, so an
+    // index only grew: a real one was 5.3 GB with 3.1 GB of it free.
+    let f = Fixture::new();
+    f.write("src/lib.py", "def compute():\n    return 1\n");
+    f.write("data/big.txt", &filler_text(2 << 20));
+    f.run(&["files"]);
+    let before = index_bytes(&f);
+
+    f.remove("data/big.txt");
+    let files = f.run(&["files"]);
+    assert_eq!(field_set(&files, "path"), ["src/lib.py"]);
+    let after = index_bytes(&f);
+    assert!(after * 4 < before, "index went {before} B -> {after} B");
+}
