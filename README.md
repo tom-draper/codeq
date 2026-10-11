@@ -440,9 +440,10 @@ Every command works there, and the index lives in a `.codeq` inside that directo
   handler bound by `@click="handleClick"` or `on:click={handleClick}`. SvelteKit route files
   (`+page.svelte`) get no component fact; they are loaded by convention, never by name.
   `<style>` contents stay unclassified, so CSS comments read as code to `search --in`.
-- Index-backed search. File contents sit in an FTS5 trigram index. A query is narrowed by
-  the index, then confirmed with a precise regex, so search never re-reads the filesystem
-  and never drops a match grep would find.
+- Index-backed search. An FTS5 trigram index records which files contain each trigram —
+  not the text, which is already on disk. A query is narrowed to candidate files by the
+  index, then only those are read and confirmed with a precise regex, so search never
+  drops a match grep would find.
 
 ## Development
 

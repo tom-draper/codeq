@@ -136,7 +136,7 @@ fn used_definition_names(
 
     let mut body_stmt =
         s.db.conn
-            .prepare("SELECT path, language, body FROM content_fts")?;
+            .prepare("SELECT path, language FROM files WHERE is_text = 1 ORDER BY path")?;
     let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
     let mut used = HashSet::new();
     // Definition extents already accounted for, so a second occurrence inside
@@ -146,7 +146,10 @@ fn used_definition_names(
     while let Some(row) = rows.next()? {
         let path = row.get_ref(0)?.as_str()?;
         let language: Option<String> = row.get(1)?;
-        let body = row.get_ref(2)?.as_str()?;
+        let Some(body) = crate::index::load_body(&s.repo.root, path) else {
+            continue;
+        };
+        let body = body.as_str();
         let spans = if crate::facts::has_spans(language.as_deref().unwrap_or("")) {
             span_stmt
                 .query_map([path], crate::search::span_row)?
@@ -372,7 +375,7 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
     {
         let mut stmt =
             s.db.conn
-                .prepare("SELECT path, language, body FROM content_fts")?;
+                .prepare("SELECT path, language FROM files WHERE is_text = 1 ORDER BY path")?;
         let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
@@ -389,7 +392,10 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
             let spans: Vec<_> = span_stmt
                 .query_map([rel], crate::search::span_row)?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
-            let body = row.get_ref(2)?.as_str()?;
+            let Some(body) = crate::index::load_body(&s.repo.root, rel) else {
+                continue;
+            };
+            let body = body.as_str();
             let bytes = body.as_bytes();
             // Byte offset of each line start, so an occurrence can be matched
             // against the definition sites recorded above (which are line-based).

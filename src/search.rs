@@ -456,19 +456,20 @@ pub(crate) fn innermost(defs: &[FileDef], off: usize) -> Option<&FileDef> {
 /// Stream candidate file bodies from the trigram FTS index and run `re` over each,
 /// shaping the output per `opts.out`. Deterministic order (path, then line).
 ///
-/// Bodies are *borrowed* from each SQLite row and scanned in place — never
-/// collected — so a query over a common substring (which can match a large
+/// Bodies are read from disk one candidate at a time and scanned in place —
+/// never collected — so a query over a common substring (which can match a large
 /// fraction of a big repo) holds one body at a time instead of materializing all
-/// of them (which spiked memory into the hundreds of MB and copied every byte).
-/// The trigram `LIKE` prefilter is a safe superset (`_`/`%` only broaden); the
-/// precise regex confirms. With no literal, every text file is a candidate.
+/// of them (which spiked memory into the hundreds of MB).
+/// The trigram prefilter is a safe superset; the precise regex confirms. With
+/// no literal, every text file is a candidate.
 /// `path`/`language` filters apply per row; when `opts.in_filter` isn't `Any`,
 /// matches are classified via cached spans (files in an unparseable language are
 /// skipped, never guessed).
 pub(crate) fn run_search(
     conn: &rusqlite::Connection,
+    root: &Path,
     re: &regex::Regex,
-    like: Option<&[String]>,
+    prefilter: Option<&[String]>,
     path_filter: Option<&str>,
     language_filter: Option<&str>,
     path_accept: Option<&dyn Fn(&str) -> bool>,
@@ -476,8 +477,9 @@ pub(crate) fn run_search(
 ) -> Result<SearchData> {
     let (acc, _) = run_search_acc(
         conn,
+        root,
         re,
-        like,
+        prefilter,
         path_filter,
         language_filter,
         path_accept,
@@ -505,8 +507,9 @@ fn scan_cap(opts: &ScanOpts) -> usize {
 /// scan stopped at the limit, so there is nothing left to add.
 pub(crate) fn run_search_acc(
     conn: &rusqlite::Connection,
+    root: &Path,
     re: &regex::Regex,
-    like: Option<&[String]>,
+    prefilter: Option<&[String]>,
     path_filter: Option<&str>,
     language_filter: Option<&str>,
     path_accept: Option<&dyn Fn(&str) -> bool>,
@@ -515,19 +518,18 @@ pub(crate) fn run_search_acc(
     let cap = scan_cap(opts);
     let filtering = opts.in_filter != InFilter::Any;
 
-    let patterns = like.filter(|l| !l.is_empty() && !opts.wants_non_matching());
-    let mut sql = String::from("SELECT path, language, body FROM content_fts");
-    if let Some(pats) = patterns {
-        let clause = (1..=pats.len())
-            .map(|i| format!("body LIKE ?{i}"))
-            .collect::<Vec<_>>()
-            .join(" OR ");
-        sql.push_str(&format!(" WHERE {clause}"));
+    // Candidates are every text file, or — given a prefilter — the ones whose
+    // trigrams could hold a match. Each literal's clause is an AND of its
+    // trigrams; any one literal suffices, so the clauses are OR-ed.
+    let clauses = prefilter.filter(|l| !l.is_empty() && !opts.wants_non_matching());
+    let mut sql = String::from("SELECT path, language FROM files WHERE is_text = 1");
+    if clauses.is_some() {
+        sql.push_str(" AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?1)");
     }
     sql.push_str(" ORDER BY path");
-    let params: Vec<&dyn rusqlite::ToSql> = patterns
-        .map(|pats| pats.iter().map(|p| p as &dyn rusqlite::ToSql).collect())
-        .unwrap_or_default();
+    let query = clauses.map(|c| c.join(" OR "));
+    let params: Vec<&dyn rusqlite::ToSql> =
+        query.iter().map(|q| q as &dyn rusqlite::ToSql).collect();
 
     let mut def_stmt = conn.prepare(
         "SELECT name, kind, start_byte, end_byte FROM facts
@@ -560,8 +562,11 @@ pub(crate) fn run_search_acc(
                 continue;
             }
         }
-        // Borrow the body from the row — never copied into an owned String.
-        let body = row.get_ref(2)?.as_str()?;
+        // The index holds trigrams, not text: the file itself is the body.
+        let Some(body) = crate::index::load_body(root, rel) else {
+            continue;
+        };
+        let body = body.as_str();
 
         // A `$`-binding language also needs spans, with no `--in` filter in
         // sight: `$` is identifier syntax in code and something else inside a
@@ -1119,31 +1124,51 @@ pub(crate) fn scan_stdin(
     ))
 }
 
-/// A `%literal%` LIKE pattern for the content index — trigram needs >= 3 chars,
-/// so shorter literals can't be prefiltered (caller full-scans). `_`/`%` in the
-/// literal are left as LIKE wildcards: only broadens the candidate set (a safe
-/// superset), and the precise regex confirms.
-pub(crate) fn like_pattern(lit: &str) -> Option<String> {
-    if lit.chars().count() < 3 {
+/// Most trigrams one literal contributes to the prefilter. Any subset of a
+/// literal's trigrams is still a superset filter, and past a few dozen each
+/// extra one costs a posting-list intersection to exclude almost nothing.
+const MAX_TRIGRAMS: usize = 32;
+
+/// The content-index clause for one literal: an AND of its trigrams, each a
+/// quoted FTS5 string so the tokenizer folds it exactly as it folded the file.
+/// A file containing the literal contains every one of its trigrams, so the
+/// clause never drops a match; a file holding them all apart is a false
+/// candidate the real matcher rejects.
+///
+/// `None` when the literal cannot be prefiltered and the caller must full-scan:
+/// shorter than a trigram, or holding a NUL, at which the tokenizer stops.
+pub(crate) fn trigram_clause(lit: &str) -> Option<String> {
+    let chars: Vec<char> = lit.chars().collect();
+    if chars.len() < 3 || chars.contains(&'\0') {
         return None;
     }
-    Some(format!("%{lit}%"))
+    let mut seen = std::collections::HashSet::new();
+    let terms: Vec<String> = chars
+        .windows(3)
+        .filter(|w| seen.insert(w.to_vec()))
+        .take(MAX_TRIGRAMS)
+        .map(|w| {
+            let tri: String = w.iter().collect();
+            format!("\"{}\"", tri.replace('"', "\"\""))
+        })
+        .collect();
+    Some(format!("({})", terms.join(" AND ")))
 }
 
 /// A single-literal prefilter (for `--fixed` search and `references`).
-pub(crate) fn like_of(lit: &str) -> Option<Vec<String>> {
-    like_pattern(lit).map(|p| vec![p])
+pub(crate) fn prefilter_of(lit: &str) -> Option<Vec<String>> {
+    trigram_clause(lit).map(|p| vec![p])
 }
 
 /// Build a prefilter for a regex: a set of literals such that *every* match must
-/// contain at least one of them (as a substring), OR-ed as LIKE patterns. Uses
+/// contain at least one of them (as a substring), OR-ed as trigram clauses. Uses
 /// regex-syntax prefix/suffix literal extraction, then an inner-literal fallback.
 /// Returns `None` when no safe prefilter exists — the caller then full-scans,
 /// which is always correct.
 ///
 /// Correctness: a finite prefix (or suffix) literal set means every match starts
 /// (or ends) with one of the literals, so it contains one as a substring; the
-/// LIKE OR is a true superset and never drops a match.
+/// OR of their clauses is a true superset and never drops a match.
 pub(crate) fn regex_prefilter(pattern: &str) -> Option<Vec<String>> {
     let hir = regex_syntax::parse(pattern).ok()?;
     usable_literals(ExtractKind::Prefix, &hir)
@@ -1189,7 +1214,7 @@ fn inner_required_literal(hir: &regex_syntax::hir::Hir) -> Option<Vec<String>> {
     walk(hir, &mut cur, &mut best);
     flush(&mut cur, &mut best);
     let s = std::str::from_utf8(&best).ok()?;
-    like_pattern(s).map(|p| vec![p])
+    trigram_clause(s).map(|p| vec![p])
 }
 
 fn usable_literals(kind: ExtractKind, hir: &regex_syntax::hir::Hir) -> Option<Vec<String>> {
@@ -1205,7 +1230,7 @@ fn usable_literals(kind: ExtractKind, hir: &regex_syntax::hir::Hir) -> Option<Ve
         let s = std::str::from_utf8(lit.as_bytes()).ok()?;
         // Any alternative shorter than a trigram is unfilterable, which would
         // make the whole OR unsafe — bail to a full scan instead.
-        terms.push(like_pattern(s)?);
+        terms.push(trigram_clause(s)?);
     }
     Some(terms)
 }

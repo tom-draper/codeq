@@ -13,31 +13,24 @@ pub fn cmd_astgrep(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
-    // Gather the indexed source of every file in the requested language (the
-    // stored FTS body is the whole file). Structural search re-parses each.
-    //
-    // The path filter is applied in Rust, NOT as `AND path LIKE ?` in this query.
-    // `content_fts` is an FTS5 table with `tokenize = 'trigram'`, and the trigram
-    // tokenizer *takes over* `LIKE` on the table — so a `LIKE` against `path`,
-    // which is `UNINDEXED` and therefore has no trigram data, matches nothing at
-    // all. Every `--path` form returned an empty result with exit 0: not a
-    // narrowed answer, an emptied one. It looked like "astgrep can't express
-    // that", which is what the reporter concluded before giving up on the
-    // command. `search` was never affected because it LIKEs `body` (which *is*
-    // the indexed column) and filters paths in Rust, as here.
+    // Every text file in the requested language; structural search re-parses
+    // each, so the source is read from disk as the matcher asks for it. The
+    // path filter runs first, so a narrowed query reads only what it names.
     let mut stmt =
         s.db.conn
-            .prepare("SELECT path, body FROM content_fts WHERE language = ?1 ORDER BY path")?;
+            .prepare("SELECT path FROM files WHERE language = ?1 AND is_text = 1 ORDER BY path")?;
     let mut scanned = 0usize;
     // Stream the bodies into the matcher one at a time (it re-parses each and
     // keeps only matches), so a big single-language repo isn't all held in memory
     // at once — the astgrep matcher takes an iterator, so no Vec is needed.
     let files = stmt
-        .query_map([&language], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?
+        .query_map([&language], |r| r.get::<_, String>(0))?
         .filter_map(|r| r.ok())
-        .filter(|(p, _): &(String, String)| path.as_deref().is_none_or(|q| p.contains(q)))
+        .filter(|p| path.as_deref().is_none_or(|q| p.contains(q)))
+        .filter_map(|p| {
+            let body = crate::index::load_body(&s.repo.root, &p)?;
+            Some((p, body))
+        })
         .inspect(|_| scanned += 1);
 
     let mut matches = crate::astgrep::search(language, pattern, files)?;
@@ -145,13 +138,15 @@ pub fn cmd_astgrep_explain(cwd: &Path, location: &str, out: Out) -> Result<()> {
     }
     let rel = resolve_file(&s, path)?;
 
-    // Language and body both come from the index, so `--explain` needs no
-    // `--language`: the file already knows what it is.
-    let (language, body): (Option<String>, String) = s.db.conn.query_row(
-        "SELECT language, body FROM content_fts WHERE path = ?1",
-        [&rel],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
+    // The language comes from the index, so `--explain` needs no `--language`:
+    // the file already knows what it is.
+    let language: Option<String> =
+        s.db.conn
+            .query_row("SELECT language FROM files WHERE path = ?1", [&rel], |r| {
+                r.get(0)
+            })?;
+    let body = crate::index::load_body(&s.repo.root, &rel)
+        .ok_or_else(|| anyhow!("cannot read '{rel}'"))?;
     let language = language.ok_or_else(|| {
         anyhow!("'{rel}' has no language codeq classifies, so it has no parse tree")
     })?;
@@ -332,7 +327,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     // usable >=3-char literal), in which case we scan every body — still from
     // the index, never the filesystem, and always correct.
     let match_query = match args.patterns {
-        [one] if args.fixed => like_of(one),
+        [one] if args.fixed => prefilter_of(one),
         _ => regex_prefilter(&expr),
     };
     // `--glob` and grep-style positional paths both become per-row path
@@ -436,6 +431,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     } else {
         run_search_acc(
             &s.db.conn,
+            &s.repo.root,
             &re,
             match_query.as_deref(),
             args.path,
@@ -607,7 +603,7 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
     let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
     // The name is a substring of every reference, so the trigram index narrows
     // to files that contain it (the \b matcher then confirms word boundaries).
-    let match_query = like_of(name);
+    let match_query = prefilter_of(name);
     // A call site or qualified access is *code* — a doc-comment example like
     // `fn build()` is not one — so the position filters imply code-only.
     let in_filter = if call_only || qualifier.is_some() {
@@ -632,6 +628,7 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
     };
     let (mut hits, mut truncated) = match run_search(
         &s.db.conn,
+        &s.repo.root,
         &re,
         match_query.as_deref(),
         path,

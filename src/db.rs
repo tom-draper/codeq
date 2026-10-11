@@ -101,7 +101,7 @@ use rusqlite::Connection;
 // hashing the query constants is the obvious form — but it would cover only the
 // query-driven half. A visibility rule or an attribute reader is ordinary Rust
 // and would slip through, while the mechanism looked complete. Not yet solved.
-pub const SCHEMA_VERSION: i64 = 44;
+pub const SCHEMA_VERSION: i64 = 45;
 
 /// Below this many free pages (1 MiB at the default page size) compaction is
 /// not worth a rewrite, whatever share of a small index they are.
@@ -215,6 +215,9 @@ impl Db {
                 -- indexes; an integer is not.
                 id           INTEGER PRIMARY KEY,
                 path         TEXT NOT NULL UNIQUE,
+                -- Text, so searchable: its trigrams are in `content_fts` under
+                -- this row's id. A file with a NUL in its first 8 KiB is not.
+                is_text      INTEGER NOT NULL DEFAULT 0,
                 language     TEXT,
                 size_bytes   INTEGER NOT NULL,
                 mtime_ns     INTEGER,
@@ -334,22 +337,25 @@ impl Db {
         Ok(tx.commit()?)
     }
 
-    /// Full-text content index using the trigram tokenizer, which lets SQLite
-    /// accelerate `LIKE '%literal%'` on any substring of >= 3 chars. We
-    /// prefilter with LIKE (not FTS `MATCH`, which silently drops matches for
-    /// many substrings) by a regex's required literals (Zoekt/csearch style),
-    /// not just token/word queries. Case-insensitive so it's a safe superset
-    /// for both case-sensitive and -i searches (the real matcher confirms).
+    /// The trigram index over file contents: which files hold each trigram,
+    /// keyed by `files.id`, and nothing else. A search intersects the trigrams
+    /// of its required literals to get candidate files (Zoekt/csearch style),
+    /// then reads those from disk for the real matcher to confirm.
+    /// Case-insensitive so the candidates are a safe superset for both
+    /// case-sensitive and -i searches.
     ///
-    /// `detail=none` keeps only which rows hold each trigram, not where. LIKE
-    /// never needed the positions — SQLite re-checks every candidate row
-    /// against the stored body — and they were most of the database: 30.7 MB
-    /// of a 66 MB index on redis, 1.5 GB on a repo of committed geodata, against
-    /// 2.5 MB and 5.4 MB without them.
+    /// Two things it deliberately does not hold, each of which used to be most
+    /// of the database:
+    ///   * trigram *positions* (`detail=none`) — 30.7 MB of a 66 MB index on
+    ///     redis, 1.5 GB on a repo of committed geodata, against 2.5 MB and
+    ///     5.4 MB without them;
+    ///   * the text itself (`content=''`). Every query refreshes first, so the
+    ///     file on disk is the text that was indexed, and a second copy of it
+    ///     was 702 MB of what the geodata repo had left.
     fn create_fts(&self) -> Result<()> {
         self.conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
-                 path UNINDEXED, language UNINDEXED, body,
+                 body, content = '', contentless_delete = 1,
                  tokenize = 'trigram case_sensitive 0', detail = none
              );",
         )?;

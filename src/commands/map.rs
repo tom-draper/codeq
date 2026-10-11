@@ -150,11 +150,13 @@ fn generated_files(conn: &rusqlite::Connection, total_symbols: i64) -> Result<Op
 /// This is the expensive case, and it was the silent one. A `.png` has no
 /// grammar, so it is never content-indexed and costs nothing but a line in the
 /// language table — and that is the case the `(unknown)` note above warns about.
-/// A tree of `.json` backups *is* text: it goes into the trigram index whole. On
-/// one dashboard repo, 14.5 MB of `updater/backups/*.json` against 700 KB of
-/// actual code produced a **129 MB** `index.db`, and `map` said nothing at all.
-/// The advice is the same either way (`.codeqignore`), so the warning should be
-/// too.
+/// A tree of `.json` backups *is* text, so it is searched. On one dashboard
+/// repo, 14.5 MB of `updater/backups/*.json` against 700 KB of actual code
+/// produced a **129 MB** `index.db`, and `map` said nothing at all. The index
+/// no longer stores text or trigram positions, so that cost is gone; what is
+/// left is that every search without a selective literal reads the tree, and
+/// its hits crowd out the code's. The advice is the same either way
+/// (`.codeqignore`), so the warning should be too.
 ///
 /// Thresholds are deliberately blunt — no symbols at all, a fifth of the bytes,
 /// and at least a megabyte — because the note exists to catch the case that is
@@ -205,8 +207,8 @@ fn committed_data(
 
     Ok(Some(format!(
         "{} of {} is {} that defines nothing{where_}; unlike a binary it is \
-         indexed for search, so it dominates the index — `.codeqignore` it if \
-         it is data rather than code",
+         searched, so it slows and crowds every broad search — `.codeqignore` \
+         it if it is data rather than code",
         human_bytes(l.bytes),
         human_bytes(totals.bytes),
         l.language,

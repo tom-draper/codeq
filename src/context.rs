@@ -837,11 +837,9 @@ fn fold_bodies(db: &Db, d: &Def, text: &str) -> Option<String> {
 /// BOM-prefixed file, and by two per invalid byte on anything that wasn't valid
 /// UTF-8, yielding source that started mid-expression.
 fn chunk_text(root: &Path, d: &Def, cache: &mut HashMap<String, Option<String>>) -> Option<String> {
-    let text = cache.entry(d.path.clone()).or_insert_with(|| {
-        let bytes = std::fs::read(root.join(&d.path)).ok()?;
-        let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
-        Some(String::from_utf8_lossy(bytes).into_owned())
-    });
+    let text = cache
+        .entry(d.path.clone())
+        .or_insert_with(|| crate::index::load_body(root, &d.path));
     let text = text.as_ref()?;
     let end = d.end_byte.min(text.len());
     if d.start_byte >= end {
