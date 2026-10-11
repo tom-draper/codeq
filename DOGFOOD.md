@@ -4,6 +4,44 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-10-11 — The index no longer holds a copy of the repo
+
+The entry below left one thing standing: the stored body of every text file,
+702 of the 765 MB that remained on `uk-data-atlas`. It was there because
+`search` prefiltered with `LIKE`, and SQLite re-checks `LIKE` against stored
+text. The index is now contentless — it records which files contain each
+trigram, keyed by a file id — and a search intersects the trigrams of its
+required literals itself, then reads only the candidate files from disk. Every
+query refreshes first, so the file on disk is the text that was indexed.
+
+`spans` and `calls` moved to the same integer file id in place of a repeated
+path, clustered on it, which removed two indexes outright.
+
+| `index.db` | at the start of the day | after the entry below | now |
+| --- | --- | --- | --- |
+| `uk-data-atlas` (700 MB indexed) | 5.3 GB | 765 MB | **17.1 MB** |
+| redis (14 MB indexed) | 69 MB | 36.7 MB | **11.4 MB** |
+
+Trigram `MATCH` is what an earlier session replaced with `LIKE` because it
+dropped matches (see "CRITICAL, FIXED" far below), so this was the risk. The
+difference is that nothing here is a phrase query: each trigram is its own
+quoted term, AND-ed, so a file holding the literal necessarily holds every
+term. Differential harness: 8,602 PASS, 0 FAIL, and `search` went from 2.66x to
+2.36x ripgrep's time across the corpus.
+
+Reading from disk also fixed the slow searches noted below, which were SQLite
+paging multi-megabyte bodies out of overflow pages. Same three queries on
+`uk-data-atlas`, warm: 2–38 s before, 0.2–1.4 s now, same file counts as `rg`.
+
+Two things found on the way, neither caused by this work:
+
+- A test that indexes one generated file of 20,000 Python functions took 87 s
+  in a release build. Extraction is superlinear in definitions per file (2,500:
+  2.6 s; 5,000: 5.9 s; 10,000: 19.5 s), on `main` as much as here. Not yet
+  investigated.
+- Twelve processes starting on a repo with no index failed with "database is
+  locked" about once in a hundred invocations, also on `main`.
+
 ## 2026-10-11 — The index was mostly trigram positions and free pages
 
 Asked why `index.db` gets so large, I ran `dbstat` over the indexes already on
