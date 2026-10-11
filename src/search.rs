@@ -1064,11 +1064,11 @@ pub(crate) fn scan_stdin(
                     "--in needs comment/string spans, which codeq does not extract for '{lang}'"
                 ));
             }
-            let mut ex = Extractor::new()?;
+            let mut ex = Extractor::default();
             // No path: stdin has no filename. Only single-file component
             // formats use it (to name the component after its file), and a
             // piped Svelte buffer has no file to be named after.
-            let ((facts, spans, _), _) = ex.extract(lang, "", body.as_bytes());
+            let ((facts, spans, _), _) = ex.extract(lang, "", body.as_bytes())?;
             let defs: Vec<FileDef> = facts
                 .into_iter()
                 .filter(|f| f.kind != "import")

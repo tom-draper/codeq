@@ -308,7 +308,7 @@ fn api_diff(
     limit: usize,
 ) -> Result<()> {
     let changed = s.repo.changed_since(compare_to)?;
-    let mut ex = crate::facts::Extractor::new()?;
+    let mut ex = crate::facts::Extractor::default();
     let mut data: Vec<ApiChangeRow> = Vec::new();
     // Names that left this file but are still exported from it via an import.
     // Reported as a note rather than dropped silently: "it moved" is the fact,
@@ -327,7 +327,7 @@ fn api_diff(
         let mut old: HashMap<String, Vec<(String, String)>> = HashMap::new();
         if let Some(bytes) = s.repo.file_at(compare_to, &file) {
             for fact in ex
-                .extract(lang, &file, &bytes)
+                .extract(lang, &file, &bytes)?
                 .0
                  .0
                 .into_iter()
