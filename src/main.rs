@@ -375,6 +375,9 @@ enum Command {
         /// reader's attention.
         #[arg(long)]
         resolved: bool,
+        /// Include source for ambiguous callee candidates as well as listing them.
+        #[arg(long)]
+        include_ambiguous: bool,
         /// Approximate token budget for the included source (the definition is
         /// always included; callers and callees fill the rest).
         ///
@@ -1066,6 +1069,7 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             at,
             path,
             resolved,
+            include_ambiguous,
             max_tokens,
         } => commands::cmd_explore(
             cwd,
@@ -1073,6 +1077,7 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             at.as_deref(),
             path.as_deref(),
             resolved,
+            include_ambiguous,
             max_tokens,
             out,
         ),
