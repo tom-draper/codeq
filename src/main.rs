@@ -652,9 +652,15 @@ enum Command {
         /// Restrict to paths containing this substring.
         #[arg(long)]
         path: Option<String>,
-        /// Maximum matches to return (0 = unlimited).
+        /// Maximum matches, or matching definitions with --source (0 = unlimited).
         #[arg(long, default_value_t = 100)]
         limit: usize,
+        /// Return each enclosing definition once, ranked by structural match count.
+        #[arg(long, conflicts_with = "explain")]
+        source: bool,
+        /// Source token budget (approximate, 4 bytes per token).
+        #[arg(long, default_value_t = 12000, requires = "source")]
+        max_tokens: u64,
     },
     /// Content search; each match annotated with its enclosing definition.
     #[command(alias = "grep", alias = "rg")]
@@ -1190,6 +1196,8 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             path,
             limit,
             explain,
+            source,
+            max_tokens,
         } => match explain {
             Some(loc) => commands::cmd_astgrep_explain(cwd, &loc, out),
             // clap's `required_unless_present` guarantees both are set here.
@@ -1199,6 +1207,7 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
                 &language.unwrap_or_default(),
                 path,
                 limit,
+                source.then_some(max_tokens),
                 out,
             ),
         },

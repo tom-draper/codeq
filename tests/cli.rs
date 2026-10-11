@@ -12099,3 +12099,198 @@ fn the_trigram_prefilter_treats_fts_syntax_as_text() {
     f.remove("other.txt");
     assert!(hit(&["--fixed", "interest"]).is_empty());
 }
+
+#[test]
+fn astgrep_source_ranks_definitions_before_limiting_and_keeps_occurrence_identity() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn same() { first.unwrap(); }\nfn same() { second.unwrap(); third.unwrap(); }\n",
+    );
+    let out = f.run(&[
+        "astgrep",
+        "$X.unwrap()",
+        "--language",
+        "rust",
+        "--source",
+        "--limit",
+        "1",
+    ]);
+    let data = &out["data"];
+    assert_eq!(data["symbols"].as_array().unwrap().len(), 1);
+    assert_eq!(data["symbols"][0]["line"], 2);
+    assert_eq!(data["symbols"][0]["hits"], 2);
+    assert_eq!(data["source"].as_array().unwrap().len(), 1);
+    let text = data["source"][0]["text"].as_str().unwrap();
+    assert!(text.contains("second.unwrap()") && text.contains("third.unwrap()"));
+    assert!(!text.contains("first.unwrap()"));
+    assert_eq!(data["truncated"], true);
+    let text = String::from_utf8(
+        f.raw(&[
+            "astgrep",
+            "$X.unwrap()",
+            "--language",
+            "rust",
+            "--source",
+            "--limit",
+            "1",
+        ])
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(text.matches("fn same()").count(), 1);
+}
+
+#[test]
+fn astgrep_source_reports_budget_omissions_and_fills_with_smaller_definitions() {
+    let f = Fixture::new();
+    f.write("a.rs", &format!("fn big() {{\n// {}\nfirst.unwrap(); second.unwrap();\n}}\nfn small() {{ value.unwrap(); }}\n", "padding ".repeat(200)));
+    let out = f.run(&[
+        "astgrep",
+        "$X.unwrap()",
+        "--language",
+        "rust",
+        "--source",
+        "--max-tokens",
+        "40",
+    ]);
+    let data = &out["data"];
+    assert_eq!(data["symbols"][0]["name"], "big");
+    assert_eq!(data["source"][0]["name"], "small");
+    assert_eq!(data["source"].as_array().unwrap().len(), 1);
+    assert_eq!(data["omitted"][0]["name"], "big");
+    assert!(data["budget"]["used_tokens"].as_u64().unwrap() <= 40);
+}
+
+#[test]
+fn astgrep_source_distinguishes_same_names_across_files_and_scopes_paths() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn same() { first.unwrap(); }\n");
+    f.write("b.rs", "fn same() { second.unwrap(); }\n");
+    let out = f.run(&[
+        "astgrep",
+        "$X.unwrap()",
+        "--language",
+        "rust",
+        "--source",
+        "--limit",
+        "0",
+    ]);
+    assert_eq!(out["data"]["source"].as_array().unwrap().len(), 2);
+    let scoped = f.run(&[
+        "astgrep",
+        "$X.unwrap()",
+        "--language",
+        "rust",
+        "--source",
+        "--path",
+        "b.rs",
+    ]);
+    assert_eq!(scoped["data"]["source"].as_array().unwrap().len(), 1);
+    assert_eq!(scoped["data"]["source"][0]["path"], "b.rs");
+}
+
+#[test]
+fn astgrep_source_explains_unscoped_matches_and_empty_queries() {
+    let f = Fixture::new();
+    f.write("a.py", "needle(0)\ndef chosen():\n    return needle(1)\n");
+    let out = f.run(&[
+        "astgrep",
+        "needle($VALUE)",
+        "--language",
+        "python",
+        "--source",
+    ]);
+    assert_eq!(out["data"]["symbols"][0]["hits"], 1);
+    assert!(out["note"].as_str().unwrap().contains("1 structural match"));
+    let empty = f.run(&[
+        "astgrep",
+        "absent($VALUE)",
+        "--language",
+        "python",
+        "--source",
+    ]);
+    assert!(empty["data"]["source"].as_array().unwrap().is_empty());
+    assert!(empty["note"].as_str().unwrap().contains("matched nothing"));
+    let unsearched = f.run(&[
+        "astgrep",
+        "needle($VALUE)",
+        "--language",
+        "python",
+        "--source",
+        "--path",
+        "missing",
+    ]);
+    assert!(unsearched["note"]
+        .as_str()
+        .unwrap()
+        .contains("pattern was never run"));
+}
+
+#[test]
+fn astgrep_source_conflicts_with_explain_and_budget_requires_source() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn f() {}\n");
+    assert!(!f
+        .raw(&["astgrep", "--explain", "a.rs:1", "--source"])
+        .status
+        .success());
+    assert!(!f
+        .raw(&[
+            "astgrep",
+            "fn $N() {}",
+            "--language",
+            "rust",
+            "--max-tokens",
+            "10"
+        ])
+        .status
+        .success());
+}
+
+#[test]
+fn mcp_astgrep_source_returns_implementations_directly() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let f = Fixture::new();
+    f.write("a.rs", "fn chosen() { value.unwrap(); other.unwrap(); }\n");
+    let mut child = Command::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(child.stdin.take().unwrap(), r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"codeq_astgrep","arguments":{{"pattern":"$X.unwrap()","language":"rust","source":true,"max_tokens":100,"limit":1}}}}}}"#).unwrap();
+    let output = child.wait_with_output().unwrap();
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_ne!(response["result"]["isError"], true, "{response}");
+    let text = response["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("value.unwrap()") && text.contains("other.unwrap()"));
+    assert_eq!(text.matches("fn chosen()").count(), 1);
+}
+
+#[test]
+fn astgrep_source_marks_a_capped_budget_omission_list() {
+    let f = Fixture::new();
+    let source = (0..60)
+        .map(|i| format!("fn f{i}() {{ value.unwrap(); }}\n"))
+        .collect::<String>();
+    f.write("a.rs", &source);
+    let out = f.run(&[
+        "astgrep",
+        "$X.unwrap()",
+        "--language",
+        "rust",
+        "--source",
+        "--limit",
+        "0",
+        "--max-tokens",
+        "0",
+    ]);
+    assert_eq!(out["data"]["symbols"].as_array().unwrap().len(), 60);
+    assert!(out["data"]["source"].as_array().unwrap().is_empty());
+    assert_eq!(out["data"]["omitted"].as_array().unwrap().len(), 50);
+    assert_eq!(out["data"]["omitted_truncated"], true);
+}

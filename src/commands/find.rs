@@ -9,6 +9,7 @@ pub fn cmd_astgrep(
     language: &str,
     path: Option<String>,
     limit: usize,
+    source_budget: Option<u64>,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
@@ -34,6 +35,25 @@ pub fn cmd_astgrep(
         .inspect(|_| scanned += 1);
 
     let mut matches = crate::astgrep::search(language, pattern, files)?;
+    if let Some(max_tokens) = source_budget {
+        let total = matches.len();
+        let mut symbols =
+            collapse_symbols(&s, matches.into_iter().map(|m| (m.path, m.start_byte)))?;
+        let unscoped = total - symbols.iter().map(|row| row.hits).sum::<usize>();
+        let note = if total == 0 {
+            astgrep_empty_note(scanned, language, path.as_deref())
+        } else if unscoped > 0 {
+            Some(format!("{unscoped} structural match(es) outside indexed definitions excluded from source; rerun without --source to see those matches"))
+        } else {
+            None
+        };
+        let truncated = limit > 0 && symbols.len() > limit;
+        if limit > 0 {
+            symbols.truncate(limit);
+        }
+        return emit_symbol_source(&s, symbols, truncated, max_tokens, note);
+    }
+
     let truncated = limit > 0 && matches.len() > limit;
     if truncated {
         matches.truncate(limit);
@@ -93,19 +113,7 @@ pub fn cmd_astgrep(
     // identical: the pattern matched nothing, or `--path` selected no files at
     // all. The second is the one that wastes an afternoon, so name it.
     let note = if rows.is_empty() {
-        match path.as_deref() {
-            Some(p) if scanned == 0 => Some(format!(
-                "no indexed {language} file matches --path {p}; the pattern was never run"
-            )),
-            // The pattern parsed and ran and found nothing. Silence would be
-            // right for `search`, where an empty grep is unambiguous — but
-            // astgrep is structurally exact, and its own docs concede that a
-            // wrong node kind and a genuine miss look identical. Point at the
-            // command that tells them apart.
-            _ => Some(format!(
-                "pattern ran over {scanned} {language} file(s) and matched nothing; if it should have matched, `astgrep --explain <file>:<line>` shows the node kinds to write it against"
-            )),
-        }
+        astgrep_empty_note(scanned, language, path.as_deref())
     } else {
         None
     };
@@ -116,6 +124,17 @@ pub fn cmd_astgrep(
         },
         note,
     )
+}
+
+fn astgrep_empty_note(scanned: usize, language: &str, path: Option<&str>) -> Option<String> {
+    Some(match path {
+        Some(p) if scanned == 0 => format!(
+            "no indexed {language} file matches --path {p}; the pattern was never run"
+        ),
+        _ => format!(
+            "pattern ran over {scanned} {language} file(s) and matched nothing; if it should have matched, `astgrep --explain <file>:<line>` shows the node kinds to write it against"
+        ),
+    })
 }
 
 /// `astgrep --explain <file>:<line>` — the parse tree covering one line: the node
@@ -535,15 +554,19 @@ fn emit_symbol_source(
     max_tokens: u64,
     note: Option<String>,
 ) -> Result<()> {
-    let seeds = symbols.iter().map(|row| crate::context::Seed {
-        name: row.name.clone(),
-        path: row.path.clone(),
-        role: "match",
-        forced: false,
-        start_byte: Some(row.byte),
-    }).collect::<Vec<_>>();
-    let (budget, source, omitted) =
-        crate::context::source_for_ranked(&s.db, &s.repo, &seeds, max_tokens)?.into_source();
+    let seeds = symbols
+        .iter()
+        .map(|row| crate::context::Seed {
+            name: row.name.clone(),
+            path: row.path.clone(),
+            role: "match",
+            forced: false,
+            start_byte: Some(row.byte),
+        })
+        .collect::<Vec<_>>();
+    let assembled = crate::context::source_for_ranked(&s.db, &s.repo, &seeds, max_tokens)?;
+    let omitted_truncated = assembled.omitted_truncated;
+    let (budget, source, omitted) = assembled.into_source();
     #[derive(Serialize)]
     struct SourceResult {
         symbols: Vec<SymbolHit>,
@@ -552,9 +575,21 @@ fn emit_symbol_source(
         #[serde(skip_serializing_if = "Vec::is_empty")]
         omitted: Vec<crate::context::Omitted>,
         #[serde(skip_serializing_if = "std::ops::Not::not")]
+        omitted_truncated: bool,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
         truncated: bool,
     }
-    s.emit_noted(SourceResult { symbols, source, budget, omitted, truncated }, note)
+    s.emit_noted(
+        SourceResult {
+            symbols,
+            source,
+            budget,
+            omitted,
+            omitted_truncated,
+            truncated,
+        },
+        note,
+    )
 }
 
 fn collapse_symbols(
@@ -568,13 +603,30 @@ fn collapse_symbols(
          AND start_byte <= ?2 AND end_byte > ?2 ORDER BY end_byte - start_byte, start_byte DESC LIMIT 1",
     )?;
     for (path, at) in matches {
-        let Some((name, kind, line, byte)) = stmt.query_row(
-            rusqlite::params![path, at],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get(2)?, r.get::<_, i64>(3)? as usize)),
-        ).optional()? else { continue };
-        grouped.entry((path.clone(), byte))
+        let Some((name, kind, line, byte)) = stmt
+            .query_row(rusqlite::params![path, at], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get(2)?,
+                    r.get::<_, i64>(3)? as usize,
+                ))
+            })
+            .optional()?
+        else {
+            continue;
+        };
+        grouped
+            .entry((path.clone(), byte))
             .and_modify(|row: &mut SymbolHit| row.hits += 1)
-            .or_insert(SymbolHit { name, kind, path, line, byte, hits: 1 });
+            .or_insert(SymbolHit {
+                name,
+                kind,
+                path,
+                line,
+                byte,
+                hits: 1,
+            });
     }
     let mut rows: Vec<SymbolHit> = grouped.into_values().collect();
     // Rank before limiting or filling a source budget. Path and position break
@@ -588,7 +640,6 @@ fn collapse_symbols(
     });
     Ok(rows)
 }
-
 #[derive(Serialize)]
 struct ReferenceRow {
     #[serde(flatten)]
