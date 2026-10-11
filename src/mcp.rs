@@ -491,7 +491,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_search",
-        "Search file contents. Regex by default (same engine as ripgrep); set fixed for a literal. Each match is annotated with its enclosing definition. Superset of grep: -A/-B/-C context, files_with_matches, count, and 'in' (code|comments|strings) which grep can't do. paths scopes it like grep's positional paths, and a path the index does not hold (gitignored output, a log, a file outside the repo) is searched from disk. On a broad pattern, max_per_file with group returns the shape of the result for a fraction of the tokens. In markdown, fenced code blocks count as strings and prose as comments, so 'in' separates documented examples from the text around them.",
+        "Search file contents. Regex by default (same engine as ripgrep); set fixed for a literal. Each match is annotated with its enclosing definition. Set symbols to rank definitions by matching-line count (descending; ties by path and position), or source to read their bodies once under max_tokens in that rank order, avoiding a search-then-read loop. Superset of grep: -A/-B/-C context, files_with_matches, count, and 'in' (code|comments|strings) which grep can't do. paths scopes it like grep's positional paths, and a path the index does not hold (gitignored output, a log, a file outside the repo) is searched from disk. On a broad pattern, max_per_file with group returns the shape of the result for a fraction of the tokens. In markdown, fenced code blocks count as strings and prose as comments, so 'in' separates documented examples from the text around them.",
     ),
     (
         "codeq_symbols",

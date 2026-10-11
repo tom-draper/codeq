@@ -439,6 +439,27 @@ pub struct Seed {
 /// its seed's role. Forced seeds are always included; the rest fill the remaining
 /// budget in a stable order and overflow is reported in `omitted`.
 pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Result<ContextResult> {
+    source_for_impl(db, repo, seeds, max_tokens, false)
+}
+
+/// Fill and emit in seed rank order, keeping any forced definitions first.
+/// Search uses this so its ranking survives both budgeting and rendering.
+pub fn source_for_ranked(
+    db: &Db,
+    repo: &Repo,
+    seeds: &[Seed],
+    max_tokens: u64,
+) -> Result<ContextResult> {
+    source_for_impl(db, repo, seeds, max_tokens, true)
+}
+
+fn source_for_impl(
+    db: &Db,
+    repo: &Repo,
+    seeds: &[Seed],
+    max_tokens: u64,
+    ranked: bool,
+) -> Result<ContextResult> {
     // Resolve each (name, path) to its definition(s); the first seed to claim a
     // definition sets its role (pass focus seeds first).
     let mut cands: Vec<(Def, &'static str, bool)> = Vec::new();
@@ -455,13 +476,17 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
         }
     }
 
-    // Decide inclusion forced-first (focus always in), then others in path+line
-    // order, but emit chunks grouped by file regardless.
+    // Stable sorting preserves seed rank within each forced/non-forced group.
+    // Exploration instead budgets and groups neighbours by path and line.
     let mut order: Vec<usize> = (0..cands.len()).collect();
     order.sort_by(|&a, &b| {
         let (da, _, fa) = &cands[a];
         let (db_, _, fb) = &cands[b];
-        (!fa, da.path.as_str(), da.start_line).cmp(&(!fb, db_.path.as_str(), db_.start_line))
+        if ranked {
+            (!fa).cmp(&(!fb))
+        } else {
+            (!fa, da.path.as_str(), da.start_line).cmp(&(!fb, db_.path.as_str(), db_.start_line))
+        }
     });
 
     let mut file_cache: HashMap<String, Option<String>> = HashMap::new();
@@ -537,13 +562,15 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
     // program, so `explore … | head -90` — the obvious way to sample a large
     // result — showed callees and not the definition. Hoisting one block costs
     // nothing and makes `head` do the right thing.
-    chunks.sort_by(|a, b| {
-        (a.reason != "focus", a.path.as_str(), a.start_line).cmp(&(
-            b.reason != "focus",
-            b.path.as_str(),
-            b.start_line,
-        ))
-    });
+    if !ranked {
+        chunks.sort_by(|a, b| {
+            (a.reason != "focus", a.path.as_str(), a.start_line).cmp(&(
+                b.reason != "focus",
+                b.path.as_str(),
+                b.start_line,
+            ))
+        });
+    }
 
     Ok(ContextResult {
         plan: None,
