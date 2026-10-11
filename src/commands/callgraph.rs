@@ -343,6 +343,7 @@ fn rust_call_owner(
     path: &str,
     receiver: Option<&str>,
     files: Option<&HashSet<String>>,
+    method: &str,
 ) -> Result<Option<String>> {
     let Some(receiver) = receiver else {
         return Ok(None);
@@ -363,7 +364,19 @@ fn rust_call_owner(
     for candidate in candidates {
         let candidate = candidate?;
         if files.map_or(candidate == path, |files| files.contains(&candidate)) {
-            return Ok(Some(owner.to_string()));
+            // A known type alone does not locate an implementation. Trait
+            // defaults and blanket impls can provide methods under other owners.
+            let mut methods = s.db.conn.prepare(
+                "SELECT path FROM facts WHERE name = ?1 AND owner = ?2 AND kind IN ('function', 'method')",
+            )?;
+            let paths =
+                methods.query_map(rusqlite::params![method, owner], |r| r.get::<_, String>(0))?;
+            for method_path in paths {
+                let method_path = method_path?;
+                if files.is_none_or(|files| files.contains(&method_path)) {
+                    return Ok(Some(owner.to_string()));
+                }
+            }
         }
     }
     Ok(None)
@@ -454,7 +467,7 @@ fn scan_called_names(
                 // module or a value receiver. `pinned` is `None` then, so
                 // candidate filtering remains conservative.
                 let owner = if lang == "rust" && b[..off.min(b.len())].trim_end().ends_with("::") {
-                    rust_call_owner(s, &graph, path, recv.as_deref(), pinned.as_ref())?
+                    rust_call_owner(s, &graph, path, recv.as_deref(), pinned.as_ref(), &lookup)?
                 } else {
                     None
                 };

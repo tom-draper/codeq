@@ -12359,3 +12359,24 @@ fn rust_impl_owners_handle_generics_traits_and_nested_helpers() {
         2
     );
 }
+
+#[test]
+fn rust_associated_calls_preserve_trait_defaults_without_an_owned_implementation() {
+    let f = Fixture::new();
+    f.write(
+        "app.rs",
+        "struct Selected;\ntrait Factory { fn build() { provided_default(); } }\n\
+        impl Factory for Selected {}\nfn run() { Selected::build(); }\n",
+    );
+    let r = f.run(&["explore", "run"]);
+    assert_eq!(r["data"]["callees"].as_array().unwrap().len(), 1, "{r}");
+    assert_eq!(r["data"]["callees"][0]["name"], "build", "{r}");
+    assert!(
+        r["data"]["source"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["text"].as_str().unwrap().contains("provided_default()")),
+        "{r}"
+    );
+}
