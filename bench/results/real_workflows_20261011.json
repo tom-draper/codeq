@@ -1,0 +1,1110 @@
+{
+  "metric": "canonical command input + stdout + stderr bytes; approximate tokens = ceil(bytes/4)",
+  "calls": "external command invocations, not measured model tool rounds",
+  "explore_max_tokens": 3000,
+  "baseline": "rg declaration/content hits then merged sed windows, radius 20 doubling until complete",
+  "limits": "reviewed fixed tasks, oracle-assisted completion, warmed indexes, no latency or model-agent claims",
+  "revisions": {
+    "flask": "c12a5d874c5a014495eb2db8a73f40037bc813ac",
+    "requests": "0e322af87745eff34caffe4df68456ebc20d9068",
+    "express": "04bc62787be974874bc1467b23606c36bc9779ba",
+    "gin": "4ea0e648e38a63d6caff14100f5eab5c50912bcd",
+    "ripgrep": "e50df40a1967708b9781486b1c017e48040bceb0"
+  },
+  "binaries": {
+    "current": "14cf66d85aee5e99ab12638658abf40bc4755a19a9c6c7d355f6583710ae3476",
+    "comparison": "ca973e7d6e9a8a196edca6e7dbd0e3ded0dc5b62496d2473be8c05568131fa5b"
+  },
+  "results": [
+    {
+      "repo": "flask",
+      "task": "known-range",
+      "focus": "full_dispatch_request",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 41,
+        "stdout_bytes": 615,
+        "stderr_bytes": 0,
+        "approx_tokens": 164,
+        "commands": [
+          "codeq read src/flask/app.py:867-883 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 32,
+        "stdout_bytes": 615,
+        "stderr_bytes": 0,
+        "approx_tokens": 162,
+        "commands": [
+          "sed -n 867,883p src/flask/app.py"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "flask",
+      "task": "position",
+      "focus": "full_dispatch_request",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 42,
+        "stdout_bytes": 615,
+        "stderr_bytes": 0,
+        "approx_tokens": 165,
+        "commands": [
+          "codeq read --at src/flask/app.py:868 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 35,
+        "stdout_bytes": 1678,
+        "stderr_bytes": 0,
+        "approx_tokens": 429,
+        "commands": [
+          "sed -n -e 848,888p src/flask/app.py"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "flask",
+      "task": "search-source",
+      "focus": "full_dispatch_request",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 104,
+        "stdout_bytes": 792,
+        "stderr_bytes": 0,
+        "approx_tokens": 224,
+        "commands": [
+          "codeq search 'self._got_first_request = True' --fixed --path src/flask/app.py --source --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 112,
+        "stdout_bytes": 1768,
+        "stderr_bytes": 0,
+        "approx_tokens": 470,
+        "commands": [
+          "rg -n --no-heading -H -F -- 'self._got_first_request = True' src/flask/app.py",
+          "sed -n -e 854,894p src/flask/app.py"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "flask",
+      "task": "explore",
+      "focus": "full_dispatch_request",
+      "required_bodies": 2,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 77,
+        "stdout_bytes": 10951,
+        "stderr_bytes": 119,
+        "approx_tokens": 2787,
+        "commands": [
+          "codeq explore full_dispatch_request --path src/flask/app.py --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 3,
+        "input_bytes": 204,
+        "stdout_bytes": 6591,
+        "stderr_bytes": 0,
+        "approx_tokens": 1699,
+        "commands": [
+          "rg -n --no-heading -H -- '\\b(?:def|fn|func|function)\\s+(?:\\([^)]*\\)\\s*)?(?:full_dispatch_request|finalize_request)\\b' src/flask/app.py",
+          "sed -n -e 847,905p src/flask/app.py",
+          "sed -n -e 827,925p src/flask/app.py"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "flask",
+      "task": "known-range",
+      "focus": "full_dispatch_request",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 41,
+        "stdout_bytes": 615,
+        "stderr_bytes": 0,
+        "approx_tokens": 164,
+        "commands": [
+          "codeq read src/flask/app.py:867-883 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 32,
+        "stdout_bytes": 615,
+        "stderr_bytes": 0,
+        "approx_tokens": 162,
+        "commands": [
+          "sed -n 867,883p src/flask/app.py"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "flask",
+      "task": "position",
+      "focus": "full_dispatch_request",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 42,
+        "stdout_bytes": 615,
+        "stderr_bytes": 0,
+        "approx_tokens": 165,
+        "commands": [
+          "codeq read --at src/flask/app.py:868 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 35,
+        "stdout_bytes": 1678,
+        "stderr_bytes": 0,
+        "approx_tokens": 429,
+        "commands": [
+          "sed -n -e 848,888p src/flask/app.py"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "flask",
+      "task": "search-source",
+      "focus": "full_dispatch_request",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 104,
+        "stdout_bytes": 792,
+        "stderr_bytes": 0,
+        "approx_tokens": 224,
+        "commands": [
+          "codeq search 'self._got_first_request = True' --fixed --path src/flask/app.py --source --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 112,
+        "stdout_bytes": 1768,
+        "stderr_bytes": 0,
+        "approx_tokens": 470,
+        "commands": [
+          "rg -n --no-heading -H -F -- 'self._got_first_request = True' src/flask/app.py",
+          "sed -n -e 854,894p src/flask/app.py"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "flask",
+      "task": "explore",
+      "focus": "full_dispatch_request",
+      "required_bodies": 2,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 77,
+        "stdout_bytes": 13712,
+        "stderr_bytes": 0,
+        "approx_tokens": 3448,
+        "commands": [
+          "codeq explore full_dispatch_request --path src/flask/app.py --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 3,
+        "input_bytes": 204,
+        "stdout_bytes": 6591,
+        "stderr_bytes": 0,
+        "approx_tokens": 1699,
+        "commands": [
+          "rg -n --no-heading -H -- '\\b(?:def|fn|func|function)\\s+(?:\\([^)]*\\)\\s*)?(?:full_dispatch_request|finalize_request)\\b' src/flask/app.py",
+          "sed -n -e 847,905p src/flask/app.py",
+          "sed -n -e 827,925p src/flask/app.py"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "requests",
+      "task": "known-range",
+      "focus": "merge_environment_settings",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 49,
+        "stdout_bytes": 1212,
+        "stderr_bytes": 0,
+        "approx_tokens": 316,
+        "commands": [
+          "codeq read src/requests/sessions.py:750-779 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 40,
+        "stdout_bytes": 1212,
+        "stderr_bytes": 0,
+        "approx_tokens": 313,
+        "commands": [
+          "sed -n 750,779p src/requests/sessions.py"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "requests",
+      "task": "position",
+      "focus": "merge_environment_settings",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 50,
+        "stdout_bytes": 1212,
+        "stderr_bytes": 0,
+        "approx_tokens": 316,
+        "commands": [
+          "codeq read --at src/requests/sessions.py:751 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 86,
+        "stdout_bytes": 4220,
+        "stderr_bytes": 0,
+        "approx_tokens": 1077,
+        "commands": [
+          "sed -n -e 731,771p src/requests/sessions.py",
+          "sed -n -e 711,791p src/requests/sessions.py"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "requests",
+      "task": "search-source",
+      "focus": "merge_environment_settings",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 94,
+        "stdout_bytes": 1410,
+        "stderr_bytes": 0,
+        "approx_tokens": 376,
+        "commands": [
+          "codeq search CURL_CA_BUNDLE --fixed --path src/requests/sessions.py --source --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 110,
+        "stdout_bytes": 1612,
+        "stderr_bytes": 0,
+        "approx_tokens": 431,
+        "commands": [
+          "rg -n --no-heading -H -F -- CURL_CA_BUNDLE src/requests/sessions.py",
+          "sed -n -e 749,789p src/requests/sessions.py"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "requests",
+      "task": "explore",
+      "focus": "merge_environment_settings",
+      "required_bodies": 2,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 90,
+        "stdout_bytes": 8520,
+        "stderr_bytes": 118,
+        "approx_tokens": 2182,
+        "commands": [
+          "codeq explore merge_environment_settings --path src/requests/sessions.py --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 3,
+        "input_bytes": 251,
+        "stdout_bytes": 8092,
+        "stderr_bytes": 0,
+        "approx_tokens": 2086,
+        "commands": [
+          "rg -n --no-heading -H -- '\\b(?:def|fn|func|function)\\s+(?:\\([^)]*\\)\\s*)?(?:merge_environment_settings|merge_setting)\\b' src/requests/sessions.py",
+          "sed -n -e 41,81p -e 730,770p src/requests/sessions.py",
+          "sed -n -e 21,101p -e 710,790p src/requests/sessions.py"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "requests",
+      "task": "known-range",
+      "focus": "merge_environment_settings",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 49,
+        "stdout_bytes": 1212,
+        "stderr_bytes": 0,
+        "approx_tokens": 316,
+        "commands": [
+          "codeq read src/requests/sessions.py:750-779 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 40,
+        "stdout_bytes": 1212,
+        "stderr_bytes": 0,
+        "approx_tokens": 313,
+        "commands": [
+          "sed -n 750,779p src/requests/sessions.py"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "requests",
+      "task": "position",
+      "focus": "merge_environment_settings",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 50,
+        "stdout_bytes": 1212,
+        "stderr_bytes": 0,
+        "approx_tokens": 316,
+        "commands": [
+          "codeq read --at src/requests/sessions.py:751 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 86,
+        "stdout_bytes": 4220,
+        "stderr_bytes": 0,
+        "approx_tokens": 1077,
+        "commands": [
+          "sed -n -e 731,771p src/requests/sessions.py",
+          "sed -n -e 711,791p src/requests/sessions.py"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "requests",
+      "task": "search-source",
+      "focus": "merge_environment_settings",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 94,
+        "stdout_bytes": 1410,
+        "stderr_bytes": 0,
+        "approx_tokens": 376,
+        "commands": [
+          "codeq search CURL_CA_BUNDLE --fixed --path src/requests/sessions.py --source --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 110,
+        "stdout_bytes": 1612,
+        "stderr_bytes": 0,
+        "approx_tokens": 431,
+        "commands": [
+          "rg -n --no-heading -H -F -- CURL_CA_BUNDLE src/requests/sessions.py",
+          "sed -n -e 749,789p src/requests/sessions.py"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "requests",
+      "task": "explore",
+      "focus": "merge_environment_settings",
+      "required_bodies": 2,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 90,
+        "stdout_bytes": 9869,
+        "stderr_bytes": 0,
+        "approx_tokens": 2490,
+        "commands": [
+          "codeq explore merge_environment_settings --path src/requests/sessions.py --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 3,
+        "input_bytes": 251,
+        "stdout_bytes": 8092,
+        "stderr_bytes": 0,
+        "approx_tokens": 2086,
+        "commands": [
+          "rg -n --no-heading -H -- '\\b(?:def|fn|func|function)\\s+(?:\\([^)]*\\)\\s*)?(?:merge_environment_settings|merge_setting)\\b' src/requests/sessions.py",
+          "sed -n -e 41,81p -e 730,770p src/requests/sessions.py",
+          "sed -n -e 21,101p -e 710,790p src/requests/sessions.py"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "express",
+      "task": "known-range",
+      "focus": "listen",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 43,
+        "stdout_bytes": 125,
+        "stderr_bytes": 0,
+        "approx_tokens": 42,
+        "commands": [
+          "codeq read lib/application.js:633-636 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 34,
+        "stdout_bytes": 125,
+        "stderr_bytes": 0,
+        "approx_tokens": 40,
+        "commands": [
+          "sed -n 633,636p lib/application.js"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "express",
+      "task": "position",
+      "focus": "listen",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 44,
+        "stdout_bytes": 125,
+        "stderr_bytes": 0,
+        "approx_tokens": 43,
+        "commands": [
+          "codeq read --at lib/application.js:634 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 37,
+        "stdout_bytes": 896,
+        "stderr_bytes": 0,
+        "approx_tokens": 234,
+        "commands": [
+          "sed -n -e 614,654p lib/application.js"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "express",
+      "task": "search-source",
+      "focus": "listen",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 99,
+        "stdout_bytes": 293,
+        "stderr_bytes": 0,
+        "approx_tokens": 98,
+        "commands": [
+          "codeq search 'http.createServer(this)' --fixed --path lib/application.js --source --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 109,
+        "stdout_bytes": 959,
+        "stderr_bytes": 0,
+        "approx_tokens": 267,
+        "commands": [
+          "rg -n --no-heading -H -F -- 'http.createServer(this)' lib/application.js",
+          "sed -n -e 614,654p lib/application.js"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "express",
+      "task": "explore",
+      "focus": "route",
+      "required_bodies": 2,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 63,
+        "stdout_bytes": 7163,
+        "stderr_bytes": 0,
+        "approx_tokens": 1807,
+        "commands": [
+          "codeq explore route --path lib/application.js --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 163,
+        "stdout_bytes": 2180,
+        "stderr_bytes": 0,
+        "approx_tokens": 586,
+        "commands": [
+          "rg -n --no-heading -H -- '\\b(?:def|fn|func|function)\\s+(?:\\([^)]*\\)\\s*)?(?:route|lazyrouter)\\b' lib/application.js",
+          "sed -n -e 124,164p -e 241,281p lib/application.js"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "express",
+      "task": "known-range",
+      "focus": "listen",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 43,
+        "stdout_bytes": 125,
+        "stderr_bytes": 0,
+        "approx_tokens": 42,
+        "commands": [
+          "codeq read lib/application.js:633-636 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 34,
+        "stdout_bytes": 125,
+        "stderr_bytes": 0,
+        "approx_tokens": 40,
+        "commands": [
+          "sed -n 633,636p lib/application.js"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "express",
+      "task": "position",
+      "focus": "listen",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 44,
+        "stdout_bytes": 125,
+        "stderr_bytes": 0,
+        "approx_tokens": 43,
+        "commands": [
+          "codeq read --at lib/application.js:634 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 37,
+        "stdout_bytes": 896,
+        "stderr_bytes": 0,
+        "approx_tokens": 234,
+        "commands": [
+          "sed -n -e 614,654p lib/application.js"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "express",
+      "task": "search-source",
+      "focus": "listen",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 99,
+        "stdout_bytes": 293,
+        "stderr_bytes": 0,
+        "approx_tokens": 98,
+        "commands": [
+          "codeq search 'http.createServer(this)' --fixed --path lib/application.js --source --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 109,
+        "stdout_bytes": 959,
+        "stderr_bytes": 0,
+        "approx_tokens": 267,
+        "commands": [
+          "rg -n --no-heading -H -F -- 'http.createServer(this)' lib/application.js",
+          "sed -n -e 614,654p lib/application.js"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "express",
+      "task": "explore",
+      "focus": "route",
+      "required_bodies": 2,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 63,
+        "stdout_bytes": 7142,
+        "stderr_bytes": 0,
+        "approx_tokens": 1802,
+        "commands": [
+          "codeq explore route --path lib/application.js --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 163,
+        "stdout_bytes": 2180,
+        "stderr_bytes": 0,
+        "approx_tokens": 586,
+        "commands": [
+          "rg -n --no-heading -H -- '\\b(?:def|fn|func|function)\\s+(?:\\([^)]*\\)\\s*)?(?:route|lazyrouter)\\b' lib/application.js",
+          "sed -n -e 124,164p -e 241,281p lib/application.js"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "gin",
+      "task": "known-range",
+      "focus": "redirectTrailingSlash",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 31,
+        "stdout_bytes": 455,
+        "stderr_bytes": 0,
+        "approx_tokens": 122,
+        "commands": [
+          "codeq read gin.go:671-685 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 22,
+        "stdout_bytes": 455,
+        "stderr_bytes": 0,
+        "approx_tokens": 120,
+        "commands": [
+          "sed -n 671,685p gin.go"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "gin",
+      "task": "position",
+      "focus": "redirectTrailingSlash",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 32,
+        "stdout_bytes": 455,
+        "stderr_bytes": 0,
+        "approx_tokens": 122,
+        "commands": [
+          "codeq read --at gin.go:672 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 25,
+        "stdout_bytes": 1162,
+        "stderr_bytes": 0,
+        "approx_tokens": 297,
+        "commands": [
+          "sed -n -e 652,692p gin.go"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "gin",
+      "task": "search-source",
+      "focus": "redirectTrailingSlash",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 80,
+        "stdout_bytes": 618,
+        "stderr_bytes": 0,
+        "approx_tokens": 175,
+        "commands": [
+          "codeq search X-Forwarded-Prefix --fixed --path gin.go --source --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 78,
+        "stdout_bytes": 1257,
+        "stderr_bytes": 0,
+        "approx_tokens": 334,
+        "commands": [
+          "rg -n --no-heading -H -F -- X-Forwarded-Prefix gin.go",
+          "sed -n -e 654,694p gin.go"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "gin",
+      "task": "explore",
+      "focus": "redirectTrailingSlash",
+      "required_bodies": 2,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 67,
+        "stdout_bytes": 3115,
+        "stderr_bytes": 118,
+        "approx_tokens": 825,
+        "commands": [
+          "codeq explore redirectTrailingSlash --path gin.go --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 148,
+        "stdout_bytes": 1721,
+        "stderr_bytes": 0,
+        "approx_tokens": 468,
+        "commands": [
+          "rg -n --no-heading -H -- '\\b(?:def|fn|func|function)\\s+(?:\\([^)]*\\)\\s*)?(?:redirectTrailingSlash|redirectRequest)\\b' gin.go",
+          "sed -n -e 651,711p gin.go"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "gin",
+      "task": "known-range",
+      "focus": "redirectTrailingSlash",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 31,
+        "stdout_bytes": 455,
+        "stderr_bytes": 0,
+        "approx_tokens": 122,
+        "commands": [
+          "codeq read gin.go:671-685 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 22,
+        "stdout_bytes": 455,
+        "stderr_bytes": 0,
+        "approx_tokens": 120,
+        "commands": [
+          "sed -n 671,685p gin.go"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "gin",
+      "task": "position",
+      "focus": "redirectTrailingSlash",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 32,
+        "stdout_bytes": 455,
+        "stderr_bytes": 0,
+        "approx_tokens": 122,
+        "commands": [
+          "codeq read --at gin.go:672 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 25,
+        "stdout_bytes": 1162,
+        "stderr_bytes": 0,
+        "approx_tokens": 297,
+        "commands": [
+          "sed -n -e 652,692p gin.go"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "gin",
+      "task": "search-source",
+      "focus": "redirectTrailingSlash",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 80,
+        "stdout_bytes": 618,
+        "stderr_bytes": 0,
+        "approx_tokens": 175,
+        "commands": [
+          "codeq search X-Forwarded-Prefix --fixed --path gin.go --source --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 78,
+        "stdout_bytes": 1257,
+        "stderr_bytes": 0,
+        "approx_tokens": 334,
+        "commands": [
+          "rg -n --no-heading -H -F -- X-Forwarded-Prefix gin.go",
+          "sed -n -e 654,694p gin.go"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "gin",
+      "task": "explore",
+      "focus": "redirectTrailingSlash",
+      "required_bodies": 2,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 67,
+        "stdout_bytes": 3391,
+        "stderr_bytes": 0,
+        "approx_tokens": 865,
+        "commands": [
+          "codeq explore redirectTrailingSlash --path gin.go --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 148,
+        "stdout_bytes": 1721,
+        "stderr_bytes": 0,
+        "approx_tokens": 468,
+        "commands": [
+          "rg -n --no-heading -H -- '\\b(?:def|fn|func|function)\\s+(?:\\([^)]*\\)\\s*)?(?:redirectTrailingSlash|redirectRequest)\\b' gin.go",
+          "sed -n -e 651,711p gin.go"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "ripgrep",
+      "task": "known-range",
+      "focus": "log",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 44,
+        "stdout_bytes": 914,
+        "stderr_bytes": 0,
+        "approx_tokens": 240,
+        "commands": [
+          "codeq read crates/core/logger.rs:37-67 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 35,
+        "stdout_bytes": 914,
+        "stderr_bytes": 0,
+        "approx_tokens": 238,
+        "commands": [
+          "sed -n 37,67p crates/core/logger.rs"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "ripgrep",
+      "task": "position",
+      "focus": "log",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 46,
+        "stdout_bytes": 914,
+        "stderr_bytes": 0,
+        "approx_tokens": 240,
+        "commands": [
+          "codeq read --at crates/core/logger.rs:38 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 75,
+        "stdout_bytes": 3447,
+        "stderr_bytes": 0,
+        "approx_tokens": 881,
+        "commands": [
+          "sed -n -e 18,58p crates/core/logger.rs",
+          "sed -n -e 1,72p crates/core/logger.rs"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "ripgrep",
+      "task": "search-source",
+      "focus": "log",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 95,
+        "stdout_bytes": 1251,
+        "stderr_bytes": 0,
+        "approx_tokens": 337,
+        "commands": [
+          "codeq search 'eprintln_locked!' --fixed --path crates/core/logger.rs --source --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 106,
+        "stdout_bytes": 1783,
+        "stderr_bytes": 0,
+        "approx_tokens": 473,
+        "commands": [
+          "rg -n --no-heading -H -F -- 'eprintln_locked!' crates/core/logger.rs",
+          "sed -n -e 20,72p crates/core/logger.rs"
+        ]
+      },
+      "variant": "current"
+    },
+    {
+      "repo": "ripgrep",
+      "task": "known-range",
+      "focus": "log",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 44,
+        "stdout_bytes": 914,
+        "stderr_bytes": 0,
+        "approx_tokens": 240,
+        "commands": [
+          "codeq read crates/core/logger.rs:37-67 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 1,
+        "input_bytes": 35,
+        "stdout_bytes": 914,
+        "stderr_bytes": 0,
+        "approx_tokens": 238,
+        "commands": [
+          "sed -n 37,67p crates/core/logger.rs"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "ripgrep",
+      "task": "position",
+      "focus": "log",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 46,
+        "stdout_bytes": 914,
+        "stderr_bytes": 0,
+        "approx_tokens": 240,
+        "commands": [
+          "codeq read --at crates/core/logger.rs:38 --raw"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 75,
+        "stdout_bytes": 3447,
+        "stderr_bytes": 0,
+        "approx_tokens": 881,
+        "commands": [
+          "sed -n -e 18,58p crates/core/logger.rs",
+          "sed -n -e 1,72p crates/core/logger.rs"
+        ]
+      },
+      "variant": "comparison"
+    },
+    {
+      "repo": "ripgrep",
+      "task": "search-source",
+      "focus": "log",
+      "required_bodies": 1,
+      "complete": true,
+      "codeq": {
+        "calls": 1,
+        "input_bytes": 95,
+        "stdout_bytes": 1251,
+        "stderr_bytes": 0,
+        "approx_tokens": 337,
+        "commands": [
+          "codeq search 'eprintln_locked!' --fixed --path crates/core/logger.rs --source --max-tokens 3000"
+        ]
+      },
+      "rg_sed": {
+        "calls": 2,
+        "input_bytes": 106,
+        "stdout_bytes": 1783,
+        "stderr_bytes": 0,
+        "approx_tokens": 473,
+        "commands": [
+          "rg -n --no-heading -H -F -- 'eprintln_locked!' crates/core/logger.rs",
+          "sed -n -e 20,72p crates/core/logger.rs"
+        ]
+      },
+      "variant": "comparison"
+    }
+  ]
+}

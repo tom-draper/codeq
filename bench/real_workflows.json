@@ -1,0 +1,117 @@
+[
+  {
+    "repo": "flask",
+    "commit": "c12a5d874c5a014495eb2db8a73f40037bc813ac",
+    "pattern": "self._got_first_request = True",
+    "focus": {
+      "name": "full_dispatch_request",
+      "path": "src/flask/app.py",
+      "byte": 35070,
+      "end_byte": 35680,
+      "line": 867,
+      "end_line": 883,
+      "sha256": "0f1d04f3d13874646e601cdc0ccffe8c8a578e0395781aee069a2aaa2088d6ef"
+    },
+    "helper": {
+      "name": "finalize_request",
+      "path": "src/flask/app.py",
+      "byte": 35686,
+      "end_byte": 36876,
+      "line": 885,
+      "end_line": 914,
+      "sha256": "19e630399064e88ce31b2dd48f3dad16d8f286574469a552401cbf42ab9efedb"
+    }
+  },
+  {
+    "repo": "requests",
+    "commit": "0e322af87745eff34caffe4df68456ebc20d9068",
+    "pattern": "CURL_CA_BUNDLE",
+    "focus": {
+      "name": "merge_environment_settings",
+      "path": "src/requests/sessions.py",
+      "byte": 27705,
+      "end_byte": 28912,
+      "line": 750,
+      "end_line": 779,
+      "sha256": "85a2e4ebfe8e247fb2b2a8f859249791be594b0ac94714d2dac9af2e97475be3"
+    },
+    "helper": {
+      "name": "merge_setting",
+      "path": "src/requests/sessions.py",
+      "byte": 1413,
+      "end_byte": 2444,
+      "line": 61,
+      "end_line": 88,
+      "sha256": "6c455559b01447c7447b54988bb7e8bb6958ea8db1eb47f84757d7b66f5a9981"
+    }
+  },
+  {
+    "repo": "express",
+    "commit": "04bc62787be974874bc1467b23606c36bc9779ba",
+    "pattern": "http.createServer(this)",
+    "focus": {
+      "name": "listen",
+      "path": "lib/application.js",
+      "byte": 14073,
+      "end_byte": 14196,
+      "line": 633,
+      "end_line": 636,
+      "sha256": "3cf6c111eb7783ad820285b33cc27f89bb546e2dd538be6dfbb1a6bdaf3d94c3"
+    },
+    "explore_focus": {
+      "name": "route",
+      "path": "lib/application.js",
+      "byte": 6000,
+      "end_byte": 6092,
+      "line": 261,
+      "end_line": 264,
+      "sha256": "1d1e8fb245a0fbeb9f332d59658ae49ab0cea869767bb6ad75a301d6ea1cfdeb"
+    },
+    "helper": {
+      "name": "lazyrouter",
+      "path": "lib/application.js",
+      "byte": 3460,
+      "end_byte": 3779,
+      "line": 144,
+      "end_line": 154,
+      "sha256": "794f911a6cd9882f176ae305f5a1d1cbc5e08ff7cac9f3c6a444fd99e8db0a49"
+    }
+  },
+  {
+    "repo": "gin",
+    "commit": "4ea0e648e38a63d6caff14100f5eab5c50912bcd",
+    "pattern": "X-Forwarded-Prefix",
+    "focus": {
+      "name": "redirectTrailingSlash",
+      "path": "gin.go",
+      "byte": 21838,
+      "end_byte": 22292,
+      "line": 671,
+      "end_line": 685,
+      "sha256": "6676ebd7baad5331c76f87f1650d2df5eef6d3315fe65df3e36e11cc534b9dbe"
+    },
+    "helper": {
+      "name": "redirectRequest",
+      "path": "gin.go",
+      "byte": 22606,
+      "end_byte": 23010,
+      "line": 699,
+      "end_line": 711,
+      "sha256": "d97c3489817ade1911244b2fcc3381efb3f8d3bb391d7f047074f4d86a8cf95a"
+    }
+  },
+  {
+    "repo": "ripgrep",
+    "commit": "e50df40a1967708b9781486b1c017e48040bceb0",
+    "pattern": "eprintln_locked!",
+    "focus": {
+      "name": "log",
+      "path": "crates/core/logger.rs",
+      "byte": 1124,
+      "end_byte": 2033,
+      "line": 37,
+      "end_line": 67,
+      "sha256": "1680873e28cfb2a23b412ce923fefafe9fb61c6601251712cce5fd6f13c7e239"
+    }
+  }
+]
