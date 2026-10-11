@@ -327,20 +327,61 @@ from explicit seeds only (it never infers what you are working on):
 Cursor can call codeq natively instead of shelling out. It has no async runtime and bridges
 each tool call to the CLI in its working directory.
 
-`codeq install` wires it up for you: it detects which agents are installed (Claude Code,
-Cursor, Windsurf, Gemini) and adds the codeq server to each one's MCP config, merging into
-whatever is already there. Use `--dry-run` to preview, `--uninstall` to remove, and
-`--agent <name>` to target one specifically.
+`codeq install` performs per-user setup for detected agents. It verifies the current
+binary's MCP handshake before registering its absolute path, preserves unrelated
+servers and settings, and installs one bundled skill guide in discovery locations:
 
-It installs the **skill** at the same time, for agents that read one — today that is Claude
-Code, at `~/.claude/skills/codeq/SKILL.md`. The skill is what tells an agent to reach for
-`explore`/`api` instead of reading whole files, so registering the server without it gets
-you the tool and not the habit. `--no-skill` opts out.
+| Agent (`--agent`) | MCP configuration | Skill guide |
+| --- | --- | --- |
+| `claude-code` | `~/.claude.json` | `~/.claude/skills/codeq/SKILL.md` |
+| `cursor` | `~/.cursor/mcp.json` | `~/.agents/skills/codeq/SKILL.md` |
+| `windsurf` | `~/.codeium/windsurf/mcp_config.json` | `~/.codeium/windsurf/skills/codeq/SKILL.md` |
+| `gemini` | `~/.gemini/settings.json` | `~/.agents/skills/codeq/SKILL.md` |
+| `codex` | `$CODEX_HOME/config.toml`, default `~/.codex/config.toml` | `~/.agents/skills/codeq/SKILL.md` |
 
-The skill text is compiled into the binary, so the installed guide always describes the
-installed codeq rather than whatever a checkout happens to say. If the destination is a
-symlink — how you'd wire up a checkout you're editing — `install` reports it and leaves it
-alone, and `--uninstall` refuses to delete through it.
+The canonical guide is [SKILL.md](.claude/skills/codeq/SKILL.md), compiled into the binary.
+Installation copies it to native skill directories. It does not append instructions to
+`AGENTS.md` or `CLAUDE.md`. The shared guide is discovered by
+[Cursor](https://cursor.com/docs/skills),
+[Gemini CLI](https://geminicli.com/docs/cli/skills/), and
+[Codex](https://learn.chatgpt.com/docs/build-skills); Windsurf uses its
+[native skill directory](https://docs.devin.ai/desktop/cascade/skills).
+
+```bash
+codeq install --dry-run              # inspect planned changes without writing
+codeq install --agent cursor         # target one agent, even if not detected
+codeq doctor                         # check configuration, guide, and MCP startup
+codeq uninstall --agent cursor       # remove this agent's managed setup
+codeq uninstall                      # remove all managed registrations and guides
+```
+
+Restart agents after setup so they discover the tools and guide in new sessions.
+This persists across repositories on this machine. Skill loading depends on the host;
+installation cannot guarantee that every agent chooses codeq for every task. Remote
+hosts need their own installation. Keep the registered executable at its installed path,
+and rerun `codeq install` after updating or moving the binary, or adding an agent.
+
+Configuration and guide writes use temporary files and atomic replacement, preserving
+existing permission bits. A per-user lock serializes installers; changed-file checks
+detect edits before replacement. Ownership and backups live in `~/.codeq/install.json`.
+If interrupted, rerun the same command to finish. Files are replaced individually,
+so a failed run may leave partial setup; failures return a nonzero exit status while
+other agents continue. JSON settings retain their values; TOML also retains unrelated
+comments and formatting.
+
+Customized entries and guides are preserved by default. `codeq install --force` backs
+them up before replacement, and uninstall restores those backups. Legacy installations
+without an ownership record are treated as unmanaged; identical content can be adopted,
+while differing content requires `--force`. Uninstall preserves later edits, unrelated
+settings, and externally managed symlinks. A shared guide remains until its last managed
+registration is removed. Keep the ownership journal to retain safe uninstall behavior.
+
+`--no-skill` leaves guides alone on install or uninstall. `codeq install --uninstall`
+remains an alias for `codeq uninstall`. Doctor is read-only for configuration and guides;
+it launches each distinct registered executable to check MCP initialization and tool
+availability, with a five-second timeout. It reports customized or disabled registrations
+without probing them, and reports a missing guide even after a deliberate `--no-skill` install.
+Use `--json` for structured per-agent statuses.
 
 Or register it by hand:
 
