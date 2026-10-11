@@ -4,6 +4,37 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-10-11 — The index was mostly trigram positions and free pages
+
+Asked why `index.db` gets so large, I ran `dbstat` over the indexes already on
+this machine instead of guessing. Symbols, calls and spans were never the cost:
+on `uk-data-atlas` they total about 25 MB of a 5.3 GB file. Two things were.
+
+The trigram table stored the *position* of every trigram, and nothing reads
+them — `search` only ever uses the index as a `LIKE` prefilter, and SQLite
+re-checks each candidate against the stored body. `detail=none` drops them.
+And nothing ever vacuumed, so pages freed by a reindex stayed in the file.
+
+| | before | after |
+| --- | --- | --- |
+| `uk-data-atlas` `index.db` (700 MB indexed) | 5.3 GB | **765 MB** |
+| — trigram index | 1,492 MB | 5.3 MB |
+| — free pages | 3.1 GB | 0 |
+| redis `index.db` (14 MB indexed) | 69 MB | **36.7 MB** |
+| — trigram index | 30.7 MB | 2.5 MB |
+
+A refresh now vacuums once a quarter of the file (and at least 1 MiB) is free,
+and a rebuild drops the full-text table rather than deleting it row by row.
+The prefilter returned identical rows on 15 literals against redis and cost
+about 12% more time there (117 ms to 131 ms across all 15). Differential
+harness: 8,602 PASS, 0 FAIL.
+
+What is left on a data-heavy repo is the body copy itself — 702 of those
+765 MB — which `detail=none` cannot touch. Searches that match hundreds of
+multi-megabyte files there take seconds and vary run to run (2 s to 30 s for
+the same query), before and after this change alike: the time goes on reading
+bodies out of the database, not on the prefilter. Not fixed here.
+
 ## 2026-09-25 — Search called exact-limit results truncated
 
 Exploring `scan_doc` showed it set `truncated` as soon as the number of rows
