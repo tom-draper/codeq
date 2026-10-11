@@ -26,6 +26,11 @@ is also the reason to use it.
 Still reach for `codeq search` over grep when *which definition contains this hit* is
 part of the question — the `[symbol]` annotation is something grep cannot produce.
 
+**When codeq wins:** use `read` to fetch several ranges in one call, `search --symbols`
+to rank matching definitions instead of lines, and `search --source` to get each matched
+definition once under a token budget. Use `astgrep` when code shape matters more than its
+spelling. These avoid the grep-then-sed loop that costs the most round trips.
+
 ## Invoking
 Run `codeq <command> [args]` from anywhere in the repo. Output is compact
 `path:line: text` (grep-style). **Empty output means "no results"** — it's a valid
@@ -191,6 +196,8 @@ refresh the index — every command auto-refreshes changed files first.
   Unicode letter does not.
   `CMD | codeq search PAT --stdin [--language L]` scans piped text instead of the
   index, for grep-in-a-pipeline over output that isn't in the repo.
+  `--symbols` returns one row per matching definition with its hit count. `--source`
+  adds each matching definition's body once, within `--max-tokens` (default 12000).
 - `codeq astgrep '<PATTERN>' --language <lang>` — structural (AST) search, e.g.
   `codeq astgrep '$X.unwrap()' --language rust`. Scope to files with `--path <substr>`
   (a `--path` matching no indexed file of that language says so, rather than looking

@@ -6575,6 +6575,32 @@ fn context_accepts_multiple_seed_symbols() {
 // Piped input (--stdin)
 // ---------------------------------------------------------------------------
 
+#[test]
+fn search_can_fold_hits_to_symbols_and_return_their_source_once() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn one() { needle(); needle(); }\nfn two() { needle(); }\nfn three() { needle(); }\n",
+    );
+
+    let folded = f.run(&["search", "needle", "--symbols"]);
+    let rows = folded["data"]["symbols"].as_array().unwrap();
+    assert_eq!(rows.len(), 3, "one row per enclosing definition: {folded}");
+    assert_eq!(rows[0]["name"], "one");
+    assert_eq!(rows[0]["hits"], 1, "search rows are line-based: {folded}");
+
+    let source = f.run(&["search", "needle", "--source", "--max-tokens", "100"]);
+    let chunks = source["data"]["source"].as_array().unwrap();
+    assert_eq!(chunks.len(), 3, "definitions are deduplicated: {source}");
+    assert!(chunks
+        .iter()
+        .all(|c| c["text"].as_str().unwrap().contains("needle")));
+
+    let limited = f.run(&["search", "needle", "--symbols", "--limit", "2"]);
+    assert_eq!(limited["data"]["symbols"].as_array().unwrap().len(), 2);
+    assert_eq!(limited["data"]["truncated"], true);
+}
+
 /// Run codeq with `input` on stdin.
 fn piped(dir: &Path, args: &[&str], input: &str) -> Output {
     use std::io::Write;

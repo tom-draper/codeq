@@ -227,6 +227,8 @@ Imports and dependencies:
 
 Search:
 - `codeq search <pattern>` is content search, each match tagged with its enclosing definition.
+  Add `--symbols` for one row per matching definition and `--source` for those bodies once,
+  bounded by `--max-tokens`.
 - `codeq astgrep '<pattern>' --language <lang>` matches over the syntax tree, e.g. `'$X.unwrap()'`.
 
 Repo state:
