@@ -724,6 +724,15 @@ enum Command {
         /// Output the count of matching lines per file.
         #[arg(long, short = 'c')]
         count: bool,
+        /// Collapse matching lines to their enclosing definitions, with a hit count.
+        #[arg(long, conflicts_with_all = ["files_with_matches", "files_without_match", "count", "stdin"])]
+        symbols: bool,
+        /// Return each matching definition's source once, under a token budget.
+        #[arg(long, conflicts_with_all = ["files_with_matches", "files_without_match", "count", "stdin"])]
+        source: bool,
+        /// Maximum source tokens with --source (0 = unlimited).
+        #[arg(long, default_value_t = 12000, requires = "source")]
+        max_tokens: u64,
         /// Maximum results to return (0 = unlimited).
         #[arg(long, default_value_t = 100)]
         limit: usize,
@@ -1197,6 +1206,9 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             after,
             files_with_matches,
             count,
+            symbols,
+            source,
+            max_tokens,
             limit,
             stdin,
         } => {
@@ -1225,6 +1237,9 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
                 before: before.max(context),
                 after: after.max(context),
                 files_with_matches,
+                symbols,
+                source,
+                max_tokens,
                 count,
                 limit,
                 stdin,

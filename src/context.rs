@@ -430,6 +430,7 @@ pub struct Seed {
     pub path: String,
     pub role: &'static str,
     pub forced: bool,
+    pub start_byte: Option<usize>,
 }
 
 /// Budgeted, file-grouped verbatim source for an explicit set of located
@@ -443,7 +444,11 @@ pub fn source_for(db: &Db, repo: &Repo, seeds: &[Seed], max_tokens: u64) -> Resu
     let mut cands: Vec<(Def, &'static str, bool)> = Vec::new();
     let mut seen: HashSet<(String, usize)> = HashSet::new();
     for seed in seeds {
-        for d in defs_by_name_in_path(db, &seed.name, &seed.path)? {
+        let defs = match seed.start_byte {
+            Some(byte) => defs_enclosing_byte(db, &seed.path, byte)?,
+            None => defs_by_name_in_path(db, &seed.name, &seed.path)?,
+        };
+        for d in defs {
             if seen.insert((d.path.clone(), d.start_byte)) {
                 cands.push((d, seed.role, seed.forced));
             }
@@ -559,6 +564,13 @@ fn defs_by_name_in_path(db: &Db, name: &str, path: &str) -> Result<Vec<Def>> {
         format!("SELECT {DEF_COLUMNS} FROM facts WHERE name = ? AND path = ? AND kind <> 'import'");
     let mut stmt = db.conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params![name, path], row_to_def)?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+fn defs_enclosing_byte(db: &Db, path: &str, byte: usize) -> Result<Vec<Def>> {
+    let sql = format!("SELECT {DEF_COLUMNS} FROM facts WHERE path = ? AND kind <> 'import' AND start_byte <= ? AND end_byte > ? ORDER BY end_byte - start_byte, start_byte DESC LIMIT 1");
+    let mut stmt = db.conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params![path, byte, byte], row_to_def)?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 

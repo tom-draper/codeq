@@ -243,6 +243,7 @@ pub fn cmd_explore(
             path: d.path.clone(),
             role: "focus",
             forced: true,
+            start_byte: None,
         });
     }
     for c in &callers {
@@ -252,6 +253,7 @@ pub fn cmd_explore(
                 path: c.path.clone(),
                 role: "caller",
                 forced: false,
+                start_byte: None,
             });
         }
     }
@@ -261,6 +263,7 @@ pub fn cmd_explore(
             path: c.path.clone(),
             role: "callee",
             forced: false,
+            start_byte: None,
         });
     }
 

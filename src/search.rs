@@ -29,6 +29,8 @@ pub(crate) struct Hit {
     pub(crate) path: String,
     pub(crate) line: usize,
     pub(crate) col: usize,
+    #[serde(skip_serializing)]
+    pub(crate) byte: usize,
     /// The innermost definition enclosing this match, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) symbol: Option<String>,
@@ -888,6 +890,7 @@ pub(crate) fn scan_doc(
                     path: path.to_string(),
                     line: line_idx + 1,
                     col: off - s[line_idx],
+                    byte: off,
                     symbol: enclosing.map(|d| d.name.clone()),
                     receiver: calls.and_then(|m| m.get(&off).cloned()).flatten(),
                     kind: enclosing.map(|d| d.kind.clone()),
@@ -984,6 +987,7 @@ fn scan_inverted(
                     path: path.to_string(),
                     line: i + 1,
                     col: 0,
+                    byte: starts[i],
                     symbol: enclosing.map(|d| d.name.clone()),
                     receiver: None,
                     kind: enclosing.map(|d| d.kind.clone()),
