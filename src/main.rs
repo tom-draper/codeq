@@ -573,8 +573,12 @@ enum Command {
         /// File(s) to read (repo-relative path or basename). A range can ride on
         /// the path — `a.rs:40-80`, `a.rs:12`, `a.rs:5-9,80-90` — so several
         /// slices of several files are one call.
-        #[arg(required = true)]
+        #[arg(required_unless_present = "at", conflicts_with = "at")]
         file: Vec<String>,
+        /// Read the innermost definition enclosing <path>:<line>, without guessing
+        /// a line range. Repeat to read several positions; overlapping source is emitted once.
+        #[arg(long, conflicts_with_all = ["file", "lines", "symbol", "full"])]
+        at: Vec<String>,
         /// Show only these lines, verbatim (e.g. 40-80). Repeatable, or
         /// comma-separated: 40-80,120-130.
         #[arg(long, value_delimiter = ',')]
@@ -1145,21 +1149,17 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             commands::cmd_tests(cwd, &name, path.as_deref(), limit, out)
         }
         Command::At { location } => commands::cmd_at(cwd, &location, out),
+        Command::Read { at, raw, .. } if !at.is_empty() => {
+            commands::cmd_read_at(cwd, &at, raw, out)
+        }
         Command::Read {
             file,
             lines,
             symbol,
             full,
             raw,
-        } => commands::cmd_read(
-            cwd,
-            &file,
-            &lines,
-            symbol.as_deref(),
-            full,
-            raw,
-            out,
-        ),
+            ..
+        } => commands::cmd_read(cwd, &file, &lines, symbol.as_deref(), full, raw, out),
         Command::Imports { path, limit } => commands::cmd_imports(cwd, path.as_deref(), limit, out),
         Command::Importers { query, limit } => commands::cmd_importers(cwd, &query, limit, out),
         Command::Deps {

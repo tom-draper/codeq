@@ -301,6 +301,11 @@ whole structure (imports, signatures, docstrings) cheaply, then open only what y
   ranges are `--lines 24-31,80-90`, and a range can ride on the path — `codeq read
   a.rs:24-31 b.rs:12` — so several slices of several files are one call.
 - `codeq read <file> --symbol discover` for one named definition, verbatim.
+- `codeq read --at src/a.rs:42` for the innermost definition enclosing a search
+  hit or stack frame, with exact boundaries. Repeat `--at` to read several
+  positions in one call; overlapping source is emitted once. This addresses the
+  occurrence itself, so same-named definitions elsewhere stay out of the answer.
+  A position outside any definition reports an error and suggests a line read.
 - `codeq read <file> --raw --symbol discover` for exact bytes with no line prefixes, ready
   to drop into an edit.
 - `codeq read <file> --full` for the whole file, unfolded (and still line-numbered).

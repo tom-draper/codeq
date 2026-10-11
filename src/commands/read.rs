@@ -166,6 +166,49 @@ pub fn cmd_read(
     Ok(())
 }
 
+/// Read definitions addressed by search hits or stack frames. Resolve all
+/// positions before printing so a bad final target cannot leave a partial answer.
+pub fn cmd_read_at(cwd: &Path, locations: &[String], raw: bool, out: Out) -> Result<()> {
+    use std::collections::BTreeMap;
+
+    if raw && locations.len() > 1 {
+        return Err(anyhow!(
+            "--raw yields one exact block; it takes one --at position"
+        ));
+    }
+    let s = Session::open(cwd, false, out)?;
+    let mut targets: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
+    for location in locations {
+        let found = super::explore::definition_at(&s, location)?;
+        if found.ranges.is_empty() {
+            return Err(anyhow!(
+                "no definition encloses {location}; use read {location} for the line itself"
+            ));
+        }
+        targets.entry(found.rel).or_default().extend(found.ranges);
+    }
+    let many = targets.len() > 1;
+    for (i, (rel, mut ranges)) in targets.into_iter().enumerate() {
+        ranges.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (start, end) in ranges {
+            if let Some(last) = merged.last_mut().filter(|last| start <= last.1) {
+                last.1 = last.1.max(end);
+            } else {
+                merged.push((start, end));
+            }
+        }
+        if many {
+            if i > 0 {
+                println!();
+            }
+            println!("# {rel}");
+        }
+        read_one(&s, &rel, &merged, None, false, raw)?;
+    }
+    Ok(())
+}
+
 fn read_one(
     s: &Session,
     rel: &str,
