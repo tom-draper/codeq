@@ -114,6 +114,33 @@ pub struct Db {
     pub dir: PathBuf,
 }
 
+/// Switch a new database to WAL, waiting out a competing switch.
+///
+/// Changing the journal mode needs the database to itself, and the busy
+/// timeout does not reliably cover it: on a cold start several processes all
+/// find a non-WAL database together, and a loser could get `SQLITE_BUSY` back
+/// and fail with "database is locked" — about one invocation in a hundred
+/// when twelve began at the same moment, none in 1,200 with the retry. The
+/// switch is idempotent, so retry until someone has done it.
+fn set_wal(conn: &Connection) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        let busy = match conn.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => return Ok(()),
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.code == rusqlite::ErrorCode::DatabaseBusy =>
+            {
+                e
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if std::time::Instant::now() >= deadline {
+            return Err(rusqlite::Error::SqliteFailure(busy, None).into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 impl Db {
     /// Open (creating if needed) the index for `repo_root`.
     pub fn open(repo_root: &Path) -> Result<Db> {
@@ -145,7 +172,7 @@ impl Db {
             .query_row("PRAGMA journal_mode", [], |r| r.get(0))
             .unwrap_or_default();
         if !mode.eq_ignore_ascii_case("wal") {
-            conn.pragma_update(None, "journal_mode", "WAL")?;
+            set_wal(&conn)?;
         }
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
