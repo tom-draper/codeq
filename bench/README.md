@@ -53,6 +53,30 @@ Switching the default output from JSON to grep-style text (`--json` still opt-in
 to *lose* on (`references` 0.7x→1.1x, `imports` 0.5x→1.0x), because the JSON
 envelope was pure token tax where the answer is essentially `path:line: text`.
 
+## Agent search/read workflows (`agent_workflows.py`)
+
+```sh
+python3 bench/agent_workflows.py --codeq target/debug/codeq
+```
+
+A deterministic Python fixture checks complete answers before comparing stdout
+bytes and subprocess calls. The baseline merges overlapping windows and batches
+all sed ranges into one invocation. No corpus download is needed.
+
+| Task | codeq bytes / calls | rg + sed bytes / calls |
+| --- | --- | --- |
+| Already-known range, exact bytes | 70 / 1 | 70 / 1 |
+| Complete body from a search hit | 70 / 1 | 4050 / 1 |
+| Search and read all matching implementations | 487 / 1 | 12052 / 2 |
+| Batch several search hits, source once | 249 / 1 | 12165 / 1 |
+
+These are mechanism checks on short definitions surrounded by unrelated source,
+not general savings estimates. Sed reads windows of up to 60 lines when the end
+of the definition is unknown. If boundaries are already known, raw codeq and sed
+are byte-identical. Bytes/4 is an approximate token estimate; model reasoning,
+tool-call syntax, stderr and latency are not included. Use the corpus completion
+harness above for broader task comparisons.
+
 ## Differential harness (multi-repo, correctness + trend)
 
 `differential.py` is the regression net. It clones a fixed corpus of real
