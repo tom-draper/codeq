@@ -198,6 +198,10 @@ Trace relationships (matched by name):
 - `codeq callers <name>` and `codeq callees <name>` show who calls it and what it calls.
   Rust associated calls such as `Session::open()` use indexed `impl` owners and imported
   type aliases to narrow candidates. Calls on values remain conservative.
+  Callees label syntax evidence as `resolution=qualified|name-only|ambiguous`.
+  `explore` lists ambiguous candidates without their source by default;
+  `--include-ambiguous` adds those bodies, subject to the same source budget.
+  A unique name match still does not establish the receiver type.
   `--depth N` walks the tree; `callers --examples` prints the actual call line at each site.
 - `codeq references <name>` lists every use, each tagged with its enclosing definition.
 - `codeq callpath <from> <to>` finds the shortest call chain between two symbols.

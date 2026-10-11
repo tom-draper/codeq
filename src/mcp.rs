@@ -490,7 +490,7 @@ fn build_args(tool: &str, a: &Value) -> Result<Vec<String>, String> {
 const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "codeq_explore",
-        "Understand a symbol in ONE call: its definition, who calls it, what it calls, and the verbatim source of that whole neighbourhood, budgeted and grouped by file. Prefer this over a definitions -> callers -> read -> read sequence when you need to understand or change a function/type. name is the exact symbol; path disambiguates a common name; max_tokens caps the source (the definition is always included, callers and callees fill the rest, and anything dropped is listed under omitted). Returns focus, callers, callees, imports (what is in scope in the focus file, so an edit knows what it can call), and source (each chunk tagged focus/caller/callee). Give EITHER name OR at — at is a '<path>:<line>' position and explores whatever definition encloses it, which turns a stack frame, diff hunk or search hit into its neighbourhood without resolving the name first. Same neighbourhood as codeq_about, which omits the source but reports fuller metadata per node — source is the axis the two differ on.",
+        "Understand a symbol in ONE call: its definition, who calls it, what it calls, and the verbatim source of that whole neighbourhood, budgeted and grouped by file. Prefer this over a definitions -> callers -> read -> read sequence when you need to understand or change a function/type. name is the exact symbol; path disambiguates a common name; max_tokens caps the source (the definition is always included, callers and callees fill the rest, and anything dropped is listed under omitted). Returns focus, callers, callees, imports (what is in scope in the focus file, so an edit knows what it can call), and source (each chunk tagged focus/caller/callee). Callee resolution is qualified, name-only, or ambiguous, describing syntax evidence rather than type checking. Ambiguous candidates stay listed but their source is deferred by default; include_ambiguous=true expands it. Give EITHER name OR at — at is a '<path>:<line>' position and explores whatever definition encloses it, which turns a stack frame, diff hunk or search hit into its neighbourhood without resolving the name first. Same neighbourhood as codeq_about, which omits the source but reports fuller metadata per node — source is the axis the two differ on.",
     ),
     (
         "codeq_map",
@@ -699,6 +699,8 @@ mod tests {
         assert_eq!(both, ["explore", "--at", "a.rs:3"]);
         let name = build_args("codeq_explore", &json!({ "name": "f" })).unwrap();
         assert_eq!(name, ["explore", "--", "f"]);
+        let expanded = build_args("codeq_explore", &json!({ "name": "f", "include_ambiguous": true })).unwrap();
+        assert_eq!(expanded, ["explore", "--include-ambiguous", "--", "f"]);
         assert!(build_args("codeq_explore", &json!({})).is_err());
     }
 

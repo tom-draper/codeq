@@ -241,6 +241,9 @@ pub(super) struct Callee {
     pub(super) line: i64,
     #[serde(skip)]
     pub(super) start_byte: usize,
+    #[serde(skip)]
+    owner: Option<String>,
+    pub(super) resolution: &'static str,
     /// How this callee's definition file connects to `name`'s file via the import
     /// graph (only set under `--resolved`): same-file / imported.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -283,6 +286,7 @@ pub(super) fn callees_of(
     if resolved {
         keep_reachable(s, &targets, &mut out)?;
     }
+    classify_callees(&called, &mut out);
     out.sort_by(|a, b| {
         (a.name.as_str(), a.path.as_str(), a.line).cmp(&(b.name.as_str(), b.path.as_str(), b.line))
     });
@@ -335,6 +339,51 @@ struct CalledNames {
 struct CallConstraint {
     files: Option<HashSet<String>>,
     owner: Option<String>,
+}
+
+impl CallConstraint {
+    fn allows(&self, path: &str, owner: Option<&str>) -> bool {
+        self.files.as_ref().is_none_or(|files| files.contains(path))
+            && self.owner.as_deref().is_none_or(|wanted| owner == Some(wanted))
+    }
+}
+
+fn classify_callees(called: &CalledNames, out: &mut [Callee]) {
+    let mut groups: HashMap<&str, Vec<&Callee>> = HashMap::new();
+    for candidate in out.iter() {
+        groups.entry(&candidate.name).or_default().push(candidate);
+    }
+    let mut labels = Vec::with_capacity(out.len());
+    for candidate in out.iter() {
+        let peers = &groups[candidate.name.as_str()];
+        let calls = called.module_targets.get(&candidate.name);
+        let ambiguous = calls.map_or(peers.len() > 1, |calls| {
+            calls.iter().any(|call| {
+                call.allows(&candidate.path, candidate.owner.as_deref())
+                    && peers
+                        .iter()
+                        .filter(|peer| call.allows(&peer.path, peer.owner.as_deref()))
+                        .count()
+                        > 1
+            })
+        });
+        let qualified = calls.is_some_and(|calls| {
+            calls
+                .iter()
+                .filter(|call| call.allows(&candidate.path, candidate.owner.as_deref()))
+                .all(|call| call.files.is_some() || call.owner.is_some())
+        });
+        labels.push(if ambiguous {
+            "ambiguous"
+        } else if qualified {
+            "qualified"
+        } else {
+            "name-only"
+        });
+    }
+    for (candidate, label) in out.iter_mut().zip(labels) {
+        candidate.resolution = label;
+    }
 }
 
 fn rust_call_owner(
@@ -536,15 +585,10 @@ fn callee_definitions(s: &Session, name: &str, called: &CalledNames) -> Result<V
         })?;
         for row in rows {
             let (n, k, p, l, owner, start_byte) = row?;
-            let allowed = called.module_targets.get(&n).is_none_or(|calls| {
-                calls.iter().any(|call| {
-                    call.files.as_ref().is_none_or(|files| files.contains(&p))
-                        && call
-                            .owner
-                            .as_ref()
-                            .is_none_or(|wanted| owner.as_ref() == Some(wanted))
-                })
-            });
+            let allowed = called
+                .module_targets
+                .get(&n)
+                .is_none_or(|calls| calls.iter().any(|call| call.allows(&p, owner.as_deref())));
             if n != name && allowed && seen.insert((n.clone(), p.clone(), l)) {
                 let site = called.sites.get(&n);
                 out.push(Callee {
@@ -553,6 +597,8 @@ fn callee_definitions(s: &Session, name: &str, called: &CalledNames) -> Result<V
                     path: p,
                     line: l,
                     start_byte,
+                    owner,
+                    resolution: "name-only",
                     via: None,
                     call: site.map(|(e, _)| e.clone()),
                     call_line: site.map(|(_, l)| *l),
