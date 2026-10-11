@@ -84,7 +84,7 @@ impl Session {
         let db = Db::open(&repo.root)?;
         if rebuild {
             db.conn.execute("DELETE FROM files", [])?; // cascades to facts
-            db.conn.execute("DELETE FROM content_fts", [])?;
+            db.reset_fts()?;
             // Also clear the directory cache: otherwise the next refresh sees an
             // empty `files` table against an unchanged `dirs` cache, judges the
             // index "fresh", and skips the walk — leaving it empty.
