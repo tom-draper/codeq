@@ -299,7 +299,7 @@ pub fn cmd_explore(
 /// Innermost wins, so a line inside a method resolves to the method rather than
 /// the type that contains it. A constructor parameter on the type's own header
 /// line is part of that header, so the line resolves to the type.
-fn definition_at(s: &Session, location: &str) -> Result<AtPosition> {
+pub(super) fn definition_at(s: &Session, location: &str) -> Result<AtPosition> {
     let (path, line_str) = location
         .rsplit_once(':')
         .ok_or_else(|| anyhow!("expected <path>:<line>, got '{location}'"))?;
@@ -314,7 +314,7 @@ fn definition_at(s: &Session, location: &str) -> Result<AtPosition> {
     // row silently answered about `app` when the question was about `response`,
     // which `at` (which returns all five) already knew better than to do.
     let mut stmt = s.db.conn.prepare(
-        "SELECT name, start_byte, end_byte, kind, start_line, signature, owner
+        "SELECT name, start_byte, end_byte, kind, start_line, signature, owner, end_line
          FROM facts
          WHERE kind <> 'import' AND path = ?1
            AND start_line <= ?2 AND end_line >= ?2
@@ -330,6 +330,7 @@ fn definition_at(s: &Session, location: &str) -> Result<AtPosition> {
                 start_line: r.get(4)?,
                 signature: r.get(5)?,
                 owner: r.get(6)?,
+                end_line: r.get(7)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?;
@@ -353,13 +354,23 @@ fn definition_at(s: &Session, location: &str) -> Result<AtPosition> {
     // line resolved to `red` because it has the fewest characters. Four disjoint
     // enumerators are equally innermost; only the enum around them is an
     // ancestor, and that is what containment says and span does not.
-    let mut names: Vec<String> = covering
+    let leaves: Vec<&Covering> = covering
         .iter()
         .filter(|d| !covering.iter().any(|other| d.contains(other)))
-        .map(|d| d.name.clone())
+        .copied()
         .collect();
+    let mut names: Vec<String> = leaves.iter().map(|d| d.name.clone()).collect();
     names.dedup();
-    Ok(AtPosition { rel, line, names })
+    let ranges = leaves
+        .iter()
+        .map(|d| (d.start_line as usize, d.end_line as usize))
+        .collect();
+    Ok(AtPosition {
+        rel,
+        line,
+        names,
+        ranges,
+    })
 }
 
 /// A fact whose span covers the queried line, with just what `definition_at`
@@ -370,6 +381,7 @@ struct Covering {
     end: i64,
     kind: String,
     start_line: i64,
+    end_line: i64,
     signature: Option<String>,
     owner: Option<String>,
 }
@@ -409,10 +421,11 @@ fn declared_in_header(d: &Covering, all: &[Covering]) -> bool {
 /// What a `<file>:<line>` resolved to: the innermost definitions covering it.
 /// More than one name means the line declares several things and does not
 /// identify a single symbol.
-struct AtPosition {
-    rel: String,
+pub(super) struct AtPosition {
+    pub(super) rel: String,
     line: i64,
     names: Vec<String>,
+    pub(super) ranges: Vec<(usize, usize)>,
 }
 
 /// The imports declared by the files the focus definitions live in.

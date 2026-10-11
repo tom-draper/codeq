@@ -205,6 +205,13 @@ const TOOL_OVERRIDES: &[(&str, ToolOverrides)] = &[
         },
     ),
     (
+        "read",
+        ToolOverrides {
+            one_of: &["at", "file"],
+            ..EMPTY_TOOL_OVERRIDES
+        },
+    ),
+    (
         "references",
         ToolOverrides {
             globals: ROW_GLOBALS,
@@ -539,7 +546,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_read",
-        "Read a file — PREFER THIS over a raw file read for large files. By default it folds long function/method bodies to their signature plus a marker with the exact hidden line range, so you see the whole file's structure cheaply; then expand with lines (verbatim slices, e.g. \"40-80\" or \"40-80,120-130\") or symbol (a named definition, verbatim). file takes several paths, and a range can ride on each — [\"a.rs:40-80\", \"b.rs:12\"] — so several slices of several files are ONE call instead of one per slice. full returns the unfolded file. Line-numbered text. raw=true drops the line-number prefixes and folding to emit exact bytes — use it to grab a symbol's source as an edit's search text (old_string); with symbol it requires a single match. On markdown, folding collapses each section's prose and leaves the heading tree, and symbol reads one section by its heading — prefer that over reading a whole README.",
+        "Read repository source. Choose at for complete definitions enclosing search hits or stack frames (one or several path:line positions; overlapping source once), or file with symbol for a named definition. These use exact boundaries instead of guessed sed windows. With file alone, long bodies fold to signatures and expandable line ranges; imports stay visible. For known slices, file accepts [\"a.rs:40-80\", \"b.rs:12\"] or use lines with one file. raw emits source bytes without line numbers, for edit anchors; it requires one block. full unfolds a file. Markdown headings work as symbols. Provide either at or file.",
     ),
     (
         "codeq_imports",
@@ -683,5 +690,14 @@ mod tests {
         let name = build_args("codeq_explore", &json!({ "name": "f" })).unwrap();
         assert_eq!(name, ["explore", "--", "f"]);
         assert!(build_args("codeq_explore", &json!({})).is_err());
+    }
+
+    #[test]
+    fn read_takes_positions_or_files() {
+        let args = build_args("codeq_read", &json!({ "at": ["a.rs:3", "b.rs:7"] })).unwrap();
+        assert_eq!(args, ["read", "--at", "a.rs:3", "--at", "b.rs:7"]);
+        let args = build_args("codeq_read", &json!({ "file": "a.rs", "symbol": "f" })).unwrap();
+        assert_eq!(args, ["read", "--symbol", "f", "--", "a.rs"]);
+        assert!(build_args("codeq_read", &json!({})).is_err());
     }
 }

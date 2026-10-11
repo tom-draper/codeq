@@ -4335,6 +4335,66 @@ fn read_takes_ranges_on_the_path_and_several_files() {
     assert!(out.is_empty() && err.contains("nope.txt"), "{out}{err}");
 }
 
+#[test]
+fn read_at_reads_exact_enclosing_definitions_and_deduplicates_positions() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "def same():\n    return 1\n\ndef same():\n    return 2\n",
+    )
+    .write(
+        "b.py",
+        "class Wrapper:\n    def inner(self):\n        return 3\n",
+    );
+    let out = f.raw(&["read", "--at", "a.py:5", "--raw"]);
+    assert!(out.status.success(), "{:?}", out);
+    assert_eq!(out.stdout, b"def same():\n    return 2\n");
+
+    let out = f.raw(&["read", "--at", "a.py:4", "--at", "a.py:5", "--at", "b.py:3"]);
+    assert!(out.status.success(), "{:?}", out);
+    assert_eq!(String::from_utf8(out.stdout).unwrap(),
+        "# a.py\n4\tdef same():\n5\t    return 2\n\n# b.py\n2\t    def inner(self):\n3\t        return 3\n");
+
+    // Asking for a container and a member emits their overlapping lines once.
+    let out = f.raw(&["read", "--at", "b.py:1", "--at", "b.py:3"]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "1\tclass Wrapper:\n2\t    def inner(self):\n3\t        return 3\n"
+    );
+}
+
+#[test]
+fn read_at_validates_all_positions_before_emitting_source() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() {}\n\n");
+    for bad in ["a.rs:2", "missing.rs:1", "a.rs:nope", "a.rs"] {
+        let out = f.raw(&["read", "--at", "a.rs:1", "--at", bad]);
+        assert!(!out.status.success(), "{bad}");
+        assert!(out.stdout.is_empty(), "partial answer for {bad}");
+    }
+    for conflicting in ["--full", "--symbol", "--lines"] {
+        let out = f.raw(&["read", "--at", "a.rs:1", conflicting, "1"]);
+        assert!(!out.status.success(), "{conflicting}");
+    }
+    let out = f.raw(&["read", "--at", "a.rs:1", "--at", "a.rs:1", "--raw"]);
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
+fn read_at_preserves_raw_bytes_and_handles_shared_declaration_lines() {
+    let f = Fixture::new();
+    f.write("a.rs", "fn one() {\r\n    call();\r\n}")
+        .write("b.rs", "enum Color { Red, Blue }\n");
+    let out = f.raw(&["read", "--at", "a.rs:2", "--raw"]);
+    assert!(out.status.success());
+    assert_eq!(out.stdout, b"fn one() {\r\n    call();\r\n}");
+    let out = f.raw(&["read", "--at", "b.rs:1"]);
+    assert!(out.status.success());
+    assert_eq!(out.stdout, b"1\tenum Color { Red, Blue }\n");
+}
+
 /// grep's flags mean in `search` what they mean in grep, so the command an
 /// agent already knows is not an exit-2 round trip.
 #[test]
