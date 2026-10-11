@@ -97,8 +97,9 @@ pub(super) fn callers_of(
     };
     let mut hits = match run_search(
         &s.db.conn,
+        &s.repo.root,
         &re,
-        like_of(name).as_deref(),
+        prefilter_of(name).as_deref(),
         path,
         None,
         None,
@@ -214,9 +215,10 @@ pub(super) fn alias_hits(
             continue;
         }
         let re = regex::Regex::new(&regex::escape(&binding))?;
-        let like = like_of(&binding);
+        let like = prefilter_of(&binding);
         let data = run_search(
             &s.db.conn,
+            &s.repo.root,
             &re,
             like.as_deref(),
             Some(&file),
@@ -374,7 +376,6 @@ fn scan_called_names(
         module_targets: HashMap::new(),
     };
     let graph = load_dep_graph(&s.db)?;
-    let mut body_stmt = s.db.conn.prepare("SELECT body FROM content_fts WHERE path = ?1")?;
     let mut calls_stmt = s.db.conn.prepare(
         "SELECT start_byte, name, receiver FROM calls
          WHERE file_id = (SELECT id FROM files WHERE path = ?1)
@@ -386,7 +387,7 @@ fn scan_called_names(
          WHERE file_id = (SELECT id FROM files WHERE path = ?1) ORDER BY start_byte",
     )?;
     for (path, sb, eb) in targets {
-        let body: Option<String> = body_stmt.query_row([path], |r| r.get(0)).ok();
+        let body = crate::index::load_body(&s.repo.root, path);
         let Some(b) = body else { continue };
         let Some(slice) = b.get(*sb..(*eb).min(b.len())) else {
             continue;

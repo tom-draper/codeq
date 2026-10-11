@@ -47,6 +47,8 @@ struct Parsed {
     language: Option<&'static str>,
     content_changed: bool,
     was_indexed: bool,
+    /// Not binary, so its contents are searchable.
+    is_text: bool,
     /// Body for the FTS index — `Some` for a changed text file, else `None`.
     body: Option<String>,
     facts: Vec<Fact>,
@@ -130,6 +132,7 @@ fn parse_one(
         language,
         content_changed,
         was_indexed,
+        is_text: !is_binary,
         body,
         facts,
         spans,
@@ -449,8 +452,8 @@ impl<'tx> RowWriter<'tx> {
         Ok(RowWriter {
             now,
             upsert: tx.prepare(
-                "INSERT INTO files(path, language, size_bytes, mtime_ns, ctime_ns, content_hash, indexed_at, parse_errors, parse_recovered)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                "INSERT INTO files(path, language, size_bytes, mtime_ns, ctime_ns, content_hash, indexed_at, parse_errors, parse_recovered, is_text)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                  ON CONFLICT(path) DO UPDATE SET
                     language = excluded.language,
                     size_bytes = excluded.size_bytes,
@@ -459,7 +462,8 @@ impl<'tx> RowWriter<'tx> {
                     content_hash = excluded.content_hash,
                     indexed_at = excluded.indexed_at,
                     parse_errors = excluded.parse_errors,
-                    parse_recovered = excluded.parse_recovered
+                    parse_recovered = excluded.parse_recovered,
+                    is_text = excluded.is_text
                  RETURNING id",
             )?,
             del_facts: tx.prepare("DELETE FROM facts WHERE path = ?1")?,
@@ -471,9 +475,8 @@ impl<'tx> RowWriter<'tx> {
                     is_test, decorator, contract)
                  VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
             )?,
-            del_fts: tx.prepare("DELETE FROM content_fts WHERE path = ?1")?,
-            ins_fts: tx
-                .prepare("INSERT INTO content_fts(path, language, body) VALUES(?1, ?2, ?3)")?,
+            del_fts: tx.prepare("DELETE FROM content_fts WHERE rowid = ?1")?,
+            ins_fts: tx.prepare("INSERT INTO content_fts(rowid, body) VALUES(?1, ?2)")?,
             del_spans: tx.prepare("DELETE FROM spans WHERE file_id = ?1")?,
             // OR IGNORE: the span is the whole row, so a grammar that reports
             // one twice has said nothing new the second time.
@@ -507,6 +510,7 @@ impl<'tx> RowWriter<'tx> {
                 self.now,
                 p.parse_errors,
                 p.parse_recovered,
+                p.is_text,
             ),
             |r| r.get(0),
         )?;
@@ -514,18 +518,16 @@ impl<'tx> RowWriter<'tx> {
             return Ok(false);
         }
         // Only a previously-indexed file has stale rows to drop; a new file
-        // (every file on a cold index) has none, and `DELETE FROM
-        // content_fts WHERE path=?` scans the UNINDEXED-path FTS table, so
-        // skipping it for new files is what keeps cold indexing linear.
+        // (every file on a cold index) has none.
         if p.was_indexed {
-            self.del_fts.execute([&p.rel])?;
+            self.del_fts.execute([file_id])?;
             self.del_facts.execute([&p.rel])?;
             self.del_spans.execute([file_id])?;
             self.del_impls.execute([&p.rel])?;
             self.del_calls.execute([file_id])?;
         }
         if let Some(body) = &p.body {
-            // Every indexed file's body goes in, whatever its size. A cap
+            // Every text file's trigrams go in, whatever its size. A cap
             // was tried and reverted: it made a data-heavy repo's index
             // 200x smaller, and it also made `search` stop being a strict
             // superset of ripgrep — the differential harness caught 20,000
@@ -533,9 +535,11 @@ impl<'tx> RowWriter<'tx> {
             // longer would. That guarantee is the loudest thing this tool
             // claims, and no size threshold separates "somebody's test
             // fixture" from "committed geodata" on principle rather than
-            // by fitting two data points. `.codeqignore` is the answer,
-            // and `index` now says when it is worth writing one.
-            self.ins_fts.execute((&p.rel, p.language, body.as_str()))?;
+            // by fitting two data points. The size was fixed by storing
+            // less per file instead: only the trigram set is kept, not the
+            // text. `.codeqignore` is still the answer for data that should
+            // not be searched at all.
+            self.ins_fts.execute((file_id, body.as_str()))?;
         }
         if let Some(lang) = p.language {
             for f in &p.facts {
@@ -601,12 +605,14 @@ fn drop_vanished(
     seen: &HashSet<String>,
 ) -> Result<()> {
     let mut del = tx.prepare("DELETE FROM files WHERE path = ?1")?;
-    // FTS is not FK-linked to files, so remove it explicitly.
-    let mut del_fts = tx.prepare("DELETE FROM content_fts WHERE path = ?1")?;
+    // FTS is not FK-linked to files, so remove it explicitly — and first, while
+    // the row that maps the path to its id is still there.
+    let mut del_fts =
+        tx.prepare("DELETE FROM content_fts WHERE rowid = (SELECT id FROM files WHERE path = ?1)")?;
     let gone: Vec<&String> = existing.keys().filter(|p| !seen.contains(*p)).collect();
     for p in gone {
-        del.execute([p])?;
         del_fts.execute([p])?;
+        del.execute([p])?;
     }
     Ok(())
 }
@@ -719,6 +725,18 @@ fn file_stat_key(path: &std::path::Path) -> Option<(i64, i64, i64)> {
         mtime_ns_of(&md).unwrap_or(0),
         ctime_ns_of(&md),
     ))
+}
+
+/// The text of an indexed file, as the indexer saw it: leading BOM stripped,
+/// then decoded as UTF-8 with invalid bytes replaced. Every stored offset —
+/// fact extents, spans, call sites — is a position in *this* text, not in the
+/// bytes on disk, so anything that slices by one must read through here.
+/// `None` when the file cannot be read, which a caller treats as no matches:
+/// it vanished since the refresh this query began with.
+pub(crate) fn load_body(root: &Path, rel: &str) -> Option<String> {
+    let bytes = std::fs::read(root.join(rel)).ok()?;
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+    Some(String::from_utf8_lossy(bytes).into_owned())
 }
 
 pub(crate) fn looks_binary(bytes: &[u8]) -> bool {

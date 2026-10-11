@@ -11854,6 +11854,22 @@ fn filler_text(bytes: usize) -> String {
     out
 }
 
+/// A generated tree of definitions and calls under `gen/`: what fills an index
+/// now that file text is not stored in it. Many small files, because one large
+/// one is far slower to extract.
+fn write_symbol_heavy_tree(f: &Fixture) {
+    let source: String = (0..100)
+        .map(|i| format!("def fn_{i}(a, b):\n    return fn_{}(a, b)\n\n", i / 2))
+        .collect();
+    for k in 0..200 {
+        f.write(&format!("gen/m{k}.py"), &source);
+    }
+}
+
+fn remove_symbol_heavy_tree(f: &Fixture) {
+    std::fs::remove_dir_all(f.path().join("gen")).unwrap();
+}
+
 fn index_bytes(f: &Fixture) -> u64 {
     std::fs::metadata(f.path().join(".codeq/index.db"))
         .unwrap()
@@ -11862,18 +11878,17 @@ fn index_bytes(f: &Fixture) -> u64 {
 
 #[test]
 fn the_content_index_costs_less_than_the_text_it_covers() {
-    // The trigram index is only ever a LIKE prefilter, so it stores which files
-    // hold a trigram and not where. With positions it was twice the size of the
-    // source on a C repo and the bulk of every index.db.
+    // The index holds which files contain each trigram and nothing more: not
+    // where in the file (with positions it was twice the size of the source on
+    // a C repo), and not the text, which is on disk already.
     let f = Fixture::new();
     let text = filler_text(1 << 20);
     f.write("notes.txt", &text);
 
     let hits = f.run(&["search", "w7ff", "--limit", "0"]);
     assert!(!hits["data"]["matches"].as_array().unwrap().is_empty());
-    // The stored body is one copy; everything else must fit in the second.
     let (index, source) = (index_bytes(&f), text.len() as u64);
-    assert!(index < source * 2, "index {index} B for {source} B of text");
+    assert!(index * 2 < source, "index {index} B for {source} B of text");
 }
 
 #[test]
@@ -11882,11 +11897,11 @@ fn removing_content_shrinks_the_index_file() {
     // index only grew: a real one was 5.3 GB with 3.1 GB of it free.
     let f = Fixture::new();
     f.write("src/lib.py", "def compute():\n    return 1\n");
-    f.write("data/big.txt", &filler_text(2 << 20));
+    write_symbol_heavy_tree(&f);
     f.run(&["files"]);
     let before = index_bytes(&f);
 
-    f.remove("data/big.txt");
+    remove_symbol_heavy_tree(&f);
     let files = f.run(&["files"]);
     assert_eq!(field_set(&files, "path"), ["src/lib.py"]);
     let after = index_bytes(&f);
@@ -11900,7 +11915,7 @@ fn compaction_keeps_spans_and_calls_attached_to_their_file() {
     // comments and call sites to a different file or to none.
     let f = Fixture::new();
     f.write("a.py", "def helper():\n    return 1\n");
-    f.write("data/big.txt", &filler_text(2 << 20));
+    write_symbol_heavy_tree(&f);
     f.write(
         "z.py",
         "from a import helper\n\n# zebra marker\ndef run():\n    return helper()\n",
@@ -11908,9 +11923,9 @@ fn compaction_keeps_spans_and_calls_attached_to_their_file() {
     f.run(&["files"]);
     let before = index_bytes(&f);
 
-    // Removing the middle file leaves a gap in the ids and frees enough pages
-    // to trigger the compaction.
-    f.remove("data/big.txt");
+    // Removing the generated files leaves gaps in the ids and frees enough
+    // pages to trigger the compaction.
+    remove_symbol_heavy_tree(&f);
     f.run(&["files"]);
     assert!(index_bytes(&f) * 4 < before);
 
@@ -11920,4 +11935,56 @@ fn compaction_keeps_spans_and_calls_attached_to_their_file() {
     assert_eq!(hits[0]["path"], "z.py");
     let callees = f.run(&["callees", "run"]);
     assert_eq!(field_set(&callees, "name"), ["helper"]);
+}
+
+#[test]
+fn the_trigram_prefilter_treats_fts_syntax_as_text() {
+    // Candidates come from an FTS5 query built out of the literal's trigrams,
+    // so every character FTS5 gives meaning to — quotes, operators, column
+    // and prefix syntax — has to reach the tokenizer as plain text. A clause
+    // that parsed as syntax would match nothing, and nothing looks like "no
+    // hits".
+    let f = Fixture::new();
+    let long = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    f.write(
+        "notes.txt",
+        &format!(
+            "say \"hi\" AND (x OR y) NOT z* ^caret col:on\n100%_done naïve Ünïcode\n{long}\n"
+        ),
+    );
+    f.write("other.txt", "nothing of interest here\n");
+    let hit = |args: &[&str]| -> Vec<String> {
+        let mut argv = vec!["search"];
+        argv.extend_from_slice(args);
+        let v = f.run(&argv);
+        let mut paths = field_set(&serde_json::json!({ "data": v["data"]["matches"] }), "path");
+        paths.dedup();
+        paths
+    };
+    for literal in [
+        "\"hi\" AND",
+        "(x OR y)",
+        "NOT z* ^caret",
+        "col:on",
+        "100%_done",
+        "naïve",
+        long,
+    ] {
+        assert_eq!(hit(&["--fixed", literal]), ["notes.txt"], "{literal}");
+    }
+    assert_eq!(hit(&["-i", "--fixed", "ünïcode"]), ["notes.txt"]);
+    // `_` and `%` are themselves, not wildcards.
+    assert!(hit(&["--fixed", "100x_done"]).is_empty());
+
+    // An edit replaces the file's trigrams rather than adding to them.
+    f.write("notes.txt", "rewritten entirely\n");
+    assert!(hit(&["--fixed", "col:on"]).is_empty());
+    assert_eq!(hit(&["--fixed", "rewritten"]), ["notes.txt"]);
+
+    // A file that turns binary stops being searchable, and one that is
+    // removed takes its trigrams with it.
+    f.write_bytes("notes.txt", b"rewritten\0entirely\n");
+    assert!(hit(&["--fixed", "rewritten"]).is_empty());
+    f.remove("other.txt");
+    assert!(hit(&["--fixed", "interest"]).is_empty());
 }

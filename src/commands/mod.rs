@@ -17,7 +17,7 @@ use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
 use crate::index::{language_for, refresh};
 use crate::repo::Repo;
 use crate::search::{
-    self, innermost, like_of, load_file_defs, regex_prefilter, run_search, run_search_acc,
+    self, innermost, load_file_defs, prefilter_of, regex_prefilter, run_search, run_search_acc,
     scan_stdin, scan_unindexed, FileDef, Hit, InFilter, OutMode, ScanOpts, SearchData,
 };
 

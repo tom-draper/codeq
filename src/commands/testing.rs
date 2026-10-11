@@ -149,8 +149,9 @@ pub(super) fn test_sites(
     };
     let hits = match run_search(
         &s.db.conn,
+        &s.repo.root,
         &re,
-        like_of(name).as_deref(),
+        prefilter_of(name).as_deref(),
         path,
         None,
         None,
