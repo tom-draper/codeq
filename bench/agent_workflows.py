@@ -102,6 +102,22 @@ def main():
             assert source.count(body) == 1, "codeq must emit each body once"
         record("search-and-read-implementations", cq, baseline)
 
+        # Code shape and complete implementations in one call, with the same
+        # complete-body assertions as the textual search/read workflow.
+        cq, baseline = Workflow(root), Workflow(root)
+        source = cq.run(binary, "astgrep", "needle($VALUE)", "--language", "python",
+                        "--source", "--max-tokens", "1000")
+        hits = baseline.run("rg", "-n", r"needle\(", "sample.py")
+        lines = [int(line.split(b":", 1)[0]) for line in hits.splitlines()]
+        sed_args = ["sed", "-n"]
+        for start, end in windows(lines, len(blocks)):
+            sed_args.extend(["-e", f"{start},{end}p"])
+        read = baseline.run(*sed_args, "sample.py")
+        for body in definitions:
+            assert body in source and body in read
+            assert source.count(body) == 1
+        record("structural-search-and-read-implementations", cq, baseline)
+
         # Several hits within each body: one call, no duplicate source.
         cq, baseline = Workflow(root), Workflow(root)
         at_args = []

@@ -96,6 +96,7 @@ all sed ranges into one invocation. No corpus download is needed.
 | Already-known range, exact bytes | 70 / 1 | 70 / 1 |
 | Complete body from a search hit | 70 / 1 | 4050 / 1 |
 | Search and read all matching implementations | 487 / 1 | 12052 / 2 |
+| Structural search and read matching implementations | 487 / 1 | 12052 / 2 |
 | Batch several search hits, source once | 249 / 1 | 12165 / 1 |
 
 These are mechanism checks on short definitions surrounded by unrelated source,
