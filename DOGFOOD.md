@@ -4,6 +4,34 @@ Honest friction, limitations, and failures found while using codeq to develop
 codeq. New entries at the top. The point is candour — a frustration recorded
 here is a feature request or a bug report.
 
+## 2026-10-11: One Python file of 20,000 functions took two minutes to index
+
+Found by timing, while writing a test for the index-size work that needed a
+file with many definitions. The benchmarks never showed it: the corpus has no
+single file that large.
+
+`TYPE_KINDS` is one list shared by every grammar, and it holds `module` for
+Ruby's `module Foo`. The root node of a Python file is also a `module`. So each
+public Python definition treated its own file as an enclosing type and asked it
+for a name, which scans every top-level child: N children, N times. Found by
+interrupting a debug build under gdb four times. Three of the four stacks were
+in `type_name_of` under `enclosed_by_private_type`. A node with no parent is no
+longer a type.
+
+| one Python file of N functions | before | after |
+| --- | --- | --- |
+| 5,000 | 4.8 s | 0.6 s |
+| 10,000 | 19.5 s | 1.0 s |
+| 20,000 | 120.6 s | 2.0 s |
+
+Rust was already linear (20,000 functions in 2.3 s) and is unchanged. No
+extracted fact changes: Python's root never has an identifier child, so the
+lookup always came back empty after doing the work.
+
+Not changed: `Node::parent` in tree-sitter descends from the root on every
+call, so the ancestor walks are still linear in a node's sibling count. It does
+not show at 20,000 top-level definitions, so it was left alone.
+
 ## 2026-10-11 — The index no longer holds a copy of the repo
 
 The entry below left one thing standing: the stored body of every text file,
