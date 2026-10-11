@@ -13,6 +13,7 @@ path = "src/main.rs"
 anyhow = "1"
 blake3 = "1"
 clap = { version = "4", features = ["derive"] }
+fs2 = "0.4"
 globset = "0.4.18"
 ignore = "0.4"
 libc = "0.2.186"
@@ -22,6 +23,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 streaming-iterator = "0.1.9"
+tempfile = "3.27.0"
+toml_edit = { version = "0.23", features = ["serde"] }
 tree-sitter = "0.26.10"
 tree-sitter-c = "0.24.2"
 tree-sitter-c-sharp = "0.23.5"
@@ -64,4 +67,3 @@ strip = true
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
-tempfile = "3.27.0"

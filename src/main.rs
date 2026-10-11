@@ -841,8 +841,7 @@ enum Command {
     Capabilities {},
     /// Run as an MCP server over stdio (for agent hosts to call codeq natively).
     Mcp,
-    /// Set codeq up for detected AI coding agents (Claude Code, Cursor, Windsurf,
-    /// Gemini): register its MCP server in each agent's own config, and install
+    /// Set codeq up for detected coding agents: register its MCP server and install
     /// the codeq skill for agents that read one. Only touches detected agents
     /// unless `--agent` names one.
     Install {
@@ -853,13 +852,30 @@ enum Command {
         /// adding them.
         #[arg(long)]
         uninstall: bool,
-        /// Target just this agent (and create its config if absent): claude-code,
-        /// cursor, windsurf, or gemini.
-        #[arg(long)]
+        /// Target one agent, creating its configuration if absent.
+        #[arg(long, value_parser = install::AGENTS.to_vec())]
         agent: Option<String>,
         /// Register the MCP server only, leaving the skill alone.
         #[arg(long)]
         no_skill: bool,
+        /// Back up and replace customized codeq entries or skills. Uninstall restores them.
+        #[arg(long, conflicts_with = "uninstall")]
+        force: bool,
+    },
+    /// Remove managed agent registrations and skills, preserving customized content.
+    Uninstall {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, value_parser = install::AGENTS.to_vec())]
+        agent: Option<String>,
+        /// Leave installed skills alone.
+        #[arg(long)]
+        no_skill: bool,
+    },
+    /// Check registrations, bundled guides, and MCP startup without changing configuration.
+    Doctor {
+        #[arg(long, value_parser = install::AGENTS.to_vec())]
+        agent: Option<String>,
     },
 }
 
@@ -1315,6 +1331,13 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             uninstall,
             agent,
             no_skill,
-        } => commands::cmd_install(dry_run, uninstall, agent.as_deref(), no_skill, out),
+            force,
+        } => commands::cmd_install(dry_run, uninstall, agent.as_deref(), no_skill, force, out),
+        Command::Uninstall {
+            dry_run,
+            agent,
+            no_skill,
+        } => commands::cmd_install(dry_run, true, agent.as_deref(), no_skill, false, out),
+        Command::Doctor { agent } => commands::cmd_doctor(agent.as_deref(), out),
     }
 }

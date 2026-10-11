@@ -4575,7 +4575,12 @@ fn mcp_exposes_every_agent_query_command_and_its_schema_flags() {
             .into_iter()
             // These commands manage Codeq itself or start the MCP server; they are not
             // repository-query tools an MCP client should recursively expose.
-            .filter(|name| !matches!(name.as_str(), "index" | "install" | "mcp"))
+            .filter(|name| {
+                !matches!(
+                    name.as_str(),
+                    "index" | "install" | "uninstall" | "doctor" | "mcp"
+                )
+            })
             .map(|name| format!("codeq_{name}"))
             .collect();
 
