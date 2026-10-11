@@ -459,7 +459,8 @@ impl<'tx> RowWriter<'tx> {
                     content_hash = excluded.content_hash,
                     indexed_at = excluded.indexed_at,
                     parse_errors = excluded.parse_errors,
-                    parse_recovered = excluded.parse_recovered",
+                    parse_recovered = excluded.parse_recovered
+                 RETURNING id",
             )?,
             del_facts: tx.prepare("DELETE FROM facts WHERE path = ?1")?,
             ins_fact: tx.prepare(
@@ -473,18 +474,21 @@ impl<'tx> RowWriter<'tx> {
             del_fts: tx.prepare("DELETE FROM content_fts WHERE path = ?1")?,
             ins_fts: tx
                 .prepare("INSERT INTO content_fts(path, language, body) VALUES(?1, ?2, ?3)")?,
-            del_spans: tx.prepare("DELETE FROM spans WHERE path = ?1")?,
+            del_spans: tx.prepare("DELETE FROM spans WHERE file_id = ?1")?,
+            // OR IGNORE: the span is the whole row, so a grammar that reports
+            // one twice has said nothing new the second time.
             ins_span: tx.prepare(
-                "INSERT INTO spans(path, start_byte, end_byte, kind) VALUES(?1, ?2, ?3, ?4)",
+                "INSERT OR IGNORE INTO spans(file_id, start_byte, end_byte, kind)
+                 VALUES(?1, ?2, ?3, ?4)",
             )?,
             del_impls: tx.prepare("DELETE FROM impls WHERE path = ?1")?,
             ins_impl: tx.prepare(
                 "INSERT INTO impls(path, line, subtype, supertype, relation, language)
                  VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
             )?,
-            del_calls: tx.prepare("DELETE FROM calls WHERE path = ?1")?,
+            del_calls: tx.prepare("DELETE FROM calls WHERE file_id = ?1")?,
             ins_call: tx.prepare(
-                "INSERT INTO calls(path, start_byte, name, receiver) VALUES(?1, ?2, ?3, ?4)",
+                "INSERT INTO calls(file_id, start_byte, name, receiver) VALUES(?1, ?2, ?3, ?4)",
             )?,
         })
     }
@@ -492,17 +496,20 @@ impl<'tx> RowWriter<'tx> {
     /// Store one parsed file. Returns whether its content was rewritten (false
     /// when only the stat columns changed).
     fn write(&mut self, p: &Parsed) -> Result<bool> {
-        self.upsert.execute((
-            &p.rel,
-            p.language,
-            p.size,
-            p.mtime_ns,
-            p.ctime_ns,
-            &p.hash,
-            self.now,
-            p.parse_errors,
-            p.parse_recovered,
-        ))?;
+        let file_id: i64 = self.upsert.query_row(
+            (
+                &p.rel,
+                p.language,
+                p.size,
+                p.mtime_ns,
+                p.ctime_ns,
+                &p.hash,
+                self.now,
+                p.parse_errors,
+                p.parse_recovered,
+            ),
+            |r| r.get(0),
+        )?;
         if !p.content_changed {
             return Ok(false);
         }
@@ -513,9 +520,9 @@ impl<'tx> RowWriter<'tx> {
         if p.was_indexed {
             self.del_fts.execute([&p.rel])?;
             self.del_facts.execute([&p.rel])?;
-            self.del_spans.execute([&p.rel])?;
+            self.del_spans.execute([file_id])?;
             self.del_impls.execute([&p.rel])?;
-            self.del_calls.execute([&p.rel])?;
+            self.del_calls.execute([file_id])?;
         }
         if let Some(body) = &p.body {
             // Every indexed file's body goes in, whatever its size. A cap
@@ -562,7 +569,7 @@ impl<'tx> RowWriter<'tx> {
             }
             for (sb, eb, sp) in &p.spans {
                 self.ins_span
-                    .execute((&p.rel, *sb as i64, *eb as i64, sp.as_i64()))?;
+                    .execute((file_id, *sb as i64, *eb as i64, sp.as_i64()))?;
             }
             for r in &p.relations {
                 self.ins_impl.execute((
@@ -576,7 +583,7 @@ impl<'tx> RowWriter<'tx> {
             }
             for call in &p.calls {
                 self.ins_call.execute((
-                    &p.rel,
+                    file_id,
                     call.start_byte as i64,
                     &call.name,
                     &call.receiver,

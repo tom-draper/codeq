@@ -348,7 +348,7 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
             let placeholders = vec!["?"; chunk.len()].join(",");
             let sql = format!(
                 "SELECT c.name, COUNT(*) FROM calls c
-                 JOIN files f ON f.path = c.path
+                 JOIN files f ON f.id = c.file_id
                  WHERE c.name IN ({placeholders}) AND f.language NOT IN ('svelte', 'vue')
                  GROUP BY c.name"
             );

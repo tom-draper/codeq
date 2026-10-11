@@ -11892,3 +11892,32 @@ fn removing_content_shrinks_the_index_file() {
     let after = index_bytes(&f);
     assert!(after * 4 < before, "index went {before} B -> {after} B");
 }
+
+#[test]
+fn compaction_keeps_spans_and_calls_attached_to_their_file() {
+    // Spans and calls key on a file id, and compaction VACUUMs. An implicit
+    // rowid may be renumbered by that, which would hand every later file's
+    // comments and call sites to a different file or to none.
+    let f = Fixture::new();
+    f.write("a.py", "def helper():\n    return 1\n");
+    f.write("data/big.txt", &filler_text(2 << 20));
+    f.write(
+        "z.py",
+        "from a import helper\n\n# zebra marker\ndef run():\n    return helper()\n",
+    );
+    f.run(&["files"]);
+    let before = index_bytes(&f);
+
+    // Removing the middle file leaves a gap in the ids and frees enough pages
+    // to trigger the compaction.
+    f.remove("data/big.txt");
+    f.run(&["files"]);
+    assert!(index_bytes(&f) * 4 < before);
+
+    let comments = f.run(&["search", "zebra", "--in", "comments"]);
+    let hits = comments["data"]["matches"].as_array().unwrap();
+    assert_eq!(hits.len(), 1, "{comments}");
+    assert_eq!(hits[0]["path"], "z.py");
+    let callees = f.run(&["callees", "run"]);
+    assert_eq!(field_set(&callees, "name"), ["helper"]);
+}

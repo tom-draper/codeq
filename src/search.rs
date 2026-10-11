@@ -147,8 +147,8 @@ impl InFilter {
 /// rather than a helper that runs it: both callers prepare once and step it per
 /// file, so sharing the query keeps one notion of a span without moving the
 /// `prepare` into a hot loop.
-pub(crate) const SPANS_SQL: &str =
-    "SELECT start_byte, end_byte, kind FROM spans WHERE path = ?1 ORDER BY start_byte";
+pub(crate) const SPANS_SQL: &str = "SELECT start_byte, end_byte, kind FROM spans
+     WHERE file_id = (SELECT id FROM files WHERE path = ?1) ORDER BY start_byte";
 
 /// Map a [`SPANS_SQL`] row to `(start, end, class)`.
 pub(crate) fn span_row(r: &rusqlite::Row) -> rusqlite::Result<(usize, usize, Span)> {

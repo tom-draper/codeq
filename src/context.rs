@@ -644,7 +644,9 @@ impl CalledNames {
 
 fn called_names(db: &Db, seeds: &[Def]) -> Result<CalledNames> {
     let mut stmt = db.conn.prepare(
-        "SELECT name, receiver FROM calls WHERE path = ?1 AND start_byte >= ?2 AND start_byte < ?3",
+        "SELECT name, receiver FROM calls
+         WHERE file_id = (SELECT id FROM files WHERE path = ?1)
+           AND start_byte >= ?2 AND start_byte < ?3",
     )?;
     let graph = crate::commands::load_dep_graph(db)?;
     let mut out = CalledNames {
