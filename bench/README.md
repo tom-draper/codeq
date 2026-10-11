@@ -1,6 +1,6 @@
 # Benchmark: codeq vs grep/rg/find
 
-Five harnesses, increasing in scope:
+Harnesses, increasing in scope:
 
 | script | scope | measures |
 | --- | --- | --- |
@@ -9,6 +9,11 @@ Five harnesses, increasing in scope:
 | `differential.py` | **many repos, correctness-first** | ~5,000 correctness assertions (superset-of-rg + per-symbol invariants) + per-command speed/bytes, over time |
 | `completion.py` | **many repos, token-to-completion** | tokens + tool calls an agent burns to finish realistic tasks, codeq vs chained rg/sed/cat |
 | `textmode.py` | **default (text) output faithfulness** | text output carries the same facts as `--json` (locators, counts, `-C` context, no raw-JSON dumps) |
+| `real_workflows.py` | **complete bodies on pinned real repositories** | command invocations, input/stdout/stderr bytes, complete-body checks, optional binary comparison |
+
+See [real workflow results and methodology](REAL_WORKFLOWS.md) for 19 fixed tasks
+across Flask, Requests, Express, Gin, and ripgrep, including exact-range controls
+and counted follow-up reads when source budgets are too small.
 
 ## Refresh query latency (`refresh_perf.py`)
 
