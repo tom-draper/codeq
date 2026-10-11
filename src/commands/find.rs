@@ -498,33 +498,13 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         let SearchData::Matches { matches, truncated } = data else {
             unreachable!("symbol search uses match rows")
         };
-        let mut symbols = collapse_symbols(&s, matches)?;
+        let mut symbols = collapse_symbols(&s, matches.into_iter().map(|hit| (hit.path, hit.byte)))?;
         let truncated = truncated || (args.limit > 0 && symbols.len() > args.limit);
         if args.limit > 0 {
             symbols.truncate(args.limit);
         }
         if args.source {
-            let seeds = symbols
-                .iter()
-                .map(|row| crate::context::Seed {
-                    name: row.name.clone(),
-                    path: row.path.clone(),
-                    role: "match",
-                    forced: false,
-                    start_byte: Some(row.byte),
-                })
-                .collect::<Vec<_>>();
-            let (budget, source, omitted) =
-                crate::context::source_for_ranked(&s.db, &s.repo, &seeds, args.max_tokens)?
-                    .into_source();
-            #[derive(Serialize)]
-            struct SourceResult {
-                symbols: Vec<SymbolHit>, source: Vec<crate::context::Chunk>,
-                budget: crate::context::Budget,
-                #[serde(skip_serializing_if = "Vec::is_empty")] omitted: Vec<crate::context::Omitted>,
-                #[serde(skip_serializing_if = "std::ops::Not::not")] truncated: bool,
-            }
-            return s.emit_noted(SourceResult { symbols, source, budget, omitted, truncated }, note);
+            return emit_symbol_source(&s, symbols, truncated, args.max_tokens, note);
         }
         #[derive(Serialize)]
         struct SymbolResult {
@@ -547,21 +527,54 @@ struct SymbolHit {
     hits: usize,
 }
 
-fn collapse_symbols(s: &Session, matches: Vec<Hit>) -> Result<Vec<SymbolHit>> {
+/// Text and structural searches share definition identities and source budgeting.
+fn emit_symbol_source(
+    s: &Session,
+    symbols: Vec<SymbolHit>,
+    truncated: bool,
+    max_tokens: u64,
+    note: Option<String>,
+) -> Result<()> {
+    let seeds = symbols.iter().map(|row| crate::context::Seed {
+        name: row.name.clone(),
+        path: row.path.clone(),
+        role: "match",
+        forced: false,
+        start_byte: Some(row.byte),
+    }).collect::<Vec<_>>();
+    let (budget, source, omitted) =
+        crate::context::source_for_ranked(&s.db, &s.repo, &seeds, max_tokens)?.into_source();
+    #[derive(Serialize)]
+    struct SourceResult {
+        symbols: Vec<SymbolHit>,
+        source: Vec<crate::context::Chunk>,
+        budget: crate::context::Budget,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        omitted: Vec<crate::context::Omitted>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
+    }
+    s.emit_noted(SourceResult { symbols, source, budget, omitted, truncated }, note)
+}
+
+fn collapse_symbols(
+    s: &Session,
+    matches: impl IntoIterator<Item = (String, usize)>,
+) -> Result<Vec<SymbolHit>> {
     use std::collections::BTreeMap;
     let mut grouped = BTreeMap::new();
     let mut stmt = s.db.conn.prepare(
         "SELECT name, kind, start_line, start_byte FROM facts WHERE path = ?1 AND kind <> 'import' \
          AND start_byte <= ?2 AND end_byte > ?2 ORDER BY end_byte - start_byte, start_byte DESC LIMIT 1",
     )?;
-    for hit in matches {
+    for (path, at) in matches {
         let Some((name, kind, line, byte)) = stmt.query_row(
-            rusqlite::params![hit.path, hit.byte],
+            rusqlite::params![path, at],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get(2)?, r.get::<_, i64>(3)? as usize)),
         ).optional()? else { continue };
-        grouped.entry((hit.path.clone(), byte))
+        grouped.entry((path.clone(), byte))
             .and_modify(|row: &mut SymbolHit| row.hits += 1)
-            .or_insert(SymbolHit { name, kind, path: hit.path, line, byte, hits: 1 });
+            .or_insert(SymbolHit { name, kind, path, line, byte, hits: 1 });
     }
     let mut rows: Vec<SymbolHit> = grouped.into_values().collect();
     // Rank before limiting or filling a source budget. Path and position break
