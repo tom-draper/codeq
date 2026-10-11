@@ -89,6 +89,8 @@ fn symbol_graph(
 struct ExploreNode {
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    resolution: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<String>,
     path: String,
     line: i64,
@@ -130,6 +132,7 @@ pub fn cmd_explore(
     at: Option<&str>,
     path: Option<&str>,
     resolved: bool,
+    include_ambiguous: bool,
     max_tokens: u64,
     out: Out,
 ) -> Result<()> {
@@ -200,6 +203,7 @@ pub fn cmd_explore(
         .iter()
         .map(|d| ExploreNode {
             name: d.name.clone(),
+            resolution: None,
             kind: Some(d.kind.clone()),
             path: d.path.clone(),
             line: d.start_line,
@@ -212,6 +216,7 @@ pub fn cmd_explore(
         .filter_map(|c| {
             c.symbol.as_ref().map(|sym| ExploreNode {
                 name: sym.clone(),
+                resolution: None,
                 kind: c.kind.clone(),
                 path: c.path.clone(),
                 line: c.line as i64,
@@ -224,6 +229,7 @@ pub fn cmd_explore(
         .iter()
         .map(|c| ExploreNode {
             name: c.name.clone(),
+            resolution: Some(c.resolution),
             kind: Some(c.kind.clone()),
             path: c.path.clone(),
             line: c.line,
@@ -258,6 +264,9 @@ pub fn cmd_explore(
         }
     }
     for c in &callees {
+        if c.resolution == "ambiguous" && !include_ambiguous {
+            continue;
+        }
         seeds.push(crate::context::Seed {
             name: c.name.clone(),
             path: c.path.clone(),
@@ -277,7 +286,12 @@ pub fn cmd_explore(
     // set can't turn this into the repo's whole import table.
     let imports = focus_imports(&s, &defs)?;
 
-    let note = note_if_empty(&s, &focus, name, "definition", path)?;
+    let deferred = callees.iter().filter(|c| c.resolution == "ambiguous").count();
+    let note = note_if_empty(&s, &focus, name, "definition", path)?.or_else(|| {
+        (deferred > 0 && !include_ambiguous).then(|| format!(
+            "{deferred} ambiguous callee candidates listed without source; use --include-ambiguous or read a candidate by position"
+        ))
+    });
     s.emit_noted(
         ExploreResult {
             focus,

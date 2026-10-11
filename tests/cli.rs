@@ -12380,3 +12380,105 @@ fn rust_associated_calls_preserve_trait_defaults_without_an_owned_implementation
         "{r}"
     );
 }
+
+#[test]
+fn explore_lists_ambiguous_callees_without_spending_source_by_default() {
+    let f = Fixture::new();
+    f.write(
+        "app.rs",
+        "fn run(value: Unknown) { value.build(); unique(); }\nfn unique() {}\n",
+    );
+    f.write("a.rs", "fn build() { first_candidate(); }\n");
+    f.write("b.rs", "fn build() { second_candidate(); }\n");
+    let r = f.run(&["explore", "run"]);
+    let candidates: Vec<_> = r["data"]["callees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"] == "build")
+        .collect();
+    assert_eq!(candidates.len(), 2, "{r}");
+    assert!(
+        candidates.iter().all(|c| c["resolution"] == "ambiguous"),
+        "{r}"
+    );
+    assert!(
+        r["note"].as_str().unwrap().contains("--include-ambiguous"),
+        "{r}"
+    );
+    assert!(
+        r["data"]["source"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["name"] != "build"),
+        "{r}"
+    );
+    assert!(
+        r["data"]["source"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["name"] == "unique"),
+        "{r}"
+    );
+    let expanded = f.run(&["explore", "run", "--include-ambiguous"]);
+    assert_eq!(
+        expanded["data"]["source"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["name"] == "build")
+            .count(),
+        2,
+        "{expanded}"
+    );
+    let text = f.raw(&["explore", "run"]);
+    assert!(String::from_utf8(text.stdout)
+        .unwrap()
+        .contains("resolution=ambiguous"));
+    assert!(String::from_utf8(text.stderr)
+        .unwrap()
+        .contains("--include-ambiguous"));
+}
+
+#[test]
+fn distinct_qualified_calls_are_not_ambiguous_and_resolution_follows_filters() {
+    let f = Fixture::new();
+    f.write(
+        "app.rs",
+        "struct A; struct B;\nimpl A { fn new() {} }\nimpl B { fn new() {} }\n\
+        fn both() { A::new(); B::new(); }\nfn local() { helper(); }\nfn helper() {}\n",
+    );
+    f.write("other.rs", "fn helper() {}\n");
+    let r = f.run(&["explore", "both"]);
+    assert!(
+        r["data"]["callees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["resolution"] == "qualified"),
+        "{r}"
+    );
+    assert_eq!(
+        r["data"]["source"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["name"] == "new")
+            .count(),
+        2,
+        "{r}"
+    );
+    let all = f.run(&["callees", "local"]);
+    assert!(
+        all["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["resolution"] == "ambiguous"),
+        "{all}"
+    );
+    let narrowed = f.run(&["callees", "local", "--resolved"]);
+    assert_eq!(narrowed["data"][0]["resolution"], "name-only", "{narrowed}");
+}

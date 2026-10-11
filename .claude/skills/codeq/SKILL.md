@@ -119,6 +119,10 @@ transformations. For repository source reads, choose the `read` mode above.
   prunes files unreachable through imports. `callees` is already call-only;
   `--examples` shows how a call is written. On a polyglot repo,
   `explore NAME --resolved` can avoid unrelated same-named callees.
+  Callees report `resolution=qualified|name-only|ambiguous`, describing syntax
+  evidence rather than type checking. Ambiguous candidates stay listed in
+  `explore`, with source deferred by default. Read a selected candidate with
+  `read --at path:line`, or use `explore --include-ambiguous` for all candidate bodies.
 
 ## Other structural questions
 
