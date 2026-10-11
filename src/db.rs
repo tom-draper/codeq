@@ -330,51 +330,6 @@ impl Db {
 
         self.create_fts()?;
 
-        // Best-effort column additions for indexes created before these fields
-        // existed. Errors (column already present) are expected and ignored.
-        let _ = self
-            .conn
-            .execute("ALTER TABLE facts ADD COLUMN signature TEXT", []);
-        let _ = self
-            .conn
-            .execute("ALTER TABLE facts ADD COLUMN doc TEXT", []);
-        let _ = self
-            .conn
-            .execute("ALTER TABLE facts ADD COLUMN visibility TEXT", []);
-        let _ = self
-            .conn
-            .execute("ALTER TABLE files ADD COLUMN ctime_ns INTEGER", []);
-        let _ = self
-            .conn
-            .execute("ALTER TABLE files ADD COLUMN parse_errors INTEGER", []);
-        let _ = self.conn.execute(
-            "ALTER TABLE files ADD COLUMN parse_recovered INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
-        let _ = self
-            .conn
-            .execute("ALTER TABLE facts ADD COLUMN owner TEXT", []);
-        let _ = self
-            .conn
-            .execute("ALTER TABLE facts ADD COLUMN shape TEXT", []);
-        let _ = self
-            .conn
-            .execute("ALTER TABLE facts ADD COLUMN shape_nodes INTEGER", []);
-        let _ = self.conn.execute(
-            "ALTER TABLE facts ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
-        let _ = self
-            .conn
-            .execute("ALTER TABLE facts ADD COLUMN decorator TEXT", []);
-        let _ = self
-            .conn
-            .execute("ALTER TABLE facts ADD COLUMN contract TEXT", []);
-        let _ = self.conn.execute(
-            "ALTER TABLE facts ADD COLUMN is_derived INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
-
         self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
         Ok(tx.commit()?)
     }
