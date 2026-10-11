@@ -6601,6 +6601,52 @@ fn search_can_fold_hits_to_symbols_and_return_their_source_once() {
     assert_eq!(limited["data"]["truncated"], true);
 }
 
+#[test]
+fn search_ranks_definitions_before_limits_and_source_budgets() {
+    let f = Fixture::new();
+    let strongest = "fn strongest() {\n    needle();\n    needle();\n    needle();\n}";
+    f.write(
+        "a.rs",
+        "fn early() { needle(); }\nfn second() { needle(); }\n",
+    )
+    .write("b.rs", "fn later() { needle(); }\n")
+    .write("z.rs", &format!("{strongest}\n"));
+
+    let ranked = f.run(&["search", "needle", "--symbols"]);
+    let rows = ranked["data"]["symbols"].as_array().unwrap();
+    let names: Vec<_> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["strongest", "early", "second", "later"]);
+    assert_eq!(rows[0]["hits"], 3);
+
+    let limited = f.run(&["search", "needle", "--symbols", "--limit", "1"]);
+    assert_eq!(limited["data"]["symbols"][0]["name"], "strongest");
+    assert_eq!(limited["data"]["truncated"], true);
+
+    // Every weaker definition fits individually, but reading one first would
+    // leave too little budget for the strongest definition.
+    let budget = strongest.len().div_ceil(4).to_string();
+    let source = f.run(&["search", "needle", "--source", "--max-tokens", &budget]);
+    let chunks = source["data"]["source"].as_array().unwrap();
+    assert_eq!(chunks.len(), 1, "{source}");
+    assert_eq!(chunks[0]["name"], "strongest");
+    assert_eq!(chunks[0]["text"], strongest);
+    assert_eq!(source["data"]["omitted"].as_array().unwrap().len(), 3);
+
+    let full = f.run(&["search", "needle", "--source"]);
+    let names: Vec<_> = full["data"]["source"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["strongest", "early", "second", "later"]);
+    let text = f.raw(&["search", "needle", "--source", "--max-tokens", &budget]);
+    assert!(text.status.success());
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.contains(strongest), "{text}");
+    assert!(!text.contains("fn early"), "{text}");
+}
+
 /// Run codeq with `input` on stdin.
 fn piped(dir: &Path, args: &[&str], input: &str) -> Output {
     use std::io::Write;

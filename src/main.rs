@@ -724,10 +724,10 @@ enum Command {
         /// Output the count of matching lines per file.
         #[arg(long, short = 'c')]
         count: bool,
-        /// Collapse matching lines to their enclosing definitions, with a hit count.
+        /// Rank enclosing definitions by matching-line count (descending), then path and position.
         #[arg(long, conflicts_with_all = ["files_with_matches", "files_without_match", "count", "stdin"])]
         symbols: bool,
-        /// Return each matching definition's source once, under a token budget.
+        /// Return each matching definition's source once, budgeting in the same rank order as --symbols.
         #[arg(long, conflicts_with_all = ["files_with_matches", "files_without_match", "count", "stdin"])]
         source: bool,
         /// Maximum source tokens with --source (0 = unlimited).

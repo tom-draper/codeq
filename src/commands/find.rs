@@ -504,13 +504,19 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
             symbols.truncate(args.limit);
         }
         if args.source {
-            let seeds = symbols.iter().map(|row| crate::context::Seed {
-                name: row.name.clone(), path: row.path.clone(), role: "match",
-                forced: false, start_byte: Some(row.byte),
-            }).collect::<Vec<_>>();
-            let (budget, source, omitted) = crate::context::source_for(
-                &s.db, &s.repo, &seeds, args.max_tokens,
-            )?.into_source();
+            let seeds = symbols
+                .iter()
+                .map(|row| crate::context::Seed {
+                    name: row.name.clone(),
+                    path: row.path.clone(),
+                    role: "match",
+                    forced: false,
+                    start_byte: Some(row.byte),
+                })
+                .collect::<Vec<_>>();
+            let (budget, source, omitted) =
+                crate::context::source_for_ranked(&s.db, &s.repo, &seeds, args.max_tokens)?
+                    .into_source();
             #[derive(Serialize)]
             struct SourceResult {
                 symbols: Vec<SymbolHit>, source: Vec<crate::context::Chunk>,
@@ -557,7 +563,17 @@ fn collapse_symbols(s: &Session, matches: Vec<Hit>) -> Result<Vec<SymbolHit>> {
             .and_modify(|row: &mut SymbolHit| row.hits += 1)
             .or_insert(SymbolHit { name, kind, path: hit.path, line, byte, hits: 1 });
     }
-    Ok(grouped.into_values().collect())
+    let mut rows: Vec<SymbolHit> = grouped.into_values().collect();
+    // Rank before limiting or filling a source budget. Path and position break
+    // ties deterministically; a lexically early file must not spend the budget
+    // before a definition with more matching lines.
+    rows.sort_by(|a, b| {
+        b.hits
+            .cmp(&a.hits)
+            .then_with(|| a.path.cmp(&b.path))
+            .then_with(|| a.byte.cmp(&b.byte))
+    });
+    Ok(rows)
 }
 
 #[derive(Serialize)]
