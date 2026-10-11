@@ -1,292 +1,140 @@
 ---
 name: codeq
 description: >
-  How to use the codeq CLI — a fast, deterministic code index — to navigate and
-  understand a codebase: find a symbol's callers/callees/tests, read one definition,
-  trace call chains, list a module's public API or dead code, and search (textual or
-  structural). Use whenever exploring or understanding code; always prefer it over
-  reading a whole file. For flat text lookup and exact edit anchors, grep is fine.
+  Use codeq for repository exploration: read definitions or the code around a
+  search hit, understand files, find callers/callees/tests, trace dependencies,
+  and search by text or syntax. Choose the command that answers the whole question
+  with the least source and fewest follow-up reads.
 ---
 
-# Using codeq — a code index for navigating repositories
+# Code exploration with codeq
 
-codeq is a fast, deterministic index of a codebase. **Never read a whole source file —
-use `api`/`read`/`explore` instead.** That is where the savings are, and they are large.
+Optimise **tokens and calls to a complete answer**, including follow-up reads.
+Choose the smallest useful result from this table. Codeq refreshes automatically;
+run commands from anywhere in the repo. Default text is for reading; `--json` is
+for programmatic parsing.
 
-**When grep is fine:** flat text lookup that returns a set of lines, and finding an
-exact anchor before an `Edit`. Measured on a Python repo 2026-08-16: against a full read
-of a 1,636-line file, `codeq read` cut output 77% and `codeq api` cut it 86% — but on
-lookups returning the *identical* lines, codeq ran 17–50% larger, because the column
-and the `[symbol]` suffix on every row cost more than they saved. Rows no longer carry
-the column, nor the tag on the line that declares the symbol: re-measured on codeq's own
-repo 2026-10-10, four searches ran from 13% smaller to 18% larger than `rg -n`. So flat
-lookup is now roughly a wash, not a win — the remaining cost is the `[symbol]` tag, which
-is also the reason to use it.
+| What you need | First command | What it saves |
+| --- | --- | --- |
+| Definition and its usage before editing | `codeq explore NAME --path src/file.rs` | Definition, imports, callers/callees and their source in one call |
+| Only a definition's body | `codeq read file.rs --symbol NAME` | Exact boundaries, without a locating search or guessed window |
+| Body enclosing a search hit or stack frame | `codeq read --at file.rs:42` | Resolves and reads that occurrence in one call |
+| Neighbourhood around a position | `codeq explore --at file.rs:42` | Resolves the symbol and includes its usage |
+| Find implementations mentioning a pattern | `codeq search PATTERN --source --path src --max-tokens 3000` | Matching definitions once, replacing search then repeated range reads |
+| Identify matching definitions without bodies | `codeq search PATTERN --symbols --path src` | One row per definition, ranked by matching-line count |
+| Understand an unfamiliar file | `codeq api file.rs` or `codeq read file.rs` | Public signatures or folded source instead of all bodies |
+| Read known ranges in several files | `codeq read a.rs:40-80 b.rs:12,90-95` | Several slices in one call, with filenames and line numbers |
+| Exact source for an edit | `codeq read file.rs --symbol NAME --raw` | Source bytes without display prefixes |
+| Who uses it / what it calls | `codeq callers NAME --calls` / `codeq callees NAME` | Enclosing definitions and test sites rather than loose mentions |
+| Repo orientation | `codeq map --totals`, then `codeq tree src --min-symbols 1` | Counts and directory shape without reading source |
 
-Still reach for `codeq search` over grep when *which definition contains this hit* is
-part of the question — the `[symbol]` annotation is something grep cannot produce.
+## Replace search-then-read loops
 
-**When codeq wins:** use `read` to fetch several ranges in one call, `search --symbols`
-to rank matching definitions instead of lines, and `search --source` to get each matched
-definition once under a token budget. Use `astgrep` when code shape matters more than its
-spelling. These avoid the grep-then-sed loop that costs the most round trips.
+When looking for code to understand or change, request definitions or source
+**on the initial search**:
 
-## Invoking
-Run `codeq <command> [args]` from anywhere in the repo. Output is compact
-`path:line: text` (grep-style). **Empty output means "no results"** — it's a valid
-answer, not an error. Add `--json` for structured output. You never need to build or
-refresh the index — every command auto-refreshes changed files first.
+```sh
+codeq search 'retry|backoff' --symbols --path src
+codeq search 'retry|backoff' --source --path src --max-tokens 3000
+```
 
-## What to run for what
+`--symbols` and `--source` rank by matching-line count, descending; ties use path
+and position. `--limit` counts definitions in these modes. Source is budgeted in
+that order; definitions that do not fit are listed under `omitted`. Hit frequency
+is a navigation heuristic, not a claim of semantic relevance. Matches outside
+indexed definitions are excluded from these modes; use ordinary `search` for
+module-level code, imports and unsupported file types.
 
-**Orient in an unfamiliar repo**
-- `codeq map` — high-level structure (languages, file/symbol counts, top-level directories).
-  `--totals` for just the headline numbers and the language table: it skips the sections
-  that scan rows, so it stays fast on a big repo.
-- `codeq graph [--relation references|implements|extends]` — the whole type-relation
-  graph as `from -> to` edges (`--mermaid` to render it). Relations only, not calls:
-  relation edges come off the parse tree so the graph is exact, while a name-based
-  call graph compounds its over-match at every hop — use `callers/callees --depth N`
-  there instead. TypeScript/TSX contributes explicit `extends`/`implements` edges;
-  Go does not, because its structural interfaces need type checking to determine
-  implementations.
-- `codeq tree [<path>]` — the directory shape with nesting kept, folded at `--depth`
-  (default 3); each directory reports the files and symbols of everything below it.
-  `--min-symbols 1` jumps straight to where the code is. In a repo full of data,
-  prefer `--language python` (markdown headings are definitions, so per-directory
-  READMEs can outrank the source). Ignore-aware, so no node_modules/.git noise.
+If you already have `file:line`, read its enclosing definition directly:
 
-**Understand a file without reading all of it**
-- `codeq read <file>` — the file with long function bodies folded to signatures.
-  Slices: `codeq read a.rs:40-80 b.rs:12,90-95` reads several ranges of several
-  files in one call (the `sed -n 'A,Bp'` you would otherwise run per slice).
-  For every source byte without display prefixes, use `codeq read <file> --raw`;
-  `--full` unfolds but keeps line numbers.
-- `codeq outline <file>` — just the definitions and their nesting.
+```sh
+codeq read --at src/client.rs:83
+codeq read --at src/client.rs:83 --at src/client.rs:91 --at src/server.rs:25
+codeq read --at src/client.rs:83 --raw
+```
 
-**Understand or change one symbol (reach for this first)**
-- `codeq explore <NAME>` — one call returns the definition + callers + callees *and* the
-  verbatim source of that whole neighbourhood, budgeted and grouped by file (each source
-  block tagged focus/caller/callee). Use it instead of a `definitions` → `callers` → `read`
-  → `read` sequence when you need to understand or edit a function/type. `--max-tokens`
-  caps the source; the definition is always kept and emitted **first**, so
-  `explore … | head -N` samples the definition rather than a neighbour. It
-  also returns the focus file's imports — what is in scope where you're about to edit.
-  Add `--resolved` on a polyglot repo: callees are matched by name, so a Go
-  function otherwise pulls in same-named TypeScript and spends the token budget
-  on it (391 lines to 109 on a real repo). `about` takes it too.
-- `codeq explore --at <file>:<line>` — the same, addressed by position instead of name:
-  explores whatever definition encloses that line (innermost wins). Use it on a stack
-  frame, a diff hunk or a search hit rather than running `at` and then `explore`.
-- `codeq about <NAME>` — the same neighbourhood with **no source**, but fuller metadata
-  per node (doc comment, `owner`, which callers are tests). Source is the only axis the
-  two differ on: `explore` to change code, `about` for metadata or a cheap "which file
-  does this live in".
-- `codeq read <file> --symbol <NAME>` — that definition's source, line-numbered. Add
-  `--raw` for exact bytes with no line-number prefix (to copy it verbatim).
+`read --at` returns the innermost definition at each position, deduplicates
+overlapping source and addresses the occurrence even when names repeat.
+A position outside a definition explains that and suggests reading the line.
+`explore --at` is for the wider neighbourhood; repeated names in the same file
+can contribute several focus definitions there.
 
-**Who uses it / what breaks if I change it**
-- `codeq callers <NAME>` — definitions that call/reference NAME (test sites flagged).
-  Add `--examples` to show the actual call expression at each site (how NAME is really
-  invoked, one per caller); `references <NAME> --calls` for every call line.
-- `codeq references <NAME>` — every *line* holding an occurrence, with the
-  enclosing symbol (three calls on one line are one row, anchored at the first).
-- `codeq tests <NAME>` — which tests exercise NAME *by name*. A test is recognised
-  structurally where a framework marks one — `#[test]`/`#[tokio::test]`,
-  `@pytest.mark.…`, `@Test`, `[Fact]` — and otherwise by file path, its own name, or a
-  test-like enclosing module/class (so Rust's `#[cfg(test)] mod tests` counts). JS/TS
-  `it(…)` and Go `TestX` have no attribute, so those still lean on path and name.
-  Empty means only exercised indirectly, e.g. an internal fn tested through a CLI.
-- `codeq affected --compare-to <ref>` — for a diff: the definitions it touched, their
-  transitive callers (impacted), and the test *files* to re-run. Use after making
-  changes to know what to re-check. Name-based, so it over-includes rather than misses.
-- Transitive: `codeq callers <NAME> --depth 3` (up the call tree),
-  `codeq callees <NAME> --depth 3` (down).
+## Replace guessed sed windows
 
-**Trace control flow**
-- `codeq callpath <FROM> <TO>` — the shortest call chain from FROM to TO. Both
-  arguments are *symbols*, not files: this has nothing to do with `--path`. Names resolve
-  across ALL languages, so a common name like `main` may land in a Python/JS file —
-  scope the start with `--path`: `codeq callpath main write --path src/main.rs`.
+Use `read --symbol` or `read --at` when you want a complete definition. Its
+boundaries come from the syntax tree, so you neither cut off the body nor read
+unrelated surrounding code. For an unfamiliar file, `api` shows the public
+surface, `outline` shows all definitions and nesting, and `read` folds long
+bodies while keeping imports and surrounding source. Expand only what you need.
 
-**What a symbol / file depends on**
-- `codeq callees <NAME>` — what NAME calls.
-- `codeq deps <file>` — internal files a file imports (`codeq deps --cycles` for cycles).
-- `codeq imports [PATH]` — raw, unresolved module strings. `codeq importers <QUERY>` —
-  files importing a module (a path like `src/db.rs` is reduced to its stem `db`).
+When the exact lines are already known, use `read file.rs:40-80`; for several
+slices, put ranges on each path. `--raw` emits one exact block and preserves line
+endings; it takes one file/range/position. For a single known range,
+`codeq read file.rs:40-80 --raw` returns the same source bytes as
+`sed -n '40,80p' file.rs`. Numbered output costs extra tokens because it adds
+locations. The saving comes from smaller relevant selections and avoiding
+follow-up calls, not from making identical source shorter.
 
-**Position and bundles**
-- `codeq at <file>:<line>` — the definition enclosing a position. Turns a stack frame,
-  diff hunk or grep hit into a symbol.
-- `codeq context --symbols a,b` — verbatim source for several symbols under one token
-  budget (`--changed --compare-to <ref>` seeds from a diff instead). `--expand` adds one
-  hop of referenced definitions, matched *by name* — add `--resolved` to keep only those
-  the seed files reach through imports, or a common name spends the budget on unrelated
-  same-named code.
-- `codeq files [PATTERN]` — indexed files, with `--language`.
+## Flat text lookup
 
-**API surface / cleanup**
-- `codeq api <path>` — the public/exported definitions of a file or directory.
-- **Empty result?** codeq says why on stderr (`no symbol named 'X'; closest: Y`,
-  `'X' ... has no callers`, `nothing matches --path Z`), or in `note` under
-  `--json`. Read it before concluding the symbol or the command is wrong.
-- **Markdown**: headings are definitions. `outline doc.md` = table of contents;
-  `read doc.md --symbol "Section"` = one section (not the whole file); `--in
-  strings` = fenced examples, `--in comments` = prose; local links/images are
-  file references for `deps`/`importers`.
-- **SQL**: `.sql` yields `table`, `view`, `index`, `trigger`, `function`, `type`
-  and `module` (schema) definitions, with columns as `field`s of their table — so
-  `definitions users` finds the table, `members users` lists its columns
-  (including ones a later `ALTER TABLE` added), and `api schema.sql` is the
-  schema's surface. Because reference matching is textual, `references users`
-  also finds the table named inside the SQL *string* in the app code that queries
-  it — the schema is usually the one artefact every language in the repo shares.
-  A schema-qualified name is stored bare (`analytics.events` → `events`); enum
-  variants lose their quotes; `--in strings` is quoted literals only. No imports.
-  A **foreign key is a `references` relation** (its own kind — an edge, not an
-  is-a), so `supertypes orders` is what it points at and `implementors orgs` is
-  what points at it; inline, table-level and `ALTER TABLE` forms all count.
-- `codeq members NAME` — a type's fields, enum variants and methods (`--kind` to
-  narrow). Containment is structural (a member is nested inside NAME's byte range),
-  though NAME itself still resolves by name — two same-named types both answer, so
-  scope with `--path`. Already included in `about`. Rust struct methods live in a
-  separate `impl`, so a Rust struct returns fields only. Prefer this over
-  `symbols --owner NAME`, which only sees fields/variants — never methods.
-- `codeq unused [<path>]` — definitions with no references (candidate dead code; empty
-  output = none found). Conservative and name-based, so it under-reports. Two tags mark
-  a row a framework reaches without naming it — shown rather than hidden, so discount
-  them yourself: `decorator=@app.get(...)` is registration codeq can see, and
-  `entrypoint=next/page` is a file convention it can't (Next.js App Router and Pages
-  Router exports, `react/lifecycle` methods). A Rust `impl Trait for X` method is
-  *not* shown: it is called through the trait and deleting it breaks the build, so it
-  is never dead (an inherent `impl X` method with no callers still is).
-- `codeq entrypoints [<path>]` — the definitions those two tags identify, on their own:
-  what calls into this repo from outside it. `--include-tests` adds test-runner entry
-  points.
-- `codeq untested [<path>]` — public definitions no test names. Fields, variants
-  and constants are excluded unless `--kind` asks: none has behaviour to test,
-  and they crowd out the functions that do.
-- `codeq clones [<path>]` — definitions with an identical syntax shape. Tests excluded
-  by default. Exact equality, so it finds unedited copy-paste and **not** two
-  implementations of one algorithm that differ in their accessor expressions; an empty
-  result means "no exact copies", not "no duplication".
-- `codeq implementors <TYPE>` / `codeq supertypes <TYPE>` — who implements/extends a
-  trait/interface/class, and what a type derives from.
-- `codeq hotspots [<path>]` — the inverse of `unused`: definitions ranked by how often
-  their name is referenced. One row per name; `--calls` counts only call sites (use it
-  for functions — otherwise a name that is also a common variable dominates).
+Use `codeq search PATTERN` when the enclosing definition matters. It annotates
+matches with `[symbol]` and supports regex, `-F`, `-i`, `-w`, `-g`, `-l`, `-c`,
+`-A`/`-B`/`-C`, `-e`, `-o`, `-v`, `-L`, `--path` and `--language`.
+`--in code|comments|strings` excludes irrelevant syntax without manual filtering.
+Positional paths work too: `codeq search TODO src docs`.
 
-**Search**
-- `codeq search <REGEX>` — content search; each match annotated with its enclosing
-  symbol. `--in code|comments|strings` to scope. A superset of grep — it also has
-  `--fixed`, `-i`, `-w`, `-g '*.rs' -g '!tests/'` (repeatable globs), `-l`, `-c`,
-  `-B`/`-A`/`-C`, `--path`, `--language`, `--limit` — and grep's calling
-  convention, `codeq search TODO src/a.rs docs`, where each positional path is a
-  substring (a directory scopes under it) and several are OR'd. grep's other flags work too: `-e A -e B`, `-o`, `-v`,
-  `-L`, `-F`, `-t py`. A path the index
-  does not hold (gitignored output, a log, a file outside the repo) is searched
-  from disk, with a note and without `[symbol]`. **`--limit` defaults to 100**,
-  and a result that hit it says `stopped at --limit` on stderr — raise it (or
-  pass 0) for the rest. Other commands cap too, and the defaults differ:
-  `files`/`symbols`/`members`/`imports`/`untested` at 200, `hotspots` at 30. All
-  of them now say when they cut.
-  `-w` is an *identifier* boundary rather than `\b`: `$` continues a name only in
-  JS/TS-family and Java-family **code** (not inside a string, where it is a
-  template or a JVM binary name), and Unicode punctuation ends a name where a
-  Unicode letter does not.
-  `CMD | codeq search PAT --stdin [--language L]` scans piped text instead of the
-  index, for grep-in-a-pipeline over output that isn't in the repo.
-  `--symbols` returns one row per matching definition with its hit count. `--source`
-  adds each matching definition's body once, within `--max-tokens` (default 12000).
-- `codeq astgrep '<PATTERN>' --language <lang>` — structural (AST) search, e.g.
-  `codeq astgrep '$X.unwrap()' --language rust`. Scope to files with `--path <substr>`
-  (a `--path` matching no indexed file of that language says so, rather than looking
-  like "no matches"). **Reach for this when `clones` comes back empty**: two
-  implementations that differ only in their accessor expressions have different trees,
-  so `clones` cannot see them and a pattern can.
-  Each match is annotated with the `[symbol]` it sits inside.
-- `codeq astgrep --explain <file>:<line>` — the parse tree covering that line:
-  each node's `kind`, the `field` it fills in its parent, and its source. **Write
-  patterns from this rather than guessing kinds**, and run it on a line you know
-  should match before believing an empty `astgrep` result — a wrong kind and no
-  matches look identical. No `--language` needed.
+Use `rg`/`grep` for a flat list of lines or an exact edit anchor when no definition,
+source expansion or structural filtering is needed. On identical line sets,
+codeq's symbol annotations can cost extra tokens. Use `sed` for stream
+transformations. For repository source reads, choose the `read` mode above.
 
-## Gotchas
-- **Symbol lookups match by NAME across the whole repo, in every language.** For a
-  common/ambiguous name (`new`, `build`, `main`), scope with `--path <substr>` —
-  supported on `about`, `callers`, `callees`, `definitions`, `references`,
-  `implementors`, `unused`, `astgrep`, `callpath`, and more. Don't know a symbol's file? Run
-  `codeq about <NAME>` — it shows the definition file(s).
-- **`definitions` is exact + case-sensitive; `symbols` is substring + case-insensitive.**
-  In a polyglot repo one concept is spelled per language (Go `GetIPAddress`, JS
-  `getIPAddress`, Python `get_ip_address`) — `symbols ipaddress` finds them all in one
-  call, where `definitions` needs each exact spelling. `definitions` to jump to a name
-  you know; `symbols` to find a concept across languages.
-- **callers/references are textual (name-based), not type-resolved.** A row with a
-  blank symbol is a module-level mention (e.g. an `import`/`use`), not a real call —
-  ignore it. Three flags cut false positives:
-  - `--calls` — only genuine call sites (`NAME(`), dropping bare mentions. Best
-    for an instance method invoked on a variable (`codeq callers emit --calls`);
-    if the method name has a single definition, this alone finds all its callers.
-  - `--on <RECV>` — only calls written `RECV.NAME` / `RECV::NAME` / `RECV->NAME`,
-    matching the *literal token* before the call. Ideal for associated/static calls
-    (`codeq callers open --on Session` → `Session::open(...)`). It will NOT match an
-    instance-method call on a variable — `s.emit()` where `s: Session` has token
-    `s`, not `Session` — so use `--calls` there instead.
-  - `--resolved` — drops occurrences whose file can't reach a definition of NAME via imports.
-- **`callees` is already call-only** (a bare mention isn't a callee), so it needs no
-  `--calls`. Add `--examples` to see the call as written with its receiver
-  (`subprocess.run`, not `run`) — the quickest way to tell a real callee from a
-  name collision. It does take `--resolved`, which keeps only callees whose definition file
-  the symbol's own file can reach via imports — pruning unrelated same-named defs (a
-  common `new`/`open` matching every same-named definition repo-wide). Rows tagged
-  `via=ambiguous` mean several reachable files define that name: "one of these",
-  not "this one". Same vocabulary as `callers --resolved`.
-- **JS/TS: `proto.use = function use(){}` is a method.** Module-scope property
-  assignment — `X.y = fn`, `X.prototype.y = fn`, `exports.y = fn` — is how most
-  of Node is written and it is now indexed under the *property* name (`use`), so
-  scope common names with `--path`. `exports.x` is public; other objects are
-  private (codeq doesn't trace whether they escape).
-- **JS/TS: a module-scope `const` is a definition**, whatever it's bound to. That's
-  how React components are usually written — `memo(…)`, `forwardRef(…)`,
-  `styled.div\`…\``, `createContext(…)` — so `symbols`/`outline`/`api` find them, and
-  they show up as kind `constant`, not `function`. A CommonJS
-  `var x = require('y')` is an import — find it with `imports`/`deps`.
-- **A `const` bound to an arrow function is a `function`, at any nesting.** A
-  component's local handlers are definitions of their own, indented under it in
-  `outline`, so `explore handleClick` works — a local `const` bound to anything
-  else is not. They read as signatures (`withCDN(path: string)`,
-  `async load(u: string): Promise<void>`), not as the assignment they're written
-  as, and the single-parameter form gets its parentheses back (`x => x` is
-  `bare(x)`).
-- **A namespaced base class is stored dotted** (`extends React.Component` →
-  `React.Component`), but `implementors` matches the last segment too, so
-  `implementors Component` finds it.
-- **Where the rows are:** under `--json` the envelope carries `rows`, the dotted
-  path to the row array (`"data"`, `"data.matches"`, `"data.files"`). Containers
-  differ by command on purpose (`search -l` returns files, not matches); read
-  `rows` rather than memorising them. Absent when a result holds several lists.
-- **Trim output tokens** with `--fields name,path,line`. The keys are identical on
-  every command: `name` = the definition this row *is*; `symbol` = the definition it
-  sits *inside* (only on `search`/`references`/`astgrep` matches); `line`/`col`/`byte`
-  for position, `end_line`/`end_col`/`end_byte` for extent. No command uses
-  `start_line`.
-- **`--group`** replaces the repeated path prefix with a `path (count)` header. Opt-in,
-  and the default is flat for a reason: a flat row names its own file, so it survives
-  being piped, grepped or quoted in isolation, and a grouped row does not. Group when
-  you'll read the whole result; stay flat when you'll slice it. No effect under `--json`.
-  Worth 22–37% on results that cluster in a few files; it *costs* ~4% when hits are
-  spread one-per-file, so it isn't a free default.
-- **`--max-per-file N`** keeps at most N rows per file — the big saving (`--group
-  --max-per-file 3` cut broad searches by 65–91%). **Lossy**, so it changes the data,
-  `--json` included. Capped files always state their true count (`a.rs: +237 more (of
-  240)`, or a `path (3 of 240)` header, or `notes.truncated_per_file`), so a truncated
-  answer can't be mistaken for a whole one. Use it for the *shape* of a result — which
-  files mention something and roughly how often — then rerun uncapped for detail. It
-  surveys every file, not just the first `--limit` rows' worth.
-- Default output is text; use `--json` only when you need to parse it programmatically.
+## Keep results useful and bounded
 
-## Excluding files
-codeq honours `.gitignore`/`.ignore` and a `.codeqignore` for committed-but-not-code
-trees (data, fixtures, generated assets). Gitignore syntax; note that `!keep.json`
-cannot re-include a file under an excluded `data/` — exclude `data/*.json` instead.
+- Scope broad searches with `--path`, `--language` or `-g` before fetching source.
+  Name lookups are exact and case-sensitive across all languages; disambiguate
+  common names (`new`, `main`, `build`) with `--path`. `symbols QUERY` finds name
+  substrings, case-insensitively, when the spelling is unknown.
+- `about NAME` is the neighbourhood metadata without source. Use it when you
+  need locations and relationships; `explore` when you need the bodies too.
+- `--max-tokens` budgets source in `explore`, `context` and `search --source`.
+  Estimates are byte-based, not exact model token counts. Read `omitted` before
+  assuming all requested source was returned.
+- Broad line lists: `--group` avoids repeating paths; `--max-per-file 3` surveys
+  every matching file and states the omitted counts. This is a lossy overview;
+  rerun scoped and uncapped for detail. `--fields path,line,text` drops symbol
+  annotations when only the lines are needed.
+- `search` defaults to `--limit 100`. Truncation is reported; increase the limit
+  or use `--limit 0` when completeness matters. Other command defaults differ:
+  check `<command> --help` rather than assuming 100 everywhere.
+- Empty data and error notes differ: read stderr (or JSON `note`) to distinguish
+  no matching symbol, no callers, a mistyped name and a filter selecting no files.
+- Call relationships are name-based, not type-resolved. `callers --calls` removes
+  bare mentions; `--on RECEIVER` matches a literal receiver, and `--resolved`
+  prunes files unreachable through imports. `callees` is already call-only;
+  `--examples` shows how a call is written. On a polyglot repo,
+  `explore NAME --resolved` can avoid unrelated same-named callees.
+
+## Other structural questions
+
+Use these when the question needs their extra structure; consult command help
+for flags rather than loading a complete command catalogue.
+
+- Code shape: `astgrep '$X.unwrap()' --language rust`. Before guessing syntax
+  kinds or trusting an empty result, `astgrep --explain file.rs:42` shows the tree.
+- Change impact: `affected --compare-to main`; direct tests: `tests NAME`;
+  multi-hop calls: `callers NAME --depth 3`; shortest chain: `callpath FROM TO`.
+- Imports: `imports PATH`, `deps FILE`, `importers MODULE`; cycles: `deps --cycles`.
+- Types: `members NAME`, `implementors TYPE`, `supertypes TYPE`, `graph`.
+- Cleanup: `unused PATH`, `untested PATH`, `clones PATH`, `hotspots PATH --calls`.
+  These are candidates: framework entrypoints, indirect tests and name collisions
+  need judgement; an empty `clones` result means no identical syntax trees.
+- Bundles: `context --symbols a,b --max-tokens 3000`; `--expand` adds references,
+  `--resolved` prunes import-unreachable definitions.
+- Markdown headings are definitions: `outline README.md` and
+  `read README.md --symbol 'Section'` read documentation in slices too.
+  SQL tables/views/functions are definitions; `members TABLE` returns columns.
+
+Codeq honours `.gitignore`, `.ignore` and `.codeqignore`. An explicit search path
+outside the index is searched from disk with a note; syntax filters cannot apply
+there. To explore an ignored dependency as code, point the root at it:
+`codeq --root node_modules/library api`.
