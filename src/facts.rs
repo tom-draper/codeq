@@ -52,7 +52,7 @@ pub struct Fact {
     /// for facts where it doesn't apply (imports) or can't be determined.
     pub visibility: Option<String>,
     /// The type a member belongs to — the struct/class/enum enclosing a `field`
-    /// or `variant`. `None` for everything else. Members share names constantly
+    /// or `variant`, or the impl type of a Rust method. Members share names constantly
     /// (`id`, `name`, `path`), so the owner is what makes one addressable:
     /// without it `definitions retries` cannot say *which* type's field it found.
     pub owner: Option<String>,
@@ -2159,11 +2159,32 @@ fn is_test_marker(lang: &str, attrs: &str) -> bool {
     }
 }
 
-/// The name of the type enclosing a member, for `field` and `variant` facts.
+/// The name of the type enclosing a field, variant, or Rust impl method.
 /// Walks up to the nearest type declaration and reads its name — the identifier
 /// child, whatever the grammar happens to call it. `None` for non-members, and
 /// for a member whose owner is anonymous (a bare `struct { … }` in C).
 fn owner_of(lang: &str, kind: &str, node: Node, src: &[u8]) -> Option<String> {
+    if lang == "rust" && kind == "function" {
+        let mut cur = node.parent();
+        while let Some(n) = cur {
+            // A nested helper is not a method of the surrounding impl.
+            if n.kind() == "function_item" {
+                return None;
+            }
+            if n.kind() == "impl_item" {
+                let mut ty = n.child_by_field_name("type")?;
+                if ty.kind() == "generic_type" {
+                    ty = ty.child_by_field_name("type")?;
+                }
+                return ty
+                    .utf8_text(src)
+                    .ok()
+                    .map(|t| t.rsplit("::").next().unwrap_or(t).trim().to_string());
+            }
+            cur = n.parent();
+        }
+        return None;
+    }
     if kind != "field" && kind != "variant" {
         return None;
     }

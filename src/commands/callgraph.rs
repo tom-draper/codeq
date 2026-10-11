@@ -239,6 +239,8 @@ pub(super) struct Callee {
     pub(super) kind: String,
     pub(super) path: String,
     pub(super) line: i64,
+    #[serde(skip)]
+    pub(super) start_byte: usize,
     /// How this callee's definition file connects to `name`'s file via the import
     /// graph (only set under `--resolved`): same-file / imported.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -325,7 +327,46 @@ struct CalledNames {
     /// `context` module. A receiver is only trusted when it exactly names a
     /// direct import; ordinary value receivers and unknown modules keep the
     /// established name-based superset.
-    module_targets: HashMap<String, Vec<Option<HashSet<String>>>>,
+    module_targets: HashMap<String, Vec<CallConstraint>>,
+}
+
+/// Evidence from one call. Alternatives are unioned, so an unresolved call to
+/// the same name preserves the conservative candidate set.
+struct CallConstraint {
+    files: Option<HashSet<String>>,
+    owner: Option<String>,
+}
+
+fn rust_call_owner(
+    s: &Session,
+    graph: &deps::Graph,
+    path: &str,
+    receiver: Option<&str>,
+    files: Option<&HashSet<String>>,
+) -> Result<Option<String>> {
+    let Some(receiver) = receiver else {
+        return Ok(None);
+    };
+    if !receiver
+        .bytes()
+        .all(|b| b == b'_' || b.is_ascii_alphanumeric())
+    {
+        return Ok(None);
+    }
+    let owner = graph
+        .source_name_for_binding(path, receiver)
+        .unwrap_or(receiver);
+    let mut stmt =
+        s.db.conn
+            .prepare("SELECT path FROM facts WHERE name = ?1 AND kind IN ('struct', 'enum')")?;
+    let candidates = stmt.query_map([owner], |r| r.get::<_, String>(0))?;
+    for candidate in candidates {
+        let candidate = candidate?;
+        if files.map_or(candidate == path, |files| files.contains(&candidate)) {
+            return Ok(Some(owner.to_string()));
+        }
+    }
+    Ok(None)
 }
 
 /// The name a syntax call is looked up under, and the files it is pinned to when
@@ -398,26 +439,43 @@ fn scan_called_names(
         // the existing textual fallback below.
         let lang = language_for(path).unwrap_or("");
         if crate::callsite::supports_syntax_calls(lang) {
-            let rows = calls_stmt.query_map(rusqlite::params![path, *sb as i64, *eb as i64], |r| {
-                Ok((
-                    r.get::<_, i64>(0)? as usize,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                ))
-            })?;
+            let rows =
+                calls_stmt.query_map(rusqlite::params![path, *sb as i64, *eb as i64], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)? as usize,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                })?;
             for row in rows {
                 let (off, word, recv) = row?;
                 let (lookup, pinned) = resolve_syntax_call(&graph, path, &word, recv.as_deref());
                 // An empty target set is no evidence: it may be an external
                 // module or a value receiver. `pinned` is `None` then, so
                 // candidate filtering remains conservative.
-                called.module_targets.entry(lookup.clone()).or_default().push(pinned);
+                let owner = if lang == "rust" && b[..off.min(b.len())].trim_end().ends_with("::") {
+                    rust_call_owner(s, &graph, path, recv.as_deref(), pinned.as_ref())?
+                } else {
+                    None
+                };
+                called
+                    .module_targets
+                    .entry(lookup.clone())
+                    .or_default()
+                    .push(CallConstraint {
+                        files: pinned,
+                        owner,
+                    });
                 if examples {
                     let expr = match &recv {
                         Some(r) => format!("{r}.{word}"),
                         None => word.clone(),
                     };
-                    let line = b[..off.min(b.len())].bytes().filter(|c| *c == b'\n').count() as i64 + 1;
+                    let line = b[..off.min(b.len())]
+                        .bytes()
+                        .filter(|c| *c == b'\n')
+                        .count() as i64
+                        + 1;
                     called.sites.entry(lookup.clone()).or_insert((expr, line));
                 }
                 called.idents.insert(lookup);
@@ -447,7 +505,7 @@ fn callee_definitions(s: &Session, name: &str, called: &CalledNames) -> Result<V
     for chunk in ident_list.chunks(500) {
         let placeholders = vec!["?"; chunk.len()].join(",");
         let sql = format!(
-            "SELECT name, kind, path, start_line FROM facts
+            "SELECT name, kind, path, start_line, owner, start_byte FROM facts
              WHERE kind NOT IN ('import', 'field', 'variant') AND name IN ({placeholders})"
         );
         let mut stmt = s.db.conn.prepare(&sql)?;
@@ -459,14 +517,20 @@ fn callee_definitions(s: &Session, name: &str, called: &CalledNames) -> Result<V
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, i64>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, i64>(5)? as usize,
             ))
         })?;
         for row in rows {
-            let (n, k, p, l) = row?;
+            let (n, k, p, l, owner, start_byte) = row?;
             let allowed = called.module_targets.get(&n).is_none_or(|calls| {
-                calls
-                    .iter()
-                    .any(|targets| targets.as_ref().is_none_or(|targets| targets.contains(&p)))
+                calls.iter().any(|call| {
+                    call.files.as_ref().is_none_or(|files| files.contains(&p))
+                        && call
+                            .owner
+                            .as_ref()
+                            .is_none_or(|wanted| owner.as_ref() == Some(wanted))
+                })
             });
             if n != name && allowed && seen.insert((n.clone(), p.clone(), l)) {
                 let site = called.sites.get(&n);
@@ -475,6 +539,7 @@ fn callee_definitions(s: &Session, name: &str, called: &CalledNames) -> Result<V
                     kind: k,
                     path: p,
                     line: l,
+                    start_byte,
                     via: None,
                     call: site.map(|(e, _)| e.clone()),
                     call_line: site.map(|(_, l)| *l),
