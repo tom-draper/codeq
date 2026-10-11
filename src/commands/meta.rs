@@ -10,22 +10,54 @@ pub fn cmd_install(
     uninstall: bool,
     agent: Option<&str>,
     no_skill: bool,
+    force: bool,
     out: Out,
 ) -> Result<()> {
     let home = crate::install::home_dir()?;
-    let bin = std::env::current_exe()
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "codeq".to_string());
+    let bin = std::env::current_exe()?
+        .into_os_string()
+        .into_string()
+        .map_err(|_| anyhow::anyhow!("running executable path is not UTF-8"))?;
     let opts = crate::install::Options {
         dry_run,
         uninstall,
         only: agent.map(String::from),
         bin,
         no_skill,
+        force,
+        codex_home: std::env::var_os("CODEX_HOME").map(std::path::PathBuf::from),
     };
+    if !dry_run && !uninstall {
+        crate::install::verify_binary(&opts.bin)?;
+    }
     let actions = crate::install::apply(&home, &opts)?;
 
+    print_install_actions(&actions, &out)?;
+    if actions.iter().any(crate::install::Action::failed) {
+        anyhow::bail!("agent setup failed; inspect the reported failures and rerun");
+    }
+    if !out.json && !dry_run && !uninstall {
+        if actions.iter().all(|a| a.action == "skipped") {
+            println!("\nNo agents detected. Use `codeq install --agent <name>` to set one up explicitly.");
+        } else {
+            println!("\nRestart configured agents to load the MCP server and skill. Run `codeq doctor` to verify setup.");
+        }
+    }
+    Ok(())
+}
+
+pub fn cmd_doctor(agent: Option<&str>, out: Out) -> Result<()> {
+    let home = crate::install::home_dir()?;
+    let codex_home = std::env::var_os("CODEX_HOME").map(std::path::PathBuf::from);
+    let actions = crate::install::doctor(&home, agent, codex_home.as_deref())?;
+    print_install_actions(&actions, &out)?;
+    if actions.iter().any(crate::install::Action::failed) {
+        anyhow::bail!("installation health checks failed");
+    }
+    Ok(())
+}
+
+fn print_install_actions(actions: &[crate::install::Action], out: &Out) -> Result<()> {
     if out.json {
         let data = serde_json::json!({
             "schema": crate::envelope::RESULT_SCHEMA,
@@ -38,7 +70,7 @@ pub fn cmd_install(
         };
         println!("{s}");
     } else {
-        for a in &actions {
+        for a in actions {
             let note = a
                 .note
                 .as_deref()
@@ -48,19 +80,6 @@ pub fn cmd_install(
                 "{:<12}  {:<6}  {:<15}  {}{}",
                 a.agent, a.what, a.action, a.config, note
             );
-        }
-        let touched = actions
-            .iter()
-            .filter(|a| !matches!(a.action, "skipped" | "already-current" | "already-absent"))
-            .count();
-        if touched == 0 && !uninstall {
-            println!(
-                "\nNo agents updated. Detected agents are configured automatically; \
-                 target one explicitly with `--agent <name>` (claude-code, cursor, \
-                 windsurf, gemini)."
-            );
-        } else if !dry_run && !uninstall && touched > 0 {
-            println!("\nRestart the agent(s) above to pick up the codeq MCP server and skill.");
         }
     }
     Ok(())

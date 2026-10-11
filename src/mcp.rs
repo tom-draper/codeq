@@ -663,7 +663,17 @@ mod tests {
         let mut cli: Vec<String> = root
             .get_subcommands()
             .map(|c| format!("codeq_{}", c.get_name()))
-            .filter(|n| !["codeq_index", "codeq_install", "codeq_mcp", "codeq_help"].contains(&n.as_str()))
+            .filter(|n| {
+                ![
+                    "codeq_index",
+                    "codeq_install",
+                    "codeq_uninstall",
+                    "codeq_doctor",
+                    "codeq_mcp",
+                    "codeq_help",
+                ]
+                .contains(&n.as_str())
+            })
             .collect();
         let mut tools: Vec<String> = tool_defs().iter().map(|t| t.name.to_string()).collect();
         cli.sort();
