@@ -377,11 +377,13 @@ fn scan_called_names(
     let mut body_stmt = s.db.conn.prepare("SELECT body FROM content_fts WHERE path = ?1")?;
     let mut calls_stmt = s.db.conn.prepare(
         "SELECT start_byte, name, receiver FROM calls
-         WHERE path = ?1 AND start_byte >= ?2 AND start_byte < ?3
+         WHERE file_id = (SELECT id FROM files WHERE path = ?1)
+           AND start_byte >= ?2 AND start_byte < ?3
          ORDER BY start_byte",
     )?;
     let mut span_stmt = s.db.conn.prepare(
-        "SELECT start_byte, end_byte FROM spans WHERE path = ?1 ORDER BY start_byte",
+        "SELECT start_byte, end_byte FROM spans
+         WHERE file_id = (SELECT id FROM files WHERE path = ?1) ORDER BY start_byte",
     )?;
     for (path, sb, eb) in targets {
         let body: Option<String> = body_stmt.query_row([path], |r| r.get(0)).ok();

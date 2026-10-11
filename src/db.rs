@@ -101,7 +101,7 @@ use rusqlite::Connection;
 // hashing the query constants is the obvious form — but it would cover only the
 // query-driven half. A visibility rule or an attribute reader is ordinary Rust
 // and would slip through, while the mechanism looked complete. Not yet solved.
-pub const SCHEMA_VERSION: i64 = 43;
+pub const SCHEMA_VERSION: i64 = 44;
 
 /// Below this many free pages (1 MiB at the default page size) compaction is
 /// not worth a rewrite, whatever share of a small index they are.
@@ -170,10 +170,51 @@ impl Db {
     }
 
     fn migrate(&self) -> Result<()> {
+        // One migration at a time, and whoever waited re-checks. A cold start
+        // is routinely several processes at once, all of which saw no schema;
+        // unserialised, the second would drop the tables the first had just
+        // built while a third was already querying them.
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
+        )?;
+        let prev = self.get_meta("schema_version")?;
+        if prev.as_deref() == Some(SCHEMA_VERSION.to_string().as_str()) {
+            return Ok(tx.commit()?);
+        }
+        // Everything but `meta` is derived, and a version change rebuilds it
+        // all — so drop the old tables rather than empty them. `CREATE … IF
+        // NOT EXISTS` would otherwise keep a table's previous shape, and a
+        // drop hands the pages back at once where FTS5's row-by-row delete
+        // writes tombstones first. Children before `files`, which they
+        // reference.
+        self.conn.execute_batch(
+            "DROP TABLE IF EXISTS content_fts;
+             DROP TABLE IF EXISTS facts;
+             DROP TABLE IF EXISTS spans;
+             DROP TABLE IF EXISTS impls;
+             DROP TABLE IF EXISTS calls;
+             DROP TABLE IF EXISTS dirs;
+             DROP TABLE IF EXISTS files;",
+        )?;
+        self.set_meta("last_indexed_at", "0")?;
+
         self.conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS files (
-                path         TEXT PRIMARY KEY,
+                -- Explicit, so it is stable: an implicit rowid may be
+                -- renumbered by the VACUUM that compaction runs, and `spans`
+                -- and `calls` key on it. A path is repeated in every row of a
+                -- table that stores it and again in each of that table's
+                -- indexes; an integer is not.
+                id           INTEGER PRIMARY KEY,
+                path         TEXT NOT NULL UNIQUE,
                 language     TEXT,
                 size_bytes   INTEGER NOT NULL,
                 mtime_ns     INTEGER,
@@ -189,11 +230,6 @@ impl Db {
                 parse_recovered INTEGER NOT NULL DEFAULT 0,
                 content_hash TEXT,
                 indexed_at   INTEGER NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS meta (
-                key   TEXT PRIMARY KEY,
-                value TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS facts (
@@ -238,13 +274,16 @@ impl Db {
                 FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
             );
 
+            -- Clustered on the file, so a file's spans are one range scan
+            -- already in `start_byte` order, with no separate index to keep.
             CREATE TABLE IF NOT EXISTS spans (
-                path       TEXT NOT NULL,
+                file_id    INTEGER NOT NULL,
                 start_byte INTEGER NOT NULL,
                 end_byte   INTEGER NOT NULL,
                 kind       INTEGER NOT NULL,
-                FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
-            );
+                PRIMARY KEY(file_id, start_byte, end_byte, kind),
+                FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            ) WITHOUT ROWID;
 
             -- Type relations: `subtype` implements/extends `supertype`
             -- (impl/extends/implements edges the call graph doesn't cover).
@@ -262,13 +301,13 @@ impl Db {
             -- `receiver` preserves how a member call was written for later
             -- import-aware resolution without reparsing the source at query time.
             CREATE TABLE IF NOT EXISTS calls (
-                path       TEXT NOT NULL,
+                file_id    INTEGER NOT NULL,
                 start_byte INTEGER NOT NULL,
                 name       TEXT NOT NULL,
                 receiver   TEXT,
-                PRIMARY KEY(path, start_byte),
-                FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
-            );
+                PRIMARY KEY(file_id, start_byte),
+                FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            ) WITHOUT ROWID;
 
             -- Directory mtimes: codeq's own index cache for cheap, git-free
             -- freshness. A file added/removed/renamed bumps its parent dir's
@@ -282,24 +321,13 @@ impl Db {
             CREATE INDEX IF NOT EXISTS facts_kind_name ON facts(kind, name);
             CREATE INDEX IF NOT EXISTS facts_name ON facts(name);
             CREATE INDEX IF NOT EXISTS facts_path ON facts(path);
-            CREATE INDEX IF NOT EXISTS spans_path ON spans(path);
             CREATE INDEX IF NOT EXISTS impls_supertype ON impls(supertype);
             CREATE INDEX IF NOT EXISTS impls_subtype ON impls(subtype);
             CREATE INDEX IF NOT EXISTS impls_path ON impls(path);
             CREATE INDEX IF NOT EXISTS calls_name ON calls(name);
-            CREATE INDEX IF NOT EXISTS calls_path ON calls(path);
             "#,
         )?;
 
-        // An index from an older schema may carry a `content_fts` built with
-        // different options, which `CREATE … IF NOT EXISTS` would keep. Drop it:
-        // the version change below empties it anyway, and a drop hands its
-        // pages back at once where a row-by-row delete writes tombstones first.
-        let prev = self.get_meta("schema_version")?;
-        if prev.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
-            self.conn
-                .execute_batch("DROP TABLE IF EXISTS content_fts;")?;
-        }
         self.create_fts()?;
 
         // Best-effort column additions for indexes created before these fields
@@ -347,18 +375,8 @@ impl Db {
             [],
         );
 
-        // On a schema version change, wipe derived data so the next refresh
-        // rebuilds everything (including the FTS index) from scratch.
-        if prev.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
-            self.conn.execute("DELETE FROM files", [])?; // cascades to facts
-
-            // Clear the dir cache too: an empty `files` table against a populated
-            // `dirs` cache would look "fresh" and skip the rebuild walk.
-            let _ = self.conn.execute("DELETE FROM dirs", []);
-            let _ = self.set_meta("last_indexed_at", "0");
-        }
         self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
-        Ok(())
+        Ok(tx.commit()?)
     }
 
     /// Full-text content index using the trigram tokenizer, which lets SQLite
