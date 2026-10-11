@@ -61,7 +61,7 @@ reported relationship resolves to the correct runtime implementation.
 ## Results, 2026-10-11
 
 [Recorded results](results/real_workflows_20261011.json) compare main at `40fa658`
-with the qualifier and ambiguity changes at `fc976f9`. Debug binaries were used
+with the qualifier and ambiguity changes at `114d19e`. Debug binaries were used
 for correctness and output measurements; no timings are reported. All 19 tasks
 pass for both binaries.
 
