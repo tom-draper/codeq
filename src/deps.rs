@@ -268,6 +268,45 @@ fn exact_module_match_score(
     }
 }
 
+fn exact_candidates<'a>(
+    by_tail: &HashMap<&str, Vec<&'a str>>,
+    from: &str,
+    module: &str,
+    allow_imported_name: bool,
+) -> Vec<&'a str> {
+    let tails = if module.starts_with('.') || is_file_reference(module) {
+        let mut expected: Vec<&str> = from
+            .rsplit_once(['/', '\\'])
+            .map(|(dir, _)| dir.split(['/', '\\']).filter(|s| !s.is_empty()).collect())
+            .unwrap_or_default();
+        for segment in module.split(['/', '\\']) {
+            match segment {
+                "" | "." => {}
+                ".." => {
+                    if expected.pop().is_none() {
+                        return Vec::new();
+                    }
+                }
+                other => expected.push(other),
+            }
+        }
+        vec![stem(expected.last().copied().unwrap_or(""))]
+    } else {
+        let parts = segments(module);
+        if allow_imported_name {
+            parts
+        } else {
+            parts.last().copied().into_iter().collect()
+        }
+    };
+    let mut seen = HashSet::new();
+    tails
+        .into_iter()
+        .flat_map(|tail| by_tail.get(tail).into_iter().flatten().copied())
+        .filter(|path| seen.insert(*path))
+        .collect()
+}
+
 /// The `.go` files that form an internal Go package imported by `module`.
 ///
 /// Go imports name a package directory relative to the module declared in
@@ -327,7 +366,17 @@ impl Graph {
         // stem -> files with that stem (usually one; more when names collide).
         let paths: Vec<String> = files.into_iter().collect();
         let mut by_stem: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut by_exact_tail: HashMap<&str, Vec<&str>> = HashMap::new();
         for p in &paths {
+            let mut parts = p.split(['/', '\\']).filter(|s| !s.is_empty());
+            let file = parts.next_back().unwrap_or(p);
+            by_exact_tail.entry(stem(file)).or_default().push(p);
+            if matches!(file, "__init__.py" | "mod.rs") || file.starts_with("index.") {
+                by_exact_tail
+                    .entry(parts.next_back().unwrap_or(""))
+                    .or_default()
+                    .push(p);
+            }
             by_stem.entry(stem(p)).or_default().push(p.as_str());
             // An import usually names a *directory*, not a file: `./utils` means
             // `utils/index.js`, `from pkg import x` means `pkg/__init__.py`,
@@ -392,13 +441,13 @@ impl Graph {
             // source file merely because `flask` is one of its hyphen-separated
             // words. This also lets the Jinja ancestor rule above select its
             // template-root match.
-            let exact_files: Vec<&str> = paths
-                .iter()
-                .map(String::as_str)
-                .filter(|path| {
-                    *path != from && exact_module_match(&from, path, &module, allow_imported_name)
-                })
-                .collect();
+            let exact_files: Vec<&str> =
+                exact_candidates(&by_exact_tail, &from, &module, allow_imported_name)
+                    .into_iter()
+                    .filter(|path| {
+                        *path != from && exact_module_match(&from, path, &module, allow_imported_name)
+                    })
+                    .collect();
             if !exact_files.is_empty() {
                 let strongest = exact_files
                     .iter()

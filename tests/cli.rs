@@ -6360,6 +6360,23 @@ fn deps_resolves_imports_to_internal_files_and_drops_external() {
 }
 
 #[test]
+fn deps_preserves_relative_paths_and_entry_files_with_nonstandard_names() {
+    let f = Fixture::new();
+    f.write(
+        "app.js",
+        "import './my-utils';\nimport './other/index.html';\nimport '.';\n",
+    )
+    .write("my-utils/index.html", "<p>directory entry</p>\n")
+    .write("other/index.html", "<p>explicit file</p>\n")
+    .write("index.js", "export const root = 1;\n")
+    .write("unrelated/my-utils/index.html", "<p>unrelated</p>\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "app.js"]), "path"),
+        ["index.js", "my-utils/index.html", "other/index.html"]
+    );
+}
+
+#[test]
 fn deps_does_not_resolve_relative_imports_that_escape_the_repo_root() {
     let f = Fixture::new();
     f.write("main.js", "import '../helper.js';\n")
