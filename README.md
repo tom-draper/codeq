@@ -17,7 +17,7 @@ agent that can trust the output has no reason to fall back to ad-hoc shell pipel
 > Elixir, Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, HCL/Terraform, SQL, and
 > Markdown. Other
 > languages are indexed as files and stay fully searchable. `codeq capabilities` is the
-> authoritative, version-specific support list. See [DRAFT.md](./DRAFT.md) for the design
+> authoritative, version-specific support list. See [DESIGN.md](./DESIGN.md) for the design
 > rationale.
 
 ## Install

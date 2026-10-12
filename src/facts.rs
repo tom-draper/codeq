@@ -105,7 +105,7 @@ pub struct Relation {
 impl Fact {
     /// Content-addressed id, stable within an index version + working-tree
     /// state. Encodes position, so it is deliberately *not* durable across
-    /// edits — see the fact-model note in DRAFT.md.
+    /// edits — see the fact-model note in DESIGN.md.
     pub fn id(&self, path: &str) -> String {
         let mut h = blake3::Hasher::new();
         h.update(path.as_bytes());
