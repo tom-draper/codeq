@@ -1,8 +1,7 @@
 # codeq — working in this repo
 
 codeq is a deterministic repository index for AI agents (this repo builds it).
-**Dogfood it:** when navigating this codebase, prefer codeq over raw whole-file
-reads and grep, and log any friction in [DOGFOOD.md](./DOGFOOD.md).
+When navigating this codebase, prefer codeq over raw whole-file reads and grep.
 
 Build with `cargo build` → run `./target/debug/codeq` from the repo root
 (`--release` for benchmarking). Output defaults to compact grep-style text

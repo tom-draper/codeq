@@ -2,7 +2,7 @@
 //!
 //! This is the command that has to justify the whole project: return the
 //! *smallest useful* slice of code for a task, not just search results. The
-//! design follows the constraints argued in DRAFT.md:
+//! design follows the constraints argued in DESIGN.md:
 //!
 //! - **Seeds are explicit.** codeq does not guess task intent. The agent names
 //!   symbols, or asks for changed code; we assemble from that.
