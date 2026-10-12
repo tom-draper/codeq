@@ -316,7 +316,7 @@ fn exact_candidates<'a>(
 /// and include the package's non-test source files. `Some(empty)` is meaningful:
 /// it is an external Go module and must not fall back to stem matching.
 fn go_package_targets<'a>(
-    paths: &'a [String],
+    packages: &HashMap<&str, Vec<&'a str>>,
     from: &str,
     module: &str,
     go_module: Option<&str>,
@@ -338,21 +338,26 @@ fn go_package_targets<'a>(
         // falling through to filename-stem guessing.
         return Some(Vec::new());
     };
-    Some(
-        paths
-            .iter()
-            .map(String::as_str)
-            .filter(|path| {
-                path.ends_with(".go")
-                    && !path.ends_with("_test.go")
-                    && path
-                        .rsplit_once(['/', '\\'])
-                        .map(|(dir, _)| dir)
-                        .unwrap_or("")
-                        == package
-            })
-            .collect(),
-    )
+    Some(packages.get(package).cloned().unwrap_or_default())
+}
+
+/// Every Go package directory, with the non-test `.go` files that form it.
+///
+/// Built once per graph: a Go repository has an import for most of its files,
+/// so finding each import's package by scanning every path is quadratic.
+fn go_packages(paths: &[String]) -> HashMap<&str, Vec<&str>> {
+    let mut packages: HashMap<&str, Vec<&str>> = HashMap::new();
+    for path in paths {
+        if !path.ends_with(".go") || path.ends_with("_test.go") {
+            continue;
+        }
+        let dir = path
+            .rsplit_once(['/', '\\'])
+            .map(|(dir, _)| dir)
+            .unwrap_or("");
+        packages.entry(dir).or_default().push(path);
+    }
+    packages
 }
 
 impl Graph {
@@ -367,6 +372,11 @@ impl Graph {
         let paths: Vec<String> = files.into_iter().collect();
         let mut by_stem: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut by_exact_tail: HashMap<&str, Vec<&str>> = HashMap::new();
+        let go_packages = if go_module.is_some() {
+            go_packages(&paths)
+        } else {
+            HashMap::new()
+        };
         for p in &paths {
             let mut parts = p.split(['/', '\\']).filter(|s| !s.is_empty());
             let file = parts.next_back().unwrap_or(p);
@@ -414,7 +424,7 @@ impl Graph {
             // Do this before the cross-language stem heuristic, and do not let an
             // external module such as `example.net/lib/util` borrow a local
             // `util.go` merely because their final segment happens to agree.
-            if let Some(targets) = go_package_targets(&paths, &from, &module, go_module) {
+            if let Some(targets) = go_package_targets(&go_packages, &from, &module, go_module) {
                 if targets.is_empty() {
                     continue;
                 }

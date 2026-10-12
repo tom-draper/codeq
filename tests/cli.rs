@@ -1733,6 +1733,50 @@ fn go_module_imports_resolve_to_their_package_not_a_matching_file_stem() {
 }
 
 #[test]
+fn a_go_package_is_every_non_test_file_in_exactly_its_directory() {
+    // An import names a directory, so it reaches each file of that package:
+    // not its tests, not a nested package, and not a non-Go file beside them.
+    // The module path itself is the package at the repository root.
+    let f = Fixture::new();
+    f.write("go.mod", "module example.com/acme/service\n\ngo 1.22\n");
+    f.write(
+        "cmd/app/main.go",
+        "package main\n\nimport (\n\t\"example.com/acme/service\"\n\t\"example.com/acme/service/internal/store\"\n)\n\nfunc run() { service.Start(); store.Open() }\n",
+    );
+    f.write("service.go", "package service\n\nfunc Start() {}\n");
+    f.write(
+        "service_test.go",
+        "package service\n\nfunc TestStart() {}\n",
+    );
+    f.write(
+        "internal/store/open.go",
+        "package store\n\nfunc Open() {}\n",
+    );
+    f.write(
+        "internal/store/close.go",
+        "package store\n\nfunc Close() {}\n",
+    );
+    f.write(
+        "internal/store/open_test.go",
+        "package store\n\nfunc TestOpen() {}\n",
+    );
+    f.write("internal/store/schema.sql", "CREATE TABLE t (id INT);\n");
+    f.write(
+        "internal/store/cache/cache.go",
+        "package cache\n\nfunc Get() {}\n",
+    );
+
+    assert_eq!(
+        field_set(&f.run(&["deps", "cmd/app/main.go"]), "path"),
+        [
+            "internal/store/close.go",
+            "internal/store/open.go",
+            "service.go"
+        ]
+    );
+}
+
+#[test]
 fn symbols_can_be_filtered_by_the_type_that_owns_them() {
     // Members are only addressable together with their type, so the owner has to
     // be queryable — otherwise "what does this type hold?" means fetching every
