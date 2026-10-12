@@ -6745,3 +6745,21 @@ nonzero on a mismatch. The MCP tool exposes the same instructions. This lets
 an agent discover search-to-source workflows from the executable it actually
 queries. Run the check with that executable's explicit path when several builds
 are installed. Older binaries without `guide` still require their `--help`.
+
+
+## 2026-10-12: a small explore query rebuilt a quadratic import graph
+
+The long differential run exposed slow graph queries in Redis and Rust Book.
+A warm `map --totals` was quick while a budgeted `explore --at` took seconds.
+The graph builder tested each import against every indexed file, repeatedly
+splitting and normalizing candidate paths. A separate CPU profile confirmed
+that path processing and exact-module matching dominated the query.
+
+Index candidate files by filename stem and conventional entry-directory name,
+then retain the existing exact-match and scoring functions. This narrows the
+search without changing import resolution. Seven alternating release runs on
+Rust Book reduced the measured explore median from 8340.42 ms to 67.58 ms.
+Every timed stdout/stderr pair matched; all 10,672 differential checks passed.
+The samples and scope limits are in `bench/results/query_latency_20261012.json`;
+the harness is `bench/query_latency.py`. These are warm sequential CLI queries,
+not cold-index or concurrent-agent measurements.

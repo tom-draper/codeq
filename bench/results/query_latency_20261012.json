@@ -1,0 +1,316 @@
+{
+  "metric": "end-to-end warm CLI wall time in milliseconds",
+  "limits": "sequential warmed queries on cached corpus checkouts; excludes cold indexing and model reasoning",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpu_count": 12,
+  "loadavg_before": [
+    1.4404296875,
+    2.12890625,
+    1.8466796875
+  ],
+  "loadavg_after": [
+    1.19873046875,
+    1.7802734375,
+    1.76123046875
+  ],
+  "binaries_sha256": {
+    "before": "382c24a35900371ee9168f8522015685f96cefd5b446495fccc7fc834d0df538",
+    "after": "fe9c87a9e7ea349c1faf142691bb13342acf6426e40ddaf846bad101be0982fc"
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "results": [
+    {
+      "task": "repo-totals",
+      "root": ".",
+      "args": [
+        "map",
+        "--totals"
+      ],
+      "revision": "0a56d05529d1208cabfce6035e7a8da347335640",
+      "stdout_bytes": 305,
+      "stderr_bytes": 0,
+      "answer_sha256": "dd4b39055ad05fded1c6f85dfe47e071d97c81867ed6268c9d955d41fae55d47",
+      "samples_ms": {
+        "before": [
+          14.437301,
+          19.10393,
+          15.149175,
+          11.183713,
+          14.295071,
+          33.040009,
+          17.181465
+        ],
+        "after": [
+          14.828491,
+          18.288504,
+          14.240903,
+          12.923109,
+          12.607443,
+          22.360282,
+          11.006744
+        ]
+      },
+      "median_ms": {
+        "before": 15.149175,
+        "after": 14.240903
+      },
+      "range_ms": {
+        "before": [
+          11.183713,
+          33.040009
+        ],
+        "after": [
+          11.006744,
+          22.360282
+        ]
+      }
+    },
+    {
+      "task": "repo-search",
+      "root": ".",
+      "args": [
+        "search",
+        "Session",
+        "--path",
+        "src",
+        "--limit",
+        "10"
+      ],
+      "revision": "0a56d05529d1208cabfce6035e7a8da347335640",
+      "stdout_bytes": 752,
+      "stderr_bytes": 84,
+      "answer_sha256": "51626362bd4bf7bd8afc1c4d461b104b53e7c66bab644052538c64159a9597a6",
+      "samples_ms": {
+        "before": [
+          15.176844,
+          18.196429,
+          16.769556,
+          8.965431,
+          8.837351,
+          9.607641,
+          10.115583
+        ],
+        "after": [
+          12.336368,
+          13.223061,
+          80.04936,
+          10.60855,
+          9.121665,
+          9.169859,
+          9.968881
+        ]
+      },
+      "median_ms": {
+        "before": 10.115583,
+        "after": 10.60855
+      },
+      "range_ms": {
+        "before": [
+          8.837351,
+          18.196429
+        ],
+        "after": [
+          9.121665,
+          80.04936
+        ]
+      }
+    },
+    {
+      "task": "book-totals",
+      "root": "bench/.corpus/rust-book",
+      "args": [
+        "map",
+        "--totals"
+      ],
+      "revision": "4717cec4ba387b4925cff394d71e3d95fb36476b",
+      "stdout_bytes": 386,
+      "stderr_bytes": 172,
+      "answer_sha256": "37b52b597115b684e7c214dc93c5494783545fcf22fe40159a015221ff98d9ef",
+      "samples_ms": {
+        "before": [
+          39.932663,
+          92.147262,
+          41.006963,
+          28.267314,
+          25.642019,
+          26.709735,
+          28.025713
+        ],
+        "after": [
+          35.137103,
+          54.307811,
+          30.626341,
+          31.063756,
+          33.424456,
+          29.460657,
+          26.824721
+        ]
+      },
+      "median_ms": {
+        "before": 28.267314,
+        "after": 31.063756
+      },
+      "range_ms": {
+        "before": [
+          25.642019,
+          92.147262
+        ],
+        "after": [
+          26.824721,
+          54.307811
+        ]
+      }
+    },
+    {
+      "task": "book-explore",
+      "root": "bench/.corpus/rust-book",
+      "args": [
+        "explore",
+        "--at",
+        "listings/ch06-enums-and-pattern-matching/listing-06-07/src/main.rs:10",
+        "--max-tokens",
+        "200"
+      ],
+      "revision": "4717cec4ba387b4925cff394d71e3d95fb36476b",
+      "stdout_bytes": 1443,
+      "stderr_bytes": 0,
+      "answer_sha256": "2a847c66a20324099f9661fd69425db5892a4fc62e8215d2c120e983f3b0e7c8",
+      "samples_ms": {
+        "before": [
+          7858.263679,
+          7839.591155,
+          11910.725878,
+          8983.487503,
+          12011.116871,
+          7681.004065,
+          8340.418811
+        ],
+        "after": [
+          90.03153,
+          85.122718,
+          67.580758,
+          62.78927,
+          51.271466,
+          50.339591,
+          78.911351
+        ]
+      },
+      "median_ms": {
+        "before": 8340.418811,
+        "after": 67.580758
+      },
+      "range_ms": {
+        "before": [
+          7681.004065,
+          12011.116871
+        ],
+        "after": [
+          50.339591,
+          90.03153
+        ]
+      }
+    },
+    {
+      "task": "redis-explore",
+      "root": "bench/.corpus/redis",
+      "args": [
+        "explore",
+        "dictAdd",
+        "--path",
+        "src/dict.c",
+        "--max-tokens",
+        "200"
+      ],
+      "revision": "f60370ce28b946c1146dcea77c9c399d39601aaa",
+      "stdout_bytes": 7389,
+      "stderr_bytes": 0,
+      "answer_sha256": "50f593d5400d1fd4f01d6cb2e83519220780a53ce235ac1ed0ccf9ad55fe74aa",
+      "samples_ms": {
+        "before": [
+          7355.798427,
+          8020.20625,
+          10996.042266,
+          14026.037865,
+          8662.459817,
+          7226.131821,
+          7460.897659
+        ],
+        "after": [
+          58.325438,
+          60.62665,
+          119.965087,
+          120.267667,
+          65.223541,
+          65.064313,
+          64.038103
+        ]
+      },
+      "median_ms": {
+        "before": 8020.20625,
+        "after": 65.064313
+      },
+      "range_ms": {
+        "before": [
+          7226.131821,
+          14026.037865
+        ],
+        "after": [
+          58.325438,
+          120.267667
+        ]
+      }
+    },
+    {
+      "task": "flask-explore",
+      "root": "bench/.corpus/flask",
+      "args": [
+        "explore",
+        "run",
+        "--path",
+        "src/flask/app.py",
+        "--max-tokens",
+        "200"
+      ],
+      "revision": "c12a5d874c5a014495eb2db8a73f40037bc813ac",
+      "stdout_bytes": 6410,
+      "stderr_bytes": 119,
+      "answer_sha256": "822ef3bee3b95cac5da0122c83414ddb4328a47ccbb506d793e311419121b48b",
+      "samples_ms": {
+        "before": [
+          333.389343,
+          296.09327,
+          405.246613,
+          357.722703,
+          293.551906,
+          303.825624,
+          281.555068
+        ],
+        "after": [
+          25.719867,
+          24.441738,
+          33.713338,
+          34.391812,
+          33.841039,
+          22.708198,
+          21.849086
+        ]
+      },
+      "median_ms": {
+        "before": 303.825624,
+        "after": 25.719867
+      },
+      "range_ms": {
+        "before": [
+          281.555068,
+          405.246613
+        ],
+        "after": [
+          21.849086,
+          34.391812
+        ]
+      }
+    }
+  ],
+  "verified_timed_invocations": 84
+}

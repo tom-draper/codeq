@@ -43,6 +43,41 @@ variants. The new extractor compiles languages as it encounters them and reuses
 their parsers. The improvement depends on the languages needed and the amount of
 source to parse. This is not a general estimate for large repository rebuilds.
 
+## Warm query latency (`query_latency.py`)
+
+Compare two release binaries on complete repository queries with seven alternating
+runs per side. The harness checks identical stdout and stderr for every invocation
+and exits on failed commands or changed answers. It records every sample, medians,
+ranges, binary hashes, corpus revisions, and machine load.
+
+```sh
+python3 bench/query_latency.py --before /tmp/codeq-before --after target/release/codeq
+```
+
+The corpus must already be cached. `--corpus PATH` selects another copy. Run this
+without concurrent builds or corpus verification, since those compete for CPU and
+may refresh the same indexes. Timings include process startup, repository discovery,
+freshness checks, graph construction, queries, and output capture. Both sides use
+warm indexes and filesystem caches. Cold indexing, concurrent queries, and model
+reasoning are outside this measurement.
+
+[The exact-candidate results](results/query_latency_20261012.json) compare release
+binaries before and after indexing import candidates by their final component.
+Rust Book's position-based `explore` query fell from a median of 8340.42 ms to
+67.58 ms, a 123.4-fold speedup across seven alternating runs per binary. The ranges
+were 7681.00 to 12011.12 ms before and 50.34 to 90.03 ms after. Redis's `explore`
+query showed a similar reduction; Flask's smaller graph improved less. The three
+control queries had overlapping ranges and showed no clear speedup.
+
+[A separate baseline CPU profile](results/query_latency_profile_20261012.txt)
+shows path splitting, character iteration, and `exact_module_match` dominating
+CPU work. The old graph builder tested every import against every file, allocating
+and normalizing paths repeatedly. The new candidate index narrows the files by
+filename stem or entry-directory name before applying the same matching and
+ranking rules. It preserves Python import prefixes, Jinja ancestor lookup,
+relative paths, and ambiguity. The profiling binary uses the original release
+configuration with symbols retained; profiling time is excluded from the samples.
+
 ## Text-mode faithfulness (`textmode.py`)
 
 `differential.py`/`completion.py` only exercise `--json`, so the *text renderer* —
