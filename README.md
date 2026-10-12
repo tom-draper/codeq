@@ -356,7 +356,7 @@ servers and settings, and installs one bundled skill guide in discovery location
 | `gemini` | `~/.gemini/settings.json` | `~/.agents/skills/codeq/SKILL.md` |
 | `codex` | `$CODEX_HOME/config.toml`, default `~/.codex/config.toml` | `~/.agents/skills/codeq/SKILL.md` |
 
-The canonical guide is [SKILL.md](.claude/skills/codeq/SKILL.md), compiled into the binary.
+The canonical guide is [SKILL.md](.agents/skills/codeq/SKILL.md), compiled into the binary.
 Installation copies it to native skill directories. It does not append instructions to
 `AGENTS.md` or `CLAUDE.md`. The shared guide is discovered by
 [Cursor](https://cursor.com/docs/skills),

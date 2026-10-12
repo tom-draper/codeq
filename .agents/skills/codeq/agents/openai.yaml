@@ -1,0 +1,4 @@
+interface:
+  display_name: "codeq"
+  short_description: "Explore code with structured search, symbol navigation, and dependency queries"
+  default_prompt: "Use $codeq to inspect and navigate this repository efficiently."
