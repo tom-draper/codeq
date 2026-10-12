@@ -621,6 +621,10 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
         "Describe what codeq supports: commands, languages, fact kinds, schema, and language_support — a per-language matrix of which extractions exist (definitions, imports, members, relations, spans, calls). Check it before reading an empty result as evidence of absence: Go, C, and Zig have no extracted relation edges, Ruby declares no fields, and several languages have no import syntax codeq reads.",
     ),
     (
+        "codeq_guide",
+        "Read this executable's bundled agent guide, including search-to-source workflows and supported flags. Use when installed instructions may be stale. Optional check compares a skill file with the bundled guide without changing it. Requires no repository or index.",
+    ),
+    (
         "codeq_graph",
         "Every explicit type or schema relation in the repository as an edge list. relation filters to implements, extends, or references; mermaid emits a graph LR document. This is not a call graph: use callers or callees for a call relationship rooted at a symbol. Go's structural interfaces have no explicit relation edge.",
     ),

@@ -9,6 +9,12 @@ description: >
 
 # Code exploration with codeq
 
+Use `codeq guide` to retrieve the instructions bundled with the executable you
+are running. If a saved skill may be stale, run `codeq guide --check <skill-path>`.
+A mismatch exits nonzero without changing the file. Run `codeq install` to update
+managed skills, then restart the agent. Compare against the same executable you
+use for queries, including its explicit path when several builds are installed.
+
 Optimise **tokens and calls to a complete answer**, including follow-up reads.
 Choose the smallest useful result from this table. Codeq refreshes automatically;
 run commands from anywhere in the repo. Default text is for reading; `--json` is

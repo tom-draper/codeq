@@ -1,6 +1,46 @@
 //! Commands about codeq itself: `install`, `capabilities`.
 
 use super::*;
+use anyhow::Context;
+
+pub fn cmd_guide(check: Option<&Path>, out: Out) -> Result<()> {
+    let guide = crate::install::SKILL;
+    let matches = check
+        .map(|path| {
+            std::fs::read(path)
+                .with_context(|| format!("cannot read guide {}", path.display()))
+                .map(|bytes| bytes == guide.as_bytes())
+        })
+        .transpose()?;
+    if out.json {
+        let data = match check {
+            Some(path) => serde_json::json!({"path": path, "matches": matches}),
+            None => serde_json::json!({"guide": guide}),
+        };
+        let result = serde_json::json!({"schema": crate::envelope::RESULT_SCHEMA, "data": data});
+        println!(
+            "{}",
+            if out.pretty {
+                serde_json::to_string_pretty(&result)?
+            } else {
+                serde_json::to_string(&result)?
+            }
+        );
+    } else if let Some(path) = check {
+        if matches == Some(true) {
+            println!(
+                "{}: matches this executable's bundled guide",
+                path.display()
+            );
+        }
+    } else {
+        print!("{guide}");
+    }
+    if matches == Some(false) {
+        anyhow::bail!("guide differs from this executable's bundled guide; run `codeq guide` for current instructions or `codeq install` to update managed skills");
+    }
+    Ok(())
+}
 
 /// `install` — register codeq's MCP server with detected AI coding agents. Writes
 /// to each agent's own config (in the home directory), never to a repository, so

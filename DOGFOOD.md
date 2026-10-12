@@ -6731,3 +6731,17 @@ What is still not understood: `CREATE OPERATOR`/`CAST`/`OPERATOR CLASS`, and
 `SELECT`s using extension operators (`<->`, `<#>`). None is a definition codeq
 models. A `CREATE TABLE t (val vector(3))` still indexes the table and column;
 only the signature loses the type's `(3)`.
+
+
+## 2026-10-12: installed instructions described a newer executable
+
+The executable on PATH advertised a single-file `read`, while this checkout's
+guide described multi-file ranges, `read --at`, and `search --source`. Reading
+the checkout's instructions did not establish what the installed binary could do.
+
+`codeq guide` now returns the same guide that its executable installs.
+`codeq guide --check PATH` compares a saved skill without changing it and exits
+nonzero on a mismatch. The MCP tool exposes the same instructions. This lets
+an agent discover search-to-source workflows from the executable it actually
+queries. Run the check with that executable's explicit path when several builds
+are installed. Older binaries without `guide` still require their `--help`.
