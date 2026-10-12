@@ -14,7 +14,7 @@ use config::Config;
 use storage::{Manifest, Owned};
 
 /// One source of truth, compiled with the CLI that the guide describes.
-const SKILL: &str = include_str!("../.claude/skills/codeq/SKILL.md");
+pub const SKILL: &str = include_str!("../.claude/skills/codeq/SKILL.md");
 pub const AGENTS: &[&str] = &["claude-code", "cursor", "windsurf", "gemini", "codex"];
 
 struct Agent {

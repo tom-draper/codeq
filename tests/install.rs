@@ -27,6 +27,47 @@ fn success(out: Output) -> Value {
 }
 
 #[test]
+fn guide_matches_installed_skill_and_detects_stale_instructions_without_writes() {
+    let home = TempDir::new().unwrap();
+    let guide = success(run(&home, &["guide"]));
+    assert!(guide["data"]["guide"]
+        .as_str()
+        .unwrap()
+        .contains("codeq search PATTERN --source"));
+    assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
+
+    let text = Command::cargo_bin("codeq")
+        .unwrap()
+        .arg("guide")
+        .current_dir(home.path())
+        .output()
+        .unwrap();
+    assert!(text.status.success());
+    assert_eq!(
+        text.stdout,
+        guide["data"]["guide"].as_str().unwrap().as_bytes()
+    );
+
+    success(run(&home, &["install", "--agent", "cursor"]));
+    let path = home.path().join(".agents/skills/codeq/SKILL.md");
+    assert_eq!(std::fs::read(&path).unwrap(), text.stdout);
+    let path_arg = path.to_str().unwrap();
+    let current = success(run(&home, &["guide", "--check", path_arg]));
+    assert_eq!(current["data"]["matches"], true);
+    std::fs::write(&path, "old instructions\n").unwrap();
+    let stale = run(&home, &["guide", "--check", path_arg]);
+    assert!(!stale.status.success());
+    let result: Value = serde_json::from_slice(&stale.stdout).unwrap();
+    assert_eq!(result["data"]["matches"], false);
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("codeq guide"));
+    assert_eq!(std::fs::read(&path).unwrap(), b"old instructions\n");
+    assert!(!run(&home, &["guide", "--check", "missing.md"])
+        .status
+        .success());
+    assert!(!home.path().join(".codeq/index.db").exists());
+}
+
+#[test]
 fn install_doctor_and_uninstall_work_for_every_supported_agent() {
     for agent in ["claude-code", "cursor", "windsurf", "gemini", "codex"] {
         let home = TempDir::new().unwrap();

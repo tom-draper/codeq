@@ -848,6 +848,13 @@ enum Command {
     },
     /// Describe what codeq can do: commands, languages, fact kinds, schema.
     Capabilities {},
+    /// Print this executable's bundled agent guide, or check a skill file against it.
+    /// Works outside a repository and never changes files.
+    Guide {
+        /// Check that this file matches the bundled guide instead of printing it.
+        #[arg(long)]
+        check: Option<PathBuf>,
+    },
     /// Run as an MCP server over stdio (for agent hosts to call codeq natively).
     Mcp,
     /// Set codeq up for detected coding agents: register its MCP server and install
@@ -1339,6 +1346,7 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             names.sort_unstable();
             commands::cmd_capabilities(&names, out)
         }
+        Command::Guide { check } => commands::cmd_guide(check.as_deref(), out),
         Command::Mcp => mcp::serve(),
         Command::Install {
             dry_run,

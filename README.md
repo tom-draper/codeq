@@ -37,6 +37,13 @@ every detected agent and installs the codeq skill for those that read one. `--dr
 shows what it would touch without writing anything. See [MCP server](#mcp-server) for the
 details and for registering by hand.
 
+`codeq guide` prints the agent instructions bundled with the running executable,
+including search-to-source workflows. It works outside a repository and creates no
+index. Use `codeq guide --check /path/to/SKILL.md` to check a saved guide against
+that executable. A mismatch exits nonzero and leaves the file unchanged.
+After upgrading the binary, run `codeq install` to update managed skills and
+restart the agent. `codeq doctor` checks the complete installation.
+
 ## Why not grep and find?
 
 grep and find work on bytes and lines. codeq works on a parsed model of the code, which
@@ -254,6 +261,7 @@ Repo state:
   call graph and cannot infer Go interface implementations; use rooted `callers`/
   `callees` queries for call relationships.
 - `codeq capabilities` self-describes: commands, languages, fact kinds, schema.
+- `codeq guide` returns the running executable's agent instructions; `--check PATH` detects a stale skill file.
 
 Cross-cutting flags: `--path <substr>` scopes a name-based lookup to matching files,
 `--fields a,b` trims output to the fields you want, and `--json` switches to the structured
