@@ -390,8 +390,7 @@ impl LangSpec {
                 // says what `const Card =` does not.
                 let body = match val {
                     Some(v)
-                        if kind == "constant"
-                            && v.end_position().row > v.start_position().row =>
+                        if kind == "constant" && v.end_position().row > v.start_position().row =>
                     {
                         Some(wrapper_head(v).unwrap_or(v))
                     }
@@ -578,22 +577,14 @@ fn guard_allows(lang: &str, is_import: bool, g: &str) -> bool {
         // declarations; the callee name says which.
         ("ruby", true) => matches!(
             g,
-            "require"
-                | "require_relative"
-                | "require_dependency"
-                | "load"
-                | "autoload"
+            "require" | "require_relative" | "require_dependency" | "load" | "autoload"
         ),
         ("ruby", false) => {
             matches!(g, "attr_accessor" | "attr_reader" | "attr_writer")
         }
         _ => matches!(
             g,
-            "require"
-                | "require_relative"
-                | "require_dependency"
-                | "load"
-                | "autoload"
+            "require" | "require_relative" | "require_dependency" | "load" | "autoload"
         ),
     }
 }
@@ -652,9 +643,7 @@ fn effective_visibility(
     // public surface. The declaration is public; what it is
     // declared inside is what makes it reachable.
     match own.as_deref() {
-        Some("public") if enclosed_by_private_type(lang, node, src) => {
-            Some("private".to_string())
-        }
+        Some("public") if enclosed_by_private_type(lang, node, src) => Some("private".to_string()),
         _ => own,
     }
 }

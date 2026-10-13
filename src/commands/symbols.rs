@@ -32,7 +32,15 @@ pub struct SymbolsArgs<'a> {
 }
 
 pub fn cmd_symbols(cwd: &Path, args: SymbolsArgs, out: Out) -> Result<()> {
-    let SymbolsArgs { pattern, kind, owner, language, path, signatures, limit } = args;
+    let SymbolsArgs {
+        pattern,
+        kind,
+        owner,
+        language,
+        path,
+        signatures,
+        limit,
+    } = args;
     let s = Session::open(cwd, false, out)?;
 
     let mut sql = String::from(

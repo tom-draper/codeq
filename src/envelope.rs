@@ -494,9 +494,7 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
             // and silently lost the `[symbol]` the docs promise on *every*
             // match. Whether a pattern happens to span a line is not a reason to
             // answer a different question.
-            let enclosing = tag
-                .map(|s| format!("  [{s}]"))
-                .unwrap_or_default();
+            let enclosing = tag.map(|s| format!("  [{s}]")).unwrap_or_default();
             out.push_str(&format!(
                 "{pad}{}{reason}{enclosing}\n{t}\n",
                 loc.trim_end_matches([':', ' '])
@@ -505,9 +503,7 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
         }
         // codeq's differentiator over grep: annotate the match with the symbol
         // it sits inside, so an agent needn't a follow-up `at` to place it.
-        let enclosing = tag
-            .map(|s| format!("  [{s}]"))
-            .unwrap_or_default();
+        let enclosing = tag.map(|s| format!("  [{s}]")).unwrap_or_default();
         // The receiver a call is made on. Shown rather than used to filter: a
         // receiver can be a value (`db.query()`) or a module path
         // (`helpers::stem()`), and telling those apart needs name resolution

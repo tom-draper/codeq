@@ -454,7 +454,15 @@ pub fn cmd_implementors(
     limit: usize,
     out: Out,
 ) -> Result<()> {
-    cmd_impl_edges(cwd, Direction::Implementors, name, relation, path, limit, out)
+    cmd_impl_edges(
+        cwd,
+        Direction::Implementors,
+        name,
+        relation,
+        path,
+        limit,
+        out,
+    )
 }
 
 /// `supertypes <type>` — the traits / interfaces / base classes a type extends
@@ -483,6 +491,13 @@ fn cmd_impl_edges(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
     let data = impl_edges(&s, direction, name, relation, path, limit)?;
-    let note = note_if_empty_feat(&s, &data, name, direction.empty_label(), path, Some("relations"))?;
+    let note = note_if_empty_feat(
+        &s,
+        &data,
+        name,
+        direction.empty_label(),
+        path,
+        Some("relations"),
+    )?;
     s.emit_noted(data, note)
 }

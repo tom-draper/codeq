@@ -790,9 +790,16 @@ pub(crate) fn scan_doc(
     let mut starts: Option<Vec<usize>> = None;
 
     if opts.invert {
-        return scan_inverted(path, body, load_defs, opts, cap, acc, |m| {
-            bounded(m) && accept(m.start())
-        }, re);
+        return scan_inverted(
+            path,
+            body,
+            load_defs,
+            opts,
+            cap,
+            acc,
+            |m| bounded(m) && accept(m.start()),
+            re,
+        );
     }
 
     match opts.out {
@@ -899,9 +906,8 @@ pub(crate) fn scan_doc(
                     symbol: enclosing.map(|d| d.name.clone()),
                     receiver: calls.and_then(|m| m.get(&off).cloned()).flatten(),
                     kind: enclosing.map(|d| d.kind.clone()),
-                    decl: enclosing.is_some_and(|d| {
-                        s.partition_point(|&x| x <= d.start_byte) - 1 == line_idx
-                    }),
+                    decl: enclosing
+                        .is_some_and(|d| s.partition_point(|&x| x <= d.start_byte) - 1 == line_idx),
                     text: if opts.only_matching {
                         cap_str(m.as_str().lines().next().unwrap_or(""), MAX_LINE)
                     } else {
@@ -952,7 +958,11 @@ fn scan_inverted(
 ) -> bool {
     let starts = line_starts_of(body);
     // A trailing newline ends the last line; it does not start an empty one.
-    let n = if body.ends_with('\n') { starts.len() - 1 } else { starts.len() };
+    let n = if body.ends_with('\n') {
+        starts.len() - 1
+    } else {
+        starts.len()
+    };
     let mut matched = vec![false; starts.len()];
     for m in re.find_iter(body).filter(|m| accepted(m)) {
         // A match spanning lines takes every line it touches out of the result.
@@ -974,7 +984,10 @@ fn scan_inverted(
         OutMode::Count => {
             let count = free.count();
             if count > 0 {
-                acc.counts.push(FileCount { path: path.to_string(), count });
+                acc.counts.push(FileCount {
+                    path: path.to_string(),
+                    count,
+                });
                 if acc.counts.len() >= cap {
                     acc.truncated = true;
                     return true;

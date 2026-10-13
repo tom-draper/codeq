@@ -132,7 +132,11 @@ pub fn cmd_read(
             // frame and a compiler error all print. The whole argument is tried
             // first, so a real file with a colon in its name still wins.
             Err(e) => match arg.rsplit_once(':').and_then(|(f, spec)| {
-                let ranges = spec.split(',').map(parse_range).collect::<Result<Vec<_>>>().ok()?;
+                let ranges = spec
+                    .split(',')
+                    .map(parse_range)
+                    .collect::<Result<Vec<_>>>()
+                    .ok()?;
                 Some((f, ranges))
             }) {
                 Some((f, ranges)) => (resolve_file(&s, f)?, ranges),
@@ -157,9 +161,15 @@ pub fn cmd_read(
             }
             println!("# {rel}");
         }
-        let ranges = if inline.is_empty() { &flag_ranges } else { inline };
+        let ranges = if inline.is_empty() {
+            &flag_ranges
+        } else {
+            inline
+        };
         if !inline.is_empty() && !flag_ranges.is_empty() {
-            return Err(anyhow!("a range was given twice: on the path and with --lines"));
+            return Err(anyhow!(
+                "a range was given twice: on the path and with --lines"
+            ));
         }
         read_one(&s, rel, ranges, symbol, full, raw)?;
     }

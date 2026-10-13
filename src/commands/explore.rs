@@ -286,7 +286,10 @@ pub fn cmd_explore(
     // set can't turn this into the repo's whole import table.
     let imports = focus_imports(&s, &defs)?;
 
-    let deferred = callees.iter().filter(|c| c.resolution == "ambiguous").count();
+    let deferred = callees
+        .iter()
+        .filter(|c| c.resolution == "ambiguous")
+        .count();
     let note = note_if_empty(&s, &focus, name, "definition", path)?.or_else(|| {
         (deferred > 0 && !include_ambiguous).then(|| format!(
             "{deferred} ambiguous callee candidates listed without source; use --include-ambiguous or read a candidate by position"

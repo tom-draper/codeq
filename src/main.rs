@@ -732,7 +732,11 @@ enum Command {
         #[arg(long = "files-with-matches", short = 'l')]
         files_with_matches: bool,
         /// Output only the paths of files with no match (grep's -L).
-        #[arg(long = "files-without-match", short = 'L', conflicts_with = "files_with_matches")]
+        #[arg(
+            long = "files-without-match",
+            short = 'L',
+            conflicts_with = "files_with_matches"
+        )]
         files_without_match: bool,
         /// Output the count of matching lines per file.
         #[arg(long, short = 'c')]
@@ -1257,32 +1261,32 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
                 regexp
             };
             commands::cmd_search(
-            cwd,
-            commands::SearchArgs {
-                patterns: &patterns,
-                paths: &paths,
-                files_without_match,
-                only_matching,
-                invert: invert_match,
-                fixed,
-                ignore_case,
-                word,
-                path: path.as_deref(),
-                language: language.as_deref(),
-                globs: &glob,
-                in_kind: in_kind.as_deref(),
-                before: before.max(context),
-                after: after.max(context),
-                files_with_matches,
-                symbols,
-                source,
-                max_tokens,
-                count,
-                limit,
-                stdin,
-            },
-            out,
-        )
+                cwd,
+                commands::SearchArgs {
+                    patterns: &patterns,
+                    paths: &paths,
+                    files_without_match,
+                    only_matching,
+                    invert: invert_match,
+                    fixed,
+                    ignore_case,
+                    word,
+                    path: path.as_deref(),
+                    language: language.as_deref(),
+                    globs: &glob,
+                    in_kind: in_kind.as_deref(),
+                    before: before.max(context),
+                    after: after.max(context),
+                    files_with_matches,
+                    symbols,
+                    source,
+                    max_tokens,
+                    count,
+                    limit,
+                    stdin,
+                },
+                out,
+            )
         }
         Command::Context {
             symbols,

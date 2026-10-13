@@ -455,7 +455,8 @@ impl Graph {
                 exact_candidates(&by_exact_tail, &from, &module, allow_imported_name)
                     .into_iter()
                     .filter(|path| {
-                        *path != from && exact_module_match(&from, path, &module, allow_imported_name)
+                        *path != from
+                            && exact_module_match(&from, path, &module, allow_imported_name)
                     })
                     .collect();
             if !exact_files.is_empty() {

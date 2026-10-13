@@ -4271,11 +4271,17 @@ fn text_is_the_default_output_json_is_opt_in() {
     // differentiator: the enclosing symbol annotated as `[name]`.
     f.write("b.rs", "fn gamma() {\n    delta();\n}\n");
     let so = f.raw(&["search", "delta"]);
-    assert_eq!(String::from_utf8_lossy(&so.stdout), "b.rs:2: delta();  [gamma]\n");
+    assert_eq!(
+        String::from_utf8_lossy(&so.stdout),
+        "b.rs:2: delta();  [gamma]\n"
+    );
     // The line that declares the symbol already names it, so the tag would
     // only repeat the line.
     let so = f.raw(&["search", "beta"]);
-    assert_eq!(String::from_utf8_lossy(&so.stdout), "a.rs:2: fn beta() {}\n");
+    assert_eq!(
+        String::from_utf8_lossy(&so.stdout),
+        "a.rs:2: fn beta() {}\n"
+    );
     // The column is still a fact: asked for, it is there, and JSON always has it.
     let so = f.raw(&["search", "delta", "--fields", "path,line,col,text"]);
     assert_eq!(String::from_utf8_lossy(&so.stdout), "b.rs:2:4: delta();\n");
@@ -4348,7 +4354,10 @@ fn read_takes_ranges_on_the_path_and_several_files() {
         let mut argv = vec!["read"];
         argv.extend(args);
         let out = f.raw(&argv);
-        (String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+        (
+            String::from_utf8(out.stdout).unwrap(),
+            String::from_utf8(out.stderr).unwrap(),
+        )
     };
 
     // `path:A-B`, and `path:N` as a search row prints it.
@@ -4444,22 +4453,39 @@ fn read_at_preserves_raw_bytes_and_handles_shared_declaration_lines() {
 #[test]
 fn search_takes_greps_flags() {
     let f = Fixture::new();
-    f.write("a.rs", "fn alpha() {}\nfn beta() { alpha(); alpha2(); }\n// a.b\n");
+    f.write(
+        "a.rs",
+        "fn alpha() {}\nfn beta() { alpha(); alpha2(); }\n// a.b\n",
+    );
     f.write("b.py", "def gamma():\n    pass\n");
     let search = |args: &[&str]| {
         let mut argv = vec!["search"];
         argv.extend(args);
         let out = f.raw(&argv);
-        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8(out.stdout).unwrap()
     };
 
     // -e: several patterns OR'd, every positional then a path.
     let out = search(&["-e", "gamma", "-e", "beta"]);
     assert!(out.contains("a.rs:2:") && out.contains("b.py:1:"), "{out}");
-    assert_eq!(search(&["-e", "gamma", "-e", "beta", "a.rs"]).lines().count(), 1);
+    assert_eq!(
+        search(&["-e", "gamma", "-e", "beta", "a.rs"])
+            .lines()
+            .count(),
+        1
+    );
     // An alternation inside one -e stays inside it.
-    assert_eq!(search(&["-e", "^fn alpha|^def", "-e", "pass$"]).lines().count(), 3);
+    assert_eq!(
+        search(&["-e", "^fn alpha|^def", "-e", "pass$"])
+            .lines()
+            .count(),
+        3
+    );
 
     // -o: the match alone, a row per occurrence.
     assert_eq!(
@@ -4468,7 +4494,10 @@ fn search_takes_greps_flags() {
     );
 
     // -v: the lines that do not match; -c counts those lines.
-    assert_eq!(search(&["-v", "alpha", "a.rs", "--fields", "line,text"]), "3: // a.b\n");
+    assert_eq!(
+        search(&["-v", "alpha", "a.rs", "--fields", "line,text"]),
+        "3: // a.b\n"
+    );
     assert_eq!(search(&["-v", "-c", "alpha", "a.rs"]), "a.rs: count=1\n");
 
     // -L: files with no match — including the ones a literal prefilter skips.
@@ -5063,10 +5092,7 @@ fn search_reads_a_named_path_the_index_does_not_hold() {
     let abs = f.path().join("src/a.rs");
     for spelled in ["./src/a.rs", abs.to_str().unwrap()] {
         let text = String::from_utf8(f.raw(&["search", "target", spelled]).stdout).unwrap();
-        assert_eq!(
-            text, "src/a.rs:1: fn target() {}\n",
-            "{spelled}"
-        );
+        assert_eq!(text, "src/a.rs:1: fn target() {}\n", "{spelled}");
     }
 }
 
@@ -8924,7 +8950,9 @@ fn group_hoists_the_path_and_keeps_the_row() {
     let fields = ["--fields", "path,line,col,text"];
     let grouped = f.raw(&[&["search", "target", "--group"][..], &fields].concat());
     assert!(
-        String::from_utf8(grouped.stdout).unwrap().contains("\n1:11: fn one()"),
+        String::from_utf8(grouped.stdout)
+            .unwrap()
+            .contains("\n1:11: fn one()"),
         "grouped row dropped a requested col"
     );
 }
@@ -12144,9 +12172,7 @@ fn the_trigram_prefilter_treats_fts_syntax_as_text() {
     let long = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     f.write(
         "notes.txt",
-        &format!(
-            "say \"hi\" AND (x OR y) NOT z* ^caret col:on\n100%_done naïve Ünïcode\n{long}\n"
-        ),
+        &format!("say \"hi\" AND (x OR y) NOT z* ^caret col:on\n100%_done naïve Ünïcode\n{long}\n"),
     );
     f.write("other.txt", "nothing of interest here\n");
     let hit = |args: &[&str]| -> Vec<String> {
