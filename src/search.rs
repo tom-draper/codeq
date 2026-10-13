@@ -889,8 +889,7 @@ pub(crate) fn scan_doc(
                         // The byte-level fallback takes the match *start* as well
                         // as its end: a Svelte/Vue component is invoked as
                         // `<Name …/>`, which is only detectable by looking left of
-                        // the name. Indexed component scripts also retain the
-                        // markup check in the authoritative-map branch above.
+                        // the name.
                         if opts.call_only && !is_call_position(bytes, m.start(), m.end()) {
                             continue;
                         }
