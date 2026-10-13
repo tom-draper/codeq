@@ -684,7 +684,12 @@ struct LineSpan {
 }
 
 fn line_fact(kind: &str, name: &str, span: LineSpan, signature: String, source: &str) -> Fact {
-    let LineSpan { start_byte, end_byte, start_line, end_line } = span;
+    let LineSpan {
+        start_byte,
+        end_byte,
+        start_line,
+        end_line,
+    } = span;
     Fact {
         kind: kind.to_string(),
         is_derived: false,

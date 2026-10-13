@@ -223,7 +223,14 @@ pub struct TreeArgs<'a> {
 ///     rather than truncates — the token budget is bounded by depth, not by repo
 ///     size.
 pub fn cmd_tree(cwd: &Path, args: TreeArgs, out: Out) -> Result<()> {
-    let TreeArgs { path, language, depth, min_symbols, files_too, limit } = args;
+    let TreeArgs {
+        path,
+        language,
+        depth,
+        min_symbols,
+        files_too,
+        limit,
+    } = args;
     let s = Session::open(cwd, false, out)?;
 
     // Definitions per file, so a directory can report the code it holds.

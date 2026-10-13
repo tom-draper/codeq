@@ -290,7 +290,14 @@ pub struct HotspotsArgs<'a> {
 /// question. `--kind`/`--path`/`--language` scope what is reported; the count is
 /// always repo-wide.
 pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
-    let HotspotsArgs { path, kind, language, calls_only, min_refs, limit } = args;
+    let HotspotsArgs {
+        path,
+        kind,
+        language,
+        calls_only,
+        min_refs,
+        limit,
+    } = args;
     let s = Session::open(cwd, false, out)?;
 
     // The definitions to rank. Scoped for *reporting* only — the count below is

@@ -309,13 +309,25 @@ pub struct SearchArgs<'a> {
 pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     // Several patterns are one alternation, each branch grouped so its own `|`
     // or anchors stay inside it.
-    let branch = |p: &String| if args.fixed { regex::escape(p) } else { p.clone() };
+    let branch = |p: &String| {
+        if args.fixed {
+            regex::escape(p)
+        } else {
+            p.clone()
+        }
+    };
     let expr = match args.patterns {
         [one] => branch(one),
-        many => many.iter().map(|p| format!("(?:{})", branch(p))).collect::<Vec<_>>().join("|"),
+        many => many
+            .iter()
+            .map(|p| format!("(?:{})", branch(p)))
+            .collect::<Vec<_>>()
+            .join("|"),
     };
     if args.only_matching && (args.before > 0 || args.after > 0) {
-        return Err(anyhow!("-o reports the match alone; it takes no context lines"));
+        return Err(anyhow!(
+            "-o reports the match alone; it takes no context lines"
+        ));
     }
     // ripgrep's type names, for a caller with `-t py` in their fingers.
     let language = args.language.map(|l| match l {
@@ -380,7 +392,11 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         // In folded modes the limit is a budget of definitions, not of the
         // first matching lines. Otherwise one chatty function can spend all
         // 100 rows and hide every later definition from `--symbols`.
-        limit: if args.symbols || args.source { 0 } else { args.limit },
+        limit: if args.symbols || args.source {
+            0
+        } else {
+            args.limit
+        },
         call_only: false,
         qualifier: None,
         identifier_boundary: args.word,
@@ -517,7 +533,8 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         let SearchData::Matches { matches, truncated } = data else {
             unreachable!("symbol search uses match rows")
         };
-        let mut symbols = collapse_symbols(&s, matches.into_iter().map(|hit| (hit.path, hit.byte)))?;
+        let mut symbols =
+            collapse_symbols(&s, matches.into_iter().map(|hit| (hit.path, hit.byte)))?;
         let truncated = truncated || (args.limit > 0 && symbols.len() > args.limit);
         if args.limit > 0 {
             symbols.truncate(args.limit);
@@ -528,7 +545,8 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         #[derive(Serialize)]
         struct SymbolResult {
             symbols: Vec<SymbolHit>,
-            #[serde(skip_serializing_if = "std::ops::Not::not")] truncated: bool,
+            #[serde(skip_serializing_if = "std::ops::Not::not")]
+            truncated: bool,
         }
         return s.emit_noted(SymbolResult { symbols, truncated }, note);
     }
@@ -675,7 +693,15 @@ pub struct ReferencesArgs<'a> {
 /// These are *textual* references (not type-resolved) — honest and deterministic,
 /// but far more precise than a substring grep.
 pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> {
-    let ReferencesArgs { name, path, language, limit, resolved, call_only, qualifier } = args;
+    let ReferencesArgs {
+        name,
+        path,
+        language,
+        limit,
+        resolved,
+        call_only,
+        qualifier,
+    } = args;
     let per_file = out.max_per_file;
     let s = Session::open(cwd, false, out)?;
 

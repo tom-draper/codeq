@@ -344,7 +344,10 @@ struct CallConstraint {
 impl CallConstraint {
     fn allows(&self, path: &str, owner: Option<&str>) -> bool {
         self.files.as_ref().is_none_or(|files| files.contains(path))
-            && self.owner.as_deref().is_none_or(|wanted| owner == Some(wanted))
+            && self
+                .owner
+                .as_deref()
+                .is_none_or(|wanted| owner == Some(wanted))
     }
 }
 
@@ -440,7 +443,10 @@ fn resolve_syntax_call(
     receiver: Option<&str>,
 ) -> (String, Option<HashSet<String>>) {
     let lookup = if receiver.is_none() {
-        graph.source_name_for_binding(path, word).unwrap_or(word).to_string()
+        graph
+            .source_name_for_binding(path, word)
+            .unwrap_or(word)
+            .to_string()
     } else {
         word.to_string()
     };
@@ -737,7 +743,16 @@ pub struct CallersArgs<'a> {
 }
 
 pub fn cmd_callers(cwd: &Path, args: CallersArgs, out: Out) -> Result<()> {
-    let CallersArgs { name, path, depth, resolved, call_only, qualifier, examples, limit } = args;
+    let CallersArgs {
+        name,
+        path,
+        depth,
+        resolved,
+        call_only,
+        qualifier,
+        examples,
+        limit,
+    } = args;
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
         let mut callers = callers_of(&s, name, path, call_only, qualifier, examples)?;
@@ -815,7 +830,14 @@ pub struct CalleesArgs<'a> {
 
 /// `callees <name>` — what this symbol references (by name).
 pub fn cmd_callees(cwd: &Path, args: CalleesArgs, out: Out) -> Result<()> {
-    let CalleesArgs { name, path, depth, resolved, examples, limit } = args;
+    let CalleesArgs {
+        name,
+        path,
+        depth,
+        resolved,
+        examples,
+        limit,
+    } = args;
     let s = Session::open(cwd, false, out)?;
     if depth <= 1 {
         let mut rows = callees_of(&s, name, path, resolved, examples)?;

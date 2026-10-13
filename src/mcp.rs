@@ -361,10 +361,17 @@ fn tools() -> Value {
     let list: Vec<Value> = tool_defs()
         .iter()
         .map(|t| {
-            let props: serde_json::Map<String, Value> =
-                t.params.iter().map(|p| (p.key.clone(), param_schema(p))).collect();
-            let required: Vec<&str> =
-                t.params.iter().filter(|p| p.required).map(|p| p.key.as_str()).collect();
+            let props: serde_json::Map<String, Value> = t
+                .params
+                .iter()
+                .map(|p| (p.key.clone(), param_schema(p)))
+                .collect();
+            let required: Vec<&str> = t
+                .params
+                .iter()
+                .filter(|p| p.required)
+                .map(|p| p.key.as_str())
+                .collect();
             json!({
                 "name": t.name,
                 "description": t.description,
@@ -646,7 +653,10 @@ mod tests {
             let args = build_args(tool, &json!({ key: "--help" })).unwrap();
             let sep = args.iter().position(|a| a == "--").expect(tool);
             assert_eq!(args[sep + 1..], ["--help"], "{tool}: {args:?}");
-            assert!(!args[..sep].contains(&"--help".to_string()), "{tool}: {args:?}");
+            assert!(
+                !args[..sep].contains(&"--help".to_string()),
+                "{tool}: {args:?}"
+            );
         }
     }
 
@@ -654,7 +664,10 @@ mod tests {
     /// scoped call fail as an unknown argument.
     #[test]
     fn clones_path_is_positional() {
-        let args = build_args("codeq_clones", &json!({ "path": "src", "kind": "function" }));
+        let args = build_args(
+            "codeq_clones",
+            &json!({ "path": "src", "kind": "function" }),
+        );
         assert_eq!(args.unwrap(), ["clones", "--kind", "function", "--", "src"]);
     }
 
@@ -690,7 +703,8 @@ mod tests {
         let root = <crate::Cli as clap::CommandFactory>::command();
         for (command, _) in TOOL_OVERRIDES {
             assert!(
-                root.get_subcommands().any(|subcommand| subcommand.get_name() == *command),
+                root.get_subcommands()
+                    .any(|subcommand| subcommand.get_name() == *command),
                 "override names an unknown subcommand: {command}"
             );
         }
@@ -703,7 +717,11 @@ mod tests {
         assert_eq!(both, ["explore", "--at", "a.rs:3"]);
         let name = build_args("codeq_explore", &json!({ "name": "f" })).unwrap();
         assert_eq!(name, ["explore", "--", "f"]);
-        let expanded = build_args("codeq_explore", &json!({ "name": "f", "include_ambiguous": true })).unwrap();
+        let expanded = build_args(
+            "codeq_explore",
+            &json!({ "name": "f", "include_ambiguous": true }),
+        )
+        .unwrap();
         assert_eq!(expanded, ["explore", "--include-ambiguous", "--", "f"]);
         assert!(build_args("codeq_explore", &json!({})).is_err());
     }
