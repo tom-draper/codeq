@@ -139,6 +139,7 @@ pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
     classified.sort_unstable();
     classified.dedup();
     let data = serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
         "result_schema": RESULT_SCHEMA,
         "index_schema": SCHEMA_VERSION,
         "commands": commands,
