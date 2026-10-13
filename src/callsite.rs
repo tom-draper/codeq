@@ -9,15 +9,9 @@
 //! - `db\n    .query()` is the same call as `db.query()`;
 //! - in `a.b.query()` the receiver is the expression `a.b`, not `b`.
 //!
-//! So when either filter is used, the file is parsed once and every call site in
-//! it is collected: a map from the byte offset of the called identifier to its
-//! receiver, if any. Checking a candidate is then a lookup.
-//!
-//! This runs only for those two opt-in filters, so ordinary queries pay nothing
-//! and the index does not grow. A language with no grammar yields no map and the
-//! caller falls back to the byte-level tests; in practice both filters already
-//! imply code-only, which excludes files codeq cannot parse, so the fallback is
-//! defensive rather than load-bearing.
+//! Indexing collects calls from the same syntax tree as definitions and spans.
+//! `--calls` and `--on` read the cached offsets and receivers. Languages without
+//! call extraction retain the byte-level fallback.
 //!
 //! Grammars differ, so this reads tree-sitter *field names* (`function`,
 //! `object`, `receiver`, `name`, …) rather than node-kind spellings wherever it
@@ -26,7 +20,9 @@
 
 use std::collections::HashMap;
 
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
+#[cfg(test)]
+use tree_sitter::Parser;
 
 /// The receiver of a call, as written: `None` for a plain `f()`, `Some("db")`
 /// for `db.query()`, `Some("a.b")` for `a.b.query()`.
@@ -65,26 +61,8 @@ const MEMBER_FIELDS: &[&str] = &[
     "suffix",
 ];
 
-/// Every call site in `src`, or `None` when the language has no grammar — or has
-/// one that cannot see the code.
-///
-/// A single-file component (`.svelte`, `.vue`) *does* have a grammar, but that
-/// grammar is a markup grammar: the `<script>` body comes back as one opaque
-/// `raw_text` node, so parsing finds no call expressions inside it at all. That
-/// is worse than having no grammar, because callers take `Some(map)` as
-/// authoritative and an empty map reads as "nothing is called here" — which
-/// silently emptied `callees` for every component. Returning `None` sends them to
-/// the byte-level scan, which can see into the script.
-pub fn calls_in(language: &str, src: &str) -> Option<CallMap> {
-    Some(
-        call_sites_in(language, src)?
-            .into_iter()
-            .map(|site| (site.start_byte, site.receiver))
-            .collect(),
-    )
-}
-
 /// Every syntax-derived invocation in `src`, in source order.
+#[cfg(test)]
 pub fn call_sites_in(language: &str, src: &str) -> Option<Vec<CallSite>> {
     if matches!(language, "svelte" | "vue") {
         return component_call_sites(language, src);
@@ -97,8 +75,17 @@ pub fn call_sites_in(language: &str, src: &str) -> Option<Vec<CallSite>> {
     parser.set_language(&lang).ok()?;
     let tree = parser.parse(src, None)?;
 
+    Some(call_sites_from_tree(
+        language,
+        tree.root_node(),
+        src.as_bytes(),
+    ))
+}
+
+/// Collect calls from an existing tree using byte offsets into `src`.
+pub(crate) fn call_sites_from_tree(language: &str, root: Node, src: &[u8]) -> Vec<CallSite> {
     let mut sites = Vec::new();
-    let mut stack = vec![tree.root_node()];
+    let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         if let Some(name_node) = unlabelled_call(language, node) {
             sites.push(CallSite {
@@ -120,19 +107,18 @@ pub fn call_sites_in(language: &str, src: &str) -> Option<Vec<CallSite>> {
             stack.push(child);
         }
     }
-    Some(sort_dedup(sites))
+    sort_dedup(sites)
 }
 
-/// Whether a language's parser exposes its ordinary call expressions. Svelte
-/// and Vue deliberately return false: their component grammar leaves script
-/// bodies opaque, so treating its empty call list as authoritative would lose
-/// real calls that the textual fallback can still find.
+/// Whether indexed call sites are authoritative for this language. Component
+/// script blocks use JavaScript/TypeScript parsers in the original coordinates.
 pub fn supports_syntax_calls(language: &str) -> bool {
     matches!(language, "svelte" | "vue") || crate::astgrep::ts_language(language).is_some()
 }
 
 /// Parse opaque component script blocks as JavaScript/TypeScript while keeping
 /// their byte offsets in the original component file.
+#[cfg(test)]
 fn component_call_sites(language: &str, src: &str) -> Option<Vec<CallSite>> {
     let markup_lang = match language {
         "svelte" => tree_sitter_svelte_ng::LANGUAGE.into(),
@@ -235,7 +221,7 @@ fn is_call(node: Node) -> bool {
 ///   (Java `method_invocation`, Ruby `call`, PHP `member_call_expression`);
 /// - the call node carries `function`, which is either a bare identifier or a
 ///   member access to unwrap (Rust, Python, JS/TS, Go, C, C++, C#).
-fn callee_of<'a>(call: Node<'a>, src: &str) -> Option<(Node<'a>, Receiver)> {
+fn callee_of<'a>(call: Node<'a>, src: &[u8]) -> Option<(Node<'a>, Receiver)> {
     // Shape 1: everything on the call node.
     if let Some(name) = first_field(call, MEMBER_FIELDS) {
         if is_identifier(name) {
@@ -367,8 +353,9 @@ fn is_identifier_ref(node: &Node) -> bool {
     is_identifier(*node)
 }
 
-fn text_of(node: Node, src: &str) -> String {
-    src.get(node.byte_range())
+fn text_of(node: Node, src: &[u8]) -> String {
+    node.utf8_text(src)
+        .ok()
         .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
         .unwrap_or_default()
 }

@@ -18,7 +18,7 @@ use anyhow::{anyhow, Result};
 use regex_syntax::hir::literal::{ExtractKind, Extractor as LiteralExtractor};
 use serde::Serialize;
 
-use crate::callsite::{calls_in, CallMap};
+use crate::callsite::CallMap;
 use crate::facts::{has_spans, Extractor, Span};
 
 const MAX_LINE: usize = 240;
@@ -601,9 +601,10 @@ pub(crate) fn run_search_acc(
         // Defs are only loaded once a match survives the filters, so a candidate
         // that matches the substring but not `\bword\b` (or is filtered by
         // --calls/--on) costs neither a body scan nor a defs query.
-        let calls = if let Some(stmt) = call_stmt.as_mut().filter(|_| {
-            crate::callsite::supports_syntax_calls(lang.as_deref().unwrap_or(""))
-        }) {
+        let calls = if let Some(stmt) = call_stmt
+            .as_mut()
+            .filter(|_| crate::callsite::supports_syntax_calls(lang.as_deref().unwrap_or("")))
+        {
             let rows = stmt.query_map([rel], |r| {
                 Ok((r.get::<_, usize>(0)?, r.get::<_, Option<String>>(1)?))
             })?;
@@ -888,8 +889,8 @@ pub(crate) fn scan_doc(
                         // The byte-level fallback takes the match *start* as well
                         // as its end: a Svelte/Vue component is invoked as
                         // `<Name …/>`, which is only detectable by looking left of
-                        // the name. Those languages have no grammar for `calls_in`
-                        // to parse, so this fallback is the only path they take.
+                        // the name. Indexed component scripts also retain the
+                        // markup check in the authoritative-map branch above.
                         if opts.call_only && !is_call_position(bytes, m.start(), m.end()) {
                             continue;
                         }
@@ -1081,7 +1082,7 @@ pub(crate) fn scan_stdin(
     let body = String::from_utf8_lossy(&buf).into_owned();
 
     let filtering = opts.in_filter != InFilter::Any;
-    let (mut defs, spans) = match language {
+    let (mut defs, spans, sites) = match language {
         Some(lang) => {
             if filtering && !has_spans(lang) {
                 return Err(anyhow!(
@@ -1092,7 +1093,7 @@ pub(crate) fn scan_stdin(
             // No path: stdin has no filename. Only single-file component
             // formats use it (to name the component after its file), and a
             // piped Svelte buffer has no file to be named after.
-            let ((facts, spans, _), _) = ex.extract(lang, "", body.as_bytes())?;
+            let ((facts, spans, _), _, sites) = ex.extract(lang, "", body.as_bytes())?;
             let defs: Vec<FileDef> = facts
                 .into_iter()
                 .filter(|f| f.kind != "import")
@@ -1103,7 +1104,7 @@ pub(crate) fn scan_stdin(
                     end_byte: f.end_byte,
                 })
                 .collect();
-            (defs, spans)
+            (defs, spans, sites)
         }
         None => {
             if filtering {
@@ -1111,7 +1112,7 @@ pub(crate) fn scan_stdin(
                     "--in needs to know the language of piped input: add --language <lang>"
                 ));
             }
-            (Vec::new(), Vec::new())
+            (Vec::new(), Vec::new(), Vec::new())
         }
     };
 
@@ -1123,7 +1124,14 @@ pub(crate) fn scan_stdin(
         opts.limit.saturating_add(1)
     };
     let calls = if opts.call_only || opts.qualifier.is_some() {
-        language.and_then(|l| calls_in(l, &body))
+        language
+            .filter(|l| crate::callsite::supports_syntax_calls(l))
+            .map(|_| {
+                sites
+                    .into_iter()
+                    .map(|site| (site.start_byte, site.receiver))
+                    .collect::<CallMap>()
+            })
     } else {
         None
     };

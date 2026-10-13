@@ -44,6 +44,7 @@ pub use liveness::{framework_registration, unreferenced_by_design};
 
 mod component;
 use component::extract_component;
+#[cfg(test)]
 pub(crate) use component::{blank_outside, script_regions};
 
 mod attrs;
@@ -163,10 +164,14 @@ pub struct ParseHealth {
     pub recovered: bool,
 }
 
-/// Facts plus parser health. Languages extracted without a parser (Markdown)
+/// Facts, parser health, and call sites. Languages extracted without a parser (Markdown)
 /// and unsupported languages report `None`, rather than pretending they parsed
 /// cleanly.
-pub type Extracted = (Extraction, Option<ParseHealth>);
+pub type Extracted = (
+    Extraction,
+    Option<ParseHealth>,
+    Vec<crate::callsite::CallSite>,
+);
 
 #[derive(Default)]
 pub struct Extractor {
@@ -239,11 +244,17 @@ impl LangSpec {
         })
     }
 
-    /// One parse yields definition facts, comment/string spans, and type relations.
+    /// One parse yields facts, spans, type relations, and calls.
     fn extract(&mut self, src: &[u8]) -> Extracted {
         let tree = match self.parser.parse(src, None) {
             Some(t) => t,
-            None => return ((Vec::new(), Vec::new(), Vec::new()), None),
+            None => return ((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()),
+        };
+        // Preserve calls from the unrepaired tree when Rust fact recovery retries.
+        let calls = if crate::callsite::supports_syntax_calls(self.lang) {
+            crate::callsite::call_sites_from_tree(self.lang, tree.root_node(), src)
+        } else {
+            Vec::new()
         };
         // tree-sitter-rust 0.24.2 has a recovery bug for a valid closure with
         // nested generic parameter types and a trailing parameter comma. It
@@ -263,13 +274,14 @@ impl LangSpec {
                                 recovered: true,
                                 ..parse_health(root)
                             }),
+                            calls,
                         );
                     }
                 }
             }
         }
         let root = tree.root_node();
-        (self.harvest(root, src), Some(parse_health(root)))
+        (self.harvest(root, src), Some(parse_health(root)), calls)
     }
 
     /// Run the three queries over an already-parsed tree. Split out of `extract`
@@ -834,9 +846,9 @@ impl Extractor {
     /// Query errors propagate to the caller instead of publishing an empty index.
     pub fn extract(&mut self, language: &str, path: &str, src: &[u8]) -> Result<Extracted> {
         match language {
-            "markdown" => return Ok((markdown_facts(src), None)),
-            "rst" => return Ok((rst_facts(src), None)),
-            "jinja" => return Ok((jinja_facts(src), None)),
+            "markdown" => return Ok((markdown_facts(src), None, Vec::new())),
+            "rst" => return Ok((rst_facts(src), None, Vec::new())),
+            "jinja" => return Ok((jinja_facts(src), None, Vec::new())),
             _ => {}
         }
         self.load(language)?;
@@ -852,18 +864,18 @@ impl Extractor {
             return Ok(extract_component(markup, javascript, typescript, path, src));
         }
         let Some(spec) = self.languages.get_mut(language) else {
-            return Ok(((Vec::new(), Vec::new(), Vec::new()), None));
+            return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()));
         };
         Ok(match language {
             "hcl" => {
                 let tree = match spec.parser.parse(src, None) {
                     Some(t) => t,
-                    None => return Ok(((Vec::new(), Vec::new(), Vec::new()), None)),
+                    None => return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new())),
                 };
                 let root = tree.root_node();
                 let (mut facts, spans, rels) = spec.harvest(root, src);
                 facts.extend(hcl_facts(root, src));
-                ((facts, spans, rels), Some(parse_health(root)))
+                ((facts, spans, rels), Some(parse_health(root)), Vec::new())
             }
             "sql" => {
                 // tree-sitter-sequel does not accept doubled delimiters inside
@@ -875,9 +887,25 @@ impl Extractor {
                 let parse_src = repaired.as_deref().unwrap_or(src);
                 let tree = match spec.parser.parse(parse_src, None) {
                     Some(t) => t,
-                    None => return Ok(((Vec::new(), Vec::new(), Vec::new()), None)),
+                    None => return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new())),
                 };
                 let root = tree.root_node();
+                // Calls retain the original grammar's tree, including when facts
+                // need byte-preserving SQL identifier repair.
+                let calls = if repaired.is_some() {
+                    spec.parser
+                        .parse(src, None)
+                        .map(|original| {
+                            crate::callsite::call_sites_from_tree(
+                                language,
+                                original.root_node(),
+                                src,
+                            )
+                        })
+                        .unwrap_or_default()
+                } else {
+                    crate::callsite::call_sites_from_tree(language, root, src)
+                };
                 let (mut facts, mut spans, rels, health) = {
                     // A statement the grammar does not know (`CREATE OPERATOR`,
                     // `CREATE CAST`, a psql `\echo`) is recovered from by
@@ -918,7 +946,7 @@ impl Extractor {
                     f.name = unqualify(&f.name);
                     f.owner = f.owner.as_deref().map(unqualify);
                 }
-                ((facts, spans, rels), Some(health))
+                ((facts, spans, rels), Some(health), calls)
             }
             _ => spec.extract(src),
         })
@@ -1464,6 +1492,52 @@ mod extractor_tests {
     use super::Extractor;
 
     #[test]
+    fn shared_tree_calls_match_standalone_parses_for_language_fixtures() {
+        let fixtures =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/languages");
+        let mut extractor = Extractor::default();
+        let mut checked = 0;
+        for entry in std::fs::read_dir(fixtures).unwrap() {
+            let path = entry.unwrap().path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = path.file_name().unwrap().to_str().unwrap();
+            let language = crate::index::language_for(name).unwrap();
+            let src = std::fs::read_to_string(&path).unwrap();
+            let (_, _, actual) = extractor.extract(language, name, src.as_bytes()).unwrap();
+            let expected = crate::callsite::call_sites_in(language, &src).unwrap_or_default();
+            let rows = |sites: Vec<crate::callsite::CallSite>| {
+                sites
+                    .into_iter()
+                    .map(|s| (s.start_byte, s.name, s.receiver))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(rows(actual), rows(expected), "{name}");
+            checked += 1;
+        }
+        assert_eq!(checked, super::LANGUAGES.len());
+    }
+
+    #[test]
+    fn fact_recovery_preserves_calls_from_the_original_tree() {
+        let mut extractor = Extractor::default();
+        for (language, src) in [
+            ("rust", "fn before() { target(); }\nfn closure() { let f = |x: Option<Vec<String>>,| { target(); }; }\nfn after() { target(); }\n"),
+            ("sql", "CREATE TABLE t (\"quote\"\"name\" TEXT); SELECT target();"),
+            ("sql", "SELECT target(); CREATE OPERATOR === (FUNCTION = eq); SELECT target();"),
+        ] {
+            let (_, _, actual) = extractor.extract(language, "sample", src.as_bytes()).unwrap();
+            let expected = crate::callsite::call_sites_in(language, src).unwrap();
+            let rows = |sites: Vec<crate::callsite::CallSite>| {
+                sites.into_iter().map(|s| (s.start_byte, s.name, s.receiver)).collect::<Vec<_>>()
+            };
+            assert!(!expected.is_empty(), "{language}: {src}");
+            assert_eq!(rows(actual), rows(expected), "{language}: {src}");
+        }
+    }
+
+    #[test]
     fn one_extractor_handles_alternating_languages_and_new_source() {
         let mut extractor = Extractor::default();
         for (language, source, expected) in [
@@ -1472,7 +1546,7 @@ mod extractor_tests {
             ("python", "def third():\n    pass\n", "third"),
             ("rust", "pub fn fourth() {}", "fourth"),
         ] {
-            let ((facts, _, _), health) = extractor
+            let ((facts, _, _), health, _) = extractor
                 .extract(language, "sample", source.as_bytes())
                 .unwrap();
             let names: Vec<_> = facts.iter().map(|fact| fact.name.as_str()).collect();

@@ -101,13 +101,10 @@ fn parse_one(
             // byte-identical and free: the string is materialised for the FTS body
             // either way.
             let text = String::from_utf8_lossy(&bytes).into_owned();
-            let ((f, s, r), health) = match language {
+            let ((f, s, r), health, calls) = match language {
                 Some(lang) => extractor.extract(lang, rel, text.as_bytes())?,
-                None => ((Vec::new(), Vec::new(), Vec::new()), None),
+                None => ((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()),
             };
-            let calls = language
-                .and_then(|lang| crate::callsite::call_sites_in(lang, &text))
-                .unwrap_or_default();
             let (parse_errors, parse_recovered) = health
                 .map(|h| (Some(h.errors as i64), h.recovered))
                 .unwrap_or((None, false));
