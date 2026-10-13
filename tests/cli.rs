@@ -4692,6 +4692,52 @@ fn mcp_server_handshake_and_tool_call() {
 }
 
 #[test]
+fn mcp_answers_lines_it_cannot_use_and_survives_invalid_utf8() {
+    use std::io::Write;
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    let mut child = PCommand::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(b"{not json\n").unwrap();
+        stdin.write_all(b"\xff\xfe\n").unwrap();
+        stdin
+            .write_all(b"[{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}]\n")
+            .unwrap();
+        stdin.write_all(b"[]\n").unwrap();
+        // Still alive after all of the above.
+        stdin
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"ping\"}\n")
+            .unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let msgs: Vec<Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    assert_eq!(msgs.len(), 5, "every line is answered: {msgs:?}");
+    assert_eq!(msgs[0]["error"]["code"], -32700);
+    assert_eq!(
+        msgs[1]["error"]["code"], -32700,
+        "bad bytes are a parse error"
+    );
+    assert_eq!(msgs[2][0]["id"], 7, "a batch is answered as a batch");
+    assert_eq!(msgs[3]["error"]["code"], -32600);
+    assert_eq!(msgs[4]["id"], 8);
+}
+
+#[test]
 fn mcp_exposes_every_agent_query_command_and_its_schema_flags() {
     use std::io::Write;
     use std::process::{Command as PCommand, Stdio};

@@ -20,44 +20,83 @@ pub fn serve() -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut out = stdout.lock();
+    let mut input = stdin.lock();
+    let mut buf = Vec::new();
 
-    for line in stdin.lock().lines() {
-        let line = line?;
+    loop {
+        buf.clear();
+        // Bytes, not `lines()`: one non-UTF-8 byte from a client must not end
+        // the whole session, and a line is decoded lossily like any other.
+        if input.read_until(b'\n', &mut buf)? == 0 {
+            break;
+        }
+        let line = String::from_utf8_lossy(&buf);
         let text = line.trim();
         if text.is_empty() {
             continue;
         }
-        let req: Value = match serde_json::from_str(text) {
-            Ok(v) => v,
-            Err(_) => continue, // ignore malformed lines
-        };
-
-        // Notifications (no id) get no response.
-        let id = match req.get("id") {
-            Some(id) if !id.is_null() => id.clone(),
-            _ => continue,
-        };
-        let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
-        let params = req.get("params");
-
-        let result = match method {
-            "initialize" => Ok(initialize_result(params)),
-            "tools/list" => Ok(json!({ "tools": tools() })),
-            "tools/call" => Ok(call_tool(params, &exe, &cwd)),
-            "ping" => Ok(json!({})),
-            other => Err((-32601i64, format!("method not found: {other}"))),
-        };
-
-        let msg = match result {
-            Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-            Err((code, message)) => {
-                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+        let reply = match serde_json::from_str::<Value>(text) {
+            Ok(Value::Array(batch)) if batch.is_empty() => Some(error_reply(
+                Value::Null,
+                -32600,
+                "invalid request: empty batch".into(),
+            )),
+            Ok(Value::Array(batch)) => {
+                let replies: Vec<Value> = batch
+                    .iter()
+                    .filter_map(|req| respond(req, &exe, &cwd))
+                    .collect();
+                // A batch of notifications gets no reply at all.
+                (!replies.is_empty()).then_some(Value::Array(replies))
             }
+            Ok(req) => respond(&req, &exe, &cwd),
+            // A client waiting on a reply to a line that never parsed would
+            // wait forever; JSON-RPC defines the answer, with a null id.
+            Err(e) => Some(error_reply(
+                Value::Null,
+                -32700,
+                format!("parse error: {e}"),
+            )),
         };
-        writeln!(out, "{}", serde_json::to_string(&msg)?)?;
-        out.flush()?;
+        if let Some(msg) = reply {
+            writeln!(out, "{}", serde_json::to_string(&msg)?)?;
+            out.flush()?;
+        }
     }
     Ok(())
+}
+
+fn error_reply(id: Value, code: i64, message: String) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+}
+
+/// The reply to one request object, or `None` for a notification (no id).
+fn respond(req: &Value, exe: &Path, cwd: &Path) -> Option<Value> {
+    if !req.is_object() {
+        return Some(error_reply(
+            Value::Null,
+            -32600,
+            "invalid request: expected a JSON object".into(),
+        ));
+    }
+    let id = match req.get("id") {
+        Some(id) if !id.is_null() => id.clone(),
+        _ => return None,
+    };
+    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    let params = req.get("params");
+
+    let result = match method {
+        "initialize" => Ok(initialize_result(params)),
+        "tools/list" => Ok(json!({ "tools": tools() })),
+        "tools/call" => Ok(call_tool(params, exe, cwd)),
+        "ping" => Ok(json!({})),
+        other => Err((-32601i64, format!("method not found: {other}"))),
+    };
+    Some(match result {
+        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Err((code, message)) => error_reply(id, code, message),
+    })
 }
 
 fn initialize_result(params: Option<&Value>) -> Value {
