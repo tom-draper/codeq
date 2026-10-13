@@ -5688,6 +5688,33 @@ fn read_line_range_clamps_past_eof() {
 }
 
 #[test]
+fn read_rejects_ranges_that_cannot_mean_what_they_say() {
+    let f = Fixture::new();
+    f.write("a.txt", "l1\nl2\nl3\n");
+    for spec in ["a.txt:3-1", "a.txt:0"] {
+        let out = f.raw(&["read", spec]);
+        assert!(!out.status.success(), "{spec} should be refused");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("invalid line range"),
+            "{spec} should name the range, not the file: {err}"
+        );
+    }
+    let out = f.raw(&["read", "a.txt", "--lines", "3-1"]);
+    assert!(
+        !out.status.success(),
+        "an inverted --lines range is refused"
+    );
+
+    // Past the end is not an error, but it must not look like an empty slice.
+    let out = f.raw(&["read", "a.txt:9-12"]);
+    assert!(out.status.success());
+    assert!(out.stdout.is_empty());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("has 3 line(s)"), "{err}");
+}
+
+#[test]
 fn at_beyond_eof_resolves_to_nothing() {
     let f = Fixture::new();
     f.write("a.rs", "fn a() {}\n");
