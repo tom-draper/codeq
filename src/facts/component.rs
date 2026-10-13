@@ -27,15 +27,16 @@ pub(super) fn extract_component(
 ) -> Extracted {
     let tree = match markup.parser.parse(src, None) {
         Some(t) => t,
-        None => return ((Vec::new(), Vec::new(), Vec::new()), None),
+        None => return ((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()),
     };
     let root = tree.root_node();
     let (mut facts, mut spans, mut relations) = markup.harvest(root, src);
     let mut health = parse_health(root);
+    let mut calls = Vec::new();
 
     for (start, end, is_ts) in script_regions(root, src) {
         let blanked = blank_outside(src, start, end);
-        let ((f, s, r), nested_health) = if is_ts {
+        let ((f, s, r), nested_health, nested_calls) = if is_ts {
             typescript.extract(&blanked)
         } else {
             javascript.extract(&blanked)
@@ -47,10 +48,11 @@ pub(super) fn extract_component(
         facts.extend(f);
         spans.extend(s);
         relations.extend(r);
+        calls.extend(nested_calls);
     }
     facts.extend(component_fact(path, src));
     spans.sort_by_key(|(s, _, _)| *s);
-    ((facts, spans, relations), Some(health))
+    ((facts, spans, relations), Some(health), calls)
 }
 
 /// The byte range of each `<script>` block's *contents*, plus whether the block
