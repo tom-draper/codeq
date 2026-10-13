@@ -1084,12 +1084,14 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             max_tokens,
         } => commands::cmd_explore(
             cwd,
-            name.as_deref(),
-            at.as_deref(),
-            path.as_deref(),
-            resolved,
-            include_ambiguous,
-            max_tokens,
+            commands::ExploreArgs {
+                name: name.as_deref(),
+                at: at.as_deref(),
+                path: path.as_deref(),
+                resolved,
+                include_ambiguous,
+                max_tokens,
+            },
             out,
         ),
         Command::References {
