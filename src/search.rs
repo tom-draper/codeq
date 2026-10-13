@@ -413,13 +413,9 @@ pub(crate) struct FileDef {
 }
 
 /// Byte offset of the start of each line.
-fn line_starts_of(text: &str) -> Vec<usize> {
+pub(crate) fn line_starts_of(text: &str) -> Vec<usize> {
     let mut v = vec![0usize];
-    for (i, b) in text.as_bytes().iter().enumerate() {
-        if *b == b'\n' {
-            v.push(i + 1);
-        }
-    }
+    v.extend(memchr::memchr_iter(b'\n', text.as_bytes()).map(|i| i + 1));
     v
 }
 
