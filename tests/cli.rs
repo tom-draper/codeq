@@ -8301,7 +8301,8 @@ fn capabilities_reports_per_language_support() {
             .clone()
     };
 
-    // Known-true and known-false cases, each documented in DOGFOOD.
+    // Known-true and known-false cases, each one a past misreading of an
+    // empty result.
     assert_eq!(get("rust")["relations"], true);
     assert_eq!(get("go")["relations"], false, "Go is structurally typed");
     assert_eq!(get("c")["relations"], false, "C has no inheritance");
