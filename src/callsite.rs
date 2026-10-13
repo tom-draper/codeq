@@ -9,10 +9,6 @@
 //! - `db\n    .query()` is the same call as `db.query()`;
 //! - in `a.b.query()` the receiver is the expression `a.b`, not `b`.
 //!
-//! Indexing collects calls from the same syntax tree as definitions and spans.
-//! `--calls` and `--on` read the cached offsets and receivers. Languages without
-//! call extraction retain the byte-level fallback.
-//!
 //! Grammars differ, so this reads tree-sitter *field names* (`function`,
 //! `object`, `receiver`, `name`, …) rather than node-kind spellings wherever it
 //! can. Fields are the part of a grammar that is deliberately stable and
@@ -82,7 +78,6 @@ pub fn call_sites_in(language: &str, src: &str) -> Option<Vec<CallSite>> {
     ))
 }
 
-/// Collect calls from an existing tree using byte offsets into `src`.
 pub(crate) fn call_sites_from_tree(language: &str, root: Node, src: &[u8]) -> Vec<CallSite> {
     let mut sites = Vec::new();
     let mut stack = vec![root];

@@ -244,14 +244,12 @@ impl LangSpec {
         })
     }
 
-    /// One parse yields facts, spans, type relations, and calls.
     fn extract(&mut self, src: &[u8]) -> Extracted {
         let tree = match self.parser.parse(src, None) {
             Some(t) => t,
             None => return ((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()),
         };
-        // Preserve calls from the unrepaired tree when Rust fact recovery retries.
-        let calls = if crate::callsite::supports_syntax_calls(self.lang) {
+        let original_calls = if crate::callsite::supports_syntax_calls(self.lang) {
             crate::callsite::call_sites_from_tree(self.lang, tree.root_node(), src)
         } else {
             Vec::new()
@@ -274,14 +272,18 @@ impl LangSpec {
                                 recovered: true,
                                 ..parse_health(root)
                             }),
-                            calls,
+                            original_calls,
                         );
                     }
                 }
             }
         }
         let root = tree.root_node();
-        (self.harvest(root, src), Some(parse_health(root)), calls)
+        (
+            self.harvest(root, src),
+            Some(parse_health(root)),
+            original_calls,
+        )
     }
 
     /// Run the three queries over an already-parsed tree. Split out of `extract`
@@ -890,9 +892,7 @@ impl Extractor {
                     None => return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new())),
                 };
                 let root = tree.root_node();
-                // Calls retain the original grammar's tree, including when facts
-                // need byte-preserving SQL identifier repair.
-                let calls = if repaired.is_some() {
+                let original_calls = if repaired.is_some() {
                     spec.parser
                         .parse(src, None)
                         .map(|original| {
@@ -946,7 +946,7 @@ impl Extractor {
                     f.name = unqualify(&f.name);
                     f.owner = f.owner.as_deref().map(unqualify);
                 }
-                ((facts, spans, rels), Some(health), calls)
+                ((facts, spans, rels), Some(health), original_calls)
             }
             _ => spec.extract(src),
         })
