@@ -510,6 +510,31 @@ Every command works there, and the index lives in a `.codeq` inside that directo
   index, then only those are read and confirmed with a precise regex, so search never
   drops a match grep would find.
 
+## Versioning
+
+codeq carries four version numbers, each for a different consumer. `codeq capabilities`
+reports the first three for the binary you are running.
+
+| what | where it shows | changes when |
+| --- | --- | --- |
+| CLI version | `codeq --version`, `capabilities.version`, the MCP `serverInfo` | every release |
+| Result envelope | `schema` on every `--json` result (`codeq.result.v2`) | a key is renamed or removed, or its meaning changes. A new key does not change it. |
+| Index schema | `capabilities.index_schema`, `index.schema` under `--meta` | a table changes, or extraction changes what an existing file would yield |
+| MCP tools | generated from the CLI parser, so they follow the CLI version | a command or flag is added, renamed or removed |
+
+**The index is a cache, never state.** Everything in `.codeq/` is derived from the tree,
+so an upgrade needs no migration step. A binary that finds an index written under another
+index schema drops it and rebuilds on that same query, and says so:
+`# codeq: index schema changed (v46 -> v47), rebuilt the index` on stderr, and
+`index.rebuilt_from_schema` under `--json`. That one query pays for a cold index. A
+downgrade behaves the same way.
+
+**Before 1.0** a release may change commands, flags and text rows. The result envelope is
+the stable surface for programs: read `schema`, and take the row array from `rows`.
+
+After upgrading the binary, run `codeq install` so the installed skill guide and MCP
+registration match it.
+
 ## Development
 
 ```bash
