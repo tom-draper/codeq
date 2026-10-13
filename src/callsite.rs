@@ -100,7 +100,13 @@ pub fn call_sites_in(language: &str, src: &str) -> Option<Vec<CallSite>> {
     let mut sites = Vec::new();
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
-        if is_call(node) {
+        if let Some(name_node) = unlabelled_call(language, node) {
+            sites.push(CallSite {
+                start_byte: name_node.start_byte(),
+                name: crate::facts::normalize_identifier(language, &text_of(name_node, src)),
+                receiver: None,
+            });
+        } else if is_call(node) {
             if let Some((name_node, receiver)) = callee_of(node, src) {
                 sites.push(CallSite {
                     start_byte: name_node.start_byte(),
@@ -168,6 +174,36 @@ fn sort_dedup(mut sites: Vec<CallSite>) -> Vec<CallSite> {
 /// `method_invocation`, `invocation_expression`, `function_call_expression`,
 /// `object_creation_expression`. Requiring an argument list as well keeps a
 /// stray match from counting.
+/// The callee of an invocation whose node kind does not say "call", which
+/// [`is_call`] therefore cannot see.
+///
+/// Bash spells every invocation `command`, so a shell script recorded no call
+/// at all — and because the grammar exists, that empty list was taken as
+/// authoritative: `callers f --calls` and `callees f` answered "none" for
+/// every function in every script. SQL's `CREATE TRIGGER … EXECUTE FUNCTION f()`
+/// is a `create_trigger` holding a bare reference, where an ordinary `f()` is
+/// an `invocation`.
+fn unlabelled_call<'a>(language: &str, node: Node<'a>) -> Option<Node<'a>> {
+    match (language, node.kind()) {
+        ("bash", "command") => {
+            // Only a literal name: `$cmd args` and `"$dir/run" args` invoke
+            // something the source does not name.
+            let name = node.child_by_field_name("name")?;
+            let word = name.named_child(0)?;
+            (name.named_child_count() == 1 && word.kind() == "word").then_some(word)
+        }
+        ("sql", "create_trigger") => {
+            let mut c = node.walk();
+            let function = node
+                .children(&mut c)
+                .skip_while(|ch| ch.kind() != "keyword_execute")
+                .find(|ch| ch.kind() == "object_reference")?;
+            function.child_by_field_name("name")
+        }
+        _ => None,
+    }
+}
+
 fn is_call(node: Node) -> bool {
     let k = node.kind();
     if !(k.contains("call") || k.contains("invocation")) {
@@ -350,5 +386,27 @@ mod tests {
         );
         assert_eq!(sites[0].name, "wrapped");
         assert_eq!(sites[0].receiver, None);
+    }
+
+    fn names(language: &str, src: &str) -> Vec<String> {
+        super::call_sites_in(language, src)
+            .unwrap()
+            .into_iter()
+            .map(|site| site.name)
+            .collect()
+    }
+
+    #[test]
+    fn a_bash_command_is_a_call_when_the_source_names_it() {
+        let src = "g() {\n  f \"$1\" | grep -q x\n  out=$(f a)\n  $cmd b\n  \"$dir/run\" c\n}\n";
+        assert_eq!(names("bash", src), ["f", "grep", "f"]);
+    }
+
+    #[test]
+    fn a_sql_trigger_calls_the_function_it_executes() {
+        let src = "CREATE TRIGGER t BEFORE UPDATE ON circles\n\
+                   FOR EACH ROW EXECUTE FUNCTION touch();\n\
+                   SELECT count(id) FROM circles;\n";
+        assert_eq!(names("sql", src), ["touch", "count"]);
     }
 }
