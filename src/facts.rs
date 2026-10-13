@@ -275,394 +275,397 @@ impl LangSpec {
     /// Run the three queries over an already-parsed tree. Split out of `extract`
     /// so an embedding language (Svelte) can walk the same root for its own
     /// purposes without paying for a second parse.
-    fn harvest(
-        &self,
-        root: Node,
-        src: &[u8],
-    ) -> Extraction {
+    fn harvest(&self, root: Node, src: &[u8]) -> Extraction {
+        let mut facts = self.definitions(root, src);
+        dedupe_members(&mut facts);
+        (facts, self.spans(root, src), self.relations(root, src))
+    }
+
+    /// First pass: definitions and imports, one fact per query match.
+    fn definitions(&self, root: Node, src: &[u8]) -> Vec<Fact> {
         let mut facts = Vec::new();
-        {
-            let mut cursor = QueryCursor::new();
-            let mut it = cursor.matches(&self.query, root, src);
-            while let Some(m) = it.next() {
-                let mut name: Option<String> = None;
-                let mut kind: Option<&str> = None;
-                let mut def: Option<Node> = None;
-                let mut body: Option<Node> = None;
-                let mut guard: Option<&str> = None;
-                // The value bound by a JS/TS module-scope `@constant`. Decides
-                // whether this match duplicates a function captured elsewhere,
-                // and where the signature should stop.
-                let mut val: Option<Node> = None;
-                // For `from MODULE import a, b` (Python): the module and each
-                // imported name, combined below into qualified `MODULE.a` imports.
-                let mut from_module: Option<&str> = None;
-                let mut from_names: Vec<Node> = Vec::new();
-                // The local spelling of an imported name (`make as m`). Import
-                // rows retain the source module/name for dependency resolution;
-                // this records what call sites actually write.
-                let mut binding: Option<String> = None;
-                for cap in m.captures {
-                    match self.capture_names[cap.index as usize].as_str() {
-                        "name" => {
-                            name = cap.node.utf8_text(src).ok().map(|s| s.to_string());
-                        }
-                        "body" => body = Some(cap.node),
-                        // `@guard` marks a token the match is only valid for when
-                        // it equals a known keyword — e.g. Ruby `require`, which
-                        // is a plain method call the grammar can't distinguish.
-                        // (The query engine here doesn't evaluate `#eq?`, so we
-                        // filter in code.)
-                        "guard" => guard = cap.node.utf8_text(src).ok(),
-                        "val" => val = Some(cap.node),
-                        "from_module" => from_module = cap.node.utf8_text(src).ok(),
-                        "from_name" => from_names.push(cap.node),
-                        "binding" => binding = cap.node.utf8_text(src).ok().map(str::to_string),
-                        other => {
-                            kind = Some(other);
-                            def = Some(cap.node);
-                        }
+        let mut cursor = QueryCursor::new();
+        let mut it = cursor.matches(&self.query, root, src);
+        while let Some(m) = it.next() {
+            let mut name: Option<String> = None;
+            let mut kind: Option<&str> = None;
+            let mut def: Option<Node> = None;
+            let mut body: Option<Node> = None;
+            let mut guard: Option<&str> = None;
+            // The value bound by a JS/TS module-scope `@constant`. Decides
+            // whether this match duplicates a function captured elsewhere,
+            // and where the signature should stop.
+            let mut val: Option<Node> = None;
+            // For `from MODULE import a, b` (Python): the module and each
+            // imported name, combined below into qualified `MODULE.a` imports.
+            let mut from_module: Option<&str> = None;
+            let mut from_names: Vec<Node> = Vec::new();
+            // The local spelling of an imported name (`make as m`). Import
+            // rows retain the source module/name for dependency resolution;
+            // this records what call sites actually write.
+            let mut binding: Option<String> = None;
+            for cap in m.captures {
+                match self.capture_names[cap.index as usize].as_str() {
+                    "name" => {
+                        name = cap.node.utf8_text(src).ok().map(|s| s.to_string());
                     }
-                }
-                // `from MODULE import a, b [as c]` → a qualified `MODULE.a` import
-                // per imported name. The bare module string alone drops the name,
-                // so the dependency graph can't resolve it to the file that defines
-                // it; the qualified form stem-matches that file. Aliases keep the
-                // original name (what determines the source file).
-                if let Some(module) = from_module {
-                    for nn in &from_names {
-                        if let Ok(local) = nn.utf8_text(src) {
-                            let start = nn.start_position();
-                            let end = nn.end_position();
-                            facts.push(Fact {
-                                kind: "import".to_string(),
-                                is_derived: true,
-                                name: format!("{module}.{local}"),
-                                start_byte: nn.start_byte(),
-                                end_byte: nn.end_byte(),
-                                start_line: start.row + 1,
-                                start_col: start.column,
-                                end_line: end.row + 1,
-                                end_col: end.column,
-                                signature: binding.clone().unwrap_or_default(),
-                                doc: None,
-                                source: self.source.clone(),
-                                confidence: 1.0,
-                                visibility: None,
-                                owner: None,
-                                shape: None,
-                                shape_nodes: 0,
-                                is_test: false,
-                                decorator: None,
-                                contract: None,
-                            });
-                        }
+                    "body" => body = Some(cap.node),
+                    // `@guard` marks a token the match is only valid for when
+                    // it equals a known keyword — e.g. Ruby `require`, which
+                    // is a plain method call the grammar can't distinguish.
+                    // (The query engine here doesn't evaluate `#eq?`, so we
+                    // filter in code.)
+                    "guard" => guard = cap.node.utf8_text(src).ok(),
+                    "val" => val = Some(cap.node),
+                    "from_module" => from_module = cap.node.utf8_text(src).ok(),
+                    "from_name" => from_names.push(cap.node),
+                    "binding" => binding = cap.node.utf8_text(src).ok().map(str::to_string),
+                    other => {
+                        kind = Some(other);
+                        def = Some(cap.node);
                     }
-                }
-                if let Some(g) = guard {
-                    let is_import = kind == Some("import");
-                    // A guarded match is only valid when the token is a known
-                    // keyword. Elixir definitions are macro calls (`def`/`defp`/
-                    // `defmodule`); every other language guards call-style imports.
-                    // The allow-list depends on what the match claims to be, not
-                    // just the language: in Elixir `defmodule M` and `alias M`
-                    // are the same shape of call, and only the keyword says
-                    // whether it defines a module or imports one. Checking the
-                    // keyword against the *kind* keeps them apart.
-                    let ok = match (self.lang, is_import) {
-                        ("elixir", false) => matches!(
-                            g,
-                            "def"
-                                | "defp"
-                                | "defmacro"
-                                | "defmacrop"
-                                | "defmodule"
-                                | "defprotocol"
-                                | "defimpl"
-                                | "defguard"
-                        ),
-                        ("elixir", true) => matches!(g, "alias" | "import" | "use" | "require"),
-                        // Python declares an instance attribute by assigning it,
-                        // and only a `self.`-qualified assignment declares one:
-                        // `other.x = 1` mutates somebody else's object. The member
-                        // query captures the receiver as `@guard` for this check,
-                        // so dropping this arm silently loses every Python
-                        // instance attribute.
-                        ("python", false) => g == "self",
-                        ("bash", _) => matches!(g, "source" | "."),
-                        ("lua", _) => matches!(g, "require" | "dofile" | "loadfile"),
-                        ("zig", _) => matches!(g, "@import" | "@cImport"),
-                        // Ruby uses method calls for both requires and field
-                        // declarations; the callee name says which.
-                        ("ruby", true) => matches!(
-                            g,
-                            "require"
-                                | "require_relative"
-                                | "require_dependency"
-                                | "load"
-                                | "autoload"
-                        ),
-                        ("ruby", false) => {
-                            matches!(g, "attr_accessor" | "attr_reader" | "attr_writer")
-                        }
-                        _ => matches!(
-                            g,
-                            "require"
-                                | "require_relative"
-                                | "require_dependency"
-                                | "load"
-                                | "autoload"
-                        ),
-                    };
-                    if !ok {
-                        continue;
-                    }
-                }
-                if let (Some(name), Some(kind), Some(node)) = (name, kind, def) {
-                    // `const f = () => …` matches both the `@function` pattern and
-                    // the module-scope `@constant` one. The function capture is
-                    // strictly better (it knows the body, so the signature folds),
-                    // so drop the constant rather than emit the binding twice.
-                    if kind == "constant"
-                        && val.is_some_and(|v| {
-                            matches!(v.kind(), "arrow_function" | "function_expression")
-                                || is_require_binding(v, src)
-                        })
-                    {
-                        continue;
-                    }
-                    // A multi-line value — a wrapped component, a big object
-                    // literal — would collapse into an unreadable one-line
-                    // signature, so end the signature where it begins, the way a
-                    // function body does. A single-line value is kept whole:
-                    // `const VERSION = '1.0'` is more useful with its value.
-                    //
-                    // For a wrapped value, stop at the arguments rather than at
-                    // the value, so the wrapper survives: `const Card = memo(`
-                    // says what `const Card =` does not.
-                    let body = match val {
-                        Some(v)
-                            if kind == "constant"
-                                && v.end_position().row > v.start_position().row =>
-                        {
-                            Some(wrapper_head(v).unwrap_or(v))
-                        }
-                        _ => body,
-                    };
-                    // Some grammars capture the whole quoted import path (Go);
-                    // normalise to the bare module string like the others.
-                    let name = if kind == "import" {
-                        name.trim_matches(|c: char| "\"'`<>".contains(c))
-                            .to_string()
-                    } else if self.lang == "sql" && kind == "field" {
-                        unquote_sql_identifier(&name)
-                    } else if kind == "field" {
-                        // A Ruby `attr_accessor :a` declares the field `a`; the
-                        // colon is symbol syntax, not part of the name.
-                        name.trim_start_matches(':').to_string()
-                    } else {
-                        name
-                    };
-                    let name = normalize_identifier(self.lang, &name);
-                    // A function declared inside a type body is a method: it
-                    // can be called on a value. Several grammars use the same
-                    // node for both (Rust `function_item`, Python
-                    // `function_definition`), so the queries cannot tell them
-                    // apart and every method came back as `function`.
-                    let kind = if kind == "function" && is_method(self.lang, node) {
-                        "method"
-                    } else {
-                        kind
-                    };
-                    let visibility = if kind == "import" {
-                        None
-                    } else {
-                        let own = visibility_of(self.lang, &name, node, src);
-                        // A variant carries no visibility of its own in any
-                        // language codeq supports — Rust, Java, C# and TS all
-                        // forbid a modifier there, because `E::A` is reachable
-                        // exactly where `E` is. Asking the node made every one
-                        // of them `private`, so `api` reported a public enum's
-                        // surface as the bare enum name and `unused` labelled
-                        // its variants private. Inherit from the declaring type.
-                        let own = if kind == "variant" {
-                            enclosing_type_visibility(self.lang, node, src).or(own)
-                        } else {
-                            own
-                        };
-                        // A member of a private type is not public API in any
-                        // language codeq supports. Visibility was computed per
-                        // definition without consulting the type around it, so
-                        // the methods and fields of a Python `class _Draw` were
-                        // reported as public — putting them in `api`, in
-                        // `untested`, and into `api --compare-to` as newly *added*
-                        // public surface. The declaration is public; what it is
-                        // declared inside is what makes it reachable.
-                        match own.as_deref() {
-                            Some("public") if enclosed_by_private_type(self.lang, node, src) => {
-                                Some("private".to_string())
-                            }
-                            _ => own,
-                        }
-                    };
-                    let start = node.start_position();
-                    let end = node.end_position();
-                    // A member with no declaring type is not addressable — an
-                    // anonymous C struct's field, or a `self.x =` in a plain
-                    // function — and an owner-less `field` is exactly the bare
-                    // name this fact kind exists to avoid.
-                    let owner = owner_of(self.lang, kind, node, src);
-                    let (shape, shape_nodes) = shape_of(node);
-                    if matches!(kind, "field" | "variant") && owner.is_none() {
-                        continue;
-                    }
-                    let (start_byte, start_line, start_col, signature) = if self.lang == "sql"
-                        && kind == "field"
-                        && node.start_byte() > 0
-                        && src[node.start_byte() - 1] == b'['
-                    {
-                        // The SQL grammar treats T-SQL's opening `[` as an
-                        // external token on a column name, while the closing `]`
-                        // remains in the column_definition range. Restore the
-                        // source span so the signature is a faithful slice.
-                        (
-                            node.start_byte() - 1,
-                            start.row + 1,
-                            start.column.saturating_sub(1),
-                            format!(
-                                "[{}",
-                                with_value_shape(signature_of(src, node, body), kind, val)
-                            ),
-                        )
-                    } else {
-                        (
-                            node.start_byte(),
-                            start.row + 1,
-                            start.column,
-                            with_value_shape(signature_of(src, node, body), kind, val),
-                        )
-                    };
-                    facts.push(Fact {
-                        kind: kind.to_string(),
-                        is_derived: false,
-                        name,
-                        start_byte,
-                        end_byte: node.end_byte(),
-                        start_line,
-                        start_col,
-                        end_line: end.row + 1,
-                        end_col: end.column,
-                        signature: if kind == "import" {
-                            binding.unwrap_or_default()
-                        } else {
-                            signature
-                        },
-                        doc: doc_of(src, self.lang, node, body),
-                        source: self.source.clone(),
-                        confidence: 1.0,
-                        visibility,
-                        owner,
-                        shape,
-                        shape_nodes,
-                        is_test: test_attributed(self.lang, node, src),
-                        decorator: registering_decorator(node, src),
-                        contract: implemented_trait(self.lang, node, src),
-                    });
                 }
             }
-        }
-
-        // A member can be declared more than once — Python assigns `self.x` in
-        // whichever methods touch it first — but it is still one member. Keep the
-        // earliest declaration per (name, owner) so `definitions` shows a single
-        // place rather than implying several. Names cannot repeat within one type
-        // in any of these languages, so this cannot merge distinct members.
-        {
-            let mut seen: std::collections::HashSet<(String, String)> = Default::default();
-            let mut keep: Vec<bool> = Vec::with_capacity(facts.len());
-            let mut order: Vec<usize> = (0..facts.len()).collect();
-            order.sort_by_key(|&i| facts[i].start_byte);
-            let mut drop: std::collections::HashSet<usize> = Default::default();
-            for &i in &order {
-                let f = &facts[i];
-                if !matches!(f.kind.as_str(), "field" | "variant") {
-                    continue;
-                }
-                let key = (f.name.clone(), f.owner.clone().unwrap_or_default());
-                if !seen.insert(key) {
-                    drop.insert(i);
-                }
-            }
-            for i in 0..facts.len() {
-                keep.push(!drop.contains(&i));
-            }
-            let mut it = keep.iter();
-            facts.retain(|_| *it.next().unwrap_or(&true));
-        }
-
-        let mut spans = Vec::new();
-        {
-            let mut cursor = QueryCursor::new();
-            let mut it = cursor.matches(&self.span_query, root, src);
-            while let Some(m) = it.next() {
-                for cap in m.captures {
-                    let span = match self.span_capture_names[cap.index as usize].as_str() {
-                        "comment" => Span::Comment,
-                        "string" => Span::Str,
-                        _ => continue,
-                    };
-                    spans.push((cap.node.start_byte(), cap.node.end_byte(), span));
-                }
-            }
-            spans.sort_by_key(|(s, _, _)| *s);
-        }
-
-        // Third pass: type relations (implements / extends). One match binds the
-        // subtype (`@sub`) once and one or more supertypes (`@implements` /
-        // `@extends`), so a class implementing several interfaces yields several.
-        let mut relations = Vec::new();
-        {
-            let mut cursor = QueryCursor::new();
-            let mut it = cursor.matches(&self.rel_query, root, src);
-            while let Some(m) = it.next() {
-                let mut sub: Option<&str> = None;
-                let mut supers: Vec<(&str, &str)> = Vec::new(); // (relation, name)
-                for cap in m.captures {
-                    let cname = self.rel_capture_names[cap.index as usize].as_str();
-                    let text = match cap.node.utf8_text(src) {
-                        Ok(t) => t,
-                        Err(_) => continue,
-                    };
-                    match cname {
-                        "sub" => sub = Some(text),
-                        "implements" => supers.push(("implements", text)),
-                        "extends" => supers.push(("extends", text)),
-                        // Not inheritance: a SQL foreign key, kept as its own
-                        // kind so `--relation` can ask for one without the other.
-                        "references" => supers.push(("references", text)),
-                        _ => {}
-                    }
-                }
-                if let Some(sub) = sub {
-                    for (relation, sup) in supers {
-                        relations.push(Relation {
-                            subtype: sub.to_string(),
-                            supertype: sup.to_string(),
-                            relation,
-                            start_line: m
-                                .captures
-                                .iter()
-                                .map(|c| c.node.start_position().row + 1)
-                                .min()
-                                .unwrap_or(0),
+            // `from MODULE import a, b [as c]` → a qualified `MODULE.a` import
+            // per imported name. The bare module string alone drops the name,
+            // so the dependency graph can't resolve it to the file that defines
+            // it; the qualified form stem-matches that file. Aliases keep the
+            // original name (what determines the source file).
+            if let Some(module) = from_module {
+                for nn in &from_names {
+                    if let Ok(local) = nn.utf8_text(src) {
+                        let start = nn.start_position();
+                        let end = nn.end_position();
+                        facts.push(Fact {
+                            kind: "import".to_string(),
+                            is_derived: true,
+                            name: format!("{module}.{local}"),
+                            start_byte: nn.start_byte(),
+                            end_byte: nn.end_byte(),
+                            start_line: start.row + 1,
+                            start_col: start.column,
+                            end_line: end.row + 1,
+                            end_col: end.column,
+                            signature: binding.clone().unwrap_or_default(),
+                            doc: None,
+                            source: self.source.clone(),
+                            confidence: 1.0,
+                            visibility: None,
+                            owner: None,
+                            shape: None,
+                            shape_nodes: 0,
+                            is_test: false,
+                            decorator: None,
+                            contract: None,
                         });
                     }
                 }
             }
+            if let Some(g) = guard {
+                let is_import = kind == Some("import");
+                // A guarded match is only valid when the token is a known
+                // keyword. Elixir definitions are macro calls (`def`/`defp`/
+                // `defmodule`); every other language guards call-style imports.
+                // The allow-list depends on what the match claims to be, not
+                // just the language: in Elixir `defmodule M` and `alias M`
+                // are the same shape of call, and only the keyword says
+                // whether it defines a module or imports one. Checking the
+                // keyword against the *kind* keeps them apart.
+                let ok = match (self.lang, is_import) {
+                    ("elixir", false) => matches!(
+                        g,
+                        "def"
+                            | "defp"
+                            | "defmacro"
+                            | "defmacrop"
+                            | "defmodule"
+                            | "defprotocol"
+                            | "defimpl"
+                            | "defguard"
+                    ),
+                    ("elixir", true) => matches!(g, "alias" | "import" | "use" | "require"),
+                    // Python declares an instance attribute by assigning it,
+                    // and only a `self.`-qualified assignment declares one:
+                    // `other.x = 1` mutates somebody else's object. The member
+                    // query captures the receiver as `@guard` for this check,
+                    // so dropping this arm silently loses every Python
+                    // instance attribute.
+                    ("python", false) => g == "self",
+                    ("bash", _) => matches!(g, "source" | "."),
+                    ("lua", _) => matches!(g, "require" | "dofile" | "loadfile"),
+                    ("zig", _) => matches!(g, "@import" | "@cImport"),
+                    // Ruby uses method calls for both requires and field
+                    // declarations; the callee name says which.
+                    ("ruby", true) => matches!(
+                        g,
+                        "require"
+                            | "require_relative"
+                            | "require_dependency"
+                            | "load"
+                            | "autoload"
+                    ),
+                    ("ruby", false) => {
+                        matches!(g, "attr_accessor" | "attr_reader" | "attr_writer")
+                    }
+                    _ => matches!(
+                        g,
+                        "require"
+                            | "require_relative"
+                            | "require_dependency"
+                            | "load"
+                            | "autoload"
+                    ),
+                };
+                if !ok {
+                    continue;
+                }
+            }
+            if let (Some(name), Some(kind), Some(node)) = (name, kind, def) {
+                // `const f = () => …` matches both the `@function` pattern and
+                // the module-scope `@constant` one. The function capture is
+                // strictly better (it knows the body, so the signature folds),
+                // so drop the constant rather than emit the binding twice.
+                if kind == "constant"
+                    && val.is_some_and(|v| {
+                        matches!(v.kind(), "arrow_function" | "function_expression")
+                            || is_require_binding(v, src)
+                    })
+                {
+                    continue;
+                }
+                // A multi-line value — a wrapped component, a big object
+                // literal — would collapse into an unreadable one-line
+                // signature, so end the signature where it begins, the way a
+                // function body does. A single-line value is kept whole:
+                // `const VERSION = '1.0'` is more useful with its value.
+                //
+                // For a wrapped value, stop at the arguments rather than at
+                // the value, so the wrapper survives: `const Card = memo(`
+                // says what `const Card =` does not.
+                let body = match val {
+                    Some(v)
+                        if kind == "constant"
+                            && v.end_position().row > v.start_position().row =>
+                    {
+                        Some(wrapper_head(v).unwrap_or(v))
+                    }
+                    _ => body,
+                };
+                // Some grammars capture the whole quoted import path (Go);
+                // normalise to the bare module string like the others.
+                let name = if kind == "import" {
+                    name.trim_matches(|c: char| "\"'`<>".contains(c))
+                        .to_string()
+                } else if self.lang == "sql" && kind == "field" {
+                    unquote_sql_identifier(&name)
+                } else if kind == "field" {
+                    // A Ruby `attr_accessor :a` declares the field `a`; the
+                    // colon is symbol syntax, not part of the name.
+                    name.trim_start_matches(':').to_string()
+                } else {
+                    name
+                };
+                let name = normalize_identifier(self.lang, &name);
+                // A function declared inside a type body is a method: it
+                // can be called on a value. Several grammars use the same
+                // node for both (Rust `function_item`, Python
+                // `function_definition`), so the queries cannot tell them
+                // apart and every method came back as `function`.
+                let kind = if kind == "function" && is_method(self.lang, node) {
+                    "method"
+                } else {
+                    kind
+                };
+                let visibility = if kind == "import" {
+                    None
+                } else {
+                    let own = visibility_of(self.lang, &name, node, src);
+                    // A variant carries no visibility of its own in any
+                    // language codeq supports — Rust, Java, C# and TS all
+                    // forbid a modifier there, because `E::A` is reachable
+                    // exactly where `E` is. Asking the node made every one
+                    // of them `private`, so `api` reported a public enum's
+                    // surface as the bare enum name and `unused` labelled
+                    // its variants private. Inherit from the declaring type.
+                    let own = if kind == "variant" {
+                        enclosing_type_visibility(self.lang, node, src).or(own)
+                    } else {
+                        own
+                    };
+                    // A member of a private type is not public API in any
+                    // language codeq supports. Visibility was computed per
+                    // definition without consulting the type around it, so
+                    // the methods and fields of a Python `class _Draw` were
+                    // reported as public — putting them in `api`, in
+                    // `untested`, and into `api --compare-to` as newly *added*
+                    // public surface. The declaration is public; what it is
+                    // declared inside is what makes it reachable.
+                    match own.as_deref() {
+                        Some("public") if enclosed_by_private_type(self.lang, node, src) => {
+                            Some("private".to_string())
+                        }
+                        _ => own,
+                    }
+                };
+                let start = node.start_position();
+                let end = node.end_position();
+                // A member with no declaring type is not addressable — an
+                // anonymous C struct's field, or a `self.x =` in a plain
+                // function — and an owner-less `field` is exactly the bare
+                // name this fact kind exists to avoid.
+                let owner = owner_of(self.lang, kind, node, src);
+                let (shape, shape_nodes) = shape_of(node);
+                if matches!(kind, "field" | "variant") && owner.is_none() {
+                    continue;
+                }
+                let (start_byte, start_line, start_col, signature) = if self.lang == "sql"
+                    && kind == "field"
+                    && node.start_byte() > 0
+                    && src[node.start_byte() - 1] == b'['
+                {
+                    // The SQL grammar treats T-SQL's opening `[` as an
+                    // external token on a column name, while the closing `]`
+                    // remains in the column_definition range. Restore the
+                    // source span so the signature is a faithful slice.
+                    (
+                        node.start_byte() - 1,
+                        start.row + 1,
+                        start.column.saturating_sub(1),
+                        format!(
+                            "[{}",
+                            with_value_shape(signature_of(src, node, body), kind, val)
+                        ),
+                    )
+                } else {
+                    (
+                        node.start_byte(),
+                        start.row + 1,
+                        start.column,
+                        with_value_shape(signature_of(src, node, body), kind, val),
+                    )
+                };
+                facts.push(Fact {
+                    kind: kind.to_string(),
+                    is_derived: false,
+                    name,
+                    start_byte,
+                    end_byte: node.end_byte(),
+                    start_line,
+                    start_col,
+                    end_line: end.row + 1,
+                    end_col: end.column,
+                    signature: if kind == "import" {
+                        binding.unwrap_or_default()
+                    } else {
+                        signature
+                    },
+                    doc: doc_of(src, self.lang, node, body),
+                    source: self.source.clone(),
+                    confidence: 1.0,
+                    visibility,
+                    owner,
+                    shape,
+                    shape_nodes,
+                    is_test: test_attributed(self.lang, node, src),
+                    decorator: registering_decorator(node, src),
+                    contract: implemented_trait(self.lang, node, src),
+                });
+            }
         }
-
-        (facts, spans, relations)
+        facts
     }
+
+    /// Second pass: comment and string spans, ordered by start byte.
+    fn spans(&self, root: Node, src: &[u8]) -> Vec<(usize, usize, Span)> {
+        let mut spans = Vec::new();
+        let mut cursor = QueryCursor::new();
+        let mut it = cursor.matches(&self.span_query, root, src);
+        while let Some(m) = it.next() {
+            for cap in m.captures {
+                let span = match self.span_capture_names[cap.index as usize].as_str() {
+                    "comment" => Span::Comment,
+                    "string" => Span::Str,
+                    _ => continue,
+                };
+                spans.push((cap.node.start_byte(), cap.node.end_byte(), span));
+            }
+        }
+        spans.sort_by_key(|(s, _, _)| *s);
+        spans
+    }
+
+    /// Third pass: type relations (implements / extends). One match binds the
+    /// subtype (`@sub`) once and one or more supertypes (`@implements` /
+    /// `@extends`), so a class implementing several interfaces yields several.
+    fn relations(&self, root: Node, src: &[u8]) -> Vec<Relation> {
+        let mut relations = Vec::new();
+        let mut cursor = QueryCursor::new();
+        let mut it = cursor.matches(&self.rel_query, root, src);
+        while let Some(m) = it.next() {
+            let mut sub: Option<&str> = None;
+            let mut supers: Vec<(&str, &str)> = Vec::new(); // (relation, name)
+            for cap in m.captures {
+                let cname = self.rel_capture_names[cap.index as usize].as_str();
+                let text = match cap.node.utf8_text(src) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                match cname {
+                    "sub" => sub = Some(text),
+                    "implements" => supers.push(("implements", text)),
+                    "extends" => supers.push(("extends", text)),
+                    // Not inheritance: a SQL foreign key, kept as its own
+                    // kind so `--relation` can ask for one without the other.
+                    "references" => supers.push(("references", text)),
+                    _ => {}
+                }
+            }
+            if let Some(sub) = sub {
+                for (relation, sup) in supers {
+                    relations.push(Relation {
+                        subtype: sub.to_string(),
+                        supertype: sup.to_string(),
+                        relation,
+                        start_line: m
+                            .captures
+                            .iter()
+                            .map(|c| c.node.start_position().row + 1)
+                            .min()
+                            .unwrap_or(0),
+                    });
+                }
+            }
+        }
+        relations
+    }
+}
+
+/// A member can be declared more than once — Python assigns `self.x` in
+/// whichever methods touch it first — but it is still one member. Keep the
+/// earliest declaration per (name, owner) so `definitions` shows a single
+/// place rather than implying several. Names cannot repeat within one type
+/// in any of these languages, so this cannot merge distinct members.
+fn dedupe_members(facts: &mut Vec<Fact>) {
+    let mut seen: std::collections::HashSet<(String, String)> = Default::default();
+    let mut keep: Vec<bool> = Vec::with_capacity(facts.len());
+    let mut order: Vec<usize> = (0..facts.len()).collect();
+    order.sort_by_key(|&i| facts[i].start_byte);
+    let mut drop: std::collections::HashSet<usize> = Default::default();
+    for &i in &order {
+        let f = &facts[i];
+        if !matches!(f.kind.as_str(), "field" | "variant") {
+            continue;
+        }
+        let key = (f.name.clone(), f.owner.clone().unwrap_or_default());
+        if !seen.insert(key) {
+            drop.insert(i);
+        }
+    }
+    for i in 0..facts.len() {
+        keep.push(!drop.contains(&i));
+    }
+    let mut it = keep.iter();
+    facts.retain(|_| *it.next().unwrap_or(&true));
 }
 
 /// Number of explicit parser recovery nodes in a tree. `has_error` alone is
