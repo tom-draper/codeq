@@ -1,0 +1,21 @@
+file sample.tsx 294d38622d17b781
+fact import react 1:0-1:29 bytes=0-29 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=5d38fbc1e42ff723/14 source=treesitter/tsx confidence=1 sig= doc=-
+fact import react.memo 1:9-1:13 bytes=9-13 vis=- owner=- derived=1 test=0 decorator=- contract=- shape=-/0 source=treesitter/tsx confidence=1 sig= doc=-
+fact interface Props 3:0-5:1 bytes=31-67 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=b0294a29aef9fc73/13 source=treesitter/tsx confidence=1 sig=interface Props { title: string; } doc=-
+fact field title 4:2-4:15 bytes=51-64 vis=private owner=Props derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/tsx confidence=1 sig=title: string doc=-
+fact interface Named 7:0-9:1 bytes=69-106 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=164a3bfe6993b4bb/16 source=treesitter/tsx confidence=1 sig=interface Named { name(): string; } doc=-
+fact class Base 11:0-13:1 bytes=108-135 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/tsx confidence=1 sig=class Base doc=-
+fact field sides 12:2-12:11 bytes=123-132 vis=private owner=Base derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/tsx confidence=1 sig=sides = 0 doc=-
+fact class Legacy 15:7-19:1 bytes=144-234 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=153fb88712b9fab4/32 source=treesitter/tsx confidence=1 sig=class Legacy extends Base implements Named doc=-
+fact method name 16:2-18:3 bytes=191-232 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=5a5a724913fa2348/19 source=treesitter/tsx confidence=1 sig=name(): string doc=-
+fact constant Card 22:7-24:3 bytes=289-400 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=921ee13895352137/56 source=treesitter/tsx confidence=1 sig=const Card = memo doc=-
+fact function format 26:7-28:1 bytes=409-474 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=2b2c10e8a078f785/30 source=treesitter/tsx confidence=1 sig=function format(title: string): string doc=-
+relation 15 Legacy extends Base
+relation 15 Legacy implements Named
+call 302 memo on=-
+call 369 format on=-
+call 465 trim on=title
+span 21-28 kind=1
+span 219-227 kind=1
+span 236-281 kind=0
+span 361-367 kind=1

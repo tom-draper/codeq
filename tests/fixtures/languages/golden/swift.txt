@@ -1,0 +1,18 @@
+file sample.swift 573de85dd89c2013
+fact import Foundation 1:0-1:17 bytes=0-17 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/swift confidence=1 sig= doc=-
+fact interface Named 3:0-5:1 bytes=19-63 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=d317bb7654409552/14 source=treesitter/swift confidence=1 sig=protocol Named doc=-
+fact method name 4:4-4:25 bytes=40-61 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/8 source=treesitter/swift confidence=1 sig=func name() -> String doc=-
+fact class Shape 7:0-9:1 bytes=65-103 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=b548292545700b1e/17 source=treesitter/swift confidence=1 sig=class Shape doc=-
+fact field sides 8:4-8:22 bytes=83-101 vis=- owner=Shape derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/swift confidence=1 sig=var sides: Int = 0 doc=-
+fact class Circle 17:0-23:1 bytes=180-305 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=99b85868cb711a5a/50 source=treesitter/swift confidence=1 sig=class Circle: Shape, Named doc=-
+fact field radius 18:4-18:28 bytes=213-237 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/swift confidence=1 sig=let radius: Double = 1.0 doc=-
+fact method name 20:4-22:5 bytes=243-303 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=6b05576588d0f892/25 source=treesitter/swift confidence=1 sig=func name() -> String doc=-
+fact class Point 25:0-27:1 bytes=307-338 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=df77fb58ad4b9375/15 source=treesitter/swift confidence=1 sig=struct Point doc=-
+fact field x 26:4-26:14 bytes=326-336 vis=- owner=Point derived=0 test=0 decorator=- contract=- shape=-/9 source=treesitter/swift confidence=1 sig=var x: Int doc=-
+fact function label 29:0-31:1 bytes=340-409 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=0fbc59d68a03a2c9/30 source=treesitter/swift confidence=1 sig=func label(_ text: String) -> String doc=-
+relation 17 Circle extends Named
+relation 17 Circle extends Shape
+call 282 label on=-
+call 395 uppercased on=text
+span 150-179 kind=0
+span 288-296 kind=1

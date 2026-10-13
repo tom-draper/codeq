@@ -1,0 +1,23 @@
+file sample.sol 5bdccb20bb51c43c
+fact import ./Named.sol 4:0-4:21 bytes=57-78 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/solidity confidence=1 sig= doc=-
+fact interface INamed 6:0-8:1 bytes=80-159 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=573c8aaa891a706e/25 source=treesitter/solidity confidence=1 sig=interface INamed doc=-
+fact method name 7:4-7:58 bytes=103-157 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=0a8a60f5eddb7fc2/19 source=treesitter/solidity confidence=1 sig=function name() external view returns (string memory); doc=-
+fact class Shape 10:0-12:1 bytes=161-205 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=14d58cac53dd5d76/14 source=treesitter/solidity confidence=1 sig=contract Shape doc=-
+fact field sides 11:4-11:25 bytes=182-203 vis=- owner=Shape derived=0 test=0 decorator=- contract=- shape=-/8 source=treesitter/solidity confidence=1 sig=uint256 public sides; doc=-
+fact class Circle 15:0-33:1 bytes=237-617 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=704d2f7044160dd1/124 source=treesitter/solidity confidence=1 sig=contract Circle is Shape, INamed doc=-
+fact field radius 16:4-16:26 bytes=276-298 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/8 source=treesitter/solidity confidence=1 sig=uint256 public radius; doc=-
+fact enum Colour 18:4-18:30 bytes=304-330 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/9 source=treesitter/solidity confidence=1 sig=enum Colour { Red, Green } doc=-
+fact variant Red 18:18-18:21 bytes=318-321 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/1 source=treesitter/solidity confidence=1 sig=Red doc=-
+fact variant Green 18:23-18:28 bytes=323-328 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/1 source=treesitter/solidity confidence=1 sig=Green doc=-
+fact struct Point 20:4-22:5 bytes=336-375 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=bd8dda2ae0b6e4da/12 source=treesitter/solidity confidence=1 sig=struct Point { uint256 x; } doc=-
+fact field x 21:8-21:18 bytes=359-369 vis=- owner=Point derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/solidity confidence=1 sig=uint256 x; doc=-
+fact type Renamed 24:4-24:32 bytes=381-409 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/solidity confidence=1 sig=event Renamed(string label); doc=-
+fact method name 26:4-28:5 bytes=415-508 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=59c284a93f50ce06/37 source=treesitter/solidity confidence=1 sig=function name() external pure returns (string memory) doc=-
+fact method label 30:4-32:5 bytes=514-615 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=bbd66cc2ced842b0/33 source=treesitter/solidity confidence=1 sig=function label(string memory text) internal pure returns (string memory) doc=-
+relation 15 Circle extends INamed
+relation 15 Circle extends Shape
+call 486 label on=-
+span 0-31 kind=0
+span 64-77 kind=1
+span 207-236 kind=0
+span 492-500 kind=1

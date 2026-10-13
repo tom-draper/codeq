@@ -1,0 +1,7 @@
+file sample.rst ecf4c85eb32d7979
+fact heading Shapes 1:0-18:0 bytes=0-182 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/rst confidence=1 sig=Shapes doc=-
+fact import sample.rst 4:0-4:0 bytes=52-58 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/rst confidence=1 sig= doc=-
+fact heading Usage 6:0-18:0 bytes=62-182 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/rst confidence=1 sig=Usage doc=-
+fact import sample.md 9:0-9:0 bytes=87-98 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/rst confidence=1 sig= doc=-
+fact heading Limits 15:0-18:0 bytes=153-182 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/rst confidence=1 sig=Limits doc=-
+span 0-182 kind=0

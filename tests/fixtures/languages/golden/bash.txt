@@ -1,0 +1,14 @@
+file sample.sh 4ff68a6c1e94b2f3
+fact import ./helper.sh 2:0-2:18 bytes=20-38 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/bash confidence=1 sig= doc=-
+fact function label 7:0-9:1 bytes=72-99 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=18a026c35ec5902c/14 source=treesitter/bash confidence=1 sig=label() doc=-
+fact function describe 11:0-14:1 bytes=101-148 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=66c6f65f300e2655/20 source=treesitter/bash confidence=1 sig=describe() doc=-
+call 20 source on=-
+call 84 echo on=-
+call 116 label on=-
+call 124 printf on=-
+call 150 describe on=-
+span 0-19 kind=0
+span 50-71 kind=0
+span 89-97 kind=1
+span 131-137 kind=1
+span 138-146 kind=1

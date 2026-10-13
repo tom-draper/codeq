@@ -1,0 +1,18 @@
+file sample.zig cb807a29d3cff552
+fact import std 1:12-1:26 bytes=12-26 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/9 source=treesitter/zig confidence=1 sig= doc=-
+fact struct Circle 5:0-13:2 bytes=52-202 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=410be493351c56c9/52 source=treesitter/zig confidence=1 sig=const Circle = struct { radius: f64, sides: u8, pub fn name(self: Circle) []const u8 { _ = self; return label(); } }; doc=-
+fact field radius 6:4-6:15 bytes=80-91 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/5 source=treesitter/zig confidence=1 sig=radius: f64 doc=-
+fact field sides 7:4-7:13 bytes=97-106 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/zig confidence=1 sig=sides: u8 doc=-
+fact method name 9:4-12:5 bytes=113-199 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=272c386c0a4d2d2f/32 source=treesitter/zig confidence=1 sig=pub fn name(self: Circle) []const u8 doc=-
+fact enum Colour 15:0-15:35 bytes=204-239 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=72bdd7348af02966/14 source=treesitter/zig confidence=1 sig=const Colour = enum { red, green }; doc=-
+fact field red 15:22-15:25 bytes=226-229 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/zig confidence=1 sig=red doc=-
+fact field green 15:27-15:32 bytes=231-236 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/zig confidence=1 sig=green doc=-
+fact function label 18:0-20:1 bytes=264-310 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=109ceb1c6596fd5d/22 source=treesitter/zig confidence=1 sig=fn label() []const u8 doc=-
+fact function main 22:0-24:1 bytes=312-376 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=99a528792aa85de2/39 source=treesitter/zig confidence=1 sig=pub fn main() void doc=-
+call 185 label on=-
+call 347 print on=std.debug
+call 364 label on=-
+span 20-25 kind=1
+span 241-263 kind=0
+span 299-307 kind=1
+span 353-360 kind=1

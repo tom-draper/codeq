@@ -1,0 +1,12 @@
+file sample.proto 02ef3a98fad6411f
+fact import google/protobuf/empty.proto 5:0-5:37 bytes=37-74 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/proto confidence=1 sig= doc=-
+fact class Circle 8:0-11:1 bytes=102-162 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=f4035a410b9af754/26 source=treesitter/proto confidence=1 sig=message Circle { double radius = 1; Colour colour = 2; } doc=-
+fact field radius 9:2-9:20 bytes=121-139 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/9 source=treesitter/proto confidence=1 sig=double radius = 1; doc=-
+fact field colour 10:2-10:20 bytes=142-160 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/proto confidence=1 sig=Colour colour = 2; doc=-
+fact enum Colour 13:0-16:1 bytes=164-203 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=a652766ec6bdadbe/19 source=treesitter/proto confidence=1 sig=enum Colour { RED = 0; GREEN = 1; } doc=-
+fact variant RED 14:2-14:10 bytes=180-188 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/proto confidence=1 sig=RED = 0; doc=-
+fact variant GREEN 15:2-15:12 bytes=191-201 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/proto confidence=1 sig=GREEN = 1; doc=-
+fact interface Shapes 18:0-20:1 bytes=205-279 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=3ebbd620d6e89b94/24 source=treesitter/proto confidence=1 sig=service Shapes { rpc Describe(Circle) returns (google.protobuf.Empty); } doc=-
+fact method Describe 19:2-19:55 bytes=224-277 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=84e2a6e66c2629ca/18 source=treesitter/proto confidence=1 sig=rpc Describe(Circle) returns (google.protobuf.Empty); doc=-
+span 44-73 kind=1
+span 76-101 kind=0

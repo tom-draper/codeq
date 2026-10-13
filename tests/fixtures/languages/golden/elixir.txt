@@ -1,0 +1,25 @@
+file sample.ex 7ce70403557728ba
+fact module Shapes.Circle 1:0-20:3 bytes=0-281 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=87fd3abd714fdf48/92 source=treesitter/elixir confidence=1 sig=defmodule Shapes.Circle do import Enum alias Shapes.Shape require Logger @limit 10 # The label is fixed. def name(circle) do label(\"circle\") end defp label(text) do String.trim(text) end defmacro trac… doc=-
+fact import Enum 2:2-2:13 bytes=29-40 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/elixir confidence=1 sig= doc=-
+fact import Shapes.Shape 3:2-3:20 bytes=43-61 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/elixir confidence=1 sig= doc=-
+fact import Logger 4:2-4:16 bytes=64-78 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/elixir confidence=1 sig= doc=-
+fact function name 9:2-11:5 bytes=119-164 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=0a2ecb4a4761b9eb/21 source=treesitter/elixir confidence=1 sig=def name(circle) do label(\"circle\") end doc=-
+fact function label 13:2-15:5 bytes=168-215 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=158c45f35d338662/21 source=treesitter/elixir confidence=1 sig=defp label(text) do String.trim(text) end doc=-
+fact function traced 17:2-19:5 bytes=219-277 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=ed7298721213e5c8/24 source=treesitter/elixir confidence=1 sig=defmacro traced(expr) do quote do: unquote(expr) end doc=-
+call 0 defmodule on=defmodule
+call 29 import on=import
+call 43 alias on=alias
+call 64 require on=require
+call 83 limit on=limit
+call 119 def on=def
+call 123 name on=name
+call 143 label on=label
+call 168 defp on=defp
+call 173 label on=label
+call 199 trim on=String
+call 219 defmacro on=defmacro
+call 228 traced on=traced
+call 248 quote on=quote
+call 258 unquote on=unquote
+span 95-116 kind=0
+span 149-157 kind=1

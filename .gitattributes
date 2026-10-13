@@ -1,0 +1,2 @@
+# Byte offsets in the golden facts depend on the fixtures being stored as written.
+tests/fixtures/languages/** -text

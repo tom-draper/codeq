@@ -1,0 +1,24 @@
+file Sample.java eca75075d1485924
+fact import java.util.List 3:0-3:22 bytes=17-39 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/java confidence=1 sig= doc=-
+fact interface Named 5:0-7:1 bytes=41-79 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=6d79c6bee63fc4f0/13 source=treesitter/java confidence=1 sig=interface Named doc=-
+fact method name 6:4-6:18 bytes=63-77 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=-/7 source=treesitter/java confidence=1 sig=String name(); doc=-
+fact class Base 9:0-11:1 bytes=81-124 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=306adb733bd229af/16 source=treesitter/java confidence=1 sig=class Base doc=-
+fact field sides 10:4-10:28 bytes=98-122 vis=restricted owner=Base derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/java confidence=1 sig=protected int sides = 0; doc=-
+fact enum Colour 13:0-16:1 bytes=126-160 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/java confidence=1 sig=enum Colour doc=-
+fact variant RED 14:4-14:7 bytes=144-147 vis=private owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/java confidence=1 sig=RED doc=-
+fact variant GREEN 15:4-15:9 bytes=153-158 vis=private owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/java confidence=1 sig=GREEN doc=-
+fact class Sample 19:0-36:1 bytes=196-540 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=e7d5246ea4bc359e/107 source=treesitter/java confidence=1 sig=public class Sample extends Base implements Named doc=-
+fact field radius 20:4-20:32 bytes=252-280 vis=private owner=Sample derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/java confidence=1 sig=private double radius = 1.0; doc=-
+fact method name 22:4-26:5 bytes=286-391 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=e3f51380eeed4e5f/27 source=treesitter/java confidence=1 sig=@Override public String name() doc=-
+fact method label 28:4-30:5 bytes=397-465 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=001d47339f8740f6/24 source=treesitter/java confidence=1 sig=static String label(String text) doc=-
+fact method labelsAreKept 32:4-35:5 bytes=471-538 vis=private owner=- derived=0 test=1 decorator=@Test contract=- shape=74c3e49e0ec1b44f/31 source=treesitter/java confidence=1 sig=@Test void labelsAreKept() doc=-
+relation 19 Sample extends Base
+relation 19 Sample implements Named
+call 369 label on=-
+call 452 trim on=text
+call 517 of on=List
+call 520 label on=-
+span 162-195 kind=0
+span 331-353 kind=0
+span 375-383 kind=1
+span 526-529 kind=1

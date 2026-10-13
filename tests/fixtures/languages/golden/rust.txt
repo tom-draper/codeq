@@ -1,0 +1,20 @@
+file sample.rs d21d770fc268bd1a
+fact import std::fmt::Display 1:0-1:22 bytes=0-22 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/rust confidence=1 sig= doc=-
+fact trait Shape 4:0-6:1 bytes=49-98 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=dddcdae8ce58ff3f/20 source=treesitter/rust confidence=1 sig=pub trait Shape doc=A shape with a name.
+fact method name 5:4-5:29 bytes=71-96 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=d8ea4beb22ef34ee/12 source=treesitter/rust confidence=1 sig=fn name(&self) -> String; doc=-
+fact struct Circle 8:0-10:1 bytes=100-142 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=435cbcc17678491e/15 source=treesitter/rust confidence=1 sig=pub struct Circle { pub radius: f64, } doc=-
+fact field radius 9:4-9:19 bytes=124-139 vis=public owner=Circle derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/rust confidence=1 sig=pub radius: f64 doc=-
+fact enum Colour 12:0-15:1 bytes=144-183 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=82fd54e0dcca489d/14 source=treesitter/rust confidence=1 sig=pub enum Colour { Red, Green, } doc=-
+fact variant Red 13:4-13:7 bytes=166-169 vis=public owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/rust confidence=1 sig=Red doc=-
+fact variant Green 14:4-14:9 bytes=175-180 vis=public owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/rust confidence=1 sig=Green doc=-
+fact method name 18:4-21:5 bytes=213-300 vis=private owner=- derived=0 test=0 decorator=- contract=Shape shape=0c2386b15b6c310d/25 source=treesitter/rust confidence=1 sig=fn name(&self) -> String doc=-
+fact function label 24:0-26:1 bytes=304-363 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=ee47881f76e61539/27 source=treesitter/rust confidence=1 sig=pub fn label(text: &str) -> String doc=-
+fact function labels_are_kept 29:0-31:1 bytes=373-430 vis=private owner=- derived=0 test=1 decorator=#[test] contract=- shape=e034d29c6edfdd55/30 source=treesitter/rust confidence=1 sig=fn labels_are_kept() doc=-
+relation 17 Circle implements Shape
+call 279 label on=-
+call 350 to_string on=text
+span 24-49 kind=0
+span 248-270 kind=0
+span 285-293 kind=1
+span 417-420 kind=1
+span 423-426 kind=1

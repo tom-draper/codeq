@@ -1,0 +1,20 @@
+file sample.rb e87ae3314e6adfdd
+fact import json 1:0-1:14 bytes=0-14 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/7 source=treesitter/ruby confidence=1 sig= doc=-
+fact import helper 2:0-2:25 bytes=15-40 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/7 source=treesitter/ruby confidence=1 sig= doc=-
+fact module Shapes 4:0-25:3 bytes=42-294 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=c737d513fd568395/59 source=treesitter/ruby confidence=1 sig=module Shapes LIMIT = 10 class Shape attr_reader :sides def name \'shape\' end end # A circle is a shape. class Circle < Shape def area LIMIT * 3 end def self.build Circle.new.name end end end doc=-
+fact class Shape 7:2-13:5 bytes=72-148 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=0a82abf382585239/18 source=treesitter/ruby confidence=1 sig=class Shape attr_reader :sides def name \'shape\' end end doc=-
+fact field sides 8:4-8:22 bytes=88-106 vis=public owner=Shape derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/ruby confidence=1 sig=attr_reader :sides doc=-
+fact method name 10:4-12:7 bytes=112-142 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/9 source=treesitter/ruby confidence=1 sig=def name \'shape\' end doc=-
+fact class Circle 16:2-24:5 bytes=177-290 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=6c7aa1a12b124ca4/31 source=treesitter/ruby confidence=1 sig=class Circle < Shape def area LIMIT * 3 end def self.build Circle.new.name end end doc=-
+fact method area 17:4-19:7 bytes=202-234 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/9 source=treesitter/ruby confidence=1 sig=def area LIMIT * 3 end doc=-
+fact method build 21:4-23:7 bytes=240-284 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=ff4b9fb6dff154d4/14 source=treesitter/ruby confidence=1 sig=def self.build Circle.new.name end doc=-
+relation 16 Circle extends Shape
+call 0 require on=-
+call 15 require_relative on=-
+call 88 attr_reader on=-
+call 268 new on=Circle
+call 272 name on=Circle.new
+span 8-14 kind=1
+span 32-40 kind=1
+span 127-134 kind=1
+span 152-174 kind=0

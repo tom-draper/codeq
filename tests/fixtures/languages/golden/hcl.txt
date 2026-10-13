@@ -1,0 +1,16 @@
+file sample.tf 0ae7f8da49389757
+fact variable region 1:0-4:1 bytes=0-64 vis=- owner=variable derived=0 test=0 decorator=- contract=- shape=-/0 source=treesitter/hcl confidence=1 sig=variable \"region\" { doc=-
+fact constant name 7:2-7:17 bytes=77-92 vis=- owner=local derived=0 test=0 decorator=- contract=- shape=-/0 source=treesitter/hcl confidence=1 sig=name = \"circle\" doc=-
+fact resource assets 11:0-13:1 bytes=119-178 vis=- owner=aws_s3_bucket derived=0 test=0 decorator=- contract=- shape=-/0 source=treesitter/hcl confidence=1 sig=resource \"aws_s3_bucket\" \"assets\" { doc=-
+fact module network 15:0-17:1 bytes=180-231 vis=- owner=module derived=0 test=0 decorator=- contract=- shape=-/0 source=treesitter/hcl confidence=1 sig=module \"network\" { doc=-
+fact import ./modules/network 16:2-16:30 bytes=201-229 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=treesitter/hcl confidence=1 sig=source = \"./modules/network\" doc=-
+fact output bucket 19:0-21:1 bytes=233-286 vis=- owner=output derived=0 test=0 decorator=- contract=- shape=-/0 source=treesitter/hcl confidence=1 sig=output \"bucket\" { doc=-
+span 9-17 kind=1
+span 51-62 kind=1
+span 84-92 kind=1
+span 96-118 kind=0
+span 128-143 kind=1
+span 144-152 kind=1
+span 187-196 kind=1
+span 210-229 kind=1
+span 240-248 kind=1

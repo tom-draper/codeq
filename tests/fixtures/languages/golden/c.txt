@@ -1,0 +1,17 @@
+file sample.c 7d16110fcee1afd4
+fact import stdio.h 1:0-2:0 bytes=0-19 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/3 source=treesitter/c confidence=1 sig= doc=-
+fact import sample.h 2:0-3:0 bytes=19-39 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/c confidence=1 sig= doc=-
+fact struct circle 6:0-9:1 bytes=58-109 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=527e04929a9ab31c/14 source=treesitter/c confidence=1 sig=struct circle doc=-
+fact field radius 7:4-7:18 bytes=78-92 vis=public owner=circle derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/c confidence=1 sig=double radius; doc=-
+fact field sides 8:4-8:14 bytes=97-107 vis=public owner=circle derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/c confidence=1 sig=int sides; doc=-
+fact enum colour 11:0-11:26 bytes=112-138 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/c confidence=1 sig=enum colour doc=-
+fact variant RED 11:14-11:17 bytes=126-129 vis=public owner=colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/c confidence=1 sig=RED doc=-
+fact variant GREEN 11:19-11:24 bytes=131-136 vis=public owner=colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/c confidence=1 sig=GREEN doc=-
+fact function label 16:0-18:1 bytes=200-255 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=bf9f13ede0ee9401/25 source=treesitter/c confidence=1 sig=static const char *label(void) doc=-
+fact function describe 20:0-23:1 bytes=257-333 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=15eff21b6ce7a022/37 source=treesitter/c confidence=1 sig=int describe(circle_t *c) doc=-
+call 289 printf on=-
+call 304 label on=-
+span 28-38 kind=1
+span 174-199 kind=0
+span 244-252 kind=1
+span 296-302 kind=1

@@ -1,0 +1,18 @@
+file sample.php ee62802ab6efffcd
+fact import Shapes\Contracts\Countable 5:4-5:30 bytes=30-56 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/8 source=treesitter/php confidence=1 sig= doc=-
+fact interface Named 7:0-10:1 bytes=59-114 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=ee8514cdc9ad885d/18 source=treesitter/php confidence=1 sig=interface Named doc=-
+fact class Shape 12:0-15:1 bytes=116-161 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=15010e159d9063af/18 source=treesitter/php confidence=1 sig=class Shape doc=-
+fact field sides 14:4-14:29 bytes=134-159 vis=restricted owner=Shape derived=0 test=0 decorator=- contract=- shape=df51b115ba0e72e9/12 source=treesitter/php confidence=1 sig=protected int $sides = 0; doc=-
+fact enum Colour 17:0-21:1 bytes=163-208 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=d17c30735edcc502/14 source=treesitter/php confidence=1 sig=enum Colour { case Red; case Green; } doc=-
+fact variant Red 19:4-19:13 bytes=181-190 vis=public owner=Colour derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/php confidence=1 sig=case Red; doc=-
+fact variant Green 20:4-20:15 bytes=195-206 vis=public owner=Colour derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/php confidence=1 sig=case Green; doc=-
+fact class Circle 24:0-32:1 bytes=240-399 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=63f8e4c2ffde41ea/51 source=treesitter/php confidence=1 sig=class Circle extends Shape implements Named doc=-
+fact field radius 26:4-26:31 bytes=290-317 vis=public owner=Circle derived=0 test=0 decorator=- contract=- shape=e9881b3cdfcece4a/12 source=treesitter/php confidence=1 sig=public float $radius = 1.0; doc=-
+fact method name 28:4-31:5 bytes=323-397 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=235e5a2c4df53dbf/27 source=treesitter/php confidence=1 sig=public function name(): string doc=-
+fact function label 34:0-37:1 bytes=401-465 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=03153275ced046c9/30 source=treesitter/php confidence=1 sig=function label(string $text): string doc=-
+relation 24 Circle extends Shape
+relation 24 Circle implements Named
+call 375 label on=-
+call 451 trim on=-
+span 210-239 kind=0
+span 381-389 kind=1

@@ -1,0 +1,22 @@
+file sample.ts b97cbfd3dd315bef
+fact import fs 1:0-1:30 bytes=0-30 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=adb93744f8b60ef6/14 source=treesitter/typescript confidence=1 sig= doc=-
+fact import fs.readFile 1:9-1:17 bytes=9-17 vis=- owner=- derived=1 test=0 decorator=- contract=- shape=-/0 source=treesitter/typescript confidence=1 sig= doc=-
+fact interface Named 3:7-5:1 bytes=39-76 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=ff188285a2917080/16 source=treesitter/typescript confidence=1 sig=interface Named { name(): string; } doc=-
+fact enum Colour 7:7-10:1 bytes=85-116 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/typescript confidence=1 sig=enum Colour { Red, Green, } doc=-
+fact variant Red 8:2-8:5 bytes=101-104 vis=public owner=Colour derived=0 test=0 decorator=- contract=- shape=-/1 source=treesitter/typescript confidence=1 sig=Red doc=-
+fact variant Green 9:2-9:7 bytes=108-113 vis=public owner=Colour derived=0 test=0 decorator=- contract=- shape=-/1 source=treesitter/typescript confidence=1 sig=Green doc=-
+fact type Id 12:7-12:24 bytes=125-142 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/7 source=treesitter/typescript confidence=1 sig=type Id = string; doc=-
+fact class Base 14:0-16:1 bytes=144-181 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=e4d7ea232fecf136/13 source=treesitter/typescript confidence=1 sig=class Base doc=-
+fact field sides 15:2-15:21 bytes=159-178 vis=restricted owner=Base derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/typescript confidence=1 sig=protected sides = 0 doc=-
+fact class Circle 19:7-25:1 bytes=220-340 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=1326cfd8c03e5099/46 source=treesitter/typescript confidence=1 sig=class Circle extends Base implements Named doc=-
+fact field radius 20:2-20:20 bytes=267-285 vis=public owner=Circle derived=0 test=0 decorator=- contract=- shape=-/8 source=treesitter/typescript confidence=1 sig=radius: number = 1 doc=-
+fact method name 22:2-24:3 bytes=290-338 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=304865c4a7a3792b/24 source=treesitter/typescript confidence=1 sig=name(): string doc=-
+fact function label 27:7-29:1 bytes=349-411 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=741a7305369de0c4/30 source=treesitter/typescript confidence=1 sig=function label(text: string): string doc=-
+fact constant LIMIT 31:7-31:24 bytes=420-437 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/7 source=treesitter/typescript confidence=1 sig=const LIMIT = 10; doc=-
+relation 19 Circle extends Base
+relation 19 Circle implements Named
+call 318 label on=-
+call 402 trim on=text
+span 25-29 kind=1
+span 183-212 kind=0
+span 324-332 kind=1

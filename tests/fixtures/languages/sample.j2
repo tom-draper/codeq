@@ -1,0 +1,12 @@
+{% extends "base.j2" %}
+{% import "macros.j2" as forms %}
+
+{% macro label(text) %}
+  <span>{{ text }}</span>
+{% endmacro %}
+
+{% block content %}
+  {# The label is fixed. #}
+  {{ label("circle") }}
+  {% include "footer.j2" %}
+{% endblock %}
