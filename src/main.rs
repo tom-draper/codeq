@@ -940,6 +940,17 @@ fn main() -> ExitCode {
 
     match dispatch(&cwd, cli.command, out) {
         Ok(()) => ExitCode::SUCCESS,
+        // A raw "database is locked" reads like corruption. It is another
+        // codeq still writing, which is routine during a long cold build.
+        Err(e) if db::is_busy(&e) => {
+            eprintln!(
+                "codeq: another codeq process is still writing this repository's index and did \
+                 not finish within {:?}. The index is not damaged: retry when that run \
+                 completes, or set CODEQ_BUSY_TIMEOUT_MS to wait longer.",
+                db::busy_timeout()
+            );
+            ExitCode::FAILURE
+        }
         Err(e) => {
             eprintln!("codeq: {e:#}");
             ExitCode::FAILURE

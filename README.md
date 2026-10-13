@@ -494,6 +494,9 @@ Every command works there, and the index lives in a `.codeq` inside that directo
   mtime) are skipped, changed files are reparsed. There is no background process.
 - SQLite store. Files, definitions, and imports (with ranges, signatures, docstrings) live
   in `.codeq/index.db` in WAL mode, so one invocation can refresh while others read.
+  Two invocations that both need to write queue: the second waits up to 15 seconds for the
+  first. A cold build of a very large repository can take longer than that, and a query
+  arriving meanwhile then fails saying so. `CODEQ_BUSY_TIMEOUT_MS` raises the wait.
 - Tree-sitter extraction. Symbols and imports come from Tree-sitter queries, so a definition
   is distinguished from a mention. Import strings are kept raw; codeq does not resolve
   aliases or package roots.
