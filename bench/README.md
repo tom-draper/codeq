@@ -78,6 +78,23 @@ ranking rules. It preserves Python import prefixes, Jinja ancestor lookup,
 relative paths, and ambiguity. The profiling binary uses the original release
 configuration with symbols retained; profiling time is excluded from the samples.
 
+[The cached-call results](results/call_query_latency_20261013.json) compare
+baseline `43f820d` with indexed call-site reads and shared-tree extraction.
+Across seven alternating runs per binary, Redis's `callers dictFind --calls`
+fell from a median of 1305.86 ms to 49.23 ms. Flask's `references get --calls`
+fell from 148.38 ms to 20.78 ms. The repository's `references prepare --on conn`
+fell from 353.49 ms to 17.52 ms. All nine query scenarios returned identical
+stdout and stderr on every timed invocation. The call-filter scenarios also
+check that their answers contain rows.
+
+[The refresh results](results/call_refresh_latency_20261013.json) check cold,
+edited, and unchanged queries on small Python fixtures and a tracked repository
+snapshot. Their timings remain close, so these samples do not establish an
+indexing speedup. Normal indexing now extracts calls from the existing tree,
+including component script trees. Rust call sites retain the unrepaired tree,
+and SQL identifier repair still parses the original source for calls. The
+indexed facts and schema version remain unchanged.
+
 ## Text-mode faithfulness (`textmode.py`)
 
 `differential.py`/`completion.py` only exercise `--json`, so the *text renderer* —
