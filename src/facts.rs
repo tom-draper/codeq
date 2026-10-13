@@ -362,61 +362,7 @@ impl LangSpec {
                 }
             }
             if let Some(g) = guard {
-                let is_import = kind == Some("import");
-                // A guarded match is only valid when the token is a known
-                // keyword. Elixir definitions are macro calls (`def`/`defp`/
-                // `defmodule`); every other language guards call-style imports.
-                // The allow-list depends on what the match claims to be, not
-                // just the language: in Elixir `defmodule M` and `alias M`
-                // are the same shape of call, and only the keyword says
-                // whether it defines a module or imports one. Checking the
-                // keyword against the *kind* keeps them apart.
-                let ok = match (self.lang, is_import) {
-                    ("elixir", false) => matches!(
-                        g,
-                        "def"
-                            | "defp"
-                            | "defmacro"
-                            | "defmacrop"
-                            | "defmodule"
-                            | "defprotocol"
-                            | "defimpl"
-                            | "defguard"
-                    ),
-                    ("elixir", true) => matches!(g, "alias" | "import" | "use" | "require"),
-                    // Python declares an instance attribute by assigning it,
-                    // and only a `self.`-qualified assignment declares one:
-                    // `other.x = 1` mutates somebody else's object. The member
-                    // query captures the receiver as `@guard` for this check,
-                    // so dropping this arm silently loses every Python
-                    // instance attribute.
-                    ("python", false) => g == "self",
-                    ("bash", _) => matches!(g, "source" | "."),
-                    ("lua", _) => matches!(g, "require" | "dofile" | "loadfile"),
-                    ("zig", _) => matches!(g, "@import" | "@cImport"),
-                    // Ruby uses method calls for both requires and field
-                    // declarations; the callee name says which.
-                    ("ruby", true) => matches!(
-                        g,
-                        "require"
-                            | "require_relative"
-                            | "require_dependency"
-                            | "load"
-                            | "autoload"
-                    ),
-                    ("ruby", false) => {
-                        matches!(g, "attr_accessor" | "attr_reader" | "attr_writer")
-                    }
-                    _ => matches!(
-                        g,
-                        "require"
-                            | "require_relative"
-                            | "require_dependency"
-                            | "load"
-                            | "autoload"
-                    ),
-                };
-                if !ok {
+                if !guard_allows(self.lang, kind == Some("import"), g) {
                     continue;
                 }
             }
@@ -451,21 +397,7 @@ impl LangSpec {
                     }
                     _ => body,
                 };
-                // Some grammars capture the whole quoted import path (Go);
-                // normalise to the bare module string like the others.
-                let name = if kind == "import" {
-                    name.trim_matches(|c: char| "\"'`<>".contains(c))
-                        .to_string()
-                } else if self.lang == "sql" && kind == "field" {
-                    unquote_sql_identifier(&name)
-                } else if kind == "field" {
-                    // A Ruby `attr_accessor :a` declares the field `a`; the
-                    // colon is symbol syntax, not part of the name.
-                    name.trim_start_matches(':').to_string()
-                } else {
-                    name
-                };
-                let name = normalize_identifier(self.lang, &name);
+                let name = declared_name(self.lang, kind, name);
                 // A function declared inside a type body is a method: it
                 // can be called on a value. Several grammars use the same
                 // node for both (Rust `function_item`, Python
@@ -476,37 +408,7 @@ impl LangSpec {
                 } else {
                     kind
                 };
-                let visibility = if kind == "import" {
-                    None
-                } else {
-                    let own = visibility_of(self.lang, &name, node, src);
-                    // A variant carries no visibility of its own in any
-                    // language codeq supports — Rust, Java, C# and TS all
-                    // forbid a modifier there, because `E::A` is reachable
-                    // exactly where `E` is. Asking the node made every one
-                    // of them `private`, so `api` reported a public enum's
-                    // surface as the bare enum name and `unused` labelled
-                    // its variants private. Inherit from the declaring type.
-                    let own = if kind == "variant" {
-                        enclosing_type_visibility(self.lang, node, src).or(own)
-                    } else {
-                        own
-                    };
-                    // A member of a private type is not public API in any
-                    // language codeq supports. Visibility was computed per
-                    // definition without consulting the type around it, so
-                    // the methods and fields of a Python `class _Draw` were
-                    // reported as public — putting them in `api`, in
-                    // `untested`, and into `api --compare-to` as newly *added*
-                    // public surface. The declaration is public; what it is
-                    // declared inside is what makes it reachable.
-                    match own.as_deref() {
-                        Some("public") if enclosed_by_private_type(self.lang, node, src) => {
-                            Some("private".to_string())
-                        }
-                        _ => own,
-                    }
-                };
+                let visibility = effective_visibility(self.lang, kind, &name, node, src);
                 let start = node.start_position();
                 let end = node.end_position();
                 // A member with no declaring type is not addressable — an
@@ -637,6 +539,123 @@ impl LangSpec {
             }
         }
         relations
+    }
+}
+
+/// A guarded match is only valid when the token is a known
+/// keyword. Elixir definitions are macro calls (`def`/`defp`/
+/// `defmodule`); every other language guards call-style imports.
+/// The allow-list depends on what the match claims to be, not
+/// just the language: in Elixir `defmodule M` and `alias M`
+/// are the same shape of call, and only the keyword says
+/// whether it defines a module or imports one. Checking the
+/// keyword against the *kind* keeps them apart.
+fn guard_allows(lang: &str, is_import: bool, g: &str) -> bool {
+    match (lang, is_import) {
+        ("elixir", false) => matches!(
+            g,
+            "def"
+                | "defp"
+                | "defmacro"
+                | "defmacrop"
+                | "defmodule"
+                | "defprotocol"
+                | "defimpl"
+                | "defguard"
+        ),
+        ("elixir", true) => matches!(g, "alias" | "import" | "use" | "require"),
+        // Python declares an instance attribute by assigning it,
+        // and only a `self.`-qualified assignment declares one:
+        // `other.x = 1` mutates somebody else's object. The member
+        // query captures the receiver as `@guard` for this check,
+        // so dropping this arm silently loses every Python
+        // instance attribute.
+        ("python", false) => g == "self",
+        ("bash", _) => matches!(g, "source" | "."),
+        ("lua", _) => matches!(g, "require" | "dofile" | "loadfile"),
+        ("zig", _) => matches!(g, "@import" | "@cImport"),
+        // Ruby uses method calls for both requires and field
+        // declarations; the callee name says which.
+        ("ruby", true) => matches!(
+            g,
+            "require"
+                | "require_relative"
+                | "require_dependency"
+                | "load"
+                | "autoload"
+        ),
+        ("ruby", false) => {
+            matches!(g, "attr_accessor" | "attr_reader" | "attr_writer")
+        }
+        _ => matches!(
+            g,
+            "require"
+                | "require_relative"
+                | "require_dependency"
+                | "load"
+                | "autoload"
+        ),
+    }
+}
+
+/// The name a definition is known by, with the syntax its grammar captured
+/// around it removed.
+fn declared_name(lang: &str, kind: &str, name: String) -> String {
+    // Some grammars capture the whole quoted import path (Go);
+    // normalise to the bare module string like the others.
+    let name = if kind == "import" {
+        name.trim_matches(|c: char| "\"'`<>".contains(c))
+            .to_string()
+    } else if lang == "sql" && kind == "field" {
+        unquote_sql_identifier(&name)
+    } else if kind == "field" {
+        // A Ruby `attr_accessor :a` declares the field `a`; the
+        // colon is symbol syntax, not part of the name.
+        name.trim_start_matches(':').to_string()
+    } else {
+        name
+    };
+    normalize_identifier(lang, &name)
+}
+
+/// A definition's visibility once the type around it is taken into account.
+/// `None` for imports, where it does not apply.
+fn effective_visibility(
+    lang: &str,
+    kind: &str,
+    name: &str,
+    node: Node,
+    src: &[u8],
+) -> Option<String> {
+    if kind == "import" {
+        return None;
+    }
+    let own = visibility_of(lang, name, node, src);
+    // A variant carries no visibility of its own in any
+    // language codeq supports — Rust, Java, C# and TS all
+    // forbid a modifier there, because `E::A` is reachable
+    // exactly where `E` is. Asking the node made every one
+    // of them `private`, so `api` reported a public enum's
+    // surface as the bare enum name and `unused` labelled
+    // its variants private. Inherit from the declaring type.
+    let own = if kind == "variant" {
+        enclosing_type_visibility(lang, node, src).or(own)
+    } else {
+        own
+    };
+    // A member of a private type is not public API in any
+    // language codeq supports. Visibility was computed per
+    // definition without consulting the type around it, so
+    // the methods and fields of a Python `class _Draw` were
+    // reported as public — putting them in `api`, in
+    // `untested`, and into `api --compare-to` as newly *added*
+    // public surface. The declaration is public; what it is
+    // declared inside is what makes it reachable.
+    match own.as_deref() {
+        Some("public") if enclosed_by_private_type(lang, node, src) => {
+            Some("private".to_string())
+        }
+        _ => own,
     }
 }
 
