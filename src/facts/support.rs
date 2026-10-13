@@ -40,47 +40,11 @@ pub struct Support {
     pub calls: bool,
 }
 
-/// The raw query text for a language: (definitions, relations).
-fn queries_for(language: &str) -> Option<(String, String)> {
-    let pair = |q: &str, r: &str| Some((q.to_string(), r.to_string()));
-    match language {
-        "rust" => pair(RUST_QUERY, RUST_REL),
-        "python" => pair(PYTHON_QUERY, PYTHON_REL),
-        "javascript" => pair(&format!("{JS_QUERY}\n{JS_EXTRA}"), JS_REL),
-        "typescript" | "tsx" => pair(&format!("{JS_QUERY}\n{TS_EXTRA}"), TS_REL),
-        "go" => pair(GO_QUERY, GO_REL),
-        "java" => pair(JAVA_QUERY, JAVA_REL),
-        "ruby" => pair(RUBY_QUERY, RUBY_REL),
-        "c" => pair(C_QUERY, C_REL),
-        "cpp" => pair(CPP_QUERY, CPP_REL),
-        "csharp" => pair(CSHARP_QUERY, CSHARP_REL),
-        "php" => pair(PHP_QUERY, PHP_REL),
-        "bash" => pair(BASH_QUERY, ""),
-        "lua" => pair(LUA_QUERY, ""),
-        "scala" => pair(SCALA_QUERY, SCALA_REL),
-        "kotlin" => pair(KOTLIN_QUERY, KOTLIN_REL),
-        "swift" => pair(SWIFT_QUERY, SWIFT_REL),
-        "dart" => pair(DART_QUERY, DART_REL),
-        "zig" => pair(ZIG_QUERY, ""),
-        "elixir" => pair(ELIXIR_QUERY, ""),
-        "solidity" => pair(SOLIDITY_QUERY, SOLIDITY_REL),
-        "css" => pair(CSS_QUERY, ""),
-        "powershell" => pair(POWERSHELL_QUERY, ""),
-        "proto" => pair(PROTO_QUERY, ""),
-        "graphql" => pair(GRAPHQL_QUERY, GRAPHQL_REL),
-        "sql" => pair(SQL_QUERY, SQL_REL),
-        // svelte, vue, hcl and markdown build their facts in code rather than
-        // from a query, so there is no query text to describe them; `support`
-        // states their capabilities directly.
-        _ => None,
-    }
-}
-
 pub fn support(language: &str) -> Option<Support> {
     // Four languages build their facts in code rather than from a query, so
     // there is no query text to derive their capabilities from. Describe them
-    // directly — the alternative (falling through to `queries_for` and getting
-    // `None`) is what made them look unsupported.
+    // directly — the alternative (reading a definition query that is empty, or
+    // covers only the markup) is what made them look unsupported.
     let hand = |definitions, imports, members, relations: bool, calls| {
         Some(Support {
             language: language.to_string(),
@@ -118,14 +82,16 @@ pub fn support(language: &str) -> Option<Support> {
         "svelte" | "vue" => return hand(true, true, true, true, true),
         _ => {}
     }
-    let (query, rel) = queries_for(language)?;
+    let Grammar {
+        defs: query, rel, ..
+    } = grammar(language)?;
     Some(Support {
         language: language.to_string(),
         definitions: query.contains(") @") || query.contains("@function"),
         imports: query.contains("@import"),
         members: query.contains("@field") || query.contains("@variant"),
         relations: !rel.trim().is_empty(),
-        relation_kinds: relation_kinds_of(&rel),
+        relation_kinds: relation_kinds_of(rel),
         spans: has_spans(language),
         calls: crate::astgrep::ts_language(language).is_some(),
     })
