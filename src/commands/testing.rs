@@ -152,9 +152,10 @@ pub(super) fn test_sites(
         &s.repo.root,
         &re,
         prefilter_of(name).as_deref(),
-        path,
-        None,
-        None,
+        ScanScope {
+            path,
+            ..Default::default()
+        },
         &opts,
     )? {
         SearchData::Matches { matches, .. } => matches,

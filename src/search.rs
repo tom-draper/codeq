@@ -173,6 +173,19 @@ pub(crate) fn class_at(spans: &[(usize, usize, Span)], off: usize) -> Option<Spa
     }
 }
 
+/// Which files a scan covers. Every filter is applied per candidate row, and a
+/// file must pass all of them.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ScanScope<'a> {
+    /// Path substring, as `--path` takes it.
+    pub path: Option<&'a str>,
+    /// Exact language name.
+    pub language: Option<&'a str>,
+    /// A predicate over the repo-relative path, for scopes a substring cannot
+    /// express (globs, several positional paths).
+    pub accept: Option<&'a dyn Fn(&str) -> bool>,
+}
+
 pub(crate) struct ScanOpts {
     pub(crate) before: usize,
     pub(crate) after: usize,
@@ -470,21 +483,10 @@ pub(crate) fn run_search(
     root: &Path,
     re: &regex::Regex,
     prefilter: Option<&[String]>,
-    path_filter: Option<&str>,
-    language_filter: Option<&str>,
-    path_accept: Option<&dyn Fn(&str) -> bool>,
+    scope: ScanScope,
     opts: &ScanOpts,
 ) -> Result<SearchData> {
-    let (acc, _) = run_search_acc(
-        conn,
-        root,
-        re,
-        prefilter,
-        path_filter,
-        language_filter,
-        path_accept,
-        opts,
-    )?;
+    let (acc, _) = run_search_acc(conn, root, re, prefilter, scope, opts)?;
     Ok(acc.finish_for(opts))
 }
 
@@ -510,9 +512,7 @@ pub(crate) fn run_search_acc(
     root: &Path,
     re: &regex::Regex,
     prefilter: Option<&[String]>,
-    path_filter: Option<&str>,
-    language_filter: Option<&str>,
-    path_accept: Option<&dyn Fn(&str) -> bool>,
+    scope: ScanScope,
     opts: &ScanOpts,
 ) -> Result<(ScanAcc, bool)> {
     let cap = scan_cap(opts);
@@ -546,18 +546,18 @@ pub(crate) fn run_search_acc(
     let mut rows = fts_stmt.query(params.as_slice())?;
     'outer: while let Some(row) = rows.next()? {
         let rel = row.get_ref(0)?.as_str()?;
-        if let Some(pf) = path_filter {
+        if let Some(pf) = scope.path {
             if !rel.contains(pf) {
                 continue;
             }
         }
-        if let Some(accept) = path_accept {
+        if let Some(accept) = scope.accept {
             if !accept(rel) {
                 continue;
             }
         }
         let lang: Option<String> = row.get(1)?;
-        if let Some(lf) = language_filter {
+        if let Some(lf) = scope.language {
             if lang.as_deref() != Some(lf) {
                 continue;
             }
