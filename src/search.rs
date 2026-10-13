@@ -538,6 +538,14 @@ pub(crate) fn run_search_acc(
     // Comment/string spans are cached in the index (extracted once), so --in is
     // a lookup, not a per-query re-parse.
     let mut span_stmt = conn.prepare(SPANS_SQL)?;
+    let mut call_stmt = if opts.call_only || opts.qualifier.is_some() {
+        Some(conn.prepare(
+            "SELECT start_byte, receiver FROM calls
+             WHERE file_id = (SELECT id FROM files WHERE path = ?1)",
+        )?)
+    } else {
+        None
+    };
 
     let mut acc = ScanAcc::default();
     let mut stopped = false;
@@ -593,10 +601,13 @@ pub(crate) fn run_search_acc(
         // Defs are only loaded once a match survives the filters, so a candidate
         // that matches the substring but not `\bword\b` (or is filtered by
         // --calls/--on) costs neither a body scan nor a defs query.
-        // One parse per candidate file, and only when `--calls`/`--on` is in
-        // play: ordinary searches never reach this.
-        let calls = if opts.call_only || opts.qualifier.is_some() {
-            calls_in(lang.as_deref().unwrap_or(""), body)
+        let calls = if let Some(stmt) = call_stmt.as_mut().filter(|_| {
+            crate::callsite::supports_syntax_calls(lang.as_deref().unwrap_or(""))
+        }) {
+            let rows = stmt.query_map([rel], |r| {
+                Ok((r.get::<_, usize>(0)?, r.get::<_, Option<String>>(1)?))
+            })?;
+            Some(rows.collect::<rusqlite::Result<CallMap>>()?)
         } else {
             None
         };

@@ -8068,6 +8068,32 @@ fn call_filters_use_the_parse_tree() {
     );
 }
 
+#[test]
+fn call_filters_refresh_cached_receivers_and_empty_call_maps() {
+    let f = Fixture::new();
+    f.write("a.py", "def query(): pass\ndef run():\n    db.query()\n");
+    for _ in 0..2 {
+        let refs = f.run(&["references", "query", "--on", "db"]);
+        assert_eq!(refs["data"]["references"].as_array().unwrap().len(), 1);
+        let callers = f.run(&["callers", "query", "--calls"]);
+        assert_eq!(field_set(&callers, "name"), ["run"]);
+    }
+
+    f.write("a.py", "def query(): pass\ndef run():\n    other.query()\n");
+    let old = f.run(&["references", "query", "--on", "db"]);
+    assert!(old["data"]["references"].as_array().unwrap().is_empty());
+    let new = f.run(&["references", "query", "--on", "other"]);
+    assert_eq!(new["data"]["references"].as_array().unwrap().len(), 1);
+
+    f.write("a.py", "def query(): pass\ndef run():\n    return query\n");
+    for _ in 0..2 {
+        let refs = f.run(&["references", "query", "--calls"]);
+        assert!(refs["data"]["references"].as_array().unwrap().is_empty());
+        let callers = f.run(&["callers", "query", "--calls"]);
+        assert!(callers["data"].as_array().unwrap().is_empty());
+    }
+}
+
 /// The same call written across the grammars codeq knows. Each is checked
 /// against the real tree, not against documentation.
 #[test]
