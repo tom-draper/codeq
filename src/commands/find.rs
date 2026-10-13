@@ -469,9 +469,11 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
             &s.repo.root,
             &re,
             match_query.as_deref(),
-            args.path,
-            args.language,
-            path_accept,
+            ScanScope {
+                path: args.path,
+                language: args.language,
+                accept: path_accept,
+            },
             &opts,
         )?
     };
@@ -737,9 +739,11 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         &s.repo.root,
         &re,
         match_query.as_deref(),
-        path,
-        language,
-        None,
+        ScanScope {
+            path,
+            language,
+            accept: None,
+        },
         &opts,
     )? {
         SearchData::Matches { matches, truncated } => (matches, truncated),

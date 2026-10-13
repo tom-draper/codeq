@@ -18,7 +18,7 @@ use crate::index::{language_for, refresh};
 use crate::repo::Repo;
 use crate::search::{
     self, innermost, load_file_defs, prefilter_of, regex_prefilter, run_search, run_search_acc,
-    scan_stdin, scan_unindexed, FileDef, Hit, InFilter, OutMode, ScanOpts, SearchData,
+    scan_stdin, scan_unindexed, FileDef, Hit, InFilter, OutMode, ScanOpts, ScanScope, SearchData,
 };
 
 mod analysis;

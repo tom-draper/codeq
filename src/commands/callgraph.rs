@@ -100,9 +100,10 @@ pub(super) fn callers_of(
         &s.repo.root,
         &re,
         prefilter_of(name).as_deref(),
-        path,
-        None,
-        None,
+        ScanScope {
+            path,
+            ..Default::default()
+        },
         &opts,
     )? {
         SearchData::Matches { matches, .. } => matches,
@@ -221,9 +222,11 @@ pub(super) fn alias_hits(
             &s.repo.root,
             &re,
             like.as_deref(),
-            Some(&file),
-            language,
-            None,
+            ScanScope {
+                path: Some(&file),
+                language,
+                accept: None,
+            },
             opts,
         )?;
         if let SearchData::Matches { matches, .. } = data {
