@@ -181,7 +181,7 @@ pub fn cmd_deps(
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let graph = load_dep_graph(&s.db)?;
+    let graph = s.dep_graph()?;
 
     // Imports that resolve to nothing inside the repo. For code that is the
     // third-party dependency list; for a markdown link, whose target is always a

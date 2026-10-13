@@ -162,7 +162,7 @@ pub(super) fn test_sites(
         _ => unreachable!("tests always uses Matches mode"),
     };
 
-    let scopes = TestScopes::load(&s.db.conn)?;
+    let scopes = s.test_scopes()?;
     let mut tests: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
     for h in &hits {
         let sym = match &h.symbol {
@@ -170,7 +170,7 @@ pub(super) fn test_sites(
             _ => continue,
         };
         let is_fn = matches!(h.kind.as_deref(), Some("function") | Some("method"));
-        if is_fn && is_test_site(&h.path, Some(sym), h.line as i64, &scopes) {
+        if is_fn && is_test_site(&h.path, Some(sym), h.line as i64, scopes) {
             tests.insert((h.path.clone(), sym.clone()));
         }
     }
@@ -293,7 +293,7 @@ pub fn cmd_untested(
     };
 
     // One lookup per distinct name, not per definition.
-    let scopes = TestScopes::load(&s.db.conn)?;
+    let scopes = s.test_scopes()?;
     let mut stopped_at_limit = false;
     let mut covered: HashMap<String, bool> = HashMap::new();
     let mut data: Vec<UntestedRow> = Vec::new();
@@ -304,7 +304,7 @@ pub fn cmd_untested(
         // check, so a `pub fn` inside a `#[cfg(test)] mod tests` in a production
         // file was reported as untested public API — which `unused`, asking the
         // identical question one screen away, already knew better than to do.
-        if is_test_site(&cand.path, Some(&cand.name), cand.line, &scopes) {
+        if is_test_site(&cand.path, Some(&cand.name), cand.line, scopes) {
             continue;
         }
         checked += 1;

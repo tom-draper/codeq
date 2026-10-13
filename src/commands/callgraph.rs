@@ -122,21 +122,6 @@ pub(super) fn callers_of(
     // imports, and the dedup below then let the import line shadow the real
     // usage site. These are used to *rank* anchors, not to drop rows: the
     // default `callers` stays a textual superset, with `--calls` to narrow it.
-    let hit_paths: HashSet<&str> = hits.iter().map(|h| h.path.as_str()).collect();
-    let mut importsites: HashSet<(String, i64)> = HashSet::new();
-    {
-        let mut st =
-            s.db.conn
-                .prepare("SELECT path, start_line FROM facts WHERE kind = 'import'")?;
-        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-        for row in rows {
-            let (p, line) = row?;
-            if hit_paths.contains(p.as_str()) {
-                importsites.insert((p, line));
-            }
-        }
-    }
-
     // One row per (file, enclosing symbol). The representative site is the first
     // real usage; an import site is only the anchor when the file names the
     // symbol nowhere else, so a file that imports without using it is still
@@ -147,7 +132,7 @@ pub(super) fn callers_of(
         if defsites.is_declaration(&h.path, h.line as i64) {
             continue; // the declaration itself
         }
-        let is_import = importsites.contains(&(h.path.clone(), h.line as i64));
+        let is_import = s.is_import_line(&h.path, h.line as i64)?;
         let key = (h.path.clone(), h.symbol.clone());
         match pick.get(&key) {
             None => {
@@ -162,14 +147,14 @@ pub(super) fn callers_of(
         }
     }
 
-    let scopes = TestScopes::load(&s.db.conn)?;
+    let scopes = s.test_scopes()?;
     let mut out = Vec::new();
     for key in order {
         let (mut h, _) = match pick.remove(&key) {
             Some(v) => v,
             None => continue,
         };
-        let test = is_test_site(&h.path, h.symbol.as_deref(), h.line as i64, &scopes);
+        let test = is_test_site(&h.path, h.symbol.as_deref(), h.line as i64, scopes);
         // Under --examples, surface the call site's line/column and source text so
         // the row reads as a usage example (rendered grep-style by the envelope).
         let (col, text) = if examples {
@@ -209,7 +194,7 @@ pub(super) fn alias_hits(
     if opts.qualifier.is_some() {
         return Ok(Vec::new());
     }
-    let graph = load_dep_graph(&s.db)?;
+    let graph = s.dep_graph()?;
     let mut hits = Vec::new();
     for (file, binding) in graph.bindings_for_source(name) {
         if path.is_some_and(|scope| !file.contains(scope)) {
@@ -487,7 +472,7 @@ fn scan_called_names(
         sites: HashMap::new(),
         module_targets: HashMap::new(),
     };
-    let graph = load_dep_graph(&s.db)?;
+    let graph = s.dep_graph()?;
     let mut calls_stmt = s.db.conn.prepare(
         "SELECT start_byte, name, receiver FROM calls
          WHERE file_id = (SELECT id FROM files WHERE path = ?1)
@@ -520,12 +505,12 @@ fn scan_called_names(
                 })?;
             for row in rows {
                 let (off, word, recv) = row?;
-                let (lookup, pinned) = resolve_syntax_call(&graph, path, &word, recv.as_deref());
+                let (lookup, pinned) = resolve_syntax_call(graph, path, &word, recv.as_deref());
                 // An empty target set is no evidence: it may be an external
                 // module or a value receiver. `pinned` is `None` then, so
                 // candidate filtering remains conservative.
                 let owner = if lang == "rust" && b[..off.min(b.len())].trim_end().ends_with("::") {
-                    rust_call_owner(s, &graph, path, recv.as_deref(), pinned.as_ref(), &lookup)?
+                    rust_call_owner(s, graph, path, recv.as_deref(), pinned.as_ref(), &lookup)?
                 } else {
                     None
                 };
@@ -632,7 +617,7 @@ fn keep_reachable(
     out: &mut Vec<Callee>,
 ) -> Result<()> {
     let target_files: HashSet<String> = targets.iter().map(|(p, _, _)| p.clone()).collect();
-    let graph = load_dep_graph(&s.db)?;
+    let graph = s.dep_graph()?;
     let mut reach: HashSet<String> = target_files.clone();
     for tf in &target_files {
         for r in graph.reachable_from(tf) {
@@ -1083,14 +1068,14 @@ pub fn cmd_callpath(
 /// any definition). Heuristic — import resolution is itself best-effort — so it's
 /// opt-in (`--resolved`); the default output stays a safe superset. Caches per
 /// file. See [[differential-bench-harness]] for how precision is measured.
-struct Resolver {
-    graph: deps::Graph,
+struct Resolver<'a> {
+    graph: &'a deps::Graph,
     defs: std::collections::HashSet<String>,
     cache: HashMap<String, &'static str>,
 }
 
-impl Resolver {
-    fn new(s: &Session, name: &str) -> Result<Resolver> {
+impl<'a> Resolver<'a> {
+    fn new(s: &'a Session, name: &str) -> Result<Resolver<'a>> {
         let mut defs = HashSet::new();
         {
             let mut stmt = s
@@ -1103,7 +1088,7 @@ impl Resolver {
             }
         }
         Ok(Resolver {
-            graph: load_dep_graph(&s.db)?,
+            graph: s.dep_graph()?,
             defs,
             cache: HashMap::new(),
         })
