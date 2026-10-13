@@ -11840,6 +11840,23 @@ fn a_file_outside_the_index_says_so_rather_than_not_found() {
 }
 
 #[test]
+fn callpath_places_an_ambiguous_start_on_the_definition_that_reaches_the_target() {
+    // `main` is defined in a.ts (which calls nothing) and b.py (which calls
+    // helper). The chain goes through b.py, so that is where it must start.
+    let f = Fixture::new();
+    f.write("a.ts", "export function main() { return 1 }\n");
+    f.write(
+        "b.py",
+        "def helper():\n    return 1\ndef main():\n    return helper()\n",
+    );
+    let v = f.run(&["callpath", "main", "helper"]);
+    let steps = v["data"].as_array().unwrap();
+    assert_eq!(steps.len(), 2, "{v}");
+    assert_eq!(steps[0]["path"], "b.py", "{v}");
+    assert_eq!(steps[0]["line"], 3, "{v}");
+}
+
+#[test]
 fn callpath_says_which_of_the_four_reasons_it_found_nothing() {
     // The command where an empty answer has the most plausible causes — a
     // misspelled FROM, a misspelled TO, a real pair that does not connect, or a

@@ -1056,10 +1056,31 @@ pub fn cmd_callpath(
     }
     chain.reverse();
 
+    // The walk is by name, so `from` may stand for several definitions
+    // (`main` in two languages). Place the chain on the one that actually calls
+    // its first hop, not on whichever sorts first by path.
+    let start = match chain.get(1) {
+        Some(hop) => {
+            let mut found = None;
+            for d in definitions_of(&s, from, path, 0)? {
+                let calls = callees_of(&s, from, Some(&d.path), false, false)?;
+                if calls.iter().any(|c| c.name == *hop) {
+                    found = Some((d.kind, d.path, d.start_line));
+                    break;
+                }
+            }
+            match found {
+                Some(site) => Some(site),
+                None => loc_of(from)?,
+            }
+        }
+        None => loc_of(from)?,
+    };
+
     let mut steps: Vec<PathStep> = Vec::with_capacity(chain.len());
     for (depth, name) in chain.into_iter().enumerate() {
         let l = if name == from {
-            loc_of(&name)?
+            start.clone()
         } else {
             loc.get(&name).cloned()
         };
