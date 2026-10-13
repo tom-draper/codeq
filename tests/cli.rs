@@ -12596,3 +12596,40 @@ fn distinct_qualified_calls_are_not_ambiguous_and_resolution_follows_filters() {
     let narrowed = f.run(&["callees", "local", "--resolved"]);
     assert_eq!(narrowed["data"][0]["resolution"], "name-only", "{narrowed}");
 }
+
+/// An index written by a different codeq is dropped and rebuilt on the next
+/// query. That used to happen without a word, so an upgrade looked like one
+/// unexplained slow call; the run that rebuilds now names both versions.
+#[test]
+fn a_schema_change_says_it_rebuilt_the_index() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub fn kept() {}\n");
+    f.run(&["symbols", "kept"]);
+
+    let conn = rusqlite::Connection::open(f.path().join(".codeq/index.db")).unwrap();
+    conn.execute(
+        "UPDATE meta SET value = '1' WHERE key = 'schema_version'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let out = f.raw(&["symbols", "kept"]);
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("index schema changed (v1 -> v"),
+        "the rebuild went unexplained: {stderr}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("kept"),
+        "the rebuilt index lost the definition"
+    );
+
+    // Said once, by the run that did it.
+    let again = f.raw(&["symbols", "kept"]);
+    assert!(
+        !String::from_utf8_lossy(&again.stderr).contains("schema changed"),
+        "a current index was reported as rebuilt"
+    );
+}

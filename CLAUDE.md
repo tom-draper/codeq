@@ -23,7 +23,10 @@ The refresh count appears as `reindexed_files` in the `index` block under
 file(s)` on **stderr** — so stdout stays pure `path:line:` rows and a pipe
 never sees it, but the terminal is not silent. Freshness is keyed on the content
 hash, so a bare `touch` reparses nothing and prints nothing; only a real edit
-does. `index` exists
+does. A binary that
+finds an index written under another schema version rebuilds it on that query and
+says so (`# codeq: index schema changed (v46 -> v47), rebuilt the index`; JSON:
+`index.rebuilt_from_schema`). `index` exists
 only to force a full `--rebuild` or to pre-warm the cache for timing-sensitive
 benchmarks — not as a step you run before querying.
 

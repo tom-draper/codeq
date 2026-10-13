@@ -162,6 +162,12 @@ impl<T: Serialize> Envelope<T> {
 
         // Text mode: keep stdout pure data; surface noteworthy meta on stderr so
         // it doesn't pollute a parseable/piped result.
+        if let Some(prev) = &self.index.rebuilt_from_schema {
+            eprintln!(
+                "# codeq: index schema changed (v{prev} -> v{}), rebuilt the index",
+                self.index.schema
+            );
+        }
         if self.noteworthy() {
             eprintln!(
                 "# codeq: reindexed {} file(s){}{}",
@@ -761,6 +767,9 @@ pub struct IndexMeta {
     pub fresh: bool,
     #[serde(skip_serializing_if = "is_zero")]
     pub reindexed_files: u64,
+    /// The index schema this run replaced: an upgrade rebuilt the index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rebuilt_from_schema: Option<String>,
     /// Files that failed to parse/read during this refresh; 0 in the happy path.
     #[serde(skip_serializing_if = "is_zero")]
     pub partial_failures: u64,
