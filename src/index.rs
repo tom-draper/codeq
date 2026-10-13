@@ -718,9 +718,17 @@ fn file_stat_key(path: &std::path::Path) -> Option<(i64, i64, i64)> {
 /// `None` when the file cannot be read, which a caller treats as no matches:
 /// it vanished since the refresh this query began with.
 pub(crate) fn load_body(root: &Path, rel: &str) -> Option<String> {
-    let bytes = std::fs::read(root.join(rel)).ok()?;
-    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
-    Some(String::from_utf8_lossy(bytes).into_owned())
+    let mut bytes = std::fs::read(root.join(rel)).ok()?;
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        bytes.drain(..3);
+    }
+    // Valid UTF-8 is nearly every file, and it is adopted in place: the lossy
+    // conversion borrows when it has nothing to replace, so owning its result
+    // copied each body a second time.
+    Some(match String::from_utf8(bytes) {
+        Ok(body) => body,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    })
 }
 
 pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
