@@ -121,21 +121,30 @@ struct ExploreResult {
     omitted: Vec<crate::context::Omitted>,
 }
 
+/// Arguments of `explore`.
+pub struct ExploreArgs<'a> {
+    pub name: Option<&'a str>,
+    pub at: Option<&'a str>,
+    pub path: Option<&'a str>,
+    pub resolved: bool,
+    pub include_ambiguous: bool,
+    pub max_tokens: u64,
+}
+
 /// `explore <name>` — a single call that answers "show me this symbol and how it
 /// fits". It composes the graph commands (definition + callers + callees) with
 /// the context assembler (verbatim source of that neighbourhood, under a token
 /// budget, grouped by file), so an agent gets structure *and* code in one shot
 /// instead of a `definitions` → `callers` → `read` → `read` sequence.
-pub fn cmd_explore(
-    cwd: &Path,
-    name: Option<&str>,
-    at: Option<&str>,
-    path: Option<&str>,
-    resolved: bool,
-    include_ambiguous: bool,
-    max_tokens: u64,
-    out: Out,
-) -> Result<()> {
+pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
+    let ExploreArgs {
+        name,
+        at,
+        path,
+        resolved,
+        include_ambiguous,
+        max_tokens,
+    } = args;
     let s = Session::open(cwd, false, out)?;
 
     // `--at` asks the same question from the other end. A stack frame, a diff
