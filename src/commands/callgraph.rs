@@ -194,6 +194,9 @@ pub(super) fn alias_hits(
     if opts.qualifier.is_some() {
         return Ok(Vec::new());
     }
+    if !s.may_be_aliased(name)? {
+        return Ok(Vec::new());
+    }
     let graph = s.dep_graph()?;
     let mut hits = Vec::new();
     for (file, binding) in graph.bindings_for_source(name) {

@@ -93,6 +93,12 @@ fn segments(module: &str) -> Vec<&str> {
         .collect()
 }
 
+/// The symbol name an import of `module` would bind: its last segment. The
+/// same reading [`Graph::build`] records a binding's source name from.
+pub fn imported_name(module: &str) -> Option<&str> {
+    segments(module).last().copied()
+}
+
 /// The stem of a file path — its base name without extension (`src/db.rs` -> `db`).
 fn stem(path: &str) -> &str {
     Path::new(path)

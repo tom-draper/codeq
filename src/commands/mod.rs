@@ -3,7 +3,7 @@
 //! topic lives in its own submodule and is re-exported here so callers keep
 //! writing `commands::cmd_x`.
 
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
@@ -75,7 +75,8 @@ struct Session {
     // `callers --depth 3`.
     dep_graph: OnceCell<deps::Graph>,
     test_scopes: OnceCell<testing::TestScopes>,
-    import_lines: OnceCell<HashMap<String, HashSet<i64>>>,
+    import_lines: RefCell<HashMap<String, HashSet<i64>>>,
+    aliased_names: OnceCell<HashSet<String>>,
 }
 
 /// Set by `--root`: the tree was named explicitly, so discovery must take it
@@ -109,7 +110,8 @@ impl Session {
             out,
             dep_graph: OnceCell::new(),
             test_scopes: OnceCell::new(),
-            import_lines: OnceCell::new(),
+            import_lines: RefCell::new(HashMap::new()),
+            aliased_names: OnceCell::new(),
         })
     }
 
@@ -131,23 +133,47 @@ impl Session {
         Ok(self.test_scopes.get().expect("set above"))
     }
 
-    /// Whether `line` of `path` is an import statement.
+    /// Whether `line` of `path` is an import statement. Loaded a file at a
+    /// time: a query asks about the handful of files its hits landed in, not
+    /// about every import in the repo.
     fn is_import_line(&self, path: &str, line: i64) -> Result<bool> {
-        if self.import_lines.get().is_none() {
-            let mut lines: HashMap<String, HashSet<i64>> = HashMap::new();
-            let mut st = self
-                .db
-                .conn
-                .prepare("SELECT path, start_line FROM facts WHERE kind = 'import'")?;
-            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-            for row in rows {
-                let (p, line) = row?;
-                lines.entry(p).or_default().insert(line);
-            }
-            let _ = self.import_lines.set(lines);
+        if let Some(lines) = self.import_lines.borrow().get(path) {
+            return Ok(lines.contains(&line));
         }
-        let lines = self.import_lines.get().expect("set above");
-        Ok(lines.get(path).is_some_and(|l| l.contains(&line)))
+        let mut st = self
+            .db
+            .conn
+            .prepare_cached("SELECT start_line FROM facts WHERE path = ?1 AND kind = 'import'")?;
+        let lines = st
+            .query_map([path], |r| r.get::<_, i64>(0))?
+            .collect::<std::result::Result<HashSet<_>, _>>()?;
+        let found = lines.contains(&line);
+        self.import_lines
+            .borrow_mut()
+            .insert(path.to_string(), lines);
+        Ok(found)
+    }
+
+    /// Whether any import binds a local name to a symbol called `name`, which
+    /// is the only way `name` can have an alias. Answering it from the import
+    /// rows alone lets a lookup of a never-aliased symbol skip building the
+    /// import graph, which on a C repo was a third of a `callers` query.
+    fn may_be_aliased(&self, name: &str) -> Result<bool> {
+        if self.aliased_names.get().is_none() {
+            let mut st = self.db.conn.prepare(
+                "SELECT DISTINCT name FROM facts
+                 WHERE kind = 'import' AND NULLIF(signature, '') IS NOT NULL",
+            )?;
+            let mut names = HashSet::new();
+            let mut rows = st.query([])?;
+            while let Some(row) = rows.next()? {
+                if let Some(bound) = deps::imported_name(row.get_ref(0)?.as_str()?) {
+                    names.insert(bound.to_string());
+                }
+            }
+            let _ = self.aliased_names.set(names);
+        }
+        Ok(self.aliased_names.get().expect("set above").contains(name))
     }
 
     /// Build the envelope and print it honoring the caller's render options.
