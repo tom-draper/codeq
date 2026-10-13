@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package shapes;
+
+import "google/protobuf/empty.proto";
+
+// A circle has a radius.
+message Circle {
+  double radius = 1;
+  Colour colour = 2;
+}
+
+enum Colour {
+  RED = 0;
+  GREEN = 1;
+}
+
+service Shapes {
+  rpc Describe(Circle) returns (google.protobuf.Empty);
+}

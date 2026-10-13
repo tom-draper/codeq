@@ -1,0 +1,7 @@
+file sample.css 13b5554b12bc4939
+fact import base.css 1:0-1:19 bytes=0-19 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/7 source=treesitter/css confidence=1 sig= doc=-
+fact type card 8:0-10:1 bytes=85-129 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=8ceaf0e21170dc10/22 source=treesitter/css confidence=1 sig=.card { border: 1px solid var(--accent); } doc=-
+fact type fade 16:0-19:1 bytes=179-242 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=2fa0e341691ffcd0/27 source=treesitter/css confidence=1 sig=@keyframes fade { from { opacity: 0; } to { opacity: 1; } } doc=-
+span 8-18 kind=1
+span 53-84 kind=0
+span 166-174 kind=1

@@ -1,0 +1,21 @@
+file Sample.vue 3ef3438fcacd07bc
+fact component Sample 1:0-29:0 bytes=0-400 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=svelte/component confidence=1 sig=<Sample /> doc=-
+fact import vue 2:0-2:26 bytes=25-51 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=adb93744f8b60ef6/14 source=treesitter/typescript confidence=1 sig= doc=-
+fact import vue.ref 2:9-2:12 bytes=34-37 vis=- owner=- derived=1 test=0 decorator=- contract=- shape=-/0 source=treesitter/typescript confidence=1 sig= doc=-
+fact interface Named 4:0-6:1 bytes=53-90 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=ff188285a2917080/16 source=treesitter/typescript confidence=1 sig=interface Named { name(): string; } doc=-
+fact class Base 8:0-10:1 bytes=92-119 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/typescript confidence=1 sig=class Base doc=-
+fact field sides 9:2-9:11 bytes=107-116 vis=private owner=Base derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/typescript confidence=1 sig=sides = 0 doc=-
+fact class Circle 12:0-16:1 bytes=121-218 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=48969afb982aa81a/37 source=treesitter/typescript confidence=1 sig=class Circle extends Base implements Named doc=-
+fact method name 13:2-15:3 bytes=168-216 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=304865c4a7a3792b/24 source=treesitter/typescript confidence=1 sig=name(): string doc=-
+fact function label 19:0-21:1 bytes=243-305 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=741a7305369de0c4/30 source=treesitter/typescript confidence=1 sig=function label(text: string): string doc=-
+fact constant title 23:0-23:28 bytes=307-335 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=8d43d9aec301cdb2/15 source=treesitter/typescript confidence=1 sig=const title = ref(\'circle\'); doc=-
+relation 12 Circle extends Base
+relation 12 Circle implements Named
+call 196 label on=-
+call 296 trim on=text
+call 321 ref on=-
+span 19-23 kind=1
+span 45-50 kind=1
+span 202-210 kind=1
+span 220-242 kind=0
+span 325-333 kind=1

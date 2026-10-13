@@ -1,0 +1,21 @@
+file Sample.svelte 71c84af8bb48d872
+fact component Sample 1:0-31:0 bytes=0-457 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=svelte/component confidence=1 sig=<Sample /> doc=-
+fact import svelte 2:2-2:35 bytes=21-54 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=adb93744f8b60ef6/14 source=treesitter/typescript confidence=1 sig= doc=-
+fact import svelte.onMount 2:11-2:18 bytes=30-37 vis=- owner=- derived=1 test=0 decorator=- contract=- shape=-/0 source=treesitter/typescript confidence=1 sig= doc=-
+fact interface Named 4:2-6:3 bytes=58-99 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=ff188285a2917080/16 source=treesitter/typescript confidence=1 sig=interface Named { name(): string; } doc=-
+fact class Base 8:2-10:3 bytes=103-134 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/typescript confidence=1 sig=class Base doc=-
+fact field sides 9:4-9:13 bytes=120-129 vis=private owner=Base derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/typescript confidence=1 sig=sides = 0 doc=-
+fact class Circle 12:2-16:3 bytes=138-243 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=48969afb982aa81a/37 source=treesitter/typescript confidence=1 sig=class Circle extends Base implements Named doc=-
+fact method name 13:4-15:5 bytes=187-239 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=304865c4a7a3792b/24 source=treesitter/typescript confidence=1 sig=name(): string doc=-
+fact function label 19:2-21:3 bytes=272-338 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=741a7305369de0c4/30 source=treesitter/typescript confidence=1 sig=function label(text: string): string doc=-
+fact constant title 23:9-23:30 bytes=349-370 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/typescript confidence=1 sig=let title = \'circle\'; doc=-
+fact function row 28:0-30:10 bytes=407-456 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=1c6979d5b97cfc12/30 source=treesitter/svelte confidence=1 sig={#snippet row(item)} <li>{item}</li> {/snippet} doc=-
+relation 12 Circle extends Base
+relation 12 Circle implements Named
+call 217 label on=-
+call 327 trim on=text
+span 13-17 kind=1
+span 45-53 kind=1
+span 223-231 kind=1
+span 247-269 kind=0
+span 361-369 kind=1

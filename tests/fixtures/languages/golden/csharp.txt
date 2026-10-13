@@ -1,0 +1,25 @@
+file Sample.cs 9b435b61746d7b0a
+fact import System 1:0-1:13 bytes=0-13 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/csharp confidence=1 sig= doc=-
+fact import System.Collections.Generic 2:0-2:33 bytes=14-47 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/csharp confidence=1 sig= doc=-
+fact namespace Shapes 4:0-44:1 bytes=49-733 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=b4dbb0fa8614d3ad/169 source=treesitter/csharp confidence=1 sig=namespace Shapes doc=-
+fact interface INamed 6:4-9:5 bytes=72-130 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=1e1520a193dce572/15 source=treesitter/csharp confidence=1 sig=public interface INamed doc=-
+fact class Shape 11:4-14:5 bytes=136-199 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=07d5e6dc7a332ab1/18 source=treesitter/csharp confidence=1 sig=public class Shape doc=-
+fact field sides 13:8-13:32 bytes=169-193 vis=restricted owner=Shape derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/csharp confidence=1 sig=protected int sides = 0; doc=-
+fact enum Colour 16:4-20:5 bytes=205-262 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=3b56ff0a9aae3e48/13 source=treesitter/csharp confidence=1 sig=public enum Colour doc=-
+fact variant Red 18:8-18:11 bytes=238-241 vis=public owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/csharp confidence=1 sig=Red doc=-
+fact variant Green 19:8-19:13 bytes=251-256 vis=public owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/csharp confidence=1 sig=Green doc=-
+fact class Circle 23:4-43:5 bytes=303-731 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=612702779a1aa352/116 source=treesitter/csharp confidence=1 sig=public class Circle : Shape, INamed doc=-
+fact field Radius 25:8-25:42 bytes=353-387 vis=public owner=Circle derived=0 test=0 decorator=- contract=- shape=5a5743d95e63f4c1/14 source=treesitter/csharp confidence=1 sig=public double Radius { get; set; } doc=-
+fact method Name 27:8-31:9 bytes=397-508 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=66b9510c52259fee/25 source=treesitter/csharp confidence=1 sig=public string Name() doc=-
+fact method Label 33:8-36:9 bytes=518-610 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=3fab1174a1de409b/27 source=treesitter/csharp confidence=1 sig=private static string Label(string text) doc=-
+fact method LabelsAreKept 38:8-42:9 bytes=620-725 vis=public owner=- derived=0 test=1 decorator=[Fact] contract=- shape=1d74f7792b731343/37 source=treesitter/csharp confidence=1 sig=[Fact] public void LabelsAreKept() doc=-
+relation 23 Circle extends INamed
+relation 23 Circle extends Shape
+call 482 Label on=-
+call 593 Trim on=text
+call 693 WriteLine on=Console
+call 703 Label on=-
+span 268-298 kind=0
+span 440-462 kind=0
+span 488-496 kind=1
+span 709-712 kind=1

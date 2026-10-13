@@ -1,0 +1,12 @@
+file sample.lua b2a0cd7bf37d9124
+fact import json 1:13-1:28 bytes=13-28 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/9 source=treesitter/lua confidence=1 sig= doc=-
+fact function label 6:0-8:3 bytes=67-118 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=754a23942a1904ae/20 source=treesitter/lua confidence=1 sig=local function label(text) doc=-
+fact function M.describe 10:0-12:3 bytes=120-175 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=f80d0122fdb7dc6a/24 source=treesitter/lua confidence=1 sig=function M.describe(shape) doc=-
+fact method M:name 14:0-16:3 bytes=177-225 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=15833597144a7566/23 source=treesitter/lua confidence=1 sig=function M:name() doc=-
+call 13 require on=-
+call 156 label on=-
+call 209 encode on=json
+span 21-27 kind=1
+span 44-66 kind=0
+span 111-114 kind=1
+span 162-170 kind=1

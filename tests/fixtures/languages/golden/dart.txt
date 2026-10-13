@@ -1,0 +1,19 @@
+file sample.dart cadb50363ce4291d
+fact import dart:math 1:0-1:19 bytes=0-19 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/dart confidence=1 sig= doc=-
+fact class Named 3:0-5:1 bytes=21-62 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=5f0a9f8385c9cc23/17 source=treesitter/dart confidence=1 sig=abstract class Named doc=-
+fact class Shape 7:0-9:1 bytes=64-96 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=3e57e12e1748e2b1/16 source=treesitter/dart confidence=1 sig=class Shape doc=-
+fact field sides 8:2-8:16 bytes=80-94 vis=- owner=Shape derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/dart confidence=1 sig=int sides = 0; doc=-
+fact enum Colour 11:0-11:26 bytes=98-124 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/dart confidence=1 sig=enum Colour doc=-
+fact variant red 11:14-11:17 bytes=112-115 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/dart confidence=1 sig=red doc=-
+fact variant green 11:19-11:24 bytes=117-122 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/dart confidence=1 sig=green doc=-
+fact class Circle 14:0-21:1 bytes=156-295 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=0d862f56c2e77c04/55 source=treesitter/dart confidence=1 sig=class Circle extends Shape implements Named doc=-
+fact field radius 15:2-15:28 bytes=204-230 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/dart confidence=1 sig=final double radius = 1.0; doc=-
+fact method name 17:2-20:3 bytes=234-293 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=d7f36c822d42531c/29 source=treesitter/dart confidence=1 sig=@override String name() doc=-
+fact function label 23:0-25:1 bytes=297-348 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=af20760d8fdde9cc/27 source=treesitter/dart confidence=1 sig=String label(String text) doc=-
+relation 14 Circle extends Shape
+relation 14 Circle implements Named
+call 273 label on=-
+call 339 trim on=text
+span 7-18 kind=1
+span 126-155 kind=0
+span 279-287 kind=1

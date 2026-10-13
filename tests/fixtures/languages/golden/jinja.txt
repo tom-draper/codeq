@@ -1,0 +1,7 @@
+file sample.j2 a9696f153de50e45
+fact import base.j2 1:0-1:0 bytes=11-18 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/jinja confidence=1 sig= doc=-
+fact import macros.j2 2:0-2:0 bytes=34-43 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/jinja confidence=1 sig= doc=-
+fact function label 4:0-6:0 bytes=59-123 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/jinja confidence=1 sig={% macro label(text) %} doc=-
+fact block content 8:0-12:0 bytes=125-239 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/jinja confidence=1 sig={% block content %} doc=-
+fact import footer.j2 11:0-11:0 bytes=210-219 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/jinja confidence=1 sig= doc=-
+span 0-240 kind=0

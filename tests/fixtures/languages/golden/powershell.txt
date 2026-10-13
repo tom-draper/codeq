@@ -1,0 +1,7 @@
+file sample.ps1 43c2ec88e91610c4
+fact function Get-Label 2:0-5:1 bytes=22-93 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=bd4b3943004f6c29/44 source=treesitter/powershell confidence=1 sig=function Get-Label { param([string]$Text) return $Text.Trim() } doc=-
+fact class Circle 7:0-13:1 bytes=95-196 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=f070ccb8c401cf50/54 source=treesitter/powershell confidence=1 sig=class Circle { [double]$Radius [string] Name() { return (Get-Label \"circle\") } } doc=-
+fact method Name 10:4-12:5 bytes=135-194 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=0de32ad7c2080c34/42 source=treesitter/powershell confidence=1 sig=[string] Name() { return (Get-Label \"circle\") } doc=-
+span 0-21 kind=0
+span 179-187 kind=1
+span 208-211 kind=1

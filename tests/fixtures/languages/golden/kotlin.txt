@@ -1,0 +1,23 @@
+file sample.kt 4a65309dee041d44
+fact import kotlin.math.PI 3:0-3:21 bytes=16-37 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/8 source=treesitter/kotlin confidence=1 sig= doc=-
+fact class Named 5:0-7:1 bytes=39-81 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=da22a4185a1d01c0/15 source=treesitter/kotlin confidence=1 sig=interface Named { fun name(): String } doc=-
+fact method name 6:4-6:22 bytes=61-79 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/9 source=treesitter/kotlin confidence=1 sig=fun name(): String doc=-
+fact class Shape 9:0-9:32 bytes=83-115 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=85271a740c1187a2/16 source=treesitter/kotlin confidence=1 sig=open class Shape(val sides: Int) doc=-
+fact field sides 9:17-9:31 bytes=100-114 vis=- owner=Shape derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/kotlin confidence=1 sig=val sides: Int doc=-
+fact class Colour 11:0-14:1 bytes=117-157 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=1e3331c1c3ca3537/14 source=treesitter/kotlin confidence=1 sig=enum class Colour { RED, GREEN } doc=-
+fact class Circle 17:0-28:1 bytes=189-410 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=a3fee7eb6b1f6165/99 source=treesitter/kotlin confidence=1 sig=class Circle(val radius: Double) : Shape(0), Named { val limit: Int = 10 override fun name(): String { return label(\"circle\") } @Test fun labelsAreKept() { println(label(\"x\")) } } doc=-
+fact field radius 17:13-17:31 bytes=202-220 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/kotlin confidence=1 sig=val radius: Double doc=-
+fact field limit 18:4-18:23 bytes=246-265 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/9 source=treesitter/kotlin confidence=1 sig=val limit: Int = 10 doc=-
+fact method name 20:4-22:5 bytes=271-337 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=85d432325e3bf6b2/28 source=treesitter/kotlin confidence=1 sig=override fun name(): String { return label(\"circle\") } doc=-
+fact method labelsAreKept 24:4-27:5 bytes=343-408 vis=- owner=- derived=0 test=1 decorator=@Test contract=- shape=1d7d270a9b4d99f2/31 source=treesitter/kotlin confidence=1 sig=@Test fun labelsAreKept() { println(label(\"x\")) } doc=-
+fact function label 30:0-30:45 bytes=412-457 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=834138ccd5e9e2b8/24 source=treesitter/kotlin confidence=1 sig=fun label(text: String): String = text.trim() doc=-
+relation 17 Circle extends Named
+relation 17 Circle extends Shape
+call 224 Shape on=-
+call 316 label on=-
+call 383 println on=-
+call 391 label on=-
+call 451 trim on=text
+span 159-188 kind=0
+span 322-330 kind=1
+span 397-400 kind=1

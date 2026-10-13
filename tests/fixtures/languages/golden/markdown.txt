@@ -1,0 +1,9 @@
+file sample.md bbad4866efb705f6
+fact heading Shapes 1:0-15:0 bytes=0-173 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/markdown confidence=1 sig=# Shapes doc=A circle is a named shape. See the [Rust sample](sample.rs).
+fact import sample.rs 3:49-3:58 bytes=59-68 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/markdown confidence=1 sig= doc=-
+fact heading Usage 5:0-15:0 bytes=72-173 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/markdown confidence=1 sig=## Usage doc=```rust
+fact import sample.css 11:11-11:21 bytes=134-144 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/markdown confidence=1 sig= doc=-
+fact heading Limits 13:0-15:0 bytes=147-173 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/markdown confidence=1 sig=### Limits doc=Ten, at most.
+span 0-82 kind=0
+span 82-122 kind=1
+span 122-173 kind=0

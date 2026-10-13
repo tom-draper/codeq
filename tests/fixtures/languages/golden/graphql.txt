@@ -1,0 +1,15 @@
+file sample.graphql 849aac39d82cb4e0
+fact interface Named 1:0-3:1 bytes=0-35 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=640cf3a2759dcfce/14 source=treesitter/graphql confidence=1 sig=interface Named { name: String! } doc=-
+fact field name 2:2-2:15 bytes=20-33 vis=- owner=Named derived=0 test=0 decorator=- contract=- shape=-/8 source=treesitter/graphql confidence=1 sig=name: String! doc=-
+fact type Circle 6:0-9:1 bytes=66-130 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=4646ace632bab702/24 source=treesitter/graphql confidence=1 sig=type Circle implements Named { name: String! radius: Float } doc=-
+fact field name 7:2-7:15 bytes=99-112 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/8 source=treesitter/graphql confidence=1 sig=name: String! doc=-
+fact field radius 8:2-8:15 bytes=115-128 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/graphql confidence=1 sig=radius: Float doc=-
+fact enum Colour 11:0-14:1 bytes=132-161 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=9bc4598623ff0c46/12 source=treesitter/graphql confidence=1 sig=enum Colour { RED GREEN } doc=-
+fact variant RED 12:2-12:5 bytes=148-151 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/3 source=treesitter/graphql confidence=1 sig=RED doc=-
+fact variant GREEN 13:2-13:7 bytes=154-159 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/3 source=treesitter/graphql confidence=1 sig=GREEN doc=-
+fact type CircleInput 16:0-19:1 bytes=163-233 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=248e6d3f3b4e1cab/28 source=treesitter/graphql confidence=1 sig=input CircleInput { radius: Float = 1.0 label: String = \"circle\" } doc=-
+fact type Query 21:0-23:1 bytes=235-275 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=25ea0cca6ff29bac/23 source=treesitter/graphql confidence=1 sig=type Query { circle(id: ID!): Circle } doc=-
+fact field circle 22:2-22:25 bytes=250-273 vis=- owner=Query derived=0 test=0 decorator=- contract=- shape=97a663a0e6fdb061/17 source=treesitter/graphql confidence=1 sig=circle(id: ID!): Circle doc=-
+relation 6 Circle implements Named
+span 37-65 kind=0
+span 223-231 kind=1

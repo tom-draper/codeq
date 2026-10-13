@@ -1,0 +1,16 @@
+file sample.go 95a0e9e25087621b
+fact import fmt 4:1-4:6 bytes=26-31 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/5 source=treesitter/go confidence=1 sig= doc=-
+fact import strings 5:1-5:10 bytes=33-42 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/5 source=treesitter/go confidence=1 sig= doc=-
+fact interface Shape 11:5-13:1 bytes=95-129 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=8e9de97291d77bdc/12 source=treesitter/go confidence=1 sig=Shape interface { Name() string } doc=-
+fact struct Circle 15:5-18:1 bytes=136-184 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=f9891544728f4533/13 source=treesitter/go confidence=1 sig=Circle struct { Radius float64 label string } doc=-
+fact field Radius 16:1-16:15 bytes=153-167 vis=public owner=Circle derived=0 test=0 decorator=- contract=- shape=-/3 source=treesitter/go confidence=1 sig=Radius float64 doc=-
+fact field label 17:1-17:14 bytes=169-182 vis=private owner=Circle derived=0 test=0 decorator=- contract=- shape=-/3 source=treesitter/go confidence=1 sig=label string doc=-
+fact method Name 20:0-22:1 bytes=186-253 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=45f9d59b83eddd85/32 source=treesitter/go confidence=1 sig=func (c Circle) Name() string doc=-
+fact function Describe 24:0-26:1 bytes=255-304 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=d13acade7a8312e5/30 source=treesitter/go confidence=1 sig=func Describe(s Shape) doc=-
+call 234 ToUpper on=strings
+call 285 Println on=fmt
+call 295 Name on=s
+span 26-31 kind=1
+span 33-42 kind=1
+span 46-71 kind=0
+span 242-250 kind=1

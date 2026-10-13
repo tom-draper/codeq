@@ -1,0 +1,19 @@
+@import "base.css";
+
+:root {
+  --accent: #336699;
+}
+
+/* A card is a bordered box. */
+.card {
+  border: 1px solid var(--accent);
+}
+
+#header .title::after {
+  content: "circle";
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

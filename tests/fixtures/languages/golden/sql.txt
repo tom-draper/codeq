@@ -1,0 +1,22 @@
+file sample.sql 9818354d58d1f073
+fact type colour 1:0-1:43 bytes=0-43 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=1ee9729e5a89f7ae/13 source=treesitter/sql confidence=1 sig=CREATE TYPE colour AS ENUM (\'red\', \'green\') doc=-
+fact variant red 1:28-1:33 bytes=28-33 vis=public owner=colour derived=0 test=0 decorator=- contract=- shape=-/0 source=treesitter/sql confidence=1 sig=\'red\' doc=-
+fact variant green 1:35-1:42 bytes=35-42 vis=public owner=colour derived=0 test=0 decorator=- contract=- shape=-/0 source=treesitter/sql confidence=1 sig=\'green\' doc=-
+fact table shapes 3:0-6:1 bytes=46-122 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=cde524bb4a904e0f/20 source=treesitter/sql confidence=1 sig=CREATE TABLE shapes ( id INTEGER PRIMARY KEY, name TEXT NOT NULL ) doc=-
+fact field id 4:4-4:28 bytes=72-96 vis=public owner=shapes derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/sql confidence=1 sig=id INTEGER PRIMARY KEY doc=-
+fact field name 5:4-5:22 bytes=102-120 vis=public owner=shapes derived=0 test=0 decorator=- contract=- shape=-/5 source=treesitter/sql confidence=1 sig=name TEXT NOT NULL doc=-
+fact table circles 9:0-14:1 bytes=157-326 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=6ce84a1038e0bf15/38 source=treesitter/sql confidence=1 sig=CREATE TABLE circles ( id INTEGER PRIMARY KEY, shape_id INTEGER REFERENCES shapes (id), radius REAL DEFAULT 1.0, label TEXT DEFAULT \'circle\' ) doc=-
+fact field id 10:4-10:32 bytes=184-212 vis=public owner=circles derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/sql confidence=1 sig=id INTEGER PRIMARY KEY doc=-
+fact field shape_id 11:4-11:43 bytes=218-257 vis=public owner=circles derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/sql confidence=1 sig=shape_id INTEGER REFERENCES shapes (id) doc=-
+fact field radius 12:4-12:29 bytes=263-288 vis=public owner=circles derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/sql confidence=1 sig=radius REAL DEFAULT 1.0 doc=-
+fact field label 13:4-13:34 bytes=294-324 vis=public owner=circles derived=0 test=0 decorator=- contract=- shape=-/5 source=treesitter/sql confidence=1 sig=label TEXT DEFAULT \'circle\' doc=-
+fact index circles_by_shape 16:0-16:51 bytes=329-380 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=107e15c504c098a0/12 source=treesitter/sql confidence=1 sig=CREATE INDEX circles_by_shape ON circles (shape_id) doc=-
+fact view big_circles 18:0-19:48 bytes=383-458 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=0dc07dde2d906322/29 source=treesitter/sql confidence=1 sig=CREATE VIEW big_circles AS SELECT id, radius FROM circles WHERE radius > 10 doc=-
+fact function touch_updated_at 21:0-25:19 bytes=461-564 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=c6b532bb83c8a0c7/24 source=treesitter/sql confidence=1 sig=CREATE FUNCTION touch_updated_at() RETURNS trigger doc=-
+fact trigger circles_touch 27:0-28:48 bytes=567-669 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=a19415ea1c3de969/19 source=treesitter/sql confidence=1 sig=CREATE TRIGGER circles_touch BEFORE UPDATE ON circles FOR EACH ROW EXECUTE FUNCTION touch_updated_at() doc=-
+relation 9 circles references shapes
+call 651 touch_updated_at on=-
+span 28-33 kind=1
+span 35-42 kind=1
+span 125-156 kind=0
+span 316-324 kind=1

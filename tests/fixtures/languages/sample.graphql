@@ -1,0 +1,23 @@
+interface Named {
+  name: String!
+}
+
+# A circle is a named shape.
+type Circle implements Named {
+  name: String!
+  radius: Float
+}
+
+enum Colour {
+  RED
+  GREEN
+}
+
+input CircleInput {
+  radius: Float = 1.0
+  label: String = "circle"
+}
+
+type Query {
+  circle(id: ID!): Circle
+}

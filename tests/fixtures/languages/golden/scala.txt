@@ -1,0 +1,20 @@
+file sample.scala 13e2d65d002f39f2
+fact import scala 3:0-3:31 bytes=16-47 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/7 source=treesitter/scala confidence=1 sig= doc=-
+fact trait Named 5:0-7:1 bytes=49-83 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/scala confidence=1 sig=trait Named doc=-
+fact method name 6:2-6:18 bytes=65-81 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/5 source=treesitter/scala confidence=1 sig=def name: String doc=-
+fact class Shape 9:0-9:27 bytes=85-112 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/scala confidence=1 sig=class Shape(val sides: Int) doc=-
+fact field sides 9:12-9:26 bytes=97-111 vis=- owner=Shape derived=0 test=0 decorator=- contract=- shape=-/5 source=treesitter/scala confidence=1 sig=val sides: Int doc=-
+fact class Circle 12:0-16:1 bytes=144-275 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=405b557c3519561d/45 source=treesitter/scala confidence=1 sig=class Circle(val radius: Double) extends Shape(0) with Named doc=-
+fact field radius 12:13-12:31 bytes=157-175 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/5 source=treesitter/scala confidence=1 sig=val radius: Double doc=-
+fact field limit 13:2-13:21 bytes=209-228 vis=- owner=Circle derived=0 test=0 decorator=- contract=- shape=-/7 source=treesitter/scala confidence=1 sig=val limit: Int = 10 doc=-
+fact method name 15:2-15:43 bytes=232-273 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=1bbf459255721c89/15 source=treesitter/scala confidence=1 sig=def name: String = doc=-
+fact class Circle 18:0-20:1 bytes=277-340 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=0339c47440296937/23 source=treesitter/scala confidence=1 sig=object Circle doc=-
+fact method label 19:2-19:45 bytes=295-338 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=4809eb71285571f7/17 source=treesitter/scala confidence=1 sig=def label(text: String): String = doc=-
+fact enum Colour 22:0-24:1 bytes=342-375 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=a0b94b0227049779/13 source=treesitter/scala confidence=1 sig=enum Colour { case Red, Green } doc=-
+fact variant Red 23:7-23:10 bytes=363-366 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/scala confidence=1 sig=Red doc=-
+fact variant Green 23:12-23:17 bytes=368-373 vis=- owner=Colour derived=0 test=0 decorator=- contract=- shape=-/2 source=treesitter/scala confidence=1 sig=Green doc=-
+relation 12 Circle extends Named
+relation 12 Circle extends Shape
+call 258 label on=Circle
+span 114-143 kind=0
+span 264-272 kind=1

@@ -1,0 +1,22 @@
+file sample.js b3f69b5d7d55b617
+fact import fs 1:0-1:30 bytes=0-30 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=21e3fa87ea7ead38/14 source=treesitter/javascript confidence=1 sig= doc=-
+fact import fs.readFile 1:9-1:17 bytes=9-17 vis=- owner=- derived=1 test=0 decorator=- contract=- shape=-/0 source=treesitter/javascript confidence=1 sig= doc=-
+fact import path 2:13-2:28 bytes=44-59 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/9 source=treesitter/javascript confidence=1 sig= doc=-
+fact constant LIMIT 4:7-4:24 bytes=69-86 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/7 source=treesitter/javascript confidence=1 sig=const LIMIT = 10; doc=-
+fact class Shape 6:0-12:1 bytes=88-152 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=a01cce2308eae4d5/26 source=treesitter/javascript confidence=1 sig=class Shape doc=-
+fact field sides 7:2-7:11 bytes=104-113 vis=private owner=Shape derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/javascript confidence=1 sig=sides = 0 doc=-
+fact method name 9:2-11:3 bytes=118-150 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=8de52c9637f2db2c/15 source=treesitter/javascript confidence=1 sig=name() doc=-
+fact class Circle 15:7-19:1 bytes=185-252 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=946ea7987c2f4cc5/24 source=treesitter/javascript confidence=1 sig=class Circle extends Shape doc=-
+fact method area 16:2-18:3 bytes=216-250 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=180886252377042f/15 source=treesitter/javascript confidence=1 sig=area() doc=-
+fact function makeCircle 21:7-23:1 bytes=261-316 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=2eaa6a8293e8f4c9/25 source=treesitter/javascript confidence=1 sig=function makeCircle() doc=-
+fact method helper 25:0-27:1 bytes=318-386 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=f57bc53c0759d401/35 source=treesitter/javascript confidence=1 sig=exports.helper = function helper() doc=-
+relation 15 Circle extends Shape
+call 44 require on=-
+call 307 name on=new Circle()
+call 369 join on=path
+span 25-29 kind=1
+span 52-58 kind=1
+span 138-145 kind=1
+span 154-177 kind=0
+span 374-377 kind=1
+span 379-382 kind=1
