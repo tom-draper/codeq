@@ -196,31 +196,31 @@ struct LangSpec {
 }
 
 impl LangSpec {
-    fn new(
-        language: tree_sitter::Language,
-        query_src: &str,
-        span_src: &str,
-        rel_src: &str,
-        source: &str,
-        lang: &'static str,
-    ) -> Result<LangSpec> {
+    fn new(grammar: Grammar) -> Result<LangSpec> {
+        let Grammar {
+            name,
+            language,
+            defs,
+            spans,
+            rel,
+        } = grammar;
         let mut parser = Parser::new();
         parser
             .set_language(&language)
             .context("setting tree-sitter language")?;
-        let query = Query::new(&language, query_src).context("compiling query")?;
+        let query = Query::new(&language, &defs).context("compiling query")?;
         let capture_names = query
             .capture_names()
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let span_query = Query::new(&language, span_src).context("compiling span query")?;
+        let span_query = Query::new(&language, spans).context("compiling span query")?;
         let span_capture_names = span_query
             .capture_names()
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let rel_query = Query::new(&language, rel_src).context("compiling relation query")?;
+        let rel_query = Query::new(&language, rel).context("compiling relation query")?;
         let rel_capture_names = rel_query
             .capture_names()
             .iter()
@@ -234,8 +234,8 @@ impl LangSpec {
             span_capture_names,
             rel_query,
             rel_capture_names,
-            source: source.to_string(),
-            lang,
+            source: format!("treesitter/{name}"),
+            lang: name,
         })
     }
 
@@ -811,241 +811,10 @@ impl Extractor {
         if self.languages.contains_key(language) {
             return Ok(());
         }
-        let spec = match language {
-            "rust" => LangSpec::new(
-                tree_sitter_rust::LANGUAGE.into(),
-                RUST_QUERY,
-                RUST_SPANS,
-                RUST_REL,
-                "treesitter/rust",
-                "rust",
-            )?,
-            "python" => LangSpec::new(
-                tree_sitter_python::LANGUAGE.into(),
-                PYTHON_QUERY,
-                PYTHON_SPANS,
-                PYTHON_REL,
-                "treesitter/python",
-                "python",
-            )?,
-            "javascript" => LangSpec::new(
-                tree_sitter_javascript::LANGUAGE.into(),
-                &format!("{JS_QUERY}\n{JS_EXTRA}"),
-                JS_SPANS,
-                JS_REL,
-                "treesitter/javascript",
-                "javascript",
-            )?,
-            "typescript" => LangSpec::new(
-                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                &format!("{JS_QUERY}\n{TS_EXTRA}"),
-                JS_SPANS,
-                TS_REL,
-                "treesitter/typescript",
-                "typescript",
-            )?,
-            "tsx" => LangSpec::new(
-                tree_sitter_typescript::LANGUAGE_TSX.into(),
-                &format!("{JS_QUERY}\n{TS_EXTRA}"),
-                JS_SPANS,
-                TS_REL,
-                "treesitter/tsx",
-                "tsx",
-            )?,
-            "go" => LangSpec::new(
-                tree_sitter_go::LANGUAGE.into(),
-                GO_QUERY,
-                GO_SPANS,
-                GO_REL,
-                "treesitter/go",
-                "go",
-            )?,
-            "java" => LangSpec::new(
-                tree_sitter_java::LANGUAGE.into(),
-                JAVA_QUERY,
-                JAVA_SPANS,
-                JAVA_REL,
-                "treesitter/java",
-                "java",
-            )?,
-            "ruby" => LangSpec::new(
-                tree_sitter_ruby::LANGUAGE.into(),
-                RUBY_QUERY,
-                RUBY_SPANS,
-                RUBY_REL,
-                "treesitter/ruby",
-                "ruby",
-            )?,
-            "c" => LangSpec::new(
-                tree_sitter_c::LANGUAGE.into(),
-                C_QUERY,
-                C_SPANS,
-                C_REL,
-                "treesitter/c",
-                "c",
-            )?,
-            "cpp" => LangSpec::new(
-                tree_sitter_cpp::LANGUAGE.into(),
-                CPP_QUERY,
-                CPP_SPANS,
-                CPP_REL,
-                "treesitter/cpp",
-                "cpp",
-            )?,
-            "csharp" => LangSpec::new(
-                tree_sitter_c_sharp::LANGUAGE.into(),
-                CSHARP_QUERY,
-                CSHARP_SPANS,
-                CSHARP_REL,
-                "treesitter/csharp",
-                "csharp",
-            )?,
-            "php" => LangSpec::new(
-                tree_sitter_php::LANGUAGE_PHP.into(),
-                PHP_QUERY,
-                PHP_SPANS,
-                PHP_REL,
-                "treesitter/php",
-                "php",
-            )?,
-            "bash" => LangSpec::new(
-                tree_sitter_bash::LANGUAGE.into(),
-                BASH_QUERY,
-                BASH_SPANS,
-                "",
-                "treesitter/bash",
-                "bash",
-            )?,
-            "lua" => LangSpec::new(
-                tree_sitter_lua::LANGUAGE.into(),
-                LUA_QUERY,
-                LUA_SPANS,
-                "",
-                "treesitter/lua",
-                "lua",
-            )?,
-            "scala" => LangSpec::new(
-                tree_sitter_scala::LANGUAGE.into(),
-                SCALA_QUERY,
-                SCALA_SPANS,
-                SCALA_REL,
-                "treesitter/scala",
-                "scala",
-            )?,
-            "kotlin" => LangSpec::new(
-                tree_sitter_kotlin_ng::LANGUAGE.into(),
-                KOTLIN_QUERY,
-                KOTLIN_SPANS,
-                KOTLIN_REL,
-                "treesitter/kotlin",
-                "kotlin",
-            )?,
-            "swift" => LangSpec::new(
-                tree_sitter_swift::LANGUAGE.into(),
-                SWIFT_QUERY,
-                SWIFT_SPANS,
-                SWIFT_REL,
-                "treesitter/swift",
-                "swift",
-            )?,
-            "dart" => LangSpec::new(
-                tree_sitter_dart::LANGUAGE.into(),
-                DART_QUERY,
-                DART_SPANS,
-                DART_REL,
-                "treesitter/dart",
-                "dart",
-            )?,
-            "zig" => LangSpec::new(
-                tree_sitter_zig::LANGUAGE.into(),
-                ZIG_QUERY,
-                ZIG_SPANS,
-                "",
-                "treesitter/zig",
-                "zig",
-            )?,
-            "elixir" => LangSpec::new(
-                tree_sitter_elixir::LANGUAGE.into(),
-                ELIXIR_QUERY,
-                ELIXIR_SPANS,
-                "",
-                "treesitter/elixir",
-                "elixir",
-            )?,
-            "solidity" => LangSpec::new(
-                tree_sitter_solidity::LANGUAGE.into(),
-                SOLIDITY_QUERY,
-                SOLIDITY_SPANS,
-                SOLIDITY_REL,
-                "treesitter/solidity",
-                "solidity",
-            )?,
-            "svelte" => LangSpec::new(
-                tree_sitter_svelte_ng::LANGUAGE.into(),
-                SVELTE_QUERY,
-                SVELTE_SPANS,
-                "",
-                "treesitter/svelte",
-                "svelte",
-            )?,
-            "vue" => LangSpec::new(
-                tree_sitter_vue_next::LANGUAGE.into(),
-                VUE_QUERY,
-                VUE_SPANS,
-                "",
-                "treesitter/vue",
-                "vue",
-            )?,
-            "css" => LangSpec::new(
-                tree_sitter_css::LANGUAGE.into(),
-                CSS_QUERY,
-                CSS_SPANS,
-                "",
-                "treesitter/css",
-                "css",
-            )?,
-            "hcl" => LangSpec::new(
-                tree_sitter_hcl::LANGUAGE.into(),
-                "",
-                HCL_SPANS,
-                "",
-                "treesitter/hcl",
-                "hcl",
-            )?,
-            "powershell" => LangSpec::new(
-                tree_sitter_powershell::LANGUAGE.into(),
-                POWERSHELL_QUERY,
-                POWERSHELL_SPANS,
-                "",
-                "treesitter/powershell",
-                "powershell",
-            )?,
-            "proto" => LangSpec::new(
-                tree_sitter_proto::LANGUAGE.into(),
-                PROTO_QUERY,
-                PROTO_SPANS,
-                "",
-                "treesitter/proto",
-                "proto",
-            )?,
-            "graphql" => LangSpec::new(
-                tree_sitter_graphql::LANGUAGE.into(),
-                GRAPHQL_QUERY,
-                GRAPHQL_SPANS,
-                GRAPHQL_REL,
-                "treesitter/graphql",
-                "graphql",
-            )?,
-            "sql" => LangSpec::new(
-                tree_sitter_sequel::LANGUAGE.into(),
-                SQL_QUERY,
-                SQL_SPANS,
-                SQL_REL,
-                "treesitter/sql",
-                "sql",
-            )?,
-            _ => return Ok(()),
+        let Some(grammar) = grammar(language) else {
+            return Ok(());
         };
+        let spec = LangSpec::new(grammar)?;
         self.languages.insert(language.to_string(), spec);
         Ok(())
     }
