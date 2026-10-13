@@ -572,6 +572,46 @@ fn definitions_returns_precise_ranges() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn changed_handles_paths_git_would_quote() {
+    // Non-ASCII, a space, a double quote and a leading space: git quotes or
+    // decorates every one of them unless asked not to, and the quoted text names
+    // no file.
+    let names = ["ünï.rs", "sp ace.rs", "q\"uote.rs", " lead.rs"];
+    let f = Fixture::new();
+    for n in names {
+        f.write(n, "fn a() {}\n");
+    }
+    f.git_init_commit();
+    for n in names {
+        f.write(n, "fn a() {}\nfn added() {}\n");
+    }
+    f.write("new ünï.rs", "fn fresh() {}\n");
+    // A user's diff config must not change what a `+++` line looks like.
+    f.git(&["config", "diff.noprefix", "true"]);
+
+    let paths = field_set(&f.run(&["changed", "--compare-to", "HEAD"]), "path");
+    for n in names.iter().chain(&["new ünï.rs"]) {
+        assert!(
+            paths.contains(&n.to_string()),
+            "{n:?} missing from {paths:?}"
+        );
+    }
+
+    let v = f.run(&["changed", "--compare-to", "HEAD", "--symbols"]);
+    let hit = |path: &str, name: &str| {
+        v["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["path"] == path && r["name"] == name)
+    };
+    for n in names {
+        assert!(hit(n, "added"), "{n:?} hunk not attributed: {v}");
+    }
+    assert!(hit("new ünï.rs", "fresh"), "{v}");
+}
+
+#[test]
 fn changed_reports_modified_and_untracked() {
     let f = Fixture::new();
     f.write("a.rs", "fn a() {}\n").write("b.rs", "fn b() {}\n");

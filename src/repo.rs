@@ -123,21 +123,17 @@ impl Repo {
         // Keep both sides of renames. Consumers such as `api --compare-to` need
         // to see a removed module path as well as the destination path; with
         // rename detection enabled `--name-only` reports only the destination.
-        let committed = git(&self.root, &["diff", "--name-only", "--no-renames", &base])?;
-        for line in committed.lines() {
-            let p = line.trim();
-            if !p.is_empty() {
-                paths.push(p.to_string());
-            }
-        }
+        let committed = git(
+            &self.root,
+            &["diff", "--name-only", "-z", "--no-renames", &base],
+        )?;
+        paths.extend(nul_separated(&committed).map(str::to_string));
         // Untracked files aren't in the diff; include them so agents see new files.
-        let untracked = git(&self.root, &["ls-files", "--others", "--exclude-standard"])?;
-        for line in untracked.lines() {
-            let p = line.trim();
-            if !p.is_empty() {
-                paths.push(p.to_string());
-            }
-        }
+        let untracked = git(
+            &self.root,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+        )?;
+        paths.extend(nul_separated(&untracked).map(str::to_string));
         paths.sort();
         paths.dedup();
         Ok(paths)
@@ -163,15 +159,30 @@ impl Repo {
         // the changed new-side lines. A pure deletion has no new-side lines;
         // anchor that zero-width change to the preceding line (or line 1 at the
         // start of a file) so the definition containing the deletion is touched.
-        let diff = git(&self.root, &["diff", "-U0", "--no-color", &base])?;
+        // The prefixes are spelled out because `diff.noprefix` and
+        // `diff.mnemonicPrefix` in a user's config change what a `+++` line
+        // starts with.
+        let diff = git(
+            &self.root,
+            &[
+                "diff",
+                "-U0",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-renames",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                &base,
+            ],
+        )?;
         let mut current: Option<String> = None;
         for line in diff.lines() {
-            if let Some(rest) = line.strip_prefix("+++ ") {
-                current = if rest == "/dev/null" {
-                    None
-                } else {
-                    Some(rest.strip_prefix("b/").unwrap_or(rest).to_string())
-                };
+            if line.starts_with("diff --git ") {
+                // A file with no `+++` line (binary, mode-only) must not inherit
+                // the previous file's path for its hunks.
+                current = None;
+            } else if let Some(rest) = line.strip_prefix("+++ ") {
+                current = new_side_path(rest);
             } else if line.starts_with("@@ ") {
                 if let (Some(path), Some((start, count))) = (&current, parse_new_hunk(line)) {
                     let range = if count > 0 {
@@ -186,16 +197,77 @@ impl Repo {
         }
 
         // Untracked files: treat the whole file as changed.
-        let untracked = git(&self.root, &["ls-files", "--others", "--exclude-standard"])?;
-        for line in untracked.lines() {
-            let p = line.trim();
-            if !p.is_empty() {
-                map.insert(p.to_string(), vec![(1, usize::MAX)]);
-            }
+        let untracked = git(
+            &self.root,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+        )?;
+        for p in nul_separated(&untracked) {
+            map.insert(p.to_string(), vec![(1, usize::MAX)]);
         }
 
         Ok(map)
     }
+}
+
+/// The names in `git ... -z` output. Without `-z` git quotes any path holding a
+/// non-ASCII byte, a quote or a control character (`"\303\274.rs"`), and the
+/// quoted text names no file; trimming it would also eat a leading space.
+fn nul_separated(out: &str) -> impl Iterator<Item = &str> {
+    out.split('\0').filter(|p| !p.is_empty())
+}
+
+/// The path on the `+++ ` line of a patch, without git's decoration: a trailing
+/// TAB after a name that holds a space, C-style quoting of unusual names, and
+/// the `b/` prefix. `None` for `/dev/null` (a deleted file has no new side).
+fn new_side_path(rest: &str) -> Option<String> {
+    let rest = rest.strip_suffix('\t').unwrap_or(rest);
+    let path = unquote_c_style(rest);
+    if path == "/dev/null" {
+        return None;
+    }
+    Some(path.strip_prefix("b/").unwrap_or(&path).to_string())
+}
+
+/// Undo git's C-style quoting (`"a\"b\303\274"`); an unquoted name is returned as is.
+fn unquote_c_style(raw: &str) -> String {
+    let Some(inner) = raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')) else {
+        return raw.to_string();
+    };
+    let b = inner.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'\\' || i + 1 == b.len() {
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        match b[i] {
+            b'a' => out.push(7),
+            b'b' => out.push(8),
+            b'f' => out.push(12),
+            b'n' => out.push(b'\n'),
+            b'r' => out.push(b'\r'),
+            b't' => out.push(b'\t'),
+            b'v' => out.push(11),
+            b'0'..=b'7' => {
+                // Up to three octal digits: one raw byte of a UTF-8 sequence.
+                let mut value = 0u32;
+                let mut digits = 0;
+                while digits < 3 && i < b.len() && (b'0'..=b'7').contains(&b[i]) {
+                    value = value * 8 + u32::from(b[i] - b'0');
+                    i += 1;
+                    digits += 1;
+                }
+                out.push(value as u8);
+                continue;
+            }
+            other => out.push(other),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Parse the new-side `+c,d` field of a `@@ -a,b +c,d @@` hunk header into
@@ -254,4 +326,37 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
         return Err(anyhow!("git {} failed: {}", args.join(" "), stderr.trim()));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unquotes_git_c_style_paths() {
+        assert_eq!(unquote_c_style("plain.rs"), "plain.rs");
+        assert_eq!(unquote_c_style(r#""q\"uote.rs""#), "q\"uote.rs");
+        assert_eq!(unquote_c_style(r#""\303\274n\303\257.rs""#), "ünï.rs");
+        assert_eq!(unquote_c_style(r#""a\tb\\c""#), "a\tb\\c");
+        // Digits after a three-digit octal escape are literal text.
+        assert_eq!(unquote_c_style(r#""\3031""#), "\u{FFFD}1");
+    }
+
+    #[test]
+    fn new_side_path_strips_git_decoration() {
+        assert_eq!(new_side_path("b/src/a.rs"), Some("src/a.rs".into()));
+        // A trailing TAB follows any name that contains a space.
+        assert_eq!(new_side_path("b/sp ace.rs\t"), Some("sp ace.rs".into()));
+        assert_eq!(
+            new_side_path(r#""b/\303\274.rs""#),
+            Some("ü.rs".to_string())
+        );
+        assert_eq!(new_side_path("/dev/null"), None);
+    }
+
+    #[test]
+    fn nul_separated_keeps_leading_spaces() {
+        let names: Vec<&str> = nul_separated(" lead.rs\0b.rs\0").collect();
+        assert_eq!(names, vec![" lead.rs", "b.rs"]);
+    }
 }
