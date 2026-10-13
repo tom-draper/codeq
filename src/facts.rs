@@ -21,7 +21,7 @@ mod docs;
 use docs::{jinja_facts, markdown_facts, rst_facts};
 
 mod queries;
-use queries::*;
+use queries::{grammar, Grammar};
 
 mod shape;
 use shape::shape_of;

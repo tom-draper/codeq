@@ -1,7 +1,7 @@
 //! What codeq can extract per language, derived from the query text itself.
 //! `capabilities` reports it, and empty-result notes cite it.
 
-use super::queries::*;
+use super::queries::{grammar, Grammar};
 
 /// What codeq can extract for one language.
 ///
@@ -54,10 +54,9 @@ pub fn support(language: &str) -> Option<Support> {
             relations,
             // A component's relations come from its embedded `<script>`, so its
             // kinds are TypeScript's.
-            relation_kinds: if relations {
-                relation_kinds_of(TS_REL)
-            } else {
-                Vec::new()
+            relation_kinds: match grammar("typescript") {
+                Some(ts) if relations => relation_kinds_of(ts.rel),
+                _ => Vec::new(),
             },
             spans: has_spans(language),
             calls,
