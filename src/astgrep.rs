@@ -284,6 +284,72 @@ fn match_children(
     true
 }
 
+/// The literal text a match must contain: every pattern leaf that is not a
+/// metavariable. A leaf matches by exact text, so a file missing any of these
+/// cannot match, whatever its structure.
+fn required_literals<'a>(pat: Node, psrc: &'a [u8]) -> Vec<&'a [u8]> {
+    let mut out: Vec<&[u8]> = Vec::new();
+    let mut stack = vec![pat];
+    while let Some(node) = stack.pop() {
+        if node.named_child_count() == 0 {
+            let text = &psrc[node.start_byte()..node.end_byte()];
+            let metavar =
+                text.starts_with(SENTINEL.as_bytes()) || text.starts_with(VARIADIC.as_bytes());
+            if !metavar && !text.is_empty() && !out.contains(&text) {
+                out.push(text);
+            }
+            continue;
+        }
+        let mut cur = node.walk();
+        stack.extend(node.named_children(&mut cur));
+    }
+    out
+}
+
+/// Parse one file and append every node matching the pattern.
+fn match_file(
+    parser: &mut Parser,
+    pat_node: Node,
+    psrc: &[u8],
+    path: &str,
+    body: &str,
+    out: &mut Vec<Match>,
+) {
+    let Some(tree) = parser.parse(body, None) else {
+        return;
+    };
+    let pat_kind = pat_node.kind_id();
+    let csrc = body.as_bytes();
+    // DFS; only same-kind nodes can match; a matched node's subtree is skipped
+    // so nested duplicates of the same pattern aren't reported.
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if node.kind_id() == pat_kind {
+            let mut binds = HashMap::new();
+            if node_matches(pat_node, node, psrc, csrc, &mut binds) {
+                let sp = node.start_position();
+                let ep = node.end_position();
+                let mut b: Vec<(String, String)> = binds.into_iter().collect();
+                b.sort();
+                out.push(Match {
+                    path: path.to_string(),
+                    start_byte: node.start_byte(),
+                    start_line: sp.row + 1,
+                    start_col: sp.column,
+                    end_line: ep.row + 1,
+                    text: node.utf8_text(csrc).unwrap_or("").to_string(),
+                    binds: b,
+                });
+                continue;
+            }
+        }
+        let mut cur = node.walk();
+        for child in node.children(&mut cur) {
+            stack.push(child);
+        }
+    }
+}
+
 /// Compile `pattern` for `lang_name` and return every structural match across
 /// `files` (each `(path, source)`), in deterministic path+position order.
 pub fn search<I>(lang_name: &str, pattern: &str, files: I) -> Result<Vec<Match>>
@@ -328,44 +394,58 @@ where
             "pattern is a bare metavariable — it would match everything"
         ));
     }
-    let pat_kind = pat_node.kind_id();
-
-    let mut out = Vec::new();
-    for (path, body) in files {
-        let tree = match parser.parse(&body, None) {
-            Some(t) => t,
-            None => continue,
-        };
-        let csrc = body.as_bytes();
-        // DFS; only same-kind nodes can match; a matched node's subtree is skipped
-        // so nested duplicates of the same pattern aren't reported.
-        let mut stack = vec![tree.root_node()];
-        while let Some(node) = stack.pop() {
-            if node.kind_id() == pat_kind {
-                let mut binds = HashMap::new();
-                if node_matches(pat_node, node, psrc, csrc, &mut binds) {
-                    let sp = node.start_position();
-                    let ep = node.end_position();
-                    let mut b: Vec<(String, String)> = binds.into_iter().collect();
-                    b.sort();
-                    out.push(Match {
-                        path: path.clone(),
-                        start_byte: node.start_byte(),
-                        start_line: sp.row + 1,
-                        start_col: sp.column,
-                        end_line: ep.row + 1,
-                        text: node.utf8_text(csrc).unwrap_or("").to_string(),
-                        binds: b,
-                    });
-                    continue;
-                }
-            }
-            let mut cur = node.walk();
-            for child in node.children(&mut cur) {
-                stack.push(child);
+    // A file can only match if it holds every literal the pattern spells out,
+    // so most files are ruled out by a substring test and never parsed. What
+    // survives is parsed on every core: re-parsing is the whole cost here, and
+    // one file's parse owes nothing to another's.
+    let literals = required_literals(pat_node, psrc);
+    let finders: Vec<memchr::memmem::Finder> = literals
+        .iter()
+        .map(|lit| memchr::memmem::Finder::new(lit))
+        .collect();
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 8);
+    // Bounded, so bodies are still streamed rather than all held at once.
+    let (work_tx, work_rx) = std::sync::mpsc::sync_channel::<(String, String)>(workers * 2);
+    let work_rx = std::sync::Mutex::new(work_rx);
+    let mut out = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    // A parser and a pattern tree per worker: neither is shared.
+                    let mut out = Vec::new();
+                    let mut parser = Parser::new();
+                    if parser.set_language(&lang).is_err() {
+                        return out;
+                    }
+                    let Some(pat_tree) = parser.parse(&substituted, None) else {
+                        return out;
+                    };
+                    let pat_node = significant(pat_tree.root_node());
+                    loop {
+                        let next = work_rx.lock().unwrap().recv();
+                        let Ok((path, body)) = next else {
+                            return out;
+                        };
+                        match_file(&mut parser, pat_node, psrc, &path, &body, &mut out);
+                    }
+                })
+            })
+            .collect();
+        for (path, body) in files {
+            let possible = finders.iter().all(|f| f.find(body.as_bytes()).is_some());
+            if possible && work_tx.send((path, body)).is_err() {
+                break;
             }
         }
-    }
+        drop(work_tx);
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("astgrep worker panicked"))
+            .collect::<Vec<Match>>()
+    });
     out.sort_by(|a, b| {
         a.path
             .cmp(&b.path)
