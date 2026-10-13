@@ -10067,7 +10067,7 @@ fn the_envelope_says_where_its_rows_are() {
 
 #[test]
 fn unused_exclusions_are_one_policy_not_a_growing_query() {
-    // The rule lives in `facts::UNREFERENCED_BY_DESIGN` now; this pins the
+    // The rule lives in `facts::liveness::UNREFERENCED_BY_DESIGN` now; this pins the
     // behaviour it governs so moving it cannot quietly change it.
     let f = Fixture::new();
     f.write("s.graphql", "type User { id: ID! }\n");
