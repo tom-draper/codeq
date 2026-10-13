@@ -131,16 +131,17 @@ pub fn cmd_read(
             // Not a file as written: `path:A-B`, the form a search row, a stack
             // frame and a compiler error all print. The whole argument is tried
             // first, so a real file with a colon in its name still wins.
-            Err(e) => match arg.rsplit_once(':').and_then(|(f, spec)| {
-                let ranges = spec
-                    .split(',')
-                    .map(parse_range)
-                    .collect::<Result<Vec<_>>>()
-                    .ok()?;
-                Some((f, ranges))
-            }) {
-                Some((f, ranges)) => (resolve_file(&s, f)?, ranges),
-                None => return Err(e),
+            // Once the file part resolves, a malformed range is the error to
+            // report, not "file not found: a.rs:10-5".
+            Err(e) => match arg.rsplit_once(':') {
+                Some((f, spec)) if resolve_file(&s, f).is_ok() => {
+                    let ranges = spec
+                        .split(',')
+                        .map(parse_range)
+                        .collect::<Result<Vec<_>>>()?;
+                    (resolve_file(&s, f)?, ranges)
+                }
+                _ => return Err(e),
             },
         });
     }
@@ -259,6 +260,10 @@ fn read_one(
             return Err(anyhow!("--raw yields one exact block; it takes one range"));
         }
         for (i, (a, b)) in ranges.iter().enumerate() {
+            // Silence reads as "an empty slice", not "past the end of the file".
+            if *a > n {
+                eprintln!("# codeq: {rel} has {n} line(s); nothing at {a}-{b}");
+            }
             // grep's separator between non-adjacent blocks.
             if i > 0 {
                 println!("--");
@@ -372,12 +377,22 @@ fn parse_range(spec: impl AsRef<str>) -> Result<(usize, usize)> {
     let a: usize = a
         .trim()
         .parse()
-        .map_err(|_| anyhow!("invalid line range"))?;
+        .map_err(|_| anyhow!("invalid line range '{spec}'"))?;
     let b: usize = b
         .trim()
         .parse()
-        .map_err(|_| anyhow!("invalid line range"))?;
-    Ok((a.max(1), b.max(a)))
+        .map_err(|_| anyhow!("invalid line range '{spec}'"))?;
+    if b == 0 {
+        return Err(anyhow!("invalid line range '{spec}': lines start at 1"));
+    }
+    // `10-5` used to be quietly read as line 10, which answers a different
+    // question than the one asked.
+    if b < a {
+        return Err(anyhow!(
+            "invalid line range '{spec}': ends before it starts"
+        ));
+    }
+    Ok((a.max(1), b))
 }
 
 fn print_range(lines: &[&str], a: usize, b: usize) {
