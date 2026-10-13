@@ -1736,9 +1736,6 @@ pub fn has_spans(language: &str) -> bool {
     )
 }
 
-/// The declaration text with any body stripped, collapsed to one line and
-/// capped. When there is no body capture (structs, consts, imports, …) the
-/// whole node text is used, still capped.
 /// The text of the first direct child of `node` whose kind is `kind`.
 fn first_child_kind<'a>(node: Node, kind: &str, src: &'a [u8]) -> Option<&'a str> {
     let mut c = node.walk();
@@ -2431,6 +2428,9 @@ fn wrapper_head(val: Node) -> Option<Node> {
     }
 }
 
+/// The declaration text with any body stripped, collapsed to one line and
+/// capped. When there is no body capture (structs, consts, imports, …) the
+/// whole node text is used, still capped.
 fn signature_of(src: &[u8], def: Node, body: Option<Node>) -> String {
     if let Some(sig) = arrow_signature(src, def) {
         return cap(&sig, MAX_SIG);
