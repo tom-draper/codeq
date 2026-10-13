@@ -102,7 +102,8 @@ use rusqlite::Connection;
 // query-driven half. A visibility rule or an attribute reader is ordinary Rust
 // and would slip through, while the mechanism looked complete. Not yet solved.
 // v46 records Rust impl owners for qualifier-aware callee selection.
-pub const SCHEMA_VERSION: i64 = 46;
+// v47 stops tagging wrapper decorators (`pass_context`, `setupmethod`) as registrations.
+pub const SCHEMA_VERSION: i64 = 47;
 
 /// Below this many free pages (1 MiB at the default page size) compaction is
 /// not worth a rewrite, whatever share of a small index they are.

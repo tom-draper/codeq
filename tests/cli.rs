@@ -10818,6 +10818,9 @@ fn entrypoints_lists_syntax_registered_routes_and_optional_tests() {
          class Config:\n    @property\n    def value(self):\n        return 0\n\n    @value.setter\n    def value(self, value):\n        pass\n\n\
          @contextmanager\ndef transaction():\n    yield\n\n\
          @cache\ndef cached():\n    return 1\n\n\
+         @click.pass_context\ndef with_context(ctx):\n    pass\n\n\
+         @setupmethod\ndef guarded():\n    pass\n\n\
+         @deprecated\ndef legacy():\n    pass\n\n\
          @pytest.mark.unit\ndef test_health():\n    assert health() == {}\n",
     );
 

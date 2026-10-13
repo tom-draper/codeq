@@ -149,6 +149,13 @@ pub(super) fn registering_decorator(node: Node, src: &[u8]) -> Option<String> {
         "no_type_check",
         "unique",
         "LocalProxy",
+        // Wrap or mark a definition without registering it: Click's context
+        // injection, Flask's setup guard, a deprecation marker.
+        "deprecated",
+        "pass_context",
+        "pass_obj",
+        "make_pass_decorator",
+        "setupmethod",
         "functools",
         "derive",
         "inline",
