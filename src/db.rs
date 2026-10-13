@@ -113,6 +113,11 @@ pub struct Db {
     /// The `.codeq` directory; reserved for status/cleanup commands.
     #[allow(dead_code)]
     pub dir: PathBuf,
+    /// The schema version of the index this open replaced, when it found one
+    /// written by a different codeq. Everything derived was dropped and is
+    /// about to be rebuilt, which the caller should say rather than leave an
+    /// upgrade looking like an unexplained slow query.
+    pub rebuilt_from: Option<String>,
 }
 
 /// Switch a new database to WAL, waiting out a competing switch.
@@ -178,7 +183,11 @@ impl Db {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
-        let db = Db { conn, dir };
+        let mut db = Db {
+            conn,
+            dir,
+            rebuilt_from: None,
+        };
         // The DDL batch (CREATE TABLE/INDEX/VIRTUAL TABLE + best-effort ALTERs)
         // only needs to run when the schema is missing or out of date. On the
         // common path it's already current, so skip it — re-parsing ~a dozen
@@ -192,12 +201,14 @@ impl Db {
             )
             .ok();
         if stored.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
-            db.migrate()?;
+            db.rebuilt_from = db.migrate()?;
         }
         Ok(db)
     }
 
-    fn migrate(&self) -> Result<()> {
+    /// Returns the version it replaced: `None` on a first build, or when
+    /// another process migrated while this one waited.
+    fn migrate(&self) -> Result<Option<String>> {
         // One migration at a time, and whoever waited re-checks. A cold start
         // is routinely several processes at once, all of which saw no schema;
         // unserialised, the second would drop the tables the first had just
@@ -214,7 +225,8 @@ impl Db {
         )?;
         let prev = self.get_meta("schema_version")?;
         if prev.as_deref() == Some(SCHEMA_VERSION.to_string().as_str()) {
-            return Ok(tx.commit()?);
+            tx.commit()?;
+            return Ok(None);
         }
         // Everything but `meta` is derived, and a version change rebuilds it
         // all — so drop the old tables rather than empty them. `CREATE … IF
@@ -362,7 +374,8 @@ impl Db {
         self.create_fts()?;
 
         self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
-        Ok(tx.commit()?)
+        tx.commit()?;
+        Ok(prev)
     }
 
     /// The trigram index over file contents: which files hold each trigram,

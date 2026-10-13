@@ -119,6 +119,7 @@ impl Session {
             schema: SCHEMA_VERSION,
             fresh: true, // we just refreshed before answering
             reindexed_files: self.reindexed,
+            rebuilt_from_schema: self.db.rebuilt_from.clone(),
             partial_failures: self.partial_failures,
             elapsed_ms: self.started.elapsed().as_millis() as u64,
         };
