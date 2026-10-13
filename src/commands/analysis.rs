@@ -150,34 +150,42 @@ fn used_definition_names(
             continue;
         };
         let body = body.as_str();
-        let spans = if crate::facts::has_spans(language.as_deref().unwrap_or("")) {
-            span_stmt
-                .query_map([path], crate::search::span_row)?
-                .collect::<std::result::Result<Vec<_>, _>>()?
-        } else {
-            Vec::new()
-        };
         let bytes = body.as_bytes();
-        let mut line_starts = vec![0];
-        line_starts.extend(
-            bytes
-                .iter()
-                .enumerate()
-                .filter(|(_, b)| **b == b'\n')
-                .map(|(i, _)| i + 1),
-        );
+        let file_language = crate::index::language_for(path);
+        // Spans and line starts are per-file work that only a live match
+        // needs, and most files hold none: a name already known to be used is
+        // settled, so its later occurrences are skipped before either is built.
+        let mut spans: Option<Vec<_>> = None;
+        let mut line_starts: Option<Vec<usize>> = None;
         for m in re.find_iter(body) {
+            if used.contains(m.as_str()) {
+                continue;
+            }
+            if spans.is_none() {
+                spans = Some(
+                    if crate::facts::has_spans(language.as_deref().unwrap_or("")) {
+                        span_stmt
+                            .query_map([path], crate::search::span_row)?
+                            .collect::<std::result::Result<Vec<_>, _>>()?
+                    } else {
+                        Vec::new()
+                    },
+                );
+            }
+            let spans = spans.as_deref().unwrap_or_default();
             if !crate::search::has_identifier_boundaries(
                 bytes,
                 m.start(),
                 m.end(),
-                crate::index::language_for(path),
-                crate::search::is_in_string(&spans, m.start()),
-            ) || !crate::search::is_not_comment(&spans, m.start())
+                file_language,
+                crate::search::is_in_string(spans, m.start()),
+            ) || !crate::search::is_not_comment(spans, m.start())
             {
                 continue;
             }
-            let line = line_starts.partition_point(|&start| start <= m.start()) as i64;
+            let line = line_starts
+                .get_or_insert_with(|| crate::search::line_starts_of(body))
+                .partition_point(|&start| start <= m.start()) as i64;
             // The declaration is the *first* occurrence of the name inside its
             // own extent, not the occurrence on the extent's first line. Those
             // are the same thing only when nothing precedes the name — and an
@@ -337,12 +345,18 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
     // asks about one name at a time, but here a single line often declares one
     // symbol and calls another — `fn a() { hot(); }` — and dropping the name
     // silently discarded every such call site.
-    let mut defsites: HashSet<(String, String, i64)> = HashSet::new();
+    // Path first, then name: the scan below asks once per identifier in the
+    // repo, and this shape answers from borrowed strings where a tuple key
+    // needed two allocations per question.
+    let mut defsites: HashMap<String, HashMap<String, Vec<i64>>> = HashMap::new();
     let mut declarations: HashMap<String, i64> = HashMap::new();
     for_each_def_site(&s.db.conn, |name, path, line, _end| {
         if wanted.contains(name.as_str()) {
             *declarations.entry(name.clone()).or_insert(0) += 1;
-            defsites.insert((name, path, line));
+            let lines = defsites.entry(path).or_default().entry(name).or_default();
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
         }
     })?;
 
@@ -351,7 +365,7 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
     // Svelte/Vue intentionally have no reliable stored calls (their script body
     // is opaque to the component parser), so those files retain the old textual
     // fallback in the pass below rather than silently losing coverage.
-    let mut counts: HashMap<String, i64> = HashMap::new();
+    let mut counts: HashMap<&str, i64> = HashMap::new();
     if calls_only {
         let wanted_names: Vec<&str> = wanted.iter().copied().collect();
         for chunk in wanted_names.chunks(500) {
@@ -372,7 +386,9 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
             })?;
             for row in rows {
                 let (name, count) = row?;
-                counts.insert(name, count);
+                if let Some(name) = wanted.get(name.as_str()) {
+                    counts.insert(name, count);
+                }
             }
         }
     }
@@ -406,14 +422,8 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
             let bytes = body.as_bytes();
             // Byte offset of each line start, so an occurrence can be matched
             // against the definition sites recorded above (which are line-based).
-            let mut line_starts: Vec<usize> = vec![0];
-            line_starts.extend(
-                bytes
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, b)| **b == b'\n')
-                    .map(|(i, _)| i + 1),
-            );
+            let line_starts = crate::search::line_starts_of(body);
+            let file_sites = defsites.get(rel);
             for_each_ident(body, |off, tok| {
                 if let Some(name) = wanted.get(tok) {
                     if crate::search::class_at(&spans, off).is_some() {
@@ -423,10 +433,13 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
                         return;
                     }
                     let line = line_starts.partition_point(|&s| s <= off) as i64;
-                    if defsites.contains(&((*name).to_string(), rel.to_string(), line)) {
+                    if file_sites
+                        .and_then(|sites| sites.get(*name))
+                        .is_some_and(|lines| lines.contains(&line))
+                    {
                         return; // this name's own declaration
                     }
-                    *counts.entry((*name).to_string()).or_insert(0) += 1;
+                    *counts.entry(name).or_insert(0) += 1;
                 }
             });
         }
@@ -441,7 +454,7 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
             continue;
         }
         let declared = declarations.get(name).copied().unwrap_or(0);
-        let refs = counts.get(name).copied().unwrap_or(0);
+        let refs = counts.get(name.as_str()).copied().unwrap_or(0);
         if refs < min_refs {
             continue;
         }
