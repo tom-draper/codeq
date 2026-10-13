@@ -124,7 +124,8 @@ from the extraction queries rather than a hand-kept list. The kinds matter: C# w
 `class C : B, I` for both inheritance and implementation and the grammar cannot tell
 them apart, so C# emits `extends` and never `implements`. Type relations are unavailable for Go, C, and Zig; Go satisfies
 interfaces structurally, so determining implementations would require type checking rather
-than syntax extraction. Ruby declares no fields.
+than syntax extraction. A Ruby field is an `attr_reader`/`attr_writer`/`attr_accessor`
+symbol, since the language declares none otherwise.
 When a command comes back empty for that reason it says so, rather than letting an
 unsupported language read as evidence of absence.
 
