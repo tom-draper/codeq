@@ -283,8 +283,8 @@ benchmarks — not as a step you run before querying.
     the declaration, not transitively resolved).
 - **Check what codeq supports before trusting an empty answer:** `codeq
   capabilities` includes `language_support`, a per-language matrix of which
-  extractions exist. Go, C and Zig have **no** relation extraction, Ruby declares no
-  fields, Bash/Lua/Zig/Elixir have no imports — for those, "none found" is not
+  extractions exist. Go, C and Zig have **no** relation extraction, Bash/Lua/Elixir
+  have no members, PowerShell/GraphQL/SQL have no imports — for those, "none found" is not
   evidence of absence, and the empty-result note says so.
   - **`relation_kinds` per language**, because `relations: true` is too coarse to
     act on: C# writes `class C : B, I` for both inheritance and implementation and
@@ -610,6 +610,15 @@ unchecked by it. It writes a result to
 Run these whenever a change touches extraction, the search engine, the renderer,
 or the schema — which is most changes. Skipping them is how six commits once went
 in unverified: everything passed in the end, but nobody knew that at the time.
+
+**Changing extraction means bumping `SCHEMA_VERSION`** (`src/db.rs`), or existing
+indexes keep the old facts. `tests/languages.rs` enforces it: it indexes one
+fixture per language (`tests/fixtures/languages/`), checks each yields every fact
+`capabilities` advertises for it, and compares everything extracted against
+`golden/`. Facts that change while the version does not fail the test. After a
+bump, or after adding or editing a fixture, regenerate with
+`CODEQ_BLESS=1 cargo test --test languages` and commit the golden files; the diff
+shows exactly which facts moved. A new language needs a fixture there.
 
 - Token/benchmark numbers: `bench/bench.py` (single commands), `bench/tasks.py`
   (task-level), `bench/completion.py` (the token-to-completion table in the
