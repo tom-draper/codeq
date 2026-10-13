@@ -62,6 +62,19 @@ pub struct Render<'a> {
     pub max_per_file: Option<usize>,
 }
 
+impl Render<'_> {
+    fn is_json(&self) -> bool {
+        self.json || self.meta || self.pretty
+    }
+
+    /// Whether the output will carry the `repo`/`index` blocks. Public so a
+    /// caller can skip gathering what they hold: the repo block costs two `git`
+    /// processes, and text output never prints it.
+    pub fn includes_meta(&self, index: &IndexMeta) -> bool {
+        self.is_json() && (self.meta || self.pretty || index.noteworthy())
+    }
+}
+
 pub struct Envelope<T: Serialize> {
     repo: RepoMeta,
     index: IndexMeta,
@@ -90,7 +103,7 @@ impl<T: Serialize> Envelope<T> {
 
     /// Whether the meta blocks carry signal worth the tokens.
     fn noteworthy(&self) -> bool {
-        self.index.reindexed_files > 0 || !self.index.fresh || self.index.partial_failures > 0
+        self.index.noteworthy()
     }
 
     pub fn print(&self, r: Render) -> anyhow::Result<()> {
@@ -120,8 +133,8 @@ impl<T: Serialize> Envelope<T> {
 
         // JSON is opt-in (`--json`); `--meta`/`--pretty` are JSON concepts so they
         // imply it. The default is compact grep-style text — far fewer tokens.
-        if r.json || r.meta || r.pretty {
-            let include_meta = r.meta || r.pretty || self.noteworthy();
+        if r.is_json() {
+            let include_meta = r.includes_meta(&self.index);
             let mut out = serde_json::Map::new();
             out.insert("schema".into(), Value::from(RESULT_SCHEMA));
             if let Some(n) = &self.note {
@@ -873,6 +886,12 @@ pub struct IndexMeta {
     #[serde(skip_serializing_if = "is_zero")]
     pub partial_failures: u64,
     pub elapsed_ms: u64,
+}
+
+impl IndexMeta {
+    fn noteworthy(&self) -> bool {
+        self.reindexed_files > 0 || !self.fresh || self.partial_failures > 0
+    }
 }
 
 fn is_zero(n: &u64) -> bool {

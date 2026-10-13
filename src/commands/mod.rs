@@ -181,12 +181,6 @@ impl Session {
     /// Emit with a note explaining an empty result. The note is only ever
     /// diagnostic: it never changes `data`, so a parser can keep ignoring it.
     fn emit_noted<T: Serialize>(&self, data: T, note: Option<String>) -> Result<()> {
-        let repo = RepoMeta {
-            root: self.repo.root.to_string_lossy().into_owned(),
-            vcs: self.repo.vcs(),
-            head: self.repo.head(),
-            dirty: self.repo.dirty(),
-        };
         let index = IndexMeta {
             schema: SCHEMA_VERSION,
             fresh: true, // we just refreshed before answering
@@ -195,14 +189,26 @@ impl Session {
             partial_failures: self.partial_failures,
             elapsed_ms: self.started.elapsed().as_millis() as u64,
         };
-        Envelope::new(repo, index, data).note(note).print(Render {
+        let render = Render {
             json: self.out.json,
             meta: self.out.meta,
             pretty: self.out.pretty,
             fields: self.out.fields.as_deref(),
             group: self.out.group,
             max_per_file: self.out.max_per_file,
-        })
+        };
+        // HEAD and the dirty flag each cost a `git` process, and only the repo
+        // block reports them. Text output and a quiet JSON answer never print
+        // that block, so asking anyway was two spawns on every query: about a
+        // third of a warm lookup, and `git status` grows with the tree.
+        let shown = render.includes_meta(&index);
+        let repo = RepoMeta {
+            root: self.repo.root.to_string_lossy().into_owned(),
+            vcs: self.repo.vcs(),
+            head: if shown { self.repo.head() } else { None },
+            dirty: if shown { self.repo.dirty() } else { None },
+        };
+        Envelope::new(repo, index, data).note(note).print(render)
     }
 }
 
