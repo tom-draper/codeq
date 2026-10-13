@@ -12047,7 +12047,7 @@ fn filler_text(bytes: usize) -> String {
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         out.push_str(&format!("w{:x} ", (state >> 33) % 4096));
-        if state % 11 == 0 {
+        if state.is_multiple_of(11) {
             out.push('\n');
         }
     }
