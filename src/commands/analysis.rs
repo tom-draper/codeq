@@ -498,7 +498,7 @@ pub fn cmd_unused(
     // by name, so every one of them would read as dead code.
     //
     // The other exclusion — declarations that exist to be consumed from outside
-    // the repository — lives in `facts::UNREFERENCED_BY_DESIGN`, applied below.
+    // the repository — lives in `facts::liveness::UNREFERENCED_BY_DESIGN`, applied below.
     // It used to be three hand-written clauses in this query, which is the wrong
     // home for a policy that gains an entry every time a language with an
     // external contract is added.
