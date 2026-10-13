@@ -70,7 +70,7 @@ pub(super) fn load(home: &Path) -> Result<Manifest> {
 
 /// The lock is advisory and serializes codeq installers. A changed-file check
 /// also detects edits by other applications before replacing a file.
-pub(super) fn lock(home: &Path) -> Result<File> {
+pub(super) fn lock(home: &Path) -> Result<InstallLock> {
     let path = home.join(".codeq/install.lock");
     require_regular(home, &path)?;
     std::fs::create_dir_all(path.parent().unwrap())?;
@@ -81,7 +81,23 @@ pub(super) fn lock(home: &Path) -> Result<File> {
         .truncate(false)
         .open(&path)?;
     FileExt::try_lock_exclusive(&file).context("another codeq installer is running")?;
-    Ok(file)
+    Ok(InstallLock(file))
+}
+
+/// The held installer lock, released when dropped.
+///
+/// Released explicitly, not by closing the file. An `flock` belongs to the open
+/// file description, and a child forked while it is held shares that
+/// description until it execs. Closing this handle then leaves the lock held
+/// for a moment by a process that never asked for it, and the next installer
+/// to try is told another one is running. The unit tests did exactly that:
+/// they run in threads, and one test's spawn landed inside another's lock.
+pub(super) struct InstallLock(File);
+
+impl Drop for InstallLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.0);
+    }
 }
 
 pub(super) fn save(home: &Path, state: &Manifest) -> Result<()> {
