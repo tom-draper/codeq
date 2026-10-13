@@ -13,17 +13,10 @@ fn opts(bin: &str) -> Options {
     }
 }
 
-fn tmp() -> PathBuf {
-    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let d = std::env::temp_dir().join(format!("codeq-install-{}-{n}", std::process::id()));
-    std::fs::create_dir_all(&d).unwrap();
-    d
-}
-
 #[test]
 fn installs_into_a_detected_agent_and_is_idempotent() {
-    let home = tmp();
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().to_path_buf();
     // Pretend Cursor is installed, with a pre-existing unrelated server.
     std::fs::create_dir_all(home.join(".cursor")).unwrap();
     std::fs::write(
@@ -50,13 +43,12 @@ fn installs_into_a_detected_agent_and_is_idempotent() {
         acts.iter().find(|a| a.agent == "cursor").unwrap().action,
         "already-current"
     );
-
-    std::fs::remove_dir_all(&home).ok();
 }
 
 #[test]
 fn skips_undetected_agents_and_uninstall_removes_only_codeq() {
-    let home = tmp();
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().to_path_buf();
     // Nothing installed: every agent is skipped, nothing is written.
     let acts = apply(&home, &opts("/usr/bin/codeq")).unwrap();
     assert!(acts.iter().all(|a| a.action == "skipped"), "{acts:?}");
@@ -83,13 +75,12 @@ fn skips_undetected_agents_and_uninstall_removes_only_codeq() {
         cfg["mcpServers"].get("codeq").is_none(),
         "codeq should be gone"
     );
-
-    std::fs::remove_dir_all(&home).ok();
 }
 
 #[test]
 fn installs_the_skill_beside_the_mcp_entry_and_is_idempotent() {
-    let home = tmp();
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().to_path_buf();
     std::fs::create_dir_all(home.join(".claude")).unwrap();
     let dest = home.join(".claude/skills/codeq/SKILL.md");
 
@@ -120,8 +111,6 @@ fn installs_the_skill_beside_the_mcp_entry_and_is_idempotent() {
     // --no-skill leaves it out of the run entirely.
     o.no_skill = true;
     assert!(apply(&home, &o).unwrap().iter().all(|a| a.what == "mcp"));
-
-    std::fs::remove_dir_all(&home).ok();
 }
 
 #[cfg(unix)]
@@ -131,7 +120,8 @@ fn a_symlinked_skill_is_never_written_through_or_deleted() {
     // wires up their checkout. Writing the embedded copy to
     // `skills/codeq/SKILL.md` would follow that link and edit the
     // repository; removing it would delete the repository's file.
-    let home = tmp();
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().to_path_buf();
     let checkout = home.join("checkout/.claude/skills/codeq");
     std::fs::create_dir_all(&checkout).unwrap();
     std::fs::write(checkout.join("SKILL.md"), "my working copy").unwrap();
@@ -163,13 +153,12 @@ fn a_symlinked_skill_is_never_written_through_or_deleted() {
         checkout.join("SKILL.md").exists(),
         "uninstall deleted the checkout's file through the symlink"
     );
-
-    std::fs::remove_dir_all(&home).ok();
 }
 
 #[test]
 fn dry_run_writes_nothing() {
-    let home = tmp();
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().to_path_buf();
     std::fs::create_dir_all(home.join(".gemini")).unwrap();
     std::fs::write(home.join(".gemini/settings.json"), "{}").unwrap();
 
@@ -184,8 +173,6 @@ fn dry_run_writes_nothing() {
         serde_json::from_str(&std::fs::read_to_string(home.join(".gemini/settings.json")).unwrap())
             .unwrap();
     assert!(cfg.get("mcpServers").is_none(), "dry-run must not write");
-
-    std::fs::remove_dir_all(&home).ok();
 }
 
 fn successful(actions: &[Action]) {
