@@ -385,9 +385,11 @@ fn render_rows(rows: &[Value], group: bool, truncated: &BTreeMap<String, usize>,
         .filter_map(|r| r.get("depth").and_then(|v| v.as_i64()))
         .min()
         .unwrap_or(0);
+    let mut cursor = ContextCursor::default();
     if !group && truncated.is_empty() {
-        for row in rows {
-            render_row(row, base, false, out);
+        for (i, row) in rows.iter().enumerate() {
+            let next = next_hit_line(rows, i);
+            render_row(row, base, false, &mut cursor, next, out);
         }
         return;
     }
@@ -402,7 +404,7 @@ fn render_rows(rows: &[Value], group: bool, truncated: &BTreeMap<String, usize>,
         let Some(p) = path else {
             // No path to hoist (a bare identifier row, a cycle, `--fields` having
             // dropped the column): nothing to group by, so render it flat.
-            render_row(&rows[i], base, false, out);
+            render_row(&rows[i], base, false, &mut cursor, None, out);
             i += 1;
             continue;
         };
@@ -422,8 +424,9 @@ fn render_rows(rows: &[Value], group: bool, truncated: &BTreeMap<String, usize>,
                 None => out.push_str(&format!("{p} ({shown})\n")),
             }
         }
-        for row in &rows[i..j] {
-            render_row(row, base, group, out);
+        for k in i..j {
+            let next = next_hit_line(rows, k);
+            render_row(&rows[k], base, group, &mut cursor, next, out);
         }
         // Flat rows carry no header, so a capped file needs its own marker —
         // led by the path, so the line stays self-describing like every other.
@@ -436,8 +439,52 @@ fn render_rows(rows: &[Value], group: bool, truncated: &BTreeMap<String, usize>,
     }
 }
 
+/// The highest line already printed for one file. Search hits carry their own
+/// -A/-B/-C window, so two hits a line apart would otherwise print the shared
+/// lines twice, and print the second hit as context (`-`) before its own match
+/// row (`:`). grep merges the windows; this is what lets the renderer do the same.
+#[derive(Default)]
+struct ContextCursor {
+    path: String,
+    last: i64,
+}
+
+impl ContextCursor {
+    /// Whether `line` of `path` has already been printed by an earlier window.
+    fn printed(&self, path: &str, line: i64) -> bool {
+        self.path == path && line <= self.last
+    }
+
+    fn mark(&mut self, path: &str, line: i64) {
+        if self.path != path {
+            self.path = path.to_string();
+            self.last = line;
+        } else {
+            self.last = self.last.max(line);
+        }
+    }
+}
+
+/// The line of the next row when it is another hit in the same file. Trailing
+/// context stops short of it, because that line prints as a match of its own.
+fn next_hit_line(rows: &[Value], i: usize) -> Option<i64> {
+    let here = rows.get(i)?.get("path")?.as_str()?;
+    let next = rows.get(i + 1)?;
+    if next.get("path")?.as_str()? != here {
+        return None;
+    }
+    next.get("line")?.as_i64()
+}
+
 /// One result row → `path:line: payload`, indented by `depth` for outlines.
-fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
+fn render_row(
+    row: &Value,
+    base_depth: i64,
+    in_group: bool,
+    cursor: &mut ContextCursor,
+    next_hit: Option<i64>,
+    out: &mut String,
+) {
     let o = match row {
         Value::Object(m) => m,
         other => {
@@ -537,21 +584,23 @@ fn render_row(row: &Value, base_depth: i64, in_group: bool, out: &mut String) {
                 if let Some(b) = before {
                     let start = ln - b.len() as i64;
                     for (i, cl) in b.iter().filter_map(|v| v.as_str()).enumerate() {
-                        out.push_str(&format!(
-                            "{pad}{lead}{}- {}\n",
-                            start + i as i64,
-                            cl.trim_end()
-                        ));
+                        let n = start + i as i64;
+                        if cursor.printed(p, n) {
+                            continue;
+                        }
+                        out.push_str(&format!("{pad}{lead}{n}- {}\n", cl.trim_end()));
                     }
                 }
                 out.push_str(&match_line);
+                cursor.mark(p, ln);
                 if let Some(a) = after {
                     for (i, cl) in a.iter().filter_map(|v| v.as_str()).enumerate() {
-                        out.push_str(&format!(
-                            "{pad}{lead}{}- {}\n",
-                            ln + 1 + i as i64,
-                            cl.trim_end()
-                        ));
+                        let n = ln + 1 + i as i64;
+                        if next_hit.is_some_and(|h| n >= h) {
+                            break;
+                        }
+                        out.push_str(&format!("{pad}{lead}{n}- {}\n", cl.trim_end()));
+                        cursor.mark(p, n);
                     }
                 }
                 return;

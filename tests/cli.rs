@@ -3985,6 +3985,28 @@ fn search_context_lines() {
 }
 
 #[test]
+fn search_context_windows_merge_instead_of_repeating_lines() {
+    // Hits on lines 2, 3 and 5 with -C 1: grep prints each line once, and a hit
+    // is always a `:` row, never first shown as `-` context for the hit before.
+    let f = Fixture::new();
+    f.write("a.txt", "one\nhit a\nhit b\nfour\nhit c\nsix\n");
+    let text = String::from_utf8_lossy(&f.raw(&["search", "hit", "-C", "1"]).stdout).into_owned();
+    let rows: Vec<&str> = text.lines().filter(|l| l.starts_with("a.txt")).collect();
+    assert_eq!(
+        rows,
+        vec![
+            "a.txt-1- one",
+            "a.txt:2: hit a",
+            "a.txt:3: hit b",
+            "a.txt-4- four",
+            "a.txt:5: hit c",
+            "a.txt-6- six",
+        ],
+        "{text}"
+    );
+}
+
+#[test]
 fn search_has_no_line_after_the_trailing_newline() {
     // `a\n\nb\n` is three lines. The empty string after the final newline is not
     // a fourth, so `^$` must find the one blank line and `-A` must not invent
