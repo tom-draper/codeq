@@ -3,6 +3,7 @@
 //! topic lives in its own submodule and is re-exported here so callers keep
 //! writing `commands::cmd_x`.
 
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
@@ -80,6 +81,14 @@ struct Session {
     partial_failures: u64,
     started: Instant,
     out: Out,
+    // Whole-table loads, kept for the life of the query. A walk that visits
+    // many symbols (`callers --depth`, `untested`, `affected`) asks for each of
+    // these once per symbol, and each is a full scan of the import or
+    // definition rows: on a 1,500-file repo that was most of a 3.8s
+    // `callers --depth 3`.
+    dep_graph: OnceCell<deps::Graph>,
+    test_scopes: OnceCell<testing::TestScopes>,
+    import_lines: OnceCell<HashMap<String, HashSet<i64>>>,
 }
 
 /// Set by `--root`: the tree was named explicitly, so discovery must take it
@@ -111,7 +120,47 @@ impl Session {
             partial_failures: stats.partial_failures,
             started,
             out,
+            dep_graph: OnceCell::new(),
+            test_scopes: OnceCell::new(),
+            import_lines: OnceCell::new(),
         })
+    }
+
+    /// The internal import graph, built on first use.
+    fn dep_graph(&self) -> Result<&deps::Graph> {
+        if self.dep_graph.get().is_none() {
+            let _ = self.dep_graph.set(imports::load_dep_graph(&self.db)?);
+        }
+        Ok(self.dep_graph.get().expect("set above"))
+    }
+
+    /// The repo's test-like containers, loaded on first use.
+    fn test_scopes(&self) -> Result<&testing::TestScopes> {
+        if self.test_scopes.get().is_none() {
+            let _ = self
+                .test_scopes
+                .set(testing::TestScopes::load(&self.db.conn)?);
+        }
+        Ok(self.test_scopes.get().expect("set above"))
+    }
+
+    /// Whether `line` of `path` is an import statement.
+    fn is_import_line(&self, path: &str, line: i64) -> Result<bool> {
+        if self.import_lines.get().is_none() {
+            let mut lines: HashMap<String, HashSet<i64>> = HashMap::new();
+            let mut st = self
+                .db
+                .conn
+                .prepare("SELECT path, start_line FROM facts WHERE kind = 'import'")?;
+            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+            for row in rows {
+                let (p, line) = row?;
+                lines.entry(p).or_default().insert(line);
+            }
+            let _ = self.import_lines.set(lines);
+        }
+        let lines = self.import_lines.get().expect("set above");
+        Ok(lines.get(path).is_some_and(|l| l.contains(&line)))
     }
 
     /// Build the envelope and print it honoring the caller's render options.
