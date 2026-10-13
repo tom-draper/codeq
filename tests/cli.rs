@@ -12633,3 +12633,47 @@ fn a_schema_change_says_it_rebuilt_the_index() {
         "a current index was reported as rebuilt"
     );
 }
+
+/// Bash spells a call `command`, which the call-site reader did not recognise,
+/// while the grammar's presence made its empty answer authoritative. So the
+/// plain textual `callers` found a shell function's callers and the precise
+/// forms answered "none" for every script.
+#[test]
+fn bash_commands_are_call_sites() {
+    let f = Fixture::new();
+    f.write(
+        "run.sh",
+        "label() {\n  echo circle\n}\n\ndescribe() {\n  # label is not called here\n  label\n}\n",
+    );
+
+    let callers = f.run(&["callers", "label", "--calls"]);
+    assert_eq!(field_set(&callers, "name"), ["describe"], "{callers}");
+
+    let callees = f.run(&["callees", "describe"]);
+    assert_eq!(field_set(&callees, "name"), ["label"], "{callees}");
+
+    let calls = f.run(&["references", "label", "--calls"]);
+    let lines: Vec<i64> = calls["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["line"].as_i64().unwrap())
+        .collect();
+    assert_eq!(lines, [7], "the comment and the declaration are not calls");
+}
+
+/// `EXECUTE FUNCTION f()` in a trigger is a call to `f`, though the grammar has
+/// no invocation node there.
+#[test]
+fn a_sql_trigger_is_a_call_site_of_its_function() {
+    let f = Fixture::new();
+    f.write(
+        "schema.sql",
+        "CREATE FUNCTION touch() RETURNS trigger AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql;\n\
+         CREATE TABLE circles (id INTEGER);\n\
+         CREATE TRIGGER circles_touch BEFORE UPDATE ON circles\n\
+         FOR EACH ROW EXECUTE FUNCTION touch();\n",
+    );
+    let callers = f.run(&["callers", "touch", "--calls"]);
+    assert_eq!(field_set(&callers, "name"), ["circles_touch"], "{callers}");
+}

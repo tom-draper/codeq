@@ -97,13 +97,17 @@ use rusqlite::Connection;
 // appeared to do nothing until `codeq index --rebuild`. Bump this whenever
 // extraction changes, even when no column does.
 //
-// A mechanical version of that check would be better than a remembered one, and
-// hashing the query constants is the obvious form — but it would cover only the
-// query-driven half. A visibility rule or an attribute reader is ordinary Rust
-// and would slip through, while the mechanism looked complete. Not yet solved.
+// `tests/languages.rs` checks this mechanically: it records every fact extracted
+// from one fixture per language, with the version it was recorded at, and fails
+// when the facts change while this number does not. Hashing the query constants
+// was the obvious form and would have covered only the query-driven half; a
+// visibility rule or an attribute reader is ordinary Rust. Comparing output
+// covers both, but only as far as the fixtures reach, so a rule no fixture
+// exercises still depends on remembering.
 // v46 records Rust impl owners for qualifier-aware callee selection.
 // v47 stops tagging wrapper decorators (`pass_context`, `setupmethod`) as registrations.
-pub const SCHEMA_VERSION: i64 = 47;
+// v48 records Bash commands and SQL trigger functions as call sites.
+pub const SCHEMA_VERSION: i64 = 48;
 
 /// Below this many free pages (1 MiB at the default page size) compaction is
 /// not worth a rewrite, whatever share of a small index they are.
