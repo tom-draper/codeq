@@ -282,7 +282,65 @@ fn parse_new_hunk(line: &str) -> Option<(usize, usize)> {
     Some((start, count))
 }
 
+/// The Git toplevel containing `start`.
+///
+/// Found by walking up for a `.git` entry rather than by asking git: discovery
+/// runs on every query, and `git rev-parse` was a process spawn costing about
+/// as much as a warm lookup does. Anything the walk cannot answer the way git
+/// would is still handed to git.
 fn git_toplevel(start: &Path) -> Option<PathBuf> {
+    native_toplevel(start).unwrap_or_else(|| git_toplevel_via_git(start))
+}
+
+/// `Some(answer)` when the walk is sure of it, `None` to defer to git.
+#[cfg(unix)]
+fn native_toplevel(start: &Path) -> Option<Option<PathBuf>> {
+    use std::os::unix::fs::MetadataExt;
+
+    // Each of these moves or bounds discovery in a way only git implements.
+    const OVERRIDES: [&str; 4] = [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    ];
+    if OVERRIDES.iter().any(|v| std::env::var_os(v).is_some()) {
+        return None;
+    }
+    let start = start.canonicalize().ok()?;
+    // Inside a `.git` directory there is no work tree, and git says so.
+    if start.components().any(|c| c.as_os_str() == ".git") {
+        return None;
+    }
+    let device = std::fs::metadata(&start).ok()?.dev();
+    for dir in start.ancestors() {
+        // Git does not cross a filesystem boundary looking for a repository.
+        if std::fs::metadata(dir).ok()?.dev() != device {
+            return Some(None);
+        }
+        let dot = dir.join(".git");
+        let Ok(meta) = std::fs::metadata(&dot) else {
+            continue;
+        };
+        // A repository's `.git` is a directory holding `HEAD`, or (a linked
+        // worktree, a submodule) a file naming the real one. Anything else
+        // called `.git` is for git to judge.
+        let is_repo = if meta.is_dir() {
+            dot.join("HEAD").is_file()
+        } else {
+            std::fs::read(&dot).is_ok_and(|body| body.starts_with(b"gitdir:"))
+        };
+        return is_repo.then(|| Some(dir.to_path_buf()));
+    }
+    Some(None)
+}
+
+#[cfg(not(unix))]
+fn native_toplevel(_start: &Path) -> Option<Option<PathBuf>> {
+    None
+}
+
+fn git_toplevel_via_git(start: &Path) -> Option<PathBuf> {
     let out = git(start, &["rev-parse", "--show-toplevel"]).ok()?;
     let top = out.trim();
     if top.is_empty() {
