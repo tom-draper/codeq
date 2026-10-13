@@ -24,6 +24,9 @@ TASKS = [
     ("book-explore", ROOT / "bench/.corpus/rust-book", ["explore", "--at", "listings/ch06-enums-and-pattern-matching/listing-06-07/src/main.rs:10", "--max-tokens", "200"]),
     ("redis-explore", ROOT / "bench/.corpus/redis", ["explore", "dictAdd", "--path", "src/dict.c", "--max-tokens", "200"]),
     ("flask-explore", ROOT / "bench/.corpus/flask", ["explore", "run", "--path", "src/flask/app.py", "--max-tokens", "200"]),
+    ("redis-callers", ROOT / "bench/.corpus/redis", ["callers", "dictFind", "--calls", "--limit", "0"]),
+    ("repo-receiver", ROOT, ["references", "prepare", "--on", "conn", "--limit", "0"]),
+    ("flask-calls", ROOT / "bench/.corpus/flask", ["references", "get", "--calls", "--limit", "0"]),
 ]
 
 
@@ -60,6 +63,12 @@ def main():
         assert b"no symbol named" not in expected[1], name
         if command[0] == "explore":
             assert b"(focus" in expected[0], f"{name}: no focus source returned"
+        if name in ("redis-callers", "repo-receiver", "flask-calls"):
+            answer = json.loads(invoke(binaries["before"], root, ["--json", *command])[1][0])
+            rows = answer["data"]
+            if isinstance(rows, dict):
+                rows = rows["references"]
+            assert rows, f"{name}: no call sites returned"
         samples = {label: [] for label in binaries}
         for iteration in range(args.runs):
             order = list(binaries) if iteration % 2 == 0 else list(reversed(binaries))
