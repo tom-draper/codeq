@@ -125,6 +125,35 @@ pub struct Db {
     pub rebuilt_from: Option<String>,
 }
 
+/// How long a query waits for another process's index write before giving up.
+///
+/// Fifteen seconds covers a refresh after any ordinary edit. A cold build of a
+/// very large repository can hold the write lock for longer, and a query that
+/// arrives during one would rather wait than fail, so `CODEQ_BUSY_TIMEOUT_MS`
+/// overrides it.
+pub fn busy_timeout() -> std::time::Duration {
+    let ms = std::env::var("CODEQ_BUSY_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15_000);
+    std::time::Duration::from_millis(ms)
+}
+
+/// Whether `err` is SQLite giving up on a lock another process held past the
+/// busy timeout, as against anything wrong with the index itself.
+pub fn is_busy(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(e, _))
+                if matches!(
+                    e.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                )
+        )
+    })
+}
+
 /// Switch a new database to WAL, waiting out a competing switch.
 ///
 /// Changing the journal mode needs the database to itself, and the busy
@@ -134,7 +163,7 @@ pub struct Db {
 /// when twelve began at the same moment, none in 1,200 with the retry. The
 /// switch is idempotent, so retry until someone has done it.
 fn set_wal(conn: &Connection) -> Result<()> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let deadline = std::time::Instant::now() + busy_timeout();
     loop {
         let busy = match conn.pragma_update(None, "journal_mode", "WAL") {
             Ok(()) => return Ok(()),
@@ -174,7 +203,7 @@ impl Db {
         // case, not an edge one. Waiting briefly is right where failing is not:
         // the work being waited on is another process finishing the very refresh
         // this one would otherwise do.
-        conn.busy_timeout(std::time::Duration::from_secs(15))?;
+        conn.busy_timeout(busy_timeout())?;
         // `PRAGMA journal_mode = WAL` takes an exclusive lock even when the
         // database is already in WAL, so setting it unconditionally made every
         // concurrent *reader* contend on open for no reason. Read it first and

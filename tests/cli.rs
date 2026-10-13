@@ -8301,8 +8301,7 @@ fn capabilities_reports_per_language_support() {
             .clone()
     };
 
-    // Known-true and known-false cases, each one a past misreading of an
-    // empty result.
+    // Known-true and known-false cases, each documented in DOGFOOD.
     assert_eq!(get("rust")["relations"], true);
     assert_eq!(get("go")["relations"], false, "Go is structurally typed");
     assert_eq!(get("c")["relations"], false, "C has no inheritance");
@@ -12633,6 +12632,42 @@ fn a_schema_change_says_it_rebuilt_the_index() {
         !String::from_utf8_lossy(&again.stderr).contains("schema changed"),
         "a current index was reported as rebuilt"
     );
+}
+
+/// A query that arrives while another process holds the index write lock past
+/// the busy timeout used to fail with SQLite's raw "database is locked", which
+/// reads like a corrupt index. It names the real cause, and recovers by itself
+/// once the writer is done.
+#[test]
+fn a_lock_held_past_the_timeout_is_explained_not_leaked() {
+    let f = Fixture::new();
+    f.write("a.rs", "pub fn first() {}\n");
+    f.run(&["symbols", "first"]);
+
+    // Another process mid-build: the write lock is taken and not released.
+    let writer = rusqlite::Connection::open(f.path().join(".codeq/index.db")).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    // An edit, so the next query has to write too.
+    f.write("a.rs", "pub fn second() {}\n");
+
+    let blocked = Command::cargo_bin("codeq")
+        .unwrap()
+        .current_dir(f.path())
+        .env("CODEQ_BUSY_TIMEOUT_MS", "200")
+        .args(["symbols", "second"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&blocked.stderr);
+    assert!(!blocked.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("another codeq process is still writing"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("database is locked"), "{stderr}");
+
+    writer.execute_batch("ROLLBACK").unwrap();
+    let after = f.run(&["symbols", "second"]);
+    assert_eq!(field_set(&after, "name"), ["second"]);
 }
 
 /// Bash spells a call `command`, which the call-site reader did not recognise,
