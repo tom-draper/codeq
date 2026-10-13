@@ -3985,6 +3985,38 @@ fn search_context_lines() {
 }
 
 #[test]
+fn search_has_no_line_after_the_trailing_newline() {
+    // `a\n\nb\n` is three lines. The empty string after the final newline is not
+    // a fourth, so `^$` must find the one blank line and `-A` must not invent
+    // a trailing context row. This is what `rg -c '^$'` reports.
+    let f = Fixture::new();
+    f.write("a.txt", "a\n\nb\n");
+    let v = f.run(&["search", "^$", "-c"]);
+    assert_eq!(v["data"]["counts"][0]["count"], 1, "{v}");
+
+    let v = f.run(&["search", "^$"]);
+    let lines: Vec<i64> = v["data"]["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["line"].as_i64().unwrap())
+        .collect();
+    assert_eq!(lines, vec![2]);
+
+    let v = f.run(&["search", "b", "-A", "2"]);
+    let after = &v["data"]["matches"][0]["after"];
+    assert!(
+        after.is_null() || after.as_array().is_some_and(|a| a.is_empty()),
+        "{v}"
+    );
+
+    // -l / -L ask the same question as the rows do.
+    f.write("b.txt", "only\n");
+    let v = f.run(&["search", "^$", "-l"]);
+    assert_eq!(field_names(&v["data"]["files"]), vec!["a.txt".to_string()]);
+}
+
+#[test]
 fn search_files_with_matches() {
     let f = Fixture::new();
     f.write("a.rs", "fn needle() {}\n");

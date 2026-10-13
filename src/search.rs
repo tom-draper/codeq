@@ -423,6 +423,18 @@ fn line_starts_of(text: &str) -> Vec<usize> {
     v
 }
 
+/// How many lines `text` has, as grep counts them: a trailing newline ends the
+/// last line instead of starting an empty one, and empty text has none.
+/// `line_starts` always holds that phantom start, so a position past the last
+/// real line must be checked against this, not against `line_starts.len()`.
+fn line_count(text: &str, line_starts: &[usize]) -> usize {
+    if text.is_empty() || text.ends_with('\n') {
+        line_starts.len() - 1
+    } else {
+        line_starts.len()
+    }
+}
+
 /// The text of line `idx` (0-based), trailing whitespace trimmed and capped.
 fn line_text(text: &str, line_starts: &[usize], idx: usize) -> String {
     let start = line_starts[idx];
@@ -435,8 +447,9 @@ fn line_text(text: &str, line_starts: &[usize], idx: usize) -> String {
 
 /// Context lines for the indices in `range` that exist.
 fn context_lines(text: &str, line_starts: &[usize], range: std::ops::Range<usize>) -> Vec<String> {
+    let n = line_count(text, line_starts);
     range
-        .filter(|&i| i < line_starts.len())
+        .filter(|&i| i < n)
         .map(|i| line_text(text, line_starts, i))
         .collect()
 }
@@ -786,7 +799,13 @@ pub(crate) fn scan_doc(
 ) -> bool {
     let filtering = opts.in_filter != InFilter::Any;
     let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(spans, off));
+    // A trailing newline ends the last line. An empty match sitting after it
+    // (`^$`, `.*`) is on no line, so grep does not report it either.
+    let ends_in_newline = body.is_empty() || body.ends_with('\n');
     let bounded = |m: &regex::Match<'_>| {
+        if ends_in_newline && m.start() == body.len() {
+            return false;
+        }
         !opts.identifier_boundary
             || has_identifier_boundaries(
                 body.as_bytes(),
@@ -968,12 +987,7 @@ fn scan_inverted(
     re: &regex::Regex,
 ) -> bool {
     let starts = line_starts_of(body);
-    // A trailing newline ends the last line; it does not start an empty one.
-    let n = if body.ends_with('\n') {
-        starts.len() - 1
-    } else {
-        starts.len()
-    };
+    let n = line_count(body, &starts);
     let mut matched = vec![false; starts.len()];
     for m in re.find_iter(body).filter(|m| accepted(m)) {
         // A match spanning lines takes every line it touches out of the result.
