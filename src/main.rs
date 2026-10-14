@@ -77,8 +77,9 @@ struct Cli {
     /// Lossy, unlike --group, so it changes the result itself rather than only
     /// its formatting: JSON and text report the same rows. Every capped file is
     /// reported with its true count (`a.rs: +237 more (of 240)` in text,
-    /// `notes.truncated_per_file` in JSON), so a truncated answer can never be
-    /// mistaken for a complete one.
+    /// `notes.truncated_per_file` in single-name JSON). Batches report counts
+    /// in each `data.results` entry's `truncated_per_file`, with a text warning
+    /// per capped name, even when --fields removes the path.
     #[arg(long, global = true, value_name = "N")]
     max_per_file: Option<usize>,
 }
@@ -209,15 +210,16 @@ enum Command {
         #[arg(long)]
         docs: bool,
     },
-    /// JUMP TO one symbol: where an EXACT name is defined (several rows only when
-    /// the name is defined more than once). Use `symbols` to browse by pattern.
+    /// Locate definitions of exact names, in argument order.
+    /// Use `symbols` to browse by pattern.
     Definitions {
-        /// Exact symbol name to resolve.
-        symbol: String,
+        /// Exact symbol names to resolve.
+        #[arg(required = true, num_args = 1..)]
+        symbol: Vec<String>,
         /// Restrict to definitions in paths containing this substring.
         #[arg(long)]
         path: Option<String>,
-        /// Maximum rows to return (0 = unlimited).
+        /// Maximum rows per name (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
@@ -333,8 +335,9 @@ enum Command {
     /// Use `explore` for the same neighbourhood WITH verbatim source but trimmed
     /// metadata — source is the axis these two differ on.
     About {
-        /// Exact symbol name.
-        name: String,
+        /// Exact symbol names, in argument order.
+        #[arg(required = true, num_args = 1..)]
+        name: Vec<String>,
         /// Scope the definition and callees to matching paths (disambiguates
         /// a common name); callers stay repo-wide.
         #[arg(long)]

@@ -89,6 +89,22 @@ Use `codeq --help` for the full command list and `codeq <command> --help` for
 flags and defaults. The [bundled agent guide](.agents/skills/codeq/SKILL.md)
 covers more workflows, including call chains, type relations, and cleanup queries.
 
+Look up several exact names in one call:
+
+```sh
+codeq definitions language_for refresh
+codeq about language_for refresh
+```
+
+Results follow argument order. Single-name JSON output keeps its existing shape;
+batches put `{name, data, note?}` entries in `data.results`. Each entry's `data`
+has the same shape as a single-name query. A missing name has its own note, even
+when other names resolve. `--path` and `about --resolved` apply to every name;
+`definitions --limit` applies separately to each name. Output flags apply to
+each entry's rows. With `--max-per-file`, a capped entry includes
+`truncated_per_file` counts. The MCP tools accept arrays through `symbol` for
+`codeq_definitions` and `name` for `codeq_about`; scalar names still work.
+
 ## Read only the source you need
 
 `codeq read FILE` folds long bodies, keeping imports, signatures, and surrounding

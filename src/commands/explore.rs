@@ -21,30 +21,25 @@ struct About {
 /// name), which is the useful "who uses this".
 pub fn cmd_about(
     cwd: &Path,
-    name: &str,
+    names: &[String],
     path: Option<&str>,
     resolved: bool,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    // `members` is theirs, the shared walk is mine: `explore` needs the same
-    // three lists, and letting the two commands gather them separately is how
-    // they would drift about who is in the neighbourhood.
-    let (definitions, callers, callees) = symbol_graph(&s, name, path, resolved)?;
-    let data = About {
-        definitions,
-        members: members_of(&s, name, path, None, 0)?,
-        callers,
-        callees,
-    };
-    // A typo is the dangerous case here: every section comes back empty under
-    // valid headers, which reads like a real answer about a real symbol.
-    let note = if data.definitions.is_empty() {
-        note_if_empty(&s, &data.definitions, name, "definition", path)?
-    } else {
-        None
-    };
-    s.emit_noted(data, note)
+    let mut results = Vec::new();
+    for name in names {
+        let (definitions, callers, callees) = symbol_graph(&s, name, path, resolved)?;
+        let data = About {
+            definitions,
+            members: members_of(&s, name, path, None, 0)?,
+            callers,
+            callees,
+        };
+        let note = note_if_empty(&s, &data.definitions, name, "definition", path)?;
+        results.push(NamedResult { name, data, note });
+    }
+    s.emit_named(results)
 }
 
 /// The graph around `name`: its definition(s), who calls it, what it calls.

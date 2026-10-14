@@ -58,6 +58,19 @@ pub struct Out {
     pub max_per_file: Option<usize>,
 }
 
+#[derive(Serialize)]
+struct NamedResult<'a, T> {
+    name: &'a str,
+    data: T,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Batch<'a, T> {
+    results: Vec<NamedResult<'a, T>>,
+}
+
 /// Shared setup: discover the repo, open the index, and bring it fresh.
 /// Returns the pieces every command needs plus how many files were reparsed.
 struct Session {
@@ -104,6 +117,16 @@ impl Session {
     /// Build the envelope and print it honoring the caller's render options.
     fn emit<T: Serialize>(&self, data: T) -> Result<()> {
         self.emit_noted(data, None)
+    }
+
+    fn emit_named<T: Serialize>(&self, mut results: Vec<NamedResult<'_, T>>) -> Result<()> {
+        if results.len() == 1 {
+            let result = results.pop().unwrap();
+            return self.emit_noted(result.data, result.note);
+        }
+        let notes: Vec<&str> = results.iter().filter_map(|r| r.note.as_deref()).collect();
+        let note = (!notes.is_empty()).then(|| notes.join("; "));
+        self.emit_noted(Batch { results }, note)
     }
 
     /// Emit with a note explaining an empty result. The note is only ever

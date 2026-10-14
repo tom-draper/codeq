@@ -4880,6 +4880,10 @@ fn mcp_exposes_every_agent_query_command_and_its_schema_flags() {
             .find(|tool| tool["name"] == name)
             .unwrap_or_else(|| panic!("missing MCP tool {name}"))["inputSchema"]["properties"]
     };
+    for (tool, key) in [("codeq_definitions", "symbol"), ("codeq_about", "name")] {
+        assert_eq!(properties(tool)[key]["type"], "array");
+        assert_eq!(properties(tool)[key]["items"]["type"], "string");
+    }
     for (tool, flag) in [
         ("codeq_context", "resolved"),
         ("codeq_api", "compare_to"),
@@ -12994,4 +12998,165 @@ fn a_sql_trigger_is_a_call_site_of_its_function() {
     );
     let callers = f.run(&["callers", "touch", "--calls"]);
     assert_eq!(field_set(&callers, "name"), ["circles_touch"], "{callers}");
+}
+
+#[test]
+fn batch_symbol_lookups_keep_order_duplicates_and_missing_names() {
+    let f = Fixture::new();
+    f.write("a.py", "def alpha():\n    beta()\ndef beta():\n    pass\n");
+    for command in ["definitions", "about"] {
+        let batch = f.run(&[command, "beta", "absent", "alpha", "beta"]);
+        assert_eq!(batch["rows"], "data.results");
+        let results = batch["data"]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 4);
+        for (row, name) in results.iter().zip(["beta", "absent", "alpha", "beta"]) {
+            assert_eq!(row["name"], name);
+            let single = f.run(&[command, name]);
+            assert_eq!(row["data"], single["data"]);
+            assert_eq!(row["note"], single["note"]);
+        }
+        assert!(batch["note"].as_str().unwrap().contains("absent"));
+        let all_missing = f.run(&[command, "absent", "missing"]);
+        for (row, name) in all_missing["data"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(["absent", "missing"])
+        {
+            assert!(row["note"].as_str().unwrap().contains(name));
+        }
+        let no_names = f.raw(&[command]);
+        assert!(!no_names.status.success());
+    }
+}
+
+#[test]
+fn batch_symbol_lookups_apply_path_resolution_and_limits_per_name() {
+    let f = Fixture::new();
+    f.write("a.py", "def alpha():\n    beta()\ndef beta():\n    pass\n");
+    f.write("b.py", "def alpha():\n    beta()\ndef beta():\n    pass\n");
+    for command in ["definitions", "about"] {
+        let flags: &[&str] = if command == "definitions" {
+            &["--path", "a.py", "--limit", "1"]
+        } else {
+            &["--path", "a.py", "--resolved"]
+        };
+        let mut args = vec![command, "beta", "alpha"];
+        args.extend_from_slice(flags);
+        let batch = f.run(&args);
+        for (row, name) in batch["data"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(["beta", "alpha"])
+        {
+            let mut args = vec![command, name];
+            args.extend_from_slice(flags);
+            assert_eq!(row["data"], f.run(&args)["data"]);
+        }
+    }
+    let limited = f.run(&["definitions", "alpha", "beta", "--limit", "1"]);
+    for row in limited["data"]["results"].as_array().unwrap() {
+        assert_eq!(row["data"].as_array().unwrap().len(), 1);
+    }
+    f.write("README.md", "# One, two\ntext\n# Other\ntext\n");
+    let headings = f.run(&["definitions", "One, two", "Other"]);
+    assert_eq!(
+        headings["data"]["results"][0]["data"][0]["name"],
+        "One, two"
+    );
+}
+
+#[test]
+fn batch_symbol_lookups_render_sections_and_preserve_output_flags() {
+    let f = Fixture::new();
+    f.write("a.py", "class Box:\n    def alpha(self):\n        pass\n    def beta(self):\n        self.alpha()\n");
+    for command in ["definitions", "about"] {
+        let output = f.raw(&[
+            command,
+            "beta",
+            "absent",
+            "alpha",
+            "--group",
+            "--fields",
+            "path,line,signature",
+        ]);
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.find("# beta\n").unwrap() < text.find("# absent\n").unwrap());
+        assert!(text.find("# absent\n").unwrap() < text.find("# alpha\n").unwrap());
+        assert!(text.contains("def beta(self)"), "{text}");
+        assert!(text.contains("def alpha(self)"), "{text}");
+        assert!(String::from_utf8(output.stderr).unwrap().contains("absent"));
+        let projected = f.run(&[command, "beta", "absent", "alpha", "--fields", "path,line"]);
+        assert_eq!(projected["data"]["results"][1]["name"], "absent");
+        assert!(projected["data"]["results"][1]["note"]
+            .as_str()
+            .unwrap()
+            .contains("absent"));
+        assert!(projected.get("notes").is_none(), "{projected}");
+    }
+    let capped = f.run(&[
+        "about",
+        "Box",
+        "alpha",
+        "--max-per-file",
+        "1",
+        "--fields",
+        "path,line",
+    ]);
+    let box_result = &capped["data"]["results"][0];
+    assert_eq!(box_result["data"]["members"].as_array().unwrap().len(), 1);
+    assert_eq!(box_result["truncated_per_file"]["a.py"], 2);
+    let output = f.raw(&["about", "Box", "alpha", "--max-per-file", "1"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains("+1 more (of 2)"));
+    let output = f.raw(&[
+        "about",
+        "Box",
+        "alpha",
+        "--max-per-file",
+        "1",
+        "--fields",
+        "name",
+    ]);
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("Box: --max-per-file capped rows"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("a.py=2"), "{stderr}");
+}
+
+#[test]
+fn batch_symbol_lookups_work_through_mcp_with_scalar_compatibility() {
+    let f = Fixture::new();
+    f.write("a.py", "def alpha():\n    beta()\ndef beta():\n    pass\n");
+    for (command, key) in [("definitions", "symbol"), ("about", "name")] {
+        let tool = format!("codeq_{command}");
+        let (error, text) = mcp_call(
+            &f,
+            &tool,
+            serde_json::json!({key: ["beta", "absent", "alpha"]}),
+        );
+        assert!(!error, "{text}");
+        assert!(text.find("# beta\n").unwrap() < text.find("# absent\n").unwrap());
+        assert!(text.find("# absent\n").unwrap() < text.find("# alpha\n").unwrap());
+        assert!(text.contains("def beta()"), "{text}");
+        assert!(text.contains("def alpha()"), "{text}");
+        assert!(text.contains("no symbol named 'absent'"), "{text}");
+        let (error, text) = mcp_call(&f, &tool, serde_json::json!({key: "alpha"}));
+        assert!(!error, "{text}");
+        let single = f.raw(&[command, "alpha"]);
+        assert!(single.status.success());
+        assert!(
+            text.contains(String::from_utf8(single.stdout).unwrap().trim()),
+            "{text}"
+        );
+        let (error, _) = mcp_call(&f, &tool, serde_json::json!({key: []}));
+        assert!(error);
+    }
 }
