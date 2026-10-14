@@ -13796,3 +13796,148 @@ void external() {}
         assert!(symbols.contains(&name.to_string()), "{name}: {symbols:?}");
     }
 }
+
+#[test]
+fn search_word_retries_regex_alternatives() {
+    let f = Fixture::new();
+    f.write("words.txt", "foobar\nfoo foo\nunrelated\n");
+    for pattern in [
+        "foo|foobar",
+        "foobar|foo",
+        "foo(?:bar)??",
+        "(?x) foo | foobar # trailing comment",
+        "(foo)|(foobar)",
+    ] {
+        let result = f.run(&["search", pattern, "-w", "words.txt"]);
+        let rows = result["data"]["matches"].as_array().unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|r| r["line"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            [1, 2],
+            "{pattern}: {result}"
+        );
+        let only = f.run(&["search", pattern, "-w", "-o", "words.txt"]);
+        assert_eq!(
+            only["data"]["matches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["text"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["foobar", "foo", "foo"]
+        );
+        assert_eq!(
+            f.run(&["search", pattern, "-w", "-c", "words.txt"])["data"]["counts"][0]["count"],
+            2
+        );
+        let inverted = f.run(&["search", pattern, "-w", "-v", "words.txt"]);
+        assert_eq!(inverted["data"]["matches"][0]["line"], 3);
+        assert_eq!(inverted["data"]["matches"].as_array().unwrap().len(), 1);
+    }
+    f.write("single.txt", "foobar\n");
+    let files = f.run(&["search", "foo|foobar", "-w", "-l", "single.txt"]);
+    assert_eq!(files["data"]["files"], serde_json::json!(["single.txt"]));
+    assert!(
+        f.run(&["search", "foo|foobar", "-w", "-L", "single.txt"])["data"]["files"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn search_word_alternatives_preserve_identifier_boundaries() {
+    let f = Fixture::new();
+    f.write(
+        "words.txt",
+        "éclair。 foo。\n_foo foo_ éfoo fooé\n$foo foo$tail\nFOOBAR\n",
+    );
+    let result = f.run(&[
+        "search",
+        "é|éclair|foo|foobar",
+        "-w",
+        "-o",
+        "-i",
+        "words.txt",
+    ]);
+    assert_eq!(
+        result["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["éclair", "foo", "foo", "foo", "FOOBAR"]
+    );
+    f.write(
+        "app.js",
+        "foo$tail();\n$foo();\nconst text = \"foo$tail $foo\";\n",
+    );
+    let result = f.run(&["search", "foo|foo\\$tail", "-w", "-o", "app.js"]);
+    assert_eq!(
+        result["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["foo$tail", "foo", "foo"]
+    );
+}
+
+#[test]
+fn search_word_alternatives_work_on_unindexed_files_and_stdin() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let f = Fixture::new();
+    let external = Fixture::new();
+    external.write("words.txt", "foobar foo\n");
+    let result = f.run(&[
+        "search",
+        "foo|foobar",
+        "-w",
+        "-o",
+        external.path().join("words.txt").to_str().unwrap(),
+    ]);
+    assert_eq!(
+        result["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["foobar", "foo"]
+    );
+    let mut child = Command::cargo_bin("codeq")
+        .unwrap()
+        .current_dir(f.path())
+        .args(["--json", "search", "foo|foobar", "-w", "-o", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"foobar foo\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        result["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["foobar", "foo"]
+    );
+}

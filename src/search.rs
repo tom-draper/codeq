@@ -186,6 +186,85 @@ pub(crate) struct ScanScope<'a> {
     pub accept: Option<&'a dyn Fn(&str) -> bool>,
 }
 
+pub(crate) struct WordRegex {
+    ordinary: regex::Regex,
+    dollar: regex::Regex,
+}
+
+impl WordRegex {
+    pub(crate) fn new(expr: &str, ignore_case: bool) -> Result<Self> {
+        let hir = regex_syntax::ParserBuilder::new()
+            .case_insensitive(ignore_case)
+            .multi_line(true)
+            .build()
+            .parse(expr)?;
+        let compile = |extra: &str| {
+            regex::Regex::new(&format!(
+                "({hir})(?:\\z|[^\\p{{Alphabetic}}\\p{{Number}}_{extra}])"
+            ))
+        };
+        Ok(Self {
+            ordinary: compile("")?,
+            dollar: compile("$")?,
+        })
+    }
+
+    fn matches<'a>(
+        &'a self,
+        body: &'a str,
+        lang: Option<&'a str>,
+        spans: &'a [(usize, usize, Span)],
+    ) -> impl Iterator<Item = regex::Match<'a>> + 'a {
+        // The suffix participates in alternative selection. Return only the
+        // capture and resume at its end so adjacent matches can share a separator.
+        let valid = move |m: &regex::Match<'_>| {
+            has_identifier_boundaries(
+                body.as_bytes(),
+                m.start(),
+                m.end(),
+                lang,
+                class_at(spans, m.start()) == Some(Span::Str),
+            )
+        };
+        let advance = move |at: usize| at + body[at..].chars().next().map_or(1, char::len_utf8);
+        let mut at = 0;
+        let mut previous_end = None;
+        std::iter::from_fn(move || {
+            while at <= body.len() {
+                let ordinary = self.ordinary.captures_at(body, at).and_then(|c| c.get(1));
+                let dollar = if dollar_binds(lang) {
+                    self.dollar.captures_at(body, at).and_then(|c| c.get(1))
+                } else {
+                    None
+                };
+                let start = ordinary
+                    .into_iter()
+                    .chain(dollar)
+                    .map(|m| m.start())
+                    .min()?;
+                let candidate = ordinary
+                    .filter(|m| m.start() == start && valid(m))
+                    .or_else(|| dollar.filter(|m| m.start() == start && valid(m)));
+                let Some(m) = candidate else {
+                    at = advance(start);
+                    continue;
+                };
+                let repeated_empty = m.is_empty() && previous_end == Some(m.end());
+                at = if m.is_empty() {
+                    advance(m.end())
+                } else {
+                    m.end()
+                };
+                previous_end = Some(m.end());
+                if !repeated_empty {
+                    return Some(m);
+                }
+            }
+            None
+        })
+    }
+}
+
 pub(crate) struct ScanOpts {
     pub(crate) before: usize,
     pub(crate) after: usize,
@@ -202,6 +281,7 @@ pub(crate) struct ScanOpts {
     /// treats `$` as part of an identifier so JavaScript names such as
     /// `$ZodError` are matched as one symbol.
     pub(crate) identifier_boundary: bool,
+    pub(crate) word_regex: Option<WordRegex>,
     /// Mirror of `--max-per-file`: matches past the Nth in a file still get
     /// collected (the envelope needs them to report each file's true count) but
     /// they do not spend `limit`. Without this the two budgets fight — the scan
@@ -797,6 +877,12 @@ pub(crate) fn scan_doc(
     cap: usize,
     acc: &mut ScanAcc,
 ) -> bool {
+    let matches = || -> Box<dyn Iterator<Item = regex::Match<'_>> + '_> {
+        match &opts.word_regex {
+            Some(word) => Box::new(word.matches(body, lang, spans)),
+            None => Box::new(re.find_iter(body)),
+        }
+    };
     let filtering = opts.in_filter != InFilter::Any;
     let accept = |off: usize| !filtering || opts.in_filter.accepts(class_at(spans, off));
     // A trailing newline ends the last line. An empty match sitting after it
@@ -829,13 +915,13 @@ pub(crate) fn scan_doc(
             cap,
             acc,
             |m| bounded(m) && accept(m.start()),
-            re,
+            matches(),
         );
     }
 
     match opts.out {
         OutMode::Files | OutMode::FilesWithout => {
-            let found = re.find_iter(body).any(|m| bounded(&m) && accept(m.start()));
+            let found = matches().any(|m| bounded(&m) && accept(m.start()));
             if found == (opts.out == OutMode::Files) {
                 acc.files.push(path.to_string());
                 if acc.files.len() >= cap {
@@ -847,7 +933,7 @@ pub(crate) fn scan_doc(
         OutMode::Count => {
             let mut last = usize::MAX;
             let mut n = 0usize;
-            for m in re.find_iter(body) {
+            for m in matches() {
                 if !bounded(&m) {
                     continue;
                 }
@@ -878,7 +964,7 @@ pub(crate) fn scan_doc(
             let mut last_line = usize::MAX;
             let mut kept_here = 0usize;
             let mut stop = false;
-            for m in re.find_iter(body) {
+            for m in matches() {
                 if !bounded(&m) {
                     continue;
                 }
@@ -976,7 +1062,7 @@ pub(crate) fn scan_doc(
 /// unit, as in grep, so `-c` counts those lines and `-l`/`-L` ask whether the
 /// file has any.
 #[allow(clippy::too_many_arguments)]
-fn scan_inverted(
+fn scan_inverted<'a>(
     path: &str,
     body: &str,
     load_defs: &mut dyn FnMut(&str) -> Vec<FileDef>,
@@ -984,12 +1070,12 @@ fn scan_inverted(
     cap: usize,
     acc: &mut ScanAcc,
     accepted: impl Fn(&regex::Match<'_>) -> bool,
-    re: &regex::Regex,
+    matches: impl Iterator<Item = regex::Match<'a>>,
 ) -> bool {
     let starts = line_starts_of(body);
     let n = line_count(body, &starts);
     let mut matched = vec![false; starts.len()];
-    for m in re.find_iter(body).filter(|m| accepted(m)) {
+    for m in matches.filter(|m| accepted(m)) {
         // A match spanning lines takes every line it touches out of the result.
         let first = starts.partition_point(|&x| x <= m.start()) - 1;
         let last = starts.partition_point(|&x| x < m.end().max(m.start() + 1)) - 1;

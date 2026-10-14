@@ -143,6 +143,7 @@ pub(super) fn test_sites(
         call_only: false,
         qualifier: None,
         identifier_boundary: true,
+        word_regex: None,
         per_file: None,
         only_matching: false,
         invert: false,

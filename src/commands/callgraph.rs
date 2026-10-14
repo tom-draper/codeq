@@ -91,6 +91,7 @@ pub(super) fn callers_of(
         call_only,
         qualifier: qualifier.map(str::to_string),
         identifier_boundary: true,
+        word_regex: None,
         per_file: None,
         only_matching: false,
         invert: false,
