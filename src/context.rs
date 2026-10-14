@@ -156,15 +156,13 @@ pub fn build(db: &Db, repo: &Repo, req: &Request) -> Result<ContextResult> {
 
     let mut file_cache: HashMap<String, Option<String>> = HashMap::new();
 
-    // Read seed chunk texts (needed for expansion regardless of include_text).
     let mut seed_text: HashMap<usize, String> = HashMap::new();
-    for (i, def) in defs.iter().take(seed_count).enumerate() {
-        if let Some(t) = chunk_text(&repo.root, def, &mut file_cache) {
-            seed_text.insert(i, t);
-        }
-    }
-
     if req.expand {
+        for (i, def) in defs.iter().take(seed_count).enumerate() {
+            if let Some(t) = chunk_text(&repo.root, def, &mut file_cache) {
+                seed_text.insert(i, t);
+            }
+        }
         let neighbors = expansion_neighbors(db, req, &defs[..seed_count], &seed_text)?;
         defs.extend(neighbors);
     }
@@ -368,22 +366,8 @@ fn fill_budget(
     let mut used: u64 = 0;
     for (i, reason) in candidates {
         let d = &defs[i];
-        let mut text = seed_text
-            .remove(&i)
-            .or_else(|| chunk_text(&repo.root, d, file_cache));
         let bytes = d.end_byte.saturating_sub(d.start_byte) as u64;
         let mut est = bytes.div_ceil(4).max(1);
-
-        // Explicitly-requested seeds are always included, even if they exceed the
-        // budget — you asked for them, and returning nothing (or dropping the very
-        // symbol you named) is worse than overshooting. The budget caps expansion.
-        // An oversized seed is reduced rather than dropped (see `reduce_to_fit`),
-        // so "always included" doesn't turn `--max-tokens` into a suggestion.
-        let reduced = if reason == "seed" {
-            reduce_to_fit(db, d, &mut text, &mut est, used, req.max_tokens)
-        } else {
-            None
-        };
         if reason != "seed" && used + est > req.max_tokens {
             if omitted.len() < MAX_OMITTED {
                 omitted.push(Omitted {
@@ -397,6 +381,21 @@ fn fill_budget(
             }
             continue;
         }
+        // Seeds stay included. Reduction still needs source under --no-text to
+        // preserve the folded or clipped estimate and provenance.
+        let needs_reduction = reason == "seed" && used + est > req.max_tokens;
+        let mut text = if req.include_text || needs_reduction {
+            seed_text
+                .remove(&i)
+                .or_else(|| chunk_text(&repo.root, d, file_cache))
+        } else {
+            None
+        };
+        let reduced = if needs_reduction {
+            reduce_to_fit(db, d, &mut text, &mut est, used, req.max_tokens)
+        } else {
+            None
+        };
         used += est;
         chunks.push(Chunk {
             path: d.path.clone(),
