@@ -654,12 +654,16 @@ pub(crate) fn run_search_acc(
 /// skipped, as the index skips them.
 pub(crate) fn scan_unindexed(
     targets: &[(String, PathBuf)],
+    accept: &dyn Fn(&str, &Path) -> bool,
     re: &regex::Regex,
     opts: &ScanOpts,
     acc: &mut ScanAcc,
 ) {
     let cap = scan_cap(opts);
     let scan_file = |label: &str, path: &Path, acc: &mut ScanAcc| -> bool {
+        if !accept(label, path) {
+            return false;
+        }
         let Ok(bytes) = std::fs::read(path) else {
             return false;
         };

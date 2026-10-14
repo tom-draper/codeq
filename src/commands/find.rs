@@ -478,7 +478,17 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     // with and `--language` no language to compare: both exclude them.
     let classified = in_filter != InFilter::Any || args.language.is_some();
     if !stopped && !classified {
-        scan_unindexed(&unindexed, &re, &opts, &mut acc);
+        let disk_accept = |label: &str, path: &Path| {
+            glob.as_ref().is_none_or(|gf| {
+                // Use the same repo-relative path as the index, regardless of
+                // how the positional target was spelled. External files keep
+                // their caller-visible path.
+                let relative = path.strip_prefix(&root).ok();
+                let glob_path = relative.map(|p| p.to_string_lossy());
+                gf.accepts(glob_path.as_deref().unwrap_or(label))
+            })
+        };
+        scan_unindexed(&unindexed, &disk_accept, &re, &opts, &mut acc);
     }
     let data = acc.finish_for(&opts);
     let quoted = |ps: &mut dyn Iterator<Item = &str>| {

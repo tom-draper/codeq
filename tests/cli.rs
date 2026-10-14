@@ -4417,6 +4417,85 @@ fn search_globs_use_the_last_matching_rule() {
 }
 
 #[test]
+fn search_globs_filter_unindexed_paths() {
+    let f = Fixture::new();
+    f.write(".gitignore", "logs/\n");
+    f.write("src/a.py", "needle\n");
+    f.write("logs/a.py", "needle\n");
+    f.write("logs/a.txt", "needle\n");
+    f.write("logs/deep/b.py", "needle\n");
+    f.git_init_commit();
+
+    let cases: &[(&[&str], &[&str])] = &[
+        (&["*.py"], &["logs/a.py", "logs/deep/b.py"]),
+        (&["!*.txt"], &["logs/a.py", "logs/deep/b.py"]),
+        (&["!logs/deep/", "*.py"], &["logs/a.py", "logs/deep/b.py"]),
+        (&["*.py", "!logs/deep/"], &["logs/a.py"]),
+        (&["logs/a.py"], &["logs/a.py"]),
+        (&["!logs/"], &[]),
+    ];
+    for (globs, expected) in cases {
+        let mut args = vec!["search", "needle", "logs", "-l"];
+        for glob in *globs {
+            args.extend(["-g", glob]);
+        }
+        assert_eq!(
+            field_names(&f.run(&args)["data"]["files"]),
+            *expected,
+            "{globs:?}"
+        );
+    }
+
+    for target in ["logs", "./logs", f.path().join("logs").to_str().unwrap()] {
+        let result = f.run(&["search", "needle", target, "-g", "logs/a.py"]);
+        let matches = result["data"]["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1, "{target}");
+        assert_eq!(matches[0]["path"], format!("{target}/a.py"));
+    }
+    assert!(
+        f.run(&["search", "needle", "logs/a.txt", "-g", "!*.txt"])["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        field_names(
+            &f.run(&[
+                "search",
+                "needle",
+                "src",
+                "logs",
+                "-l",
+                "-g",
+                "*.py",
+                "-g",
+                "!logs/deep/"
+            ])["data"]["files"]
+        ),
+        ["src/a.py", "logs/a.py"]
+    );
+
+    let external = Fixture::new();
+    external.write("a.py", "needle\n");
+    external.write("a.txt", "needle\n");
+    for glob in ["*.py", "!*.txt"] {
+        let result = f.run(&[
+            "search",
+            "needle",
+            external.path().to_str().unwrap(),
+            "-g",
+            glob,
+        ]);
+        let matches = result["data"]["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1, "{glob}");
+        assert_eq!(
+            matches[0]["path"],
+            external.path().join("a.py").to_str().unwrap()
+        );
+    }
+}
+
+#[test]
 fn search_word_matches_whole_words_only() {
     let f = Fixture::new();
     f.write("a.rs", "let count = 1;\nlet counter = 2;\n");
