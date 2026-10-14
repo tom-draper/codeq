@@ -397,6 +397,11 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         call_only: false,
         qualifier: None,
         identifier_boundary: args.word,
+        word_regex: if args.word {
+            Some(crate::search::WordRegex::new(&expr, args.ignore_case)?)
+        } else {
+            None
+        },
         per_file: out.max_per_file,
         only_matching: args.only_matching,
         invert: args.invert,
@@ -737,6 +742,7 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         call_only,
         qualifier: qualifier.map(str::to_string),
         identifier_boundary: true,
+        word_regex: None,
         per_file,
         only_matching: false,
         invert: false,
