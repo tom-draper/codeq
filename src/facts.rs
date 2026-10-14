@@ -676,6 +676,19 @@ fn effective_visibility(
         Some("public") if enclosed_by_private_type(lang, node, src) => Some("private".to_string()),
         _ => own,
     };
+    if lang == "cpp" && own.as_deref() != Some("private") {
+        let mut cur = node.parent();
+        while let Some(parent) = cur {
+            if is_type_node(parent) {
+                match visibility_of(lang, "", parent, src).as_deref() {
+                    Some("private") => return Some("private".to_string()),
+                    Some("restricted") => own = Some("restricted".to_string()),
+                    _ => {}
+                }
+            }
+            cur = parent.parent();
+        }
+    }
     if lang == "rust" && own.as_deref() != Some("private") {
         let mut cur = node.parent();
         while let Some(parent) = cur {
@@ -1347,6 +1360,39 @@ fn modifier_words(def: Node, src: &[u8]) -> String {
     out
 }
 
+fn cpp_member_visibility(def: Node, src: &[u8]) -> Option<&'static str> {
+    let mut member = def;
+    while let Some(parent) = member.parent() {
+        if parent.kind() == "field_declaration_list" {
+            let owner = parent.parent()?;
+            let mut visibility = if owner.kind() == "class_specifier" {
+                "private"
+            } else {
+                "public"
+            };
+            let mut cursor = parent.walk();
+            for sibling in parent.named_children(&mut cursor) {
+                if sibling.start_byte() >= member.start_byte() {
+                    break;
+                }
+                if sibling.kind() == "access_specifier" {
+                    visibility = match sibling.utf8_text(src).ok()? {
+                        "public" => "public",
+                        "protected" => "restricted",
+                        _ => "private",
+                    };
+                }
+            }
+            return Some(visibility);
+        }
+        if parent.kind() == "compound_statement" {
+            return None;
+        }
+        member = parent;
+    }
+    None
+}
+
 /// Normalized visibility of a definition, by each language's own notion of it.
 /// `public` = the external/module API; `private` = module- or file-local;
 /// `restricted` = crate-visible (`pub(crate)`) or `protected`. Heuristic where a
@@ -1443,6 +1489,11 @@ fn visibility_of(lang: &str, name: &str, def: Node, src: &[u8]) -> Option<String
             None => s("public"), // a top-level function is globally callable
         },
         "c" | "cpp" => {
+            if lang == "cpp" {
+                if let Some(visibility) = cpp_member_visibility(def, src) {
+                    return s(visibility);
+                }
+            }
             if first_child_kind(def, "storage_class_specifier", src) == Some("static") {
                 s("private") // internal linkage
             } else {

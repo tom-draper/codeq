@@ -13703,3 +13703,96 @@ fn extraction_notes_do_not_misclassify_supported_or_unknown_files() {
         assert!(String::from_utf8_lossy(&read.stderr).contains("no definition named 'absent'"));
     }
 }
+
+#[test]
+fn cpp_access_sections_control_external_api() {
+    let f = Fixture::new();
+    f.write(
+        "a.cpp",
+        r#"class Widget {
+    int hidden;
+    void secret() {}
+    struct Hidden { void nested_secret() {} };
+public:
+    void visible() {}
+    static void utility() {}
+    static int count;
+    struct Nested { void nested_visible() {} };
+protected:
+    int guarded;
+    void inherited() {}
+    struct Protected { void protected_nested() {} };
+private:
+    void later_secret() {}
+public:
+    void again() {}
+};
+struct Record {
+    int value;
+    void update() {}
+private:
+    int internal;
+protected:
+    void restricted() {}
+public:
+    static void factory() {}
+};
+union Choice { int option; private: int concealed; };
+static void file_local() {}
+void external() {}
+"#,
+    );
+    let expected = [
+        "Nested",
+        "Record",
+        "Widget",
+        "again",
+        "count",
+        "external",
+        "factory",
+        "nested_visible",
+        "option",
+        "update",
+        "utility",
+        "value",
+        "visible",
+    ];
+    let mut api = field_set(&f.run(&["api", "a.cpp"]), "name");
+    api.sort();
+    assert_eq!(api, expected);
+    let mut untested = field_set(&f.run(&["untested", "a.cpp"]), "name");
+    untested.sort();
+    assert_eq!(
+        untested,
+        [
+            "Nested",
+            "Record",
+            "Widget",
+            "again",
+            "external",
+            "factory",
+            "nested_visible",
+            "update",
+            "utility",
+            "visible"
+        ]
+    );
+    let symbols = field_set(&f.run(&["symbols", "--path", "a.cpp"]), "name");
+    for name in [
+        "hidden",
+        "secret",
+        "Hidden",
+        "nested_secret",
+        "guarded",
+        "inherited",
+        "Protected",
+        "protected_nested",
+        "later_secret",
+        "internal",
+        "restricted",
+        "concealed",
+        "file_local",
+    ] {
+        assert!(symbols.contains(&name.to_string()), "{name}: {symbols:?}");
+    }
+}

@@ -109,7 +109,7 @@ use rusqlite::Connection;
 // v48 records Bash commands and SQL trigger functions as call sites.
 // v49 marks Python function-local definitions as private.
 // v50 propagates Rust enclosing module visibility to their declarations.
-pub const SCHEMA_VERSION: i64 = 50;
+pub const SCHEMA_VERSION: i64 = 51;
 
 /// Below this many free pages (1 MiB at the default page size) compaction is
 /// not worth a rewrite, whatever share of a small index they are.
