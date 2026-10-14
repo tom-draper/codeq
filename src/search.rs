@@ -1036,8 +1036,8 @@ fn scan_inverted(
                     kind: enclosing.map(|d| d.kind.clone()),
                     decl: false,
                     text: line_text(body, &starts, i),
-                    before: Vec::new(),
-                    after: Vec::new(),
+                    before: context_lines(body, &starts, i.saturating_sub(opts.before)..i),
+                    after: context_lines(body, &starts, (i + 1)..(i + 1 + opts.after)),
                 });
                 // The same two budgets as the ordinary scan: see there.
                 if opts.per_file.is_none_or(|n| kept_here < n) {
