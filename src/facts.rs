@@ -635,6 +635,22 @@ fn effective_visibility(
     if kind == "import" {
         return None;
     }
+    if lang == "python" {
+        let mut scope = node;
+        // Instance fields belong to their class even when initialized inside
+        // a method. Check whether that class is local, rather than the assignment.
+        if kind == "field" {
+            while let Some(parent) = scope.parent() {
+                scope = parent;
+                if scope.kind() == "class_definition" {
+                    break;
+                }
+            }
+        }
+        if has_ancestor_kind(scope, "function_definition") {
+            return Some("private".to_string());
+        }
+    }
     let own = visibility_of(lang, name, node, src);
     // A variant carries no visibility of its own in any
     // language codeq supports — Rust, Java, C# and TS all

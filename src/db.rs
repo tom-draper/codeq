@@ -107,7 +107,8 @@ use rusqlite::Connection;
 // v46 records Rust impl owners for qualifier-aware callee selection.
 // v47 stops tagging wrapper decorators (`pass_context`, `setupmethod`) as registrations.
 // v48 records Bash commands and SQL trigger functions as call sites.
-pub const SCHEMA_VERSION: i64 = 48;
+// v49 marks Python function-local definitions as private.
+pub const SCHEMA_VERSION: i64 = 49;
 
 /// Below this many free pages (1 MiB at the default page size) compaction is
 /// not worth a rewrite, whatever share of a small index they are.

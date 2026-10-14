@@ -11968,6 +11968,68 @@ fn a_python_module_scope_binding_is_a_definition() {
 }
 
 #[test]
+fn python_function_local_definitions_are_private() {
+    let f = Fixture::new();
+    f.write(
+        "sample.py",
+        concat!(
+            "def outer():\n",
+            "    def inner():\n        return 3\n",
+            "    class Local:\n",
+            "        flag = 1\n",
+            "        def run(self):\n            self.hidden = 2\n",
+            "    return 1\n",
+            "class Public:\n",
+            "    def __init__(self):\n        self.value = 1\n",
+            "    def method(self):\n",
+            "        def helper():\n            return 2\n",
+            "        return 1\n",
+            "    class Nested:\n        def nested_method(self):\n            pass\n",
+            "async def async_outer():\n",
+            "    @decorate\n    async def async_inner():\n        return 1\n",
+            "    return 1\n",
+        ),
+    );
+    let mut api = field_set(&f.run(&["api", "sample.py"]), "name");
+    api.sort();
+    assert_eq!(
+        api,
+        [
+            "Nested",
+            "Public",
+            "__init__",
+            "async_outer",
+            "method",
+            "nested_method",
+            "outer",
+            "value"
+        ]
+    );
+
+    let symbols = field_set(&f.run(&["symbols", "--path", "sample.py"]), "name");
+    let locals = [
+        "inner",
+        "Local",
+        "flag",
+        "run",
+        "hidden",
+        "helper",
+        "async_inner",
+    ];
+    for name in locals {
+        assert!(symbols.contains(&name.to_string()), "{name}: {symbols:?}");
+    }
+    let untested = field_set(&f.run(&["untested", "sample.py"]), "name");
+    assert!(untested.contains(&"outer".to_string()), "{untested:?}");
+    for name in locals {
+        assert!(
+            !untested.contains(&name.to_string()),
+            "{name}: {untested:?}"
+        );
+    }
+}
+
+#[test]
 fn a_member_of_a_private_type_is_not_public_api() {
     let f = Fixture::new();
     f.write(
