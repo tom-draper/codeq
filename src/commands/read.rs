@@ -443,7 +443,7 @@ fn print_folded(lines: &[&str], folded: &[bool]) {
     }
 }
 
-/// Resolve a file argument (repo-relative path or basename) to an indexed path.
+/// Resolve a file argument (repo-relative, local, absolute or basename) to an indexed path.
 pub(super) fn resolve_file(s: &Session, arg: &str) -> Result<String> {
     if s.db
         .conn
@@ -451,6 +451,24 @@ pub(super) fn resolve_file(s: &Session, arg: &str) -> Result<String> {
         .is_ok()
     {
         return Ok(arg.to_string());
+    }
+    // The index stores repo-relative paths, while editors and stack traces
+    // often supply absolute paths or paths relative to the query directory.
+    if let (Ok(path), Ok(root)) = (s.cwd.join(arg).canonicalize(), s.repo.root.canonicalize()) {
+        if let Ok(relative) = path.strip_prefix(root) {
+            let relative = relative.to_string_lossy();
+            if s.db
+                .conn
+                .query_row(
+                    "SELECT 1 FROM files WHERE path = ?1",
+                    [relative.as_ref()],
+                    |_| Ok(()),
+                )
+                .is_ok()
+            {
+                return Ok(relative.into_owned());
+            }
+        }
     }
     let suffix = format!("%/{}", escape_like_literal(arg));
     let mut stmt =

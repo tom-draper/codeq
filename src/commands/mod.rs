@@ -76,6 +76,7 @@ struct Batch<'a, T> {
 /// Returns the pieces every command needs plus how many files were reparsed.
 struct Session {
     repo: Repo,
+    cwd: std::path::PathBuf,
     db: Db,
     reindexed: u64,
     partial_failures: u64,
@@ -116,6 +117,7 @@ impl Session {
         let stats = refresh(&db, &repo)?;
         Ok(Session {
             repo,
+            cwd: cwd.to_path_buf(),
             db,
             reindexed: stats.reindexed,
             partial_failures: stats.partial_failures,

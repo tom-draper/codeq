@@ -11722,6 +11722,63 @@ fn imports_path_scope_treats_like_metacharacters_literally() {
 }
 
 #[test]
+fn file_commands_resolve_repository_path_forms() {
+    let f = Fixture::new();
+    f.write("pkg/sample.py", "def hello():\n    return 1\n");
+    f.write("other/sample.py", "def decoy():\n    return 2\n");
+    f.git_init_commit();
+    let absolute = f.path().join("pkg/sample.py");
+    for command in ["read", "outline", "at"] {
+        let argument = |path: &str| {
+            if command == "at" {
+                format!("{path}:2")
+            } else {
+                path.to_string()
+            }
+        };
+        let expected = f.raw(&[command, &argument("pkg/sample.py")]);
+        assert!(expected.status.success());
+        assert!(String::from_utf8_lossy(&expected.stdout).contains("hello"));
+        for path in [
+            "./pkg/sample.py",
+            "pkg/../pkg/sample.py",
+            absolute.to_str().unwrap(),
+        ] {
+            let result = f.raw(&[command, &argument(path)]);
+            assert!(
+                result.status.success(),
+                "{command} {path}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(result.stdout, expected.stdout, "{command} {path}");
+        }
+        for path in ["./sample.py", "../pkg/sample.py"] {
+            let output = Command::cargo_bin("codeq")
+                .unwrap()
+                .current_dir(f.path().join("pkg"))
+                .args([command, &argument(path)])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{command} {path}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(output.stdout, expected.stdout, "{command} {path}");
+        }
+        let ambiguous = f.raw(&[command, &argument("sample.py")]);
+        assert!(!ambiguous.status.success());
+        assert!(String::from_utf8_lossy(&ambiguous.stderr).contains("ambiguous"));
+    }
+
+    f.write(".codeqignore", "ignored.py\n");
+    f.write("ignored.py", "def ignored():\n    pass\n");
+    let ignored = f.raw(&["outline", f.path().join("ignored.py").to_str().unwrap()]);
+    assert!(!ignored.status.success());
+    assert!(String::from_utf8_lossy(&ignored.stderr).contains("not in this index"));
+}
+
+#[test]
 fn file_suffix_resolution_treats_like_metacharacters_literally() {
     let f = Fixture::new();
     f.write("pkg/a_b.rs", "fn wanted() {}\n");
