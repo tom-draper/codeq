@@ -30,3 +30,10 @@ def make_circle():
 
 def _hidden():
     return os.getcwd()
+
+
+def outer():
+    def inner():
+        return 3
+
+    return inner()

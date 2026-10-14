@@ -1,4 +1,4 @@
-file sample.py a1acd241b7f72452
+file sample.py 76721881e239c173
 fact import os 1:0-1:9 bytes=0-9 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/python confidence=1 sig= doc=-
 fact import pathlib.Path 2:20-2:24 bytes=30-34 vis=- owner=- derived=1 test=0 decorator=- contract=- shape=-/0 source=treesitter/python confidence=1 sig= doc=-
 fact constant LIMIT 4:0-4:10 bytes=36-46 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/5 source=treesitter/python confidence=1 sig=LIMIT = 10 doc=-
@@ -11,11 +11,14 @@ fact field radius 18:8-18:28 bytes=215-235 vis=public owner=Circle derived=0 tes
 fact method area 21:4-23:44 bytes=255-339 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=8d3013c5651ca51d/25 source=treesitter/python confidence=1 sig=def area(self): # Close enough. doc=-
 fact function make_circle 27:0-28:31 bytes=362-412 vis=public owner=- derived=0 test=0 decorator=@app.get("/circle") contract=- shape=4da396ac2a610f06/23 source=treesitter/python confidence=1 sig=def make_circle(): doc=-
 fact function _hidden 31:0-32:22 bytes=415-452 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=96daaf88eeaeb39d/18 source=treesitter/python confidence=1 sig=def _hidden(): doc=-
+fact function outer 35:0-39:18 bytes=455-521 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=2ad040b2a6064989/26 source=treesitter/python confidence=1 sig=def outer(): doc=-
+fact function inner 36:4-37:16 bytes=472-501 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=-/11 source=treesitter/python confidence=1 sig=def inner(): doc=-
 relation 16 Circle extends Shape
 call 347 get on=app
 call 392 Circle on=-
 call 406 name on=Circle(LIMIT)
 call 444 getcwd on=os
+call 514 inner on=-
 span 66-92 kind=1
 span 144-151 kind=1
 span 279-294 kind=0
