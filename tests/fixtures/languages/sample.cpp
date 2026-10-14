@@ -26,3 +26,20 @@ int describe(const Shape &s) {
 }
 
 }  // namespace shapes
+
+class Widget {
+    int hidden;
+    void secret() {}
+public:
+    static void utility() {}
+    static int count;
+protected:
+    struct Nested { void guarded() {} };
+};
+struct Record {
+    int value;
+private:
+    void internal() {}
+public:
+    void update() {}
+};

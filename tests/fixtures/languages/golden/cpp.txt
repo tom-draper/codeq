@@ -1,4 +1,4 @@
-file sample.cpp 9ca12396dfe2ee86
+file sample.cpp f6d36a9498ed107b
 fact import string 1:0-2:0 bytes=0-18 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/3 source=treesitter/cpp confidence=1 sig= doc=-
 fact import sample.h 2:0-3:0 bytes=18-38 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/cpp confidence=1 sig= doc=-
 fact namespace shapes 4:0-28:1 bytes=39-482 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=443091960cd58b7f/169 source=treesitter/cpp confidence=1 sig=namespace shapes doc=-
@@ -11,8 +11,19 @@ fact variant Green 12:25-12:30 bytes=171-176 vis=public owner=Colour derived=0 t
 fact class Circle 15:0-22:1 bytes=205-416 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=167495e5853c72f3/81 source=treesitter/cpp confidence=1 sig=class Circle : public Shape doc=-
 fact method name 17:4-17:65 bytes=247-308 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=a0176ae3a84563e4/29 source=treesitter/cpp confidence=1 sig=std::string name() const override doc=-
 fact method label 20:4-20:70 bytes=323-389 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=7189be4d1f298645/29 source=treesitter/cpp confidence=1 sig=static std::string label(const std::string &text) doc=-
-fact field radius 21:4-21:24 bytes=394-414 vis=public owner=Circle derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/cpp confidence=1 sig=double radius = 1.0; doc=-
+fact field radius 21:4-21:24 bytes=394-414 vis=private owner=Circle derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/cpp confidence=1 sig=double radius = 1.0; doc=-
 fact function describe 24:0-26:1 bytes=419-479 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=b42672bf35b4f917/35 source=treesitter/cpp confidence=1 sig=int describe(const Shape &s) doc=-
+fact class Widget 30:0-38:1 bytes=505-669 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=fcc0044e56bfa5f9/62 source=treesitter/cpp confidence=1 sig=class Widget doc=-
+fact field hidden 31:4-31:15 bytes=524-535 vis=private owner=Widget derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/cpp confidence=1 sig=int hidden; doc=-
+fact method secret 32:4-32:20 bytes=540-556 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/cpp confidence=1 sig=void secret() doc=-
+fact method utility 34:4-34:28 bytes=569-593 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=66515ddc3832b27f/12 source=treesitter/cpp confidence=1 sig=static void utility() doc=-
+fact field count 35:4-35:21 bytes=598-615 vis=public owner=Widget derived=0 test=0 decorator=- contract=- shape=-/6 source=treesitter/cpp confidence=1 sig=static int count; doc=-
+fact struct Nested 37:4-37:39 bytes=631-666 vis=restricted owner=- derived=0 test=0 decorator=- contract=- shape=57a770c02c2bbf3b/16 source=treesitter/cpp confidence=1 sig=struct Nested doc=-
+fact method guarded 37:20-37:37 bytes=647-664 vis=restricted owner=- derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/cpp confidence=1 sig=void guarded() doc=-
+fact struct Record 39:0-45:1 bytes=671-764 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=4e51322848c37fa8/36 source=treesitter/cpp confidence=1 sig=struct Record doc=-
+fact field value 40:4-40:14 bytes=691-701 vis=public owner=Record derived=0 test=0 decorator=- contract=- shape=-/4 source=treesitter/cpp confidence=1 sig=int value; doc=-
+fact method internal 42:4-42:22 bytes=715-733 vis=private owner=- derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/cpp confidence=1 sig=void internal() doc=-
+fact method update 44:4-44:20 bytes=746-762 vis=public owner=- derived=0 test=0 decorator=- contract=- shape=-/10 source=treesitter/cpp confidence=1 sig=void update() doc=-
 relation 15 Circle extends Shape
 call 290 label on=-
 call 463 name on=s
