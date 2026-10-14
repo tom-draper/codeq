@@ -184,6 +184,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     // change from a mere mtime bump) and walk the tree to reconcile.
     let existing = load_manifest(db)?;
     let now = now_ns();
+    let exclude_stamp = git_exclude_stamp(repo_root);
     let Walked {
         seen,
         dirs_seen,
@@ -215,6 +216,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
     drop_vanished(&tx, &existing, &seen)?;
     replace_dirs(&tx, &dirs_seen)?;
+    db.set_meta("git_exclude_stamp", &exclude_stamp)?;
 
     tx.commit()?;
     db.set_meta("last_indexed_at", &now_ns().to_string())?;
@@ -622,6 +624,9 @@ fn replace_dirs(tx: &rusqlite::Transaction, dirs_seen: &HashMap<String, i64>) ->
 /// buffer (`root/…`) instead of allocating a fresh `PathBuf` per file — which at
 /// 100k files is ~200k allocations saved off the per-query cost.
 fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
+    if db.get_meta("git_exclude_stamp")?.as_deref() != Some(git_exclude_stamp(root).as_str()) {
+        return Ok(false);
+    }
     // Reused `root/<rel>` buffer: truncate back to `root/` and append each rel.
     let mut buf = root.to_string_lossy().into_owned();
     if !buf.ends_with(std::path::MAIN_SEPARATOR) {
@@ -671,6 +676,28 @@ fn mtime_ns_of(md: &std::fs::Metadata) -> Option<i64> {
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_nanos() as i64)
+}
+
+/// State of the repository-local excludes, including a linked worktree's common directory.
+fn git_exclude_stamp(root: &Path) -> String {
+    let mut git_dir = root.join(".git");
+    if git_dir.is_file() {
+        let common_dir = (|| {
+            let pointer = std::fs::read_to_string(&git_dir).ok()?;
+            let target = pointer.lines().next()?.strip_prefix("gitdir: ")?;
+            let target = root.join(target);
+            let common = std::fs::read_to_string(target.join("commondir")).ok()?;
+            Some(target.join(common.lines().next()?))
+        })();
+        let Some(common_dir) = common_dir else {
+            return String::from("none");
+        };
+        git_dir = common_dir;
+    }
+    let exclude = git_dir.join("info/exclude");
+    // Include absence and ctime so creation, deletion and edits with restored
+    // mtimes invalidate the cache too. Older indexes have no stamp and refresh.
+    format!("{:?}:{:?}", exclude, file_stat_key(&exclude))
 }
 
 /// Mtime of a watched path for the freshness check: a directory (structural
