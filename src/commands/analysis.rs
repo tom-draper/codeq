@@ -134,83 +134,155 @@ fn used_definition_names(
     let re = regex::Regex::new(&format!("(?:{expr})"))
         .map_err(|e| anyhow!("building unused-name matcher: {e}"))?;
 
-    let mut body_stmt =
-        s.db.conn
-            .prepare("SELECT path, language FROM files WHERE is_text = 1 ORDER BY path")?;
-    let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
+    let files: Vec<(String, Option<String>)> = {
+        let mut st =
+            s.db.conn
+                .prepare("SELECT path, language FROM files WHERE is_text = 1 ORDER BY path")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get(1)?)))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    // Files are independent: a name is used if *any* file uses it, and the
+    // extents claimed below are keyed by path. So the scan is split across
+    // workers, each with its own connection (one cannot be shared) and its own
+    // set of used names, and the sets are united at the end. The answer is the
+    // sequential one; only the early exit is looser, as a worker sees just its
+    // own finds.
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 8)
+        .min(files.len().div_ceil(32).max(1));
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let scan = ScanUsed {
+        root: &s.repo.root,
+        re: &re,
+        names,
+        defsites,
+        files: &files,
+        next: &next,
+        done: &done,
+    };
+    // Opened here, since the session they come from cannot cross threads.
+    let conns = (0..workers)
+        .map(|_| s.db.open_reader())
+        .collect::<Result<Vec<_>>>()?;
+    let parts: Vec<Result<HashSet<String>>> = std::thread::scope(|scope| {
+        let scan = &scan;
+        let handles: Vec<_> = conns
+            .into_iter()
+            .map(|conn| scope.spawn(move || scan.run(&conn)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("unused worker panicked"))
+            .collect()
+    });
     let mut used = HashSet::new();
-    // Definition extents already accounted for, so a second occurrence inside
-    // one (recursion, a self-referential default) still counts as a use.
-    let mut claimed: HashSet<(String, String, i64)> = HashSet::new();
-    let mut rows = body_stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let path = row.get_ref(0)?.as_str()?;
-        let language: Option<String> = row.get(1)?;
-        let Some(body) = crate::index::load_body(&s.repo.root, path) else {
-            continue;
-        };
-        let body = body.as_str();
-        let bytes = body.as_bytes();
-        let file_language = crate::index::language_for(path);
-        // Spans and line starts are per-file work that only a live match
-        // needs, and most files hold none: a name already known to be used is
-        // settled, so its later occurrences are skipped before either is built.
-        let mut spans: Option<Vec<_>> = None;
-        let mut line_starts: Option<Vec<usize>> = None;
-        for m in re.find_iter(body) {
-            if used.contains(m.as_str()) {
+    for part in parts {
+        used.extend(part?);
+    }
+    Ok(used)
+}
+
+/// What one `unused` scan worker shares with the others: read-only inputs, and
+/// two counters to split the files and to stop early.
+struct ScanUsed<'a> {
+    root: &'a Path,
+    re: &'a regex::Regex,
+    names: &'a HashSet<String>,
+    defsites: &'a HashMap<String, HashSet<(String, i64, i64)>>,
+    files: &'a [(String, Option<String>)],
+    next: &'a std::sync::atomic::AtomicUsize,
+    done: &'a std::sync::atomic::AtomicBool,
+}
+
+impl ScanUsed<'_> {
+    /// Claim files until none are left, returning the names this worker found
+    /// a use of.
+    fn run(&self, conn: &rusqlite::Connection) -> Result<HashSet<String>> {
+        use std::sync::atomic::Ordering::Relaxed;
+        let mut span_stmt = conn.prepare(crate::search::SPANS_SQL)?;
+        let mut used: HashSet<String> = HashSet::new();
+        // Definition extents already accounted for, so a second occurrence
+        // inside one (recursion, a self-referential default) still counts as a
+        // use.
+        let mut claimed: HashSet<(String, String, i64)> = HashSet::new();
+        loop {
+            let i = self.next.fetch_add(1, Relaxed);
+            if i >= self.files.len() || self.done.load(Relaxed) {
+                return Ok(used);
+            }
+            let (path, language) = &self.files[i];
+            let path = path.as_str();
+            let Some(body) = crate::index::load_body(self.root, path) else {
                 continue;
-            }
-            if spans.is_none() {
-                spans = Some(
-                    if crate::facts::has_spans(language.as_deref().unwrap_or("")) {
-                        span_stmt
-                            .query_map([path], crate::search::span_row)?
-                            .collect::<std::result::Result<Vec<_>, _>>()?
-                    } else {
-                        Vec::new()
-                    },
-                );
-            }
-            let spans = spans.as_deref().unwrap_or_default();
-            if !crate::search::has_identifier_boundaries(
-                bytes,
-                m.start(),
-                m.end(),
-                file_language,
-                crate::search::is_in_string(spans, m.start()),
-            ) || !crate::search::is_not_comment(spans, m.start())
-            {
-                continue;
-            }
-            let line = line_starts
-                .get_or_insert_with(|| crate::search::line_starts_of(body))
-                .partition_point(|&start| start <= m.start()) as i64;
-            // The declaration is the *first* occurrence of the name inside its
-            // own extent, not the occurrence on the extent's first line. Those
-            // are the same thing only when nothing precedes the name — and an
-            // annotation on its own line, which is how C#, Java, Kotlin and PHP
-            // are conventionally written, is exactly the case where they differ:
-            // the fact starts at `[Fact]` and the name is a line below, so the
-            // declaration read as an external use and the definition could never
-            // be reported dead. Claiming each extent once keeps a recursive call
-            // — a real use, later in the same extent — counted as one.
-            let is_definition = defsites.get(m.as_str()).is_some_and(|sites| {
-                sites.iter().any(|(p, start, end)| {
-                    p == path
-                        && (*start..=*end).contains(&line)
-                        && claimed.insert((m.as_str().to_string(), p.clone(), *start))
-                })
-            });
-            if !is_definition {
-                used.insert(m.as_str().to_string());
-                if used.len() == names.len() {
-                    return Ok(used);
+            };
+            let body = body.as_str();
+            let bytes = body.as_bytes();
+            let file_language = crate::index::language_for(path);
+            // Spans and line starts are per-file work that only a live match
+            // needs, and most files hold none: a name already known to be used
+            // is settled, so its later occurrences are skipped before either
+            // is built.
+            let mut spans: Option<Vec<_>> = None;
+            let mut line_starts: Option<Vec<usize>> = None;
+            for m in self.re.find_iter(body) {
+                if used.contains(m.as_str()) {
+                    continue;
+                }
+                if spans.is_none() {
+                    spans = Some(
+                        if crate::facts::has_spans(language.as_deref().unwrap_or("")) {
+                            span_stmt
+                                .query_map([path], crate::search::span_row)?
+                                .collect::<std::result::Result<Vec<_>, _>>()?
+                        } else {
+                            Vec::new()
+                        },
+                    );
+                }
+                let spans = spans.as_deref().unwrap_or_default();
+                if !crate::search::has_identifier_boundaries(
+                    bytes,
+                    m.start(),
+                    m.end(),
+                    file_language,
+                    crate::search::is_in_string(spans, m.start()),
+                ) || !crate::search::is_not_comment(spans, m.start())
+                {
+                    continue;
+                }
+                let line = line_starts
+                    .get_or_insert_with(|| crate::search::line_starts_of(body))
+                    .partition_point(|&start| start <= m.start()) as i64;
+                // The declaration is the *first* occurrence of the name inside
+                // its own extent, not the occurrence on the extent's first
+                // line. Those are the same thing only when nothing precedes the
+                // name — and an annotation on its own line, which is how C#,
+                // Java, Kotlin and PHP are conventionally written, is exactly
+                // the case where they differ: the fact starts at `[Fact]` and
+                // the name is a line below, so the declaration read as an
+                // external use and the definition could never be reported
+                // dead. Claiming each extent once keeps a recursive call — a
+                // real use, later in the same extent — counted as one.
+                let is_definition = self.defsites.get(m.as_str()).is_some_and(|sites| {
+                    sites.iter().any(|(p, start, end)| {
+                        p == path
+                            && (*start..=*end).contains(&line)
+                            && claimed.insert((m.as_str().to_string(), p.clone(), *start))
+                    })
+                });
+                if !is_definition {
+                    used.insert(m.as_str().to_string());
+                    if used.len() == self.names.len() {
+                        self.done.store(true, Relaxed);
+                        return Ok(used);
+                    }
                 }
             }
         }
     }
-    Ok(used)
 }
 
 /// Single-name form used only for the explanatory empty-result note. `unused`

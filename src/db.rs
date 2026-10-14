@@ -115,8 +115,7 @@ const COMPACT_MIN_FREE_PAGES: i64 = 256;
 
 pub struct Db {
     pub conn: Connection,
-    /// The `.codeq` directory; reserved for status/cleanup commands.
-    #[allow(dead_code)]
+    /// The `.codeq` directory.
     pub dir: PathBuf,
     /// The schema version of the index this open replaced, when it found one
     /// written by a different codeq. Everything derived was dropped and is
@@ -238,6 +237,20 @@ impl Db {
             db.rebuilt_from = db.migrate()?;
         }
         Ok(db)
+    }
+
+    /// A read-only connection to this index, for a worker thread: a
+    /// [`Connection`] cannot be shared, and this skips the pragmas and schema
+    /// check [`Db::open`] already did.
+    pub fn open_reader(&self) -> Result<Connection> {
+        let path = self.dir.join("index.db");
+        let conn = Connection::open_with_flags(
+            &path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .with_context(|| format!("opening {}", path.display()))?;
+        conn.busy_timeout(busy_timeout())?;
+        Ok(conn)
     }
 
     /// Returns the version it replaced: `None` on a first build, or when
