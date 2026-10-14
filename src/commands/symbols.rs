@@ -332,7 +332,9 @@ fn api_diff(
         };
 
         // The exported surface as of `compare_to`.
-        let mut old: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        // Each version also keeps the line it was declared on at `compare_to`: a
+        // removed export has no line now, and the old one is the only true place.
+        let mut old: HashMap<String, Vec<(String, String, i64)>> = HashMap::new();
         if let Some(bytes) = s.repo.file_at(compare_to, &file) {
             for fact in ex
                 .extract(lang, &file, &bytes)?
@@ -348,6 +350,7 @@ fn api_diff(
                 old.entry(fact.name).or_default().push((
                     fact.kind.clone(),
                     declaration_header(&fact.kind, Some(fact.signature)).unwrap_or_default(),
+                    fact.start_line as i64,
                 ));
             }
         }
@@ -375,7 +378,7 @@ fn api_diff(
             let before = old.get_mut(&name).and_then(|versions| {
                 versions
                     .iter()
-                    .position(|(kind, signature)| {
+                    .position(|(kind, signature, _)| {
                         kind == &current_kind && Some(signature.as_str()) == sig.as_deref()
                     })
                     .map(|position| versions.remove(position))
@@ -425,9 +428,9 @@ fn api_diff(
             for mut now in current_versions.drain(..) {
                 if let Some(position) = old_versions
                     .iter()
-                    .position(|(old_kind, _)| old_kind == &now.kind)
+                    .position(|(old_kind, _, _)| old_kind == &now.kind)
                 {
-                    let (_, before) = old_versions.remove(position);
+                    let (_, before, _) = old_versions.remove(position);
                     now.change = "changed".into();
                     now.was = Some(before);
                     data.push(now);
@@ -439,7 +442,7 @@ fn api_diff(
             // A declaration changing kind but keeping its name is still one
             // changed export once same-kind overload pairs have been handled.
             let paired = unmatched_current.len().min(old_versions.len());
-            for (mut now, (_, before)) in unmatched_current
+            for (mut now, (_, before, _)) in unmatched_current
                 .drain(..paired)
                 .zip(old_versions.drain(..paired))
             {
@@ -455,13 +458,13 @@ fn api_diff(
                 }
                 continue;
             }
-            for (kind, before) in old_versions {
+            for (kind, before, was_line) in old_versions {
                 data.push(ApiChangeRow {
                     change: "removed".into(),
                     name: name.clone(),
                     kind,
                     path: file.clone(),
-                    line: 0,
+                    line: was_line,
                     signature: None,
                     was: Some(before),
                 });

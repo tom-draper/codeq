@@ -11741,6 +11741,25 @@ fn api_diff_obeys_the_kind_filter() {
 }
 
 #[test]
+fn api_diff_places_a_removed_export_on_the_line_it_had() {
+    // A removed export has no line in the tree, so its row said `line 0`, which
+    // no reader can open. The line it had at the compared ref is the real place.
+    let f = Fixture::new();
+    f.write(
+        "lib.rs",
+        "pub fn keep() {}\n\npub fn gone() {}\n\npub fn also() {}\n",
+    );
+    f.git_init_commit();
+    f.write("lib.rs", "pub fn keep() {}\n\npub fn also() {}\n");
+
+    let v = f.run(&["api", "--compare-to", "HEAD"]);
+    let removed = v["data"]["removed"].as_array().unwrap();
+    assert_eq!(removed.len(), 1, "{v}");
+    assert_eq!(removed[0]["name"], "gone", "{v}");
+    assert_eq!(removed[0]["line"], 3, "{v}");
+}
+
+#[test]
 fn api_diff_reports_an_added_overload_as_added() {
     let f = Fixture::new();
     f.write(
