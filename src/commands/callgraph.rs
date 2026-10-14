@@ -488,6 +488,7 @@ fn scan_called_names(
         "SELECT start_byte, end_byte FROM spans
          WHERE file_id = (SELECT id FROM files WHERE path = ?1) ORDER BY start_byte",
     )?;
+    let mut line_starts = HashMap::new();
     for (path, sb, eb) in targets {
         let body = crate::index::load_body(&s.repo.root, path);
         let Some(b) = body else { continue };
@@ -528,16 +529,26 @@ fn scan_called_names(
                         owner,
                     });
                 if examples {
-                    let expr = match &recv {
-                        Some(r) => format!("{r}.{word}"),
-                        None => word.clone(),
-                    };
-                    let line = b[..off.min(b.len())]
-                        .bytes()
-                        .filter(|c| *c == b'\n')
-                        .count() as i64
-                        + 1;
-                    called.sites.entry(lookup.clone()).or_insert((expr, line));
+                    called.sites.entry(lookup.clone()).or_insert_with(|| {
+                        let expr = match &recv {
+                            Some(r) => format!("{r}.{word}"),
+                            None => word.clone(),
+                        };
+                        let (starts, scanned) = line_starts
+                            .entry(path.as_str())
+                            .or_insert_with(|| (vec![0], 0));
+                        let end = off.min(b.len());
+                        if *scanned < end {
+                            let base = *scanned;
+                            starts.extend(
+                                memchr::memchr_iter(b'\n', &b.as_bytes()[base..end])
+                                    .map(|i| base + i + 1),
+                            );
+                            *scanned = end;
+                        }
+                        let line = starts.partition_point(|&start| start <= end) as i64;
+                        (expr, line)
+                    });
                 }
                 called.idents.insert(lookup);
             }

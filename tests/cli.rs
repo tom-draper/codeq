@@ -3470,7 +3470,7 @@ fn callees_examples_show_the_qualified_call_expression() {
     f.write("lib.py", "def run():\n    pass\n");
     f.write(
         "app.py",
-        "import subprocess\ndef go():\n    subprocess.run(['ls'])\n",
+        "\u{feff}import subprocess\r\n# café 🐍\r\ndef go():\r\n    subprocess.run(['ls'])\r\n    subprocess.run(['pwd'])\r\n",
     );
 
     let plain = f.run(&["callees", "go"])["data"]
@@ -3501,7 +3501,7 @@ fn callees_examples_show_the_qualified_call_expression() {
     );
     assert_eq!(
         run_row["call_line"].as_i64(),
-        Some(3),
+        Some(4),
         "line in the caller's file"
     );
 }
