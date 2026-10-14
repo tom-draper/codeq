@@ -130,6 +130,32 @@ establish a general query speedup. Another differential run was active in a
 separate checkout during measurement. Both binaries use the same release
 configuration, and alternating samples share that background load.
 
+## Context source reads (`context_reads.py`)
+
+Compare two release binaries on complete warm context queries. Seven samples per
+side alternate execution order and must return identical stdout and stderr.
+JSON checks verify seed counts, text presence, omitted neighbors, and oversized
+seed reduction. Optional Linux traces count source opens and bytes read in
+separate untimed invocations, whose output must also match.
+
+```sh
+python3 bench/context_reads.py --before /tmp/codeq-before --after target/release/codeq --before-revision <commit> --trace
+```
+
+[The context results](results/context_reads_20261014.json) compare baseline
+`e3a23d9` with source loaded only for expansion, returned text, or seed reduction.
+The 128-seed metadata case fell from a median of 47.80 ms to 3.59 ms. Seven-run
+ranges were 46.89 to 52.61 ms before and 3.44 to 4.64 ms after. The separate
+traces recorded 128 source opens and 67,112,448 bytes before, and zero after.
+Freshness checks, definition lookups, and rendering remain in the timed queries.
+
+Expansion with 64 oversized neighbors retained the seed and the same omission
+report, while source opens fell from 65 to one. The text case fell from 17.48 ms
+to 4.17 ms. Metadata for an oversized class still opens its source to preserve
+the folded token estimate. Small-seed, folded-seed, ordinary text, and real
+repository sample ranges overlap, so those cases establish no speedup. These
+measurements use warm filesystem caches and do not estimate cold-disk latency.
+
 ## Text-mode faithfulness (`textmode.py`)
 
 `differential.py`/`completion.py` only exercise `--json`, so the *text renderer* —

@@ -1,0 +1,434 @@
+{
+  "metric": "end-to-end warm CLI wall time in milliseconds",
+  "limits": "sequential warmed queries; excludes cold indexing and compilation; source traces run separately without timing",
+  "before_revision": "e3a23d9ac656374336d142422c87be44262f4d48",
+  "after_revision": "e3a23d9ac656374336d142422c87be44262f4d48",
+  "after_worktree_dirty": true,
+  "after_source_sha256": "56ee7bdfa08977b80e9aed301e26b3cb2683ead6f672e2b85f197c5ce3f19878",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpu_count": 12,
+  "loadavg_before": [
+    2.50634765625,
+    2.66455078125,
+    2.24658203125
+  ],
+  "loadavg_after": [
+    2.8837890625,
+    2.74169921875,
+    2.27685546875
+  ],
+  "binaries_sha256": {
+    "before": "c1a5d361c080140194b48972e46d603e22d58855d85ecac43156dd6668e67d98",
+    "after": "1088e6abd81c430c96d3d6b6b08299a239a6ff7b9f3fb408d85252acf7b22102"
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "verified_timed_invocations": 98,
+  "results": [
+    {
+      "task": "metadata-many-seeds",
+      "args": [
+        "context",
+        "--symbols",
+        "seed",
+        "--no-text"
+      ],
+      "source_trace": {
+        "before": {
+          "source_opens": 128,
+          "source_bytes_read": 67112448
+        },
+        "after": {
+          "source_opens": 0,
+          "source_bytes_read": 0
+        }
+      },
+      "stdout_bytes": 6997,
+      "answer_sha256": "d97bcb25335d2fb419d4f919bebe134ccd4bea2c989ee46fc2ff1223f10f9d7a",
+      "samples_ms": {
+        "before": [
+          47.796196,
+          46.887042,
+          51.76608,
+          51.26941,
+          47.263325,
+          52.614869,
+          47.250316
+        ],
+        "after": [
+          3.585889,
+          3.498502,
+          4.429928,
+          3.442331,
+          3.566376,
+          3.747869,
+          4.643814
+        ]
+      },
+      "median_ms": {
+        "before": 47.796196,
+        "after": 3.585889
+      },
+      "range_ms": {
+        "before": [
+          46.887042,
+          52.614869
+        ],
+        "after": [
+          3.442331,
+          4.643814
+        ]
+      },
+      "fixture_files": 128,
+      "fixture_bytes": 67112448
+    },
+    {
+      "task": "text-many-seeds",
+      "args": [
+        "context",
+        "--symbols",
+        "seed"
+      ],
+      "source_trace": {
+        "before": {
+          "source_opens": 128,
+          "source_bytes_read": 67112448
+        },
+        "after": {
+          "source_opens": 128,
+          "source_bytes_read": 67112448
+        }
+      },
+      "stdout_bytes": 6101,
+      "answer_sha256": "e8f50375009294dc52f81170b6a2534e26135462fbe1a7e9c4b245f92139fc00",
+      "samples_ms": {
+        "before": [
+          45.690767,
+          43.532265,
+          43.844348,
+          87.304933,
+          97.081388,
+          97.031001,
+          91.329528
+        ],
+        "after": [
+          46.689086,
+          48.683169,
+          98.059716,
+          77.239801,
+          105.455377,
+          90.81141,
+          81.952847
+        ]
+      },
+      "median_ms": {
+        "before": 87.304933,
+        "after": 81.952847
+      },
+      "range_ms": {
+        "before": [
+          43.532265,
+          97.081388
+        ],
+        "after": [
+          46.689086,
+          105.455377
+        ]
+      },
+      "fixture_files": 128,
+      "fixture_bytes": 67112448
+    },
+    {
+      "task": "metadata-small-seed",
+      "args": [
+        "context",
+        "--symbols",
+        "seed",
+        "--no-text"
+      ],
+      "source_trace": {
+        "before": {
+          "source_opens": 1,
+          "source_bytes_read": 26
+        },
+        "after": {
+          "source_opens": 0,
+          "source_bytes_read": 0
+        }
+      },
+      "stdout_bytes": 133,
+      "answer_sha256": "523af7414a4ed514ea116e8361454e4e59b2f91aa67920a6da5f232b79f81dde",
+      "samples_ms": {
+        "before": [
+          5.770106,
+          5.884514,
+          6.054329,
+          4.802922,
+          6.074737,
+          4.087218,
+          4.92351
+        ],
+        "after": [
+          5.805308,
+          6.003728,
+          5.899744,
+          4.049008,
+          3.911409,
+          4.609649,
+          5.317902
+        ]
+      },
+      "median_ms": {
+        "before": 5.770106,
+        "after": 5.317902
+      },
+      "range_ms": {
+        "before": [
+          4.087218,
+          6.074737
+        ],
+        "after": [
+          3.911409,
+          6.003728
+        ]
+      },
+      "fixture_files": 1,
+      "fixture_bytes": 26
+    },
+    {
+      "task": "omitted-neighbors-text",
+      "args": [
+        "context",
+        "--symbols",
+        "seed",
+        "--expand",
+        "--max-tokens",
+        "4000"
+      ],
+      "source_trace": {
+        "before": {
+          "source_opens": 65,
+          "source_bytes_read": 16780684
+        },
+        "after": {
+          "source_opens": 1,
+          "source_bytes_read": 1100
+        }
+      },
+      "stdout_bytes": 4285,
+      "answer_sha256": "b473da5eceaf980f4ee411a4dfad6386c38c024ffdba6c0e86634457144ebc02",
+      "samples_ms": {
+        "before": [
+          18.415099,
+          18.601387,
+          17.497378,
+          17.476103,
+          16.905006,
+          16.416255,
+          17.100847
+        ],
+        "after": [
+          4.71099,
+          4.167754,
+          4.376656,
+          4.172575,
+          4.592149,
+          4.084625,
+          4.054974
+        ]
+      },
+      "median_ms": {
+        "before": 17.476103,
+        "after": 4.172575
+      },
+      "range_ms": {
+        "before": [
+          16.416255,
+          18.601387
+        ],
+        "after": [
+          4.054974,
+          4.71099
+        ]
+      },
+      "fixture_files": 65,
+      "fixture_bytes": 16780684
+    },
+    {
+      "task": "omitted-neighbors-metadata",
+      "args": [
+        "context",
+        "--symbols",
+        "seed",
+        "--expand",
+        "--max-tokens",
+        "4000",
+        "--no-text"
+      ],
+      "source_trace": {
+        "before": {
+          "source_opens": 65,
+          "source_bytes_read": 16780684
+        },
+        "after": {
+          "source_opens": 1,
+          "source_bytes_read": 1100
+        }
+      },
+      "stdout_bytes": 3220,
+      "answer_sha256": "27f54d339fd6af812655bada1f4803df75d9b96d7d1d278ef740a41a48deef49",
+      "samples_ms": {
+        "before": [
+          15.200543,
+          15.912608,
+          15.240623,
+          14.512854,
+          15.052757,
+          14.107802,
+          14.06148
+        ],
+        "after": [
+          3.50688,
+          3.357781,
+          3.410654,
+          3.457763,
+          4.511489,
+          3.331247,
+          3.837782
+        ]
+      },
+      "median_ms": {
+        "before": 15.052757,
+        "after": 3.457763
+      },
+      "range_ms": {
+        "before": [
+          14.06148,
+          15.912608
+        ],
+        "after": [
+          3.331247,
+          4.511489
+        ]
+      },
+      "fixture_files": 65,
+      "fixture_bytes": 16780684
+    },
+    {
+      "task": "reduced-seed-metadata",
+      "args": [
+        "context",
+        "--symbols",
+        "Seed",
+        "--max-tokens",
+        "80",
+        "--no-text"
+      ],
+      "source_trace": {
+        "before": {
+          "source_opens": 1,
+          "source_bytes_read": 2740
+        },
+        "after": {
+          "source_opens": 1,
+          "source_bytes_read": 2740
+        }
+      },
+      "stdout_bytes": 144,
+      "answer_sha256": "7ea8b69da4a616cfc2cab090b60381718b7ac90e41870c3ba4b061aa7093f28b",
+      "samples_ms": {
+        "before": [
+          2.59462,
+          2.67313,
+          2.504339,
+          2.561243,
+          2.560105,
+          2.99122,
+          2.64266
+        ],
+        "after": [
+          2.653802,
+          2.55307,
+          2.643166,
+          2.438846,
+          2.69815,
+          3.856742,
+          2.926033
+        ]
+      },
+      "median_ms": {
+        "before": 2.59462,
+        "after": 2.653802
+      },
+      "range_ms": {
+        "before": [
+          2.504339,
+          2.99122
+        ],
+        "after": [
+          2.438846,
+          3.856742
+        ]
+      },
+      "fixture_files": 1,
+      "fixture_bytes": 2740
+    },
+    {
+      "task": "repository-metadata",
+      "args": [
+        "context",
+        "--symbols",
+        "build",
+        "--path",
+        "src/context.rs",
+        "--no-text"
+      ],
+      "source_trace": {
+        "before": {
+          "source_opens": 1,
+          "source_bytes_read": 33286
+        },
+        "after": {
+          "source_opens": 0,
+          "source_bytes_read": 0
+        }
+      },
+      "stdout_bytes": 147,
+      "answer_sha256": "63bf624496bc69131746f25283ab6338833c47756648f135e7d8ffcc17241479",
+      "samples_ms": {
+        "before": [
+          3.68075,
+          3.559744,
+          3.501678,
+          3.933363,
+          3.697404,
+          3.938848,
+          4.529849
+        ],
+        "after": [
+          3.686018,
+          3.711011,
+          3.789052,
+          3.581804,
+          4.267809,
+          4.012506,
+          6.112031
+        ]
+      },
+      "median_ms": {
+        "before": 3.697404,
+        "after": 3.789052
+      },
+      "range_ms": {
+        "before": [
+          3.501678,
+          4.529849
+        ],
+        "after": [
+          3.581804,
+          6.112031
+        ]
+      }
+    }
+  ]
+}
