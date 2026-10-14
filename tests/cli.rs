@@ -3078,6 +3078,63 @@ fn on_filter_disambiguates_by_receiver() {
 }
 
 #[test]
+fn references_limit_applies_after_resolution() {
+    let f = Fixture::new();
+    f.write("z.py", "def target():\n    return 1\n");
+    f.write("a.py", "def unrelated():\n    return object().target()\n");
+    f.write(
+        "b.py",
+        "from z import target\n\ndef caller():\n    return target()\n",
+    );
+
+    let limited = f.run(&[
+        "references",
+        "target",
+        "--calls",
+        "--resolved",
+        "--limit",
+        "1",
+    ]);
+    let rows = limited["data"]["references"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{limited}");
+    assert_eq!(rows[0]["path"], "b.py");
+    assert_eq!(rows[0]["line"], 4);
+    assert_eq!(rows[0]["via"], "imported");
+    assert_eq!(limited["data"]["truncated"], false);
+
+    f.write(
+        "c.py",
+        "from z import target\n\ndef second():\n    return target()\n",
+    );
+    let limited = f.run(&[
+        "references",
+        "target",
+        "--calls",
+        "--resolved",
+        "--limit",
+        "1",
+    ]);
+    let rows = limited["data"]["references"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{limited}");
+    assert_eq!(rows[0]["path"], "b.py");
+    assert_eq!(limited["data"]["truncated"], true);
+
+    let unlimited = f.run(&[
+        "references",
+        "target",
+        "--calls",
+        "--resolved",
+        "--limit",
+        "0",
+    ]);
+    let rows = unlimited["data"]["references"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{unlimited}");
+    assert_eq!(rows[0]["path"], "b.py");
+    assert_eq!(rows[1]["path"], "c.py");
+    assert_eq!(unlimited["data"]["truncated"], false);
+}
+
+#[test]
 fn resolved_is_a_noop_without_a_definition_to_anchor() {
     // A name with no definition in the repo (an external symbol) can't be
     // resolved against anything, so --resolved must not silently empty the result.

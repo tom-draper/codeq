@@ -751,10 +751,6 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
     };
     hits.extend(alias_hits(&s, name, path, language, &opts)?);
     hits.sort_by(|a, b| (a.path.as_str(), a.line, a.col).cmp(&(b.path.as_str(), b.line, b.col)));
-    if limit > 0 && hits.len() > limit {
-        hits.truncate(limit);
-        truncated = true;
-    }
 
     // Where this exact name is declared. Hits are sorted above, which is what
     // `DeclSites` needs to tell a declaration from a recursive use.
@@ -776,7 +772,7 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         // Same for `--on`: a declaration is not a qualified use.
         .filter(|r| !((call_only || qualifier.is_some()) && r.definition))
         .collect();
-    let references = resolve_rows(
+    let mut references = resolve_rows(
         &s,
         name,
         resolved,
@@ -784,6 +780,10 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         |r| r.hit.path.as_str(),
         |r, v| r.via = v,
     )?;
+    if limit > 0 && references.len() > limit {
+        references.truncate(limit);
+        truncated = true;
+    }
 
     let note = note_if_empty(&s, &references, name, "references", path)?;
     s.emit_noted(
