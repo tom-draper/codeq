@@ -606,6 +606,12 @@ fn render_row(
                 return;
             }
         }
+        // A hit with no window of its own (on line 1 there is nothing before it,
+        // and the file may end at it) still counts as printed, or the next hit's
+        // `before` would repeat it as context.
+        if let (Some(p), Some(ln)) = (str_of("path"), int_of("line")) {
+            cursor.mark(p, ln);
+        }
         out.push_str(&match_line);
         return;
     }
