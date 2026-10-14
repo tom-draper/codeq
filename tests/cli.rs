@@ -5679,6 +5679,35 @@ fn context_respects_token_budget() {
 }
 
 #[test]
+fn context_no_text_preserves_seed_reduction_and_budget() {
+    let f = Fixture::new();
+    let source = format!(
+        "\u{feff}class Seed:\n    def work(self):\n{}        return 1\n",
+        "        # café 🐍\n".repeat(128)
+    );
+    f.write("seed.py", &source);
+    let full = f.run(&["context", "--symbols", "Seed", "--max-tokens", "80"]);
+    let lean = f.run(&[
+        "context",
+        "--symbols",
+        "Seed",
+        "--max-tokens",
+        "80",
+        "--no-text",
+    ]);
+    assert_eq!(lean["data"]["chunks"][0]["name"], "Seed");
+    assert_eq!(lean["data"]["chunks"][0]["reduced"], "folded");
+    assert!(lean["data"]["chunks"][0].get("text").is_none());
+    assert!(lean["data"]["budget"]["used_tokens"].as_u64().unwrap() <= 80);
+    let mut expected = full["data"].clone();
+    expected["chunks"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("text");
+    assert_eq!(lean["data"], expected);
+}
+
+#[test]
 fn context_marks_omissions_truncated_only_when_one_is_hidden() {
     let f = Fixture::new();
     let source = |count: usize| {
