@@ -14,7 +14,7 @@ use crate::context::{self, Request};
 use crate::db::{Db, SCHEMA_VERSION};
 use crate::deps;
 use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
-use crate::index::{language_for, refresh};
+use crate::index::{language_for, refresh, NO_EXTRACTION};
 use crate::repo::Repo;
 use crate::search::{
     self, innermost, load_file_defs, prefilter_of, regex_prefilter, run_search, run_search_acc,
@@ -236,6 +236,19 @@ fn note_if_scope_empty(s: &Session, path: Option<&str>, what: &str) -> Result<Op
     } else {
         format!("{n} indexed file(s) match '{p}', but none has {what}")
     }))
+}
+
+/// Why a file-scoped command found nothing in a file whose language is indexed
+/// for search but never parsed (JSON, YAML, TOML).
+///
+/// An empty `outline` of `Cargo.toml` read exactly like "this file has no
+/// structure", where the true answer is "codeq does not look". `None` for any
+/// language that does have extraction, where an empty result is a real one.
+fn data_only_note(rel: &str) -> Option<String> {
+    let lang = language_for(rel).filter(|l| NO_EXTRACTION.contains(l))?;
+    Some(format!(
+        "{rel} is {lang}, which is indexed for search but has no extracted definitions"
+    ))
 }
 
 fn note_if_empty<T>(

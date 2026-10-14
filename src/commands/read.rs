@@ -98,7 +98,8 @@ pub fn cmd_outline(cwd: &Path, file: &str, docs: bool, out: Out) -> Result<()> {
         })
         .collect();
 
-    s.emit(data)
+    let note = data.is_empty().then(|| data_only_note(&rel)).flatten();
+    s.emit_noted(data, note)
 }
 
 /// Bodies of function/method definitions this many lines or longer are folded.
@@ -191,6 +192,9 @@ pub fn cmd_read_at(cwd: &Path, locations: &[String], raw: bool, out: Out) -> Res
     for location in locations {
         let found = super::explore::definition_at(&s, location)?;
         if found.ranges.is_empty() {
+            if let Some(note) = data_only_note(&found.rel) {
+                return Err(anyhow!("{note}; use read {location} for the line itself"));
+            }
             return Err(anyhow!(
                 "no definition encloses {location}; use read {location} for the line itself"
             ));
@@ -292,6 +296,11 @@ fn read_one(
             }
         }
         if ranges.is_empty() {
+            if let Some(note) = data_only_note(&rel) {
+                return Err(anyhow!(
+                    "no definition named '{name}': {note}; use --lines A-B"
+                ));
+            }
             return Err(anyhow!("no definition named '{name}' in {rel}"));
         }
         // `--raw` yields exact bytes for an editor's old_string, so a single

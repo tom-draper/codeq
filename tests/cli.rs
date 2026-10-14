@@ -12739,3 +12739,45 @@ fn a_sql_trigger_is_a_call_site_of_its_function() {
     let callers = f.run(&["callers", "touch", "--calls"]);
     assert_eq!(field_set(&callers, "name"), ["circles_touch"], "{callers}");
 }
+
+#[test]
+fn file_scoped_commands_explain_an_empty_result_on_a_data_only_file() {
+    let f = Fixture::new();
+    f.write("Cargo.toml", "[package]\nname = \"x\"\n");
+    f.write("a.rs", "fn a() {}\n");
+    let expected =
+        "Cargo.toml is toml, which is indexed for search but has no extracted definitions";
+
+    for args in [
+        ["outline", "Cargo.toml"],
+        ["at", "Cargo.toml:1"],
+        ["explore", "--at"],
+    ] {
+        let mut args = args.to_vec();
+        if args[0] == "explore" {
+            args.push("Cargo.toml:1");
+        }
+        let v = f.run(&args);
+        assert!(
+            v["note"].as_str().is_some_and(|n| n.contains(expected)),
+            "{args:?}: {v}"
+        );
+    }
+
+    for args in [
+        vec!["read", "Cargo.toml", "--symbol", "package"],
+        vec!["read", "--at", "Cargo.toml:1"],
+    ] {
+        let out = f.raw(&args);
+        assert!(!out.status.success(), "{args:?} should fail");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(expected), "{args:?}: {stderr}");
+    }
+
+    // A language with extraction keeps its ordinary empty-result behaviour.
+    let rust = f.run(&["at", "a.rs:9"]);
+    assert!(
+        !rust["note"].as_str().unwrap().contains("no extracted"),
+        "{rust}"
+    );
+}
