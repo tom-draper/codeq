@@ -4382,6 +4382,41 @@ fn search_glob_include_and_exclude() {
 }
 
 #[test]
+fn search_globs_use_the_last_matching_rule() {
+    let f = Fixture::new();
+    f.write("a.txt", "alpha\n");
+    f.write("b.txt", "alpha\n");
+    f.write("nested/a.txt", "alpha\n");
+    f.write("other.rs", "// alpha\n");
+
+    let cases: &[(&[&str], &[&str])] = &[
+        (&["!*.txt", "a.txt"], &["a.txt", "nested/a.txt"]),
+        (&["a.txt", "!*.txt"], &[]),
+        (
+            &["*.txt", "!a.txt", "nested/a.txt"],
+            &["b.txt", "nested/a.txt"],
+        ),
+        (&["!nested/", "nested/a.txt"], &["nested/a.txt"]),
+        (&["nested/a.txt", "!nested/"], &[]),
+        (&["!*.txt", "!other.rs"], &[]),
+        (&["!b.txt"], &["a.txt", "nested/a.txt", "other.rs"]),
+        (&["a.txt", "b.txt"], &["a.txt", "b.txt", "nested/a.txt"]),
+    ];
+    for (globs, expected) in cases {
+        let mut args = vec!["search", "alpha", "-l"];
+        for glob in *globs {
+            args.extend(["-g", glob]);
+        }
+        let result = f.run(&args);
+        assert_eq!(
+            field_names(&result["data"]["files"]),
+            *expected,
+            "{globs:?}"
+        );
+    }
+}
+
+#[test]
 fn search_word_matches_whole_words_only() {
     let f = Fixture::new();
     f.write("a.rs", "let count = 1;\nlet counter = 2;\n");

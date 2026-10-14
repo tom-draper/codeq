@@ -212,17 +212,17 @@ pub fn cmd_astgrep_explain(cwd: &Path, location: &str, out: Out) -> Result<()> {
 
 /// Include/exclude glob filter over repo-relative paths, ripgrep-style: a `!`
 /// prefix excludes; a pattern with no `/` matches by basename in any directory;
-/// a trailing `/` matches a whole directory.
+/// a trailing `/` matches a whole directory. The last matching pattern wins.
 struct GlobFilter {
-    includes: globset::GlobSet,
-    excludes: globset::GlobSet,
+    patterns: globset::GlobSet,
+    includes: Vec<bool>,
     has_includes: bool,
 }
 
 impl GlobFilter {
     fn build(globs: &[String]) -> Result<GlobFilter> {
-        let mut inc = globset::GlobSetBuilder::new();
-        let mut exc = globset::GlobSetBuilder::new();
+        let mut patterns = globset::GlobSetBuilder::new();
+        let mut includes = Vec::new();
         let mut has_includes = false;
         for g in globs {
             let (neg, pat) = match g.strip_prefix('!') {
@@ -234,16 +234,13 @@ impl GlobFilter {
                 .literal_separator(true)
                 .build()
                 .map_err(|e| anyhow!("invalid glob '{g}': {e}"))?;
-            if neg {
-                exc.add(glob);
-            } else {
-                inc.add(glob);
-                has_includes = true;
-            }
+            patterns.add(glob);
+            includes.push(!neg);
+            has_includes |= !neg;
         }
         Ok(GlobFilter {
-            includes: inc.build()?,
-            excludes: exc.build()?,
+            patterns: patterns.build()?,
+            includes,
             has_includes,
         })
     }
@@ -264,10 +261,10 @@ impl GlobFilter {
     }
 
     fn accepts(&self, path: &str) -> bool {
-        if self.excludes.is_match(path) {
-            return false;
-        }
-        !self.has_includes || self.includes.is_match(path)
+        self.patterns
+            .matches(path)
+            .last()
+            .map_or(!self.has_includes, |&index| self.includes[index])
     }
 }
 
