@@ -29,3 +29,23 @@ pub fn label(text: &str) -> String {
 fn labels_are_kept() {
     assert_eq!(label("x"), "x");
 }
+
+pub(crate) mod internal {
+    pub fn hidden() {}
+    pub struct Hidden {
+        pub value: u8,
+    }
+    pub enum State {
+        Ready,
+    }
+    pub mod nested {
+        pub fn deeply_hidden() {}
+    }
+    fn local() {}
+}
+
+mod private {
+    pub(super) mod bridge {
+        pub fn secret() {}
+    }
+}
