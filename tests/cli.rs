@@ -4080,6 +4080,26 @@ fn search_invert_carries_its_context_window() {
 }
 
 #[test]
+fn graph_walks_refuse_a_zero_hop_depth() {
+    // `--depth 1` is the direct neighbours, so 0 names no walk. `callers` and
+    // `callees` quietly ran it as 1 and `deps` answered with nothing.
+    let f = Fixture::new();
+    f.write("a.rs", "fn a() { b() }\nfn b() {}\n");
+    for args in [
+        ["callers", "b", "--depth", "0"],
+        ["callees", "a", "--depth", "0"],
+        ["deps", "a.rs", "--depth", "0"],
+    ] {
+        let out = f.raw(&args);
+        assert!(!out.status.success(), "{args:?} should be refused");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("at least 1"), "{args:?}: {err}");
+    }
+    let v = f.run(&["callers", "b", "--depth", "1"]);
+    assert_eq!(v["data"][0]["name"], "a", "{v}");
+}
+
+#[test]
 fn search_has_no_line_after_the_trailing_newline() {
     // `a\n\nb\n` is three lines. The empty string after the final newline is not
     // a fourth, so `^$` must find the one blank line and `-A` must not invent

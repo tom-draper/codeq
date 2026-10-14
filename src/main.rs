@@ -248,7 +248,7 @@ enum Command {
         path: Option<String>,
         /// Transitive hops up the call tree (1 = direct callers). Each result is
         /// tagged with its depth.
-        #[arg(long, default_value_t = 1)]
+        #[arg(long, default_value_t = 1, value_parser = hops)]
         depth: usize,
         /// Import-scoped resolution (direct callers only): drop callers whose file
         /// can't reach a definition of the name through imports, and tag the rest
@@ -285,7 +285,7 @@ enum Command {
         #[arg(long)]
         path: Option<String>,
         /// Transitive hops down the call tree (1 = direct callees).
-        #[arg(long, default_value_t = 1)]
+        #[arg(long, default_value_t = 1, value_parser = hops)]
         depth: usize,
         /// Import-scoped resolution (direct callees only): keep only callees whose
         /// definition file `name`'s own file can reach through imports (or the same
@@ -621,7 +621,7 @@ enum Command {
         /// The file to start from (a path or unique suffix). Omit with `--cycles`.
         file: Option<String>,
         /// Walk transitive dependencies to this many hops (1 = direct only).
-        #[arg(long, default_value_t = 1)]
+        #[arg(long, default_value_t = 1, value_parser = hops)]
         depth: usize,
         /// Report every import cycle in the repo instead of one file's deps.
         #[arg(long)]
@@ -897,6 +897,17 @@ enum Command {
         #[arg(long, value_parser = install::AGENTS.to_vec())]
         agent: Option<String>,
     },
+}
+
+/// A hop count for a graph walk. `1` is the direct neighbours, so `0` names no
+/// walk at all; it used to run as `1` (callers, callees) or return nothing
+/// (deps), neither of which is what was asked for.
+fn hops(s: &str) -> Result<usize, String> {
+    match s.parse::<usize>() {
+        Ok(0) => Err("must be at least 1 (1 = direct)".to_string()),
+        Ok(n) => Ok(n),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// Restore the default SIGPIPE behaviour (Rust sets it to ignore, which turns a
