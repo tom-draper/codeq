@@ -108,7 +108,8 @@ use rusqlite::Connection;
 // v47 stops tagging wrapper decorators (`pass_context`, `setupmethod`) as registrations.
 // v48 records Bash commands and SQL trigger functions as call sites.
 // v49 marks Python function-local definitions as private.
-pub const SCHEMA_VERSION: i64 = 49;
+// v50 propagates Rust enclosing module visibility to their declarations.
+pub const SCHEMA_VERSION: i64 = 50;
 
 /// Below this many free pages (1 MiB at the default page size) compaction is
 /// not worth a rewrite, whatever share of a small index they are.

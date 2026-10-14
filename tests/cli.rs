@@ -11968,6 +11968,57 @@ fn a_python_module_scope_binding_is_a_definition() {
 }
 
 #[test]
+fn rust_items_in_nonpublic_modules_are_not_external_api() {
+    let f = Fixture::new();
+    f.write(
+        "lib.rs",
+        r#"pub fn visible() {}
+pub mod external {
+    pub fn exposed() {}
+}
+pub(crate) mod internal {
+    pub fn hidden() {}
+    pub struct Hidden { pub value: u8 }
+    impl Hidden { pub fn method(&self) {} }
+    pub enum State { Ready }
+    pub mod nested { pub fn deeply_hidden() {} }
+    fn local() {}
+}
+mod private {
+    pub(super) mod bridge { pub fn secret() {} }
+}
+pub(super) mod parent_only { pub fn parent_hidden() {} }
+pub(in crate) mod scoped { pub fn scoped_hidden() {} }
+"#,
+    );
+    let mut api = field_set(&f.run(&["api", "lib.rs"]), "name");
+    api.sort();
+    assert_eq!(api, ["exposed", "external", "visible"]);
+
+    let symbols = field_set(&f.run(&["symbols", "--path", "lib.rs"]), "name");
+    for name in [
+        "hidden",
+        "Hidden",
+        "value",
+        "method",
+        "State",
+        "Ready",
+        "nested",
+        "deeply_hidden",
+        "local",
+        "bridge",
+        "secret",
+        "parent_hidden",
+        "scoped_hidden",
+    ] {
+        assert!(symbols.contains(&name.to_string()), "{name}: {symbols:?}");
+    }
+    let mut untested = field_set(&f.run(&["untested", "lib.rs"]), "name");
+    untested.sort();
+    assert_eq!(untested, ["exposed", "external", "visible"]);
+}
+
+#[test]
 fn python_function_local_definitions_are_private() {
     let f = Fixture::new();
     f.write(

@@ -672,10 +672,24 @@ fn effective_visibility(
     // `untested`, and into `api --compare-to` as newly *added*
     // public surface. The declaration is public; what it is
     // declared inside is what makes it reachable.
-    match own.as_deref() {
+    let mut own = match own.as_deref() {
         Some("public") if enclosed_by_private_type(lang, node, src) => Some("private".to_string()),
         _ => own,
+    };
+    if lang == "rust" && own.as_deref() != Some("private") {
+        let mut cur = node.parent();
+        while let Some(parent) = cur {
+            if parent.kind() == "mod_item" {
+                match first_child_kind(parent, "visibility_modifier", src) {
+                    None => return Some("private".to_string()),
+                    Some("pub") => {}
+                    Some(_) => own = Some("restricted".to_string()),
+                }
+            }
+            cur = parent.parent();
+        }
     }
+    own
 }
 
 /// A member can be declared more than once — Python assigns `self.x` in
