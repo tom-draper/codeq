@@ -4047,6 +4047,17 @@ fn search_context_windows_merge_instead_of_repeating_lines() {
 }
 
 #[test]
+fn search_context_does_not_reprint_a_hit_on_the_first_line() {
+    // A hit on line 1 has no window of its own, so nothing marked it printed and
+    // the next hit's `-B` repeated it as `a.txt-1-` right under `a.txt:1:`.
+    let f = Fixture::new();
+    f.write("a.txt", "hit a\nhit b\nthree\n");
+    let text = String::from_utf8_lossy(&f.raw(&["search", "hit", "-B", "1"]).stdout).into_owned();
+    let rows: Vec<&str> = text.lines().filter(|l| l.starts_with("a.txt")).collect();
+    assert_eq!(rows, vec!["a.txt:1: hit a", "a.txt:2: hit b"], "{text}");
+}
+
+#[test]
 fn search_has_no_line_after_the_trailing_newline() {
     // `a\n\nb\n` is three lines. The empty string after the final newline is not
     // a fourth, so `^$` must find the one blank line and `-A` must not invent
