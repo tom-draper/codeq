@@ -5741,6 +5741,62 @@ fn freshness_reflects_gitignore_edits() {
 }
 
 #[test]
+fn freshness_reflects_git_exclude_changes() {
+    let f = Fixture::new();
+    f.write("keep.rs", "fn keep() {}\n");
+    f.write("generated.rs", "fn generated() {}\n");
+    f.git_init_commit();
+    f.remove(".git/info/exclude");
+    assert_eq!(
+        field_set(&f.run(&["symbols"]), "name"),
+        ["generated", "keep"]
+    );
+
+    for _ in 0..2 {
+        f.write(".git/info/exclude", "generated.rs\n");
+        assert_eq!(field_set(&f.run(&["symbols"]), "name"), ["keep"]);
+        f.write(".git/info/exclude", "\n");
+        assert_eq!(
+            field_set(&f.run(&["symbols"]), "name"),
+            ["generated", "keep"]
+        );
+    }
+    f.write(".git/info/exclude", "generated.rs\n");
+    assert_eq!(field_set(&f.run(&["symbols"]), "name"), ["keep"]);
+    f.remove(".git/info/exclude");
+    assert_eq!(
+        field_set(&f.run(&["symbols"]), "name"),
+        ["generated", "keep"]
+    );
+}
+
+#[test]
+fn freshness_reflects_linked_worktree_excludes() {
+    let f = Fixture::new();
+    f.write("keep.rs", "fn keep() {}\n");
+    f.write("generated.rs", "fn generated() {}\n");
+    f.git_init_commit();
+    let linked = Fixture::new();
+    f.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        linked.path().to_str().unwrap(),
+    ]);
+    assert_eq!(
+        field_set(&linked.run(&["symbols"]), "name"),
+        ["generated", "keep"]
+    );
+    f.write(".git/info/exclude", "generated.rs\n");
+    assert_eq!(field_set(&linked.run(&["symbols"]), "name"), ["keep"]);
+    f.write(".git/info/exclude", "\n");
+    assert_eq!(
+        field_set(&linked.run(&["symbols"]), "name"),
+        ["generated", "keep"]
+    );
+}
+
+#[test]
 fn freshness_detects_added_file() {
     // The git-free freshness cache detects a new file via its parent directory's
     // bumped mtime — no manual reindex, no git.
