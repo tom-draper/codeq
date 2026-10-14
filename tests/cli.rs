@@ -13031,6 +13031,63 @@ fn batch_symbol_lookups_keep_order_duplicates_and_missing_names() {
 }
 
 #[test]
+fn data_only_files_explain_missing_structure() {
+    let f = Fixture::new();
+    for (path, language, body) in [
+        ("config/app.json", "json", "{\"needle\": true}\n"),
+        ("config/app.yaml", "yaml", "needle: true\n"),
+        ("config/app.yml", "yaml", "needle: true\n"),
+        ("config/app.toml", "toml", "needle = true\n"),
+    ] {
+        f.write(path, body);
+        let note = format!(
+            "{path} is {language}, which is indexed for search but has no extracted definitions"
+        );
+        let basename = Path::new(path).file_name().unwrap().to_str().unwrap();
+        let location = format!("{basename}:1");
+        for args in [
+            vec!["outline", basename],
+            vec!["at", location.as_str()],
+            vec!["explore", "--at", location.as_str()],
+        ] {
+            let json = f.run(&args);
+            assert_eq!(json["note"], note, "{args:?}: {json}");
+            let text = f.raw(&args);
+            assert!(text.status.success(), "{args:?}");
+            assert!(String::from_utf8_lossy(&text.stderr).contains(&note));
+            if args[0] != "explore" {
+                assert_eq!(json["data"], serde_json::json!([]));
+                assert!(text.stdout.is_empty());
+            } else {
+                assert_eq!(json["data"]["focus"], serde_json::json!([]));
+            }
+        }
+        for args in [
+            vec!["read", basename, "--symbol", "needle"],
+            vec!["read", basename, "--symbol", "needle", "--raw"],
+            vec!["read", "--at", location.as_str()],
+        ] {
+            let out = f.raw(&args);
+            assert!(!out.status.success(), "{args:?}");
+            assert!(out.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&out.stderr).contains(&note));
+        }
+        assert_eq!(f.raw(&["read", basename, "--raw"]).stdout, body.as_bytes());
+        assert_eq!(
+            f.raw(&["read", basename, "--lines", "1", "--raw"]).stdout,
+            body.as_bytes()
+        );
+        assert_eq!(
+            f.run(&["search", "needle", "--path", path])["data"]["matches"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
 fn batch_symbol_lookups_apply_path_resolution_and_limits_per_name() {
     let f = Fixture::new();
     f.write("a.py", "def alpha():\n    beta()\ndef beta():\n    pass\n");
@@ -13158,5 +13215,30 @@ fn batch_symbol_lookups_work_through_mcp_with_scalar_compatibility() {
         );
         let (error, _) = mcp_call(&f, &tool, serde_json::json!({key: []}));
         assert!(error);
+    }
+}
+
+#[test]
+fn extraction_notes_do_not_misclassify_supported_or_unknown_files() {
+    let f = Fixture::new();
+    for (path, body) in [
+        ("empty.rs", "// no definitions\n"),
+        ("empty.rst", "Prose without a heading.\n"),
+        ("empty.jinja", "Plain template text.\n"),
+        ("plain.txt", "Plain text.\n"),
+    ] {
+        f.write(path, body);
+        let outline = f.run(&["outline", path]);
+        assert_eq!(outline["data"], serde_json::json!([]));
+        assert!(outline.get("note").is_none(), "{outline}");
+        let location = format!("{path}:1");
+        let at = f.run(&["at", &location]);
+        assert!(at["note"]
+            .as_str()
+            .unwrap()
+            .contains("no definition encloses"));
+        let read = f.raw(&["read", path, "--symbol", "absent"]);
+        assert!(!read.status.success());
+        assert!(String::from_utf8_lossy(&read.stderr).contains("no definition named 'absent'"));
     }
 }

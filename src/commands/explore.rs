@@ -162,7 +162,10 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
             // to explore. The budget comes from a real (empty) assembly so the
             // shape of the result is identical to any other explore.
             let refusal = match found.names.as_slice() {
-                [] => Some(format!("no definition encloses {loc}")),
+                [] => Some(
+                    super::read::no_extraction_note(&found.rel)
+                        .unwrap_or_else(|| format!("no definition encloses {loc}")),
+                ),
                 [_one] => None,
                 many => Some(format!(
                     "{}:{} declares {} definitions ({}) — a line, not a symbol; \
@@ -522,7 +525,9 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
     // `explore --at` on the identical position says "no definition encloses"; this
     // said nothing at all. Two commands answering one question, one of them mute.
     let note = data.is_empty().then(|| {
-        format!("no definition encloses {rel}:{line} (between definitions, or past the end)")
+        super::read::no_extraction_note(&rel).unwrap_or_else(|| {
+            format!("no definition encloses {rel}:{line} (between definitions, or past the end)")
+        })
     });
     s.emit_noted(data, note)
 }

@@ -98,7 +98,12 @@ pub fn cmd_outline(cwd: &Path, file: &str, docs: bool, out: Out) -> Result<()> {
         })
         .collect();
 
-    s.emit(data)
+    let note = if data.is_empty() {
+        no_extraction_note(&rel)
+    } else {
+        None
+    };
+    s.emit_noted(data, note)
 }
 
 /// Bodies of function/method definitions this many lines or longer are folded.
@@ -192,9 +197,9 @@ pub fn cmd_read_at(cwd: &Path, locations: &[String], raw: bool, out: Out) -> Res
     for location in locations {
         let found = super::explore::definition_at(&s, location)?;
         if found.ranges.is_empty() {
-            return Err(anyhow!(
-                "no definition encloses {location}; use read {location} for the line itself"
-            ));
+            return Err(anyhow!(no_extraction_note(&found.rel).unwrap_or_else(|| {
+                format!("no definition encloses {location}; use read {location} for the line itself")
+            })));
         }
         targets.entry(found.rel).or_default().extend(found.ranges);
     }
@@ -297,7 +302,9 @@ fn read_one(
             }
         }
         if ranges.is_empty() {
-            return Err(anyhow!("no definition named '{name}' in {rel}"));
+            return Err(anyhow!(no_extraction_note(&rel).unwrap_or_else(|| {
+                format!("no definition named '{name}' in {rel}")
+            })));
         }
         // `--raw` yields exact bytes for an editor's old_string, so a single
         // clean block is what's wanted — refuse an ambiguous multi-match rather
@@ -474,4 +481,14 @@ pub(super) fn resolve_file(s: &Session, arg: &str) -> Result<String> {
         }
         _ => Err(anyhow!("'{arg}' is ambiguous: {}", matches.join(", "))),
     }
+}
+
+pub(super) fn no_extraction_note(rel: &str) -> Option<String> {
+    let language = language_for(rel)?;
+    if crate::facts::support(language).is_some_and(|support| support.definitions) {
+        return None;
+    }
+    Some(format!(
+        "{rel} is {language}, which is indexed for search but has no extracted definitions"
+    ))
 }

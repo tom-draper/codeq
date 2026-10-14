@@ -192,6 +192,10 @@ Codeq extracts definitions from Rust, Python, JavaScript, TypeScript, Go, Java,
 Ruby, C, C++, C#, PHP, Bash, Lua, Scala, Kotlin, Swift, Dart, Zig, Elixir,
 Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, HCL, SQL, Markdown,
 reStructuredText, and Jinja templates. Other text files remain searchable.
+JSON, YAML, and TOML have no extracted definitions. `outline` and `at` report
+that limitation in stderr or the JSON `note`; `read --symbol`, `read --at`, and
+`explore --at` explain it too. Use `search` or `read` with a line range to inspect
+these files.
 
 Support varies by language and query. Run `codeq capabilities` for the support
 matrix bundled with your executable.
