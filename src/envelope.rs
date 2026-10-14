@@ -201,6 +201,17 @@ impl<T: Serialize> Envelope<T> {
         let mut s = String::new();
         render_value(&data, r.group, &truncated, &mut s);
         print!("{s}");
+        if let Some(results) = data.get("results").and_then(Value::as_array) {
+            for result in results {
+                if let Some(counts) = result.get("truncated_per_file") {
+                    eprintln!(
+                        "# codeq: {}: --max-per-file capped rows; totals before capping: {}",
+                        result["name"].as_str().unwrap(),
+                        inline(counts),
+                    );
+                }
+            }
+        }
         if !truncated.is_empty() {
             let dropped: usize = truncated.values().sum();
             eprintln!(
@@ -298,6 +309,15 @@ fn rows_pointer(data: &Value) -> Option<String> {
 
 fn cap_per_file(data: &mut Value, n: usize) -> BTreeMap<String, usize> {
     let mut truncated = BTreeMap::new();
+    if let Some(results) = data.get_mut("results").and_then(Value::as_array_mut) {
+        for result in results {
+            let counts = cap_per_file(&mut result["data"], n);
+            if !counts.is_empty() {
+                result["truncated_per_file"] = serde_json::to_value(counts).unwrap();
+            }
+        }
+        return truncated;
+    }
     match data {
         Value::Array(rows) => cap_rows(rows, n, &mut truncated),
         Value::Object(map) => {
@@ -336,6 +356,18 @@ fn cap_rows(rows: &mut Vec<Value>, n: usize, truncated: &mut BTreeMap<String, us
 }
 
 fn render_value(data: &Value, group: bool, truncated: &BTreeMap<String, usize>, out: &mut String) {
+    if let Some(results) = data.get("results").and_then(Value::as_array) {
+        for result in results {
+            let name = result["name"].as_str().unwrap();
+            out.push_str(&format!("# {name}\n"));
+            let counts = result
+                .get("truncated_per_file")
+                .map(|v| serde_json::from_value(v.clone()).unwrap())
+                .unwrap_or_default();
+            render_value(&result["data"], group, &counts, out);
+        }
+        return;
+    }
     match data {
         Value::Array(rows) => render_rows(rows, group, truncated, out),
         Value::Object(map) => {
@@ -749,22 +781,28 @@ fn inline(v: &Value) -> String {
 fn project(data: &mut Value, fields: &[String]) -> (Vec<String>, Vec<String>) {
     let mut available: std::collections::BTreeSet<String> = Default::default();
     collect_keys(data, &mut available);
-    match data {
-        Value::Array(rows) => {
-            for row in rows {
-                project_obj(row, fields);
-            }
+    if let Some(results) = data.get_mut("results").and_then(Value::as_array_mut) {
+        for result in results {
+            project(&mut result["data"], fields);
         }
-        Value::Object(map) => {
-            for value in map.values_mut() {
-                if let Value::Array(rows) = value {
-                    for row in rows {
-                        project_obj(row, fields);
+    } else {
+        match data {
+            Value::Array(rows) => {
+                for row in rows {
+                    project_obj(row, fields);
+                }
+            }
+            Value::Object(map) => {
+                for value in map.values_mut() {
+                    if let Value::Array(rows) = value {
+                        for row in rows {
+                            project_obj(row, fields);
+                        }
                     }
                 }
             }
+            _ => {}
         }
-        _ => {}
     }
     let unmatched: Vec<String> = fields
         .iter()
@@ -776,6 +814,12 @@ fn project(data: &mut Value, fields: &[String]) -> (Vec<String>, Vec<String>) {
 
 /// Every key present on any row, in the same shapes `project` walks.
 fn collect_keys(data: &Value, out: &mut std::collections::BTreeSet<String>) {
+    if let Some(results) = data.get("results").and_then(Value::as_array) {
+        for result in results {
+            collect_keys(&result["data"], out);
+        }
+        return;
+    }
     let keys_of = |v: &Value, out: &mut std::collections::BTreeSet<String>| {
         if let Value::Object(m) = v {
             out.extend(m.keys().cloned());

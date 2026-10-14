@@ -170,15 +170,19 @@ pub(super) fn definitions_of(
 
 pub fn cmd_definitions(
     cwd: &Path,
-    symbol: &str,
+    symbols: &[String],
     path: Option<&str>,
     limit: usize,
     out: Out,
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
-    let data = definitions_of(&s, symbol, path, limit)?;
-    let note = note_if_empty(&s, &data, symbol, "definition", path)?;
-    s.emit_noted(data, note)
+    let mut results = Vec::new();
+    for name in symbols {
+        let data = definitions_of(&s, name, path, limit)?;
+        let note = note_if_empty(&s, &data, name, "definition", path)?;
+        results.push(NamedResult { name, data, note });
+    }
+    s.emit_named(results)
 }
 
 #[derive(Serialize)]

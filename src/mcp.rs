@@ -552,7 +552,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_definitions",
-        "Locate the definition(s) of an exact symbol name, with signature, doc, and precise byte/line ranges. path scopes to matching files.",
+        "Locate definitions of exact symbol names, with signature, doc, and precise byte/line ranges. symbol accepts one name or an array. Batches return named results in argument order, with a note for each missing name. path scopes to matching files; limit applies per name.",
     ),
     (
         "codeq_references",
@@ -568,7 +568,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_about",
-        "One-call dossier before editing a symbol, WITHOUT source: its definition(s) with signature and doc comment, its callers (who breaks, with test call sites flagged), and its callees (what it depends on). Replaces several separate lookups. path scopes the definition and callees to matching files to disambiguate a common name. Same neighbourhood as codeq_explore, which adds the verbatim source but trims the per-node metadata — reach for codeq_explore when you intend to change the code, and this when you want the metadata or a cheap 'where does this live'.",
+        "One-call dossier before editing symbols, WITHOUT source. name accepts one name or an array; batches return named results in argument order with a note for each missing name. Each dossier contains: its definition(s) with signature and doc comment, its callers (who breaks, with test call sites flagged), and its callees (what it depends on). Replaces several separate lookups. path scopes the definition and callees to matching files to disambiguate a common name. Same neighbourhood as codeq_explore, which adds the verbatim source but trims the per-node metadata. Reach for codeq_explore when you intend to change the code, and this when you want the metadata or a cheap 'where does this live'.",
     ),
     (
         "codeq_callpath",

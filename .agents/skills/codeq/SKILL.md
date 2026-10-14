@@ -108,6 +108,13 @@ transformations. For repository source reads, choose the `read` mode above.
   substrings, case-insensitively, when the spelling is unknown.
 - `about NAME` is the neighbourhood metadata without source. Use it when you
   need locations and relationships; `explore` when you need the bodies too.
+  `about NAME OTHER` and `definitions NAME OTHER` batch exact-name lookups in
+  argument order. Single-name output is unchanged; batch JSON uses `data.results`
+  entries with `name`, `data` and an optional missing-name `note`. Check every
+  entry's note. `definitions --limit` applies per name; `--path` scopes every
+  name. Output flags apply to each entry's rows, with `truncated_per_file` counts
+  on capped entries. MCP accepts arrays in `codeq_about.name` and
+  `codeq_definitions.symbol`, as well as scalar names.
 - `--max-tokens` budgets source in `explore`, `context` and `search --source`.
   Estimates are byte-based, not exact model token counts. Read `omitted` before
   assuming all requested source was returned.
