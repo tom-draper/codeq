@@ -1,0 +1,99 @@
+Untimed baseline profile for callee example newline scans
+
+Baseline source: da40fcb8b991f74328aeaec9020a0859dfd4db2c
+Release binary SHA-256: 3c1393fa583d17453a4e74d9570a5aadc051e9aab73aba9a105af988006773e9
+Fixture: bench/callee_examples.py repeated-callee, 5000 calls and 4096 padding lines.
+Command: perf record -e task-clock:u -- codeq-before callees caller --examples --limit 0
+
+The release binary is stripped. perf reports file offsets. The executable LOAD segment maps file offsets to virtual addresses with a 0x1000 difference. Thus sampled offsets 0x25d7c40 through 0x25d7c8e map to the byte-count loop at 0x25d8c40 through 0x25d8c8e. Its comparison vector at 0x91f40 contains 0x0a bytes, the newline constant. This is the prefix .bytes().filter(...).count() loop in scan_called_names. The two-byte loads, equality tests, and count additions dominate the samples. Profiling time is excluded from the benchmark.
+
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 9K of event 'task-clock:u'
+# Event count (approx.): 2452250000
+#
+# Overhead  Shared Object                 Symbol                  IPC   [IPC Coverage]
+# ........  ............................  ......................  ....................
+#
+    10.60%  codeq-callee-examples-before  [.] 0x00000000025d7c87  -      -            
+     9.73%  codeq-callee-examples-before  [.] 0x00000000025d7c6d  -      -            
+     9.42%  codeq-callee-examples-before  [.] 0x00000000025d7c83  -      -            
+     8.76%  codeq-callee-examples-before  [.] 0x00000000025d7c5b  -      -            
+     8.08%  codeq-callee-examples-before  [.] 0x00000000025d7c69  -      -            
+     6.83%  codeq-callee-examples-before  [.] 0x00000000025d7c65  -      -            
+     6.20%  codeq-callee-examples-before  [.] 0x00000000025d7c7f  -      -            
+     5.93%  codeq-callee-examples-before  [.] 0x00000000025d7c57  -      -            
+     4.29%  codeq-callee-examples-before  [.] 0x00000000025d7c60  -      -            
+     3.84%  codeq-callee-examples-before  [.] 0x00000000025d7c7a  -      -            
+     3.63%  codeq-callee-examples-before  [.] 0x00000000025d7c40  -      -            
+     2.97%  codeq-callee-examples-before  [.] 0x00000000025d7c53  -      -            
+     2.97%  codeq-callee-examples-before  [.] 0x00000000025d7c75  -      -            
+     2.67%  codeq-callee-examples-before  [.] 0x00000000025d7c71  -      -            
+     2.57%  codeq-callee-examples-before  [.] 0x00000000025d7c8b  -      -            
+     2.56%  codeq-callee-examples-before  [.] 0x00000000025d7c45  -      -            
+     2.41%  codeq-callee-examples-before  [.] 0x00000000025d7c49  -      -            
+     2.26%  codeq-callee-examples-before  [.] 0x00000000025d7c4f  -      -            
+     2.25%  codeq-callee-examples-before  [.] 0x00000000025d7c8e  -      -            
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#
+
+
+/tmp/codeq-callee-examples-before:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+00000000025d8bf1 <.text+0xeb3b1>:
+ 25d8bf1:	66 0f 6f 25 47 93 ab 	movdqa -0x2546cb9(%rip),%xmm4        # 91f40 <__cxa_finalize@plt-0x2c3c8b0>
+ 25d8bf8:	fd 
+ 25d8bf9:	66 0f 6f 2d 2f 98 ab 	movdqa -0x25467d1(%rip),%xmm5        # 92430 <__cxa_finalize@plt-0x2c3c3c0>
+ 25d8c00:	fd 
+ 25d8c01:	75 0a                	jne    25d8c0d <__cxa_finalize@plt-0x6f5be3>
+ 25d8c03:	80 38 bf             	cmpb   $0xbf,(%rax)
+ 25d8c06:	7f 0e                	jg     25d8c16 <__cxa_finalize@plt-0x6f5bda>
+ 25d8c08:	e9 ae 61 00 00       	jmp    25dedbb <__cxa_finalize@plt-0x6efa35>
+ 25d8c0d:	48 85 c9             	test   %rcx,%rcx
+ 25d8c10:	0f 84 d0 00 00 00    	je     25d8ce6 <__cxa_finalize@plt-0x6f5b0a>
+ 25d8c16:	48 83 f9 04          	cmp    $0x4,%rcx
+ 25d8c1a:	73 0a                	jae    25d8c26 <__cxa_finalize@plt-0x6f5bca>
+ 25d8c1c:	31 db                	xor    %ebx,%ebx
+ 25d8c1e:	4c 89 c2             	mov    %r8,%rdx
+ 25d8c21:	e9 8a 00 00 00       	jmp    25d8cb0 <__cxa_finalize@plt-0x6f5b40>
+ 25d8c26:	48 8d 55 fc          	lea    -0x4(%rbp),%rdx
+ 25d8c2a:	48 21 ca             	and    %rcx,%rdx
+ 25d8c2d:	66 0f ef c0          	pxor   %xmm0,%xmm0
+ 25d8c31:	31 f6                	xor    %esi,%esi
+ 25d8c33:	66 0f ef c9          	pxor   %xmm1,%xmm1
+ 25d8c37:	66 0f 1f 84 00 00 00 	nopw   0x0(%rax,%rax,1)
+ 25d8c3e:	00 00 
+ 25d8c40:	41 0f b7 3c 30       	movzwl (%r8,%rsi,1),%edi
+ 25d8c45:	66 0f 6e d7          	movd   %edi,%xmm2
+ 25d8c49:	41 0f b7 7c 30 02    	movzwl 0x2(%r8,%rsi,1),%edi
+ 25d8c4f:	66 0f 6e df          	movd   %edi,%xmm3
+ 25d8c53:	66 0f 74 d4          	pcmpeqb %xmm4,%xmm2
+ 25d8c57:	66 0f 60 d2          	punpcklbw %xmm2,%xmm2
+ 25d8c5b:	f2 0f 70 d2 d4       	pshuflw $0xd4,%xmm2,%xmm2
+ 25d8c60:	66 0f 70 d2 d4       	pshufd $0xd4,%xmm2,%xmm2
+ 25d8c65:	66 0f db d5          	pand   %xmm5,%xmm2
+ 25d8c69:	66 0f d4 c2          	paddq  %xmm2,%xmm0
+ 25d8c6d:	66 0f 74 dc          	pcmpeqb %xmm4,%xmm3
+ 25d8c71:	66 0f 60 db          	punpcklbw %xmm3,%xmm3
+ 25d8c75:	f2 0f 70 d3 d4       	pshuflw $0xd4,%xmm3,%xmm2
+ 25d8c7a:	66 0f 70 d2 d4       	pshufd $0xd4,%xmm2,%xmm2
+ 25d8c7f:	66 0f db d5          	pand   %xmm5,%xmm2
+ 25d8c83:	66 0f d4 ca          	paddq  %xmm2,%xmm1
+ 25d8c87:	48 83 c6 04          	add    $0x4,%rsi
+ 25d8c8b:	48 39 f2             	cmp    %rsi,%rdx
+ 25d8c8e:	75 b0                	jne    25d8c40 <__cxa_finalize@plt-0x6f5bb0>
+
+
+/tmp/codeq-callee-examples-before:     file format elf64-x86-64
+
+Contents of section .rodata:
+ 91f40 0a0a0000 00000000 00000000 00000000  ................
