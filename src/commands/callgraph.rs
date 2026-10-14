@@ -129,7 +129,9 @@ pub(super) fn callers_of(
     let mut pick: HashMap<(String, Option<String>), (Hit, bool)> = HashMap::new();
     let mut order: Vec<(String, Option<String>)> = Vec::new();
     for h in hits {
-        if defsites.is_declaration(&h.path, h.line as i64) {
+        // Syntax filters already exclude declarations. Claiming their first
+        // remaining hit would discard a recursive call.
+        if !call_only && qualifier.is_none() && defsites.is_declaration(&h.path, h.line as i64) {
             continue; // the declaration itself
         }
         let is_import = s.is_import_line(&h.path, h.line as i64)?;
