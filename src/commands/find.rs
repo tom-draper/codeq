@@ -759,18 +759,17 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
     let references: Vec<ReferenceRow> = hits
         .into_iter()
         .map(|h| {
-            let definition = defsites.is_declaration(&h.path, h.line as i64);
+            // Syntax filters already exclude declarations, so the first remaining
+            // hit inside a definition can be a recursive call.
+            let definition = !call_only
+                && qualifier.is_none()
+                && defsites.is_declaration(&h.path, h.line as i64);
             ReferenceRow {
                 hit: h,
                 definition,
                 via: None,
             }
         })
-        // A definition is not a call. `fn foo(` and `def foo(` are followed by
-        // `(` just as a call is, so the byte-level test cannot tell them apart —
-        // but the definition sites are already known exactly, so drop them.
-        // Same for `--on`: a declaration is not a qualified use.
-        .filter(|r| !((call_only || qualifier.is_some()) && r.definition))
         .collect();
     let mut references = resolve_rows(
         &s,

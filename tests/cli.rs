@@ -10841,6 +10841,70 @@ fn a_recursive_call_is_still_a_caller() {
 }
 
 #[test]
+fn calls_filter_preserves_recursive_references_and_callers() {
+    for (path, source, line) in [
+        (
+            "a.py",
+            "def recur(n):\n    return recur(n - 1) if n else 0\n",
+            2,
+        ),
+        (
+            "a.rs",
+            "fn recur(n: u32) -> u32 {\n    if n == 0 { 0 } else { recur(n - 1) }\n}\n",
+            2,
+        ),
+        (
+            "a.rs",
+            "fn recur(n: u32) -> u32 { if n == 0 { 0 } else { recur(n - 1) } }\n",
+            1,
+        ),
+    ] {
+        let f = Fixture::new();
+        f.write(path, source);
+
+        let references = f.run(&["references", "recur", "--calls"]);
+        let rows = references["data"]["references"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{references}");
+        assert_eq!(rows[0]["path"], path);
+        assert_eq!(rows[0]["line"], line);
+        assert!(rows[0].get("definition").is_none(), "{references}");
+
+        let callers = f.run(&["callers", "recur", "--calls"]);
+        let rows = callers["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{callers}");
+        assert_eq!(rows[0]["name"], "recur");
+        assert_eq!(rows[0]["path"], path);
+        assert_eq!(rows[0]["line"], line);
+    }
+}
+
+#[test]
+fn qualified_recursive_calls_are_not_declarations() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "class Counter:\n    def recur(self, n):\n        return self.recur(n - 1) if n else 0\n",
+    );
+    for flags in [vec!["--on", "self"], vec!["--calls", "--on", "self"]] {
+        let mut args = vec!["callers", "recur"];
+        args.extend(&flags);
+        let callers = f.run(&args);
+        let rows = callers["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{callers}");
+        assert_eq!(rows[0]["name"], "recur");
+        assert_eq!(rows[0]["line"], 3);
+
+        args[0] = "references";
+        let references = f.run(&args);
+        let rows = references["data"]["references"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{references}");
+        assert_eq!(rows[0]["line"], 3);
+        assert!(rows[0].get("definition").is_none(), "{references}");
+        assert_eq!(rows[0]["receiver"], "self");
+    }
+}
+
+#[test]
 fn unused_sees_a_declaration_written_below_its_annotation() {
     // C#, Java, Kotlin and PHP put the annotation *inside* the declaration node,
     // so the fact starts at `[Fact]` and the name sits a line below. The
