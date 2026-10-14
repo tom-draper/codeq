@@ -1,0 +1,450 @@
+{
+  "metric": "end-to-end warm CLI wall time in milliseconds",
+  "limits": "sequential warmed queries; synthetic call-heavy cases are not representative of every repository; excludes cold indexing and compilation",
+  "before_revision": "da40fcb8b991f74328aeaec9020a0859dfd4db2c",
+  "after_revision": "da40fcb8b991f74328aeaec9020a0859dfd4db2c",
+  "after_worktree_dirty": true,
+  "after_source_sha256": "2d28b83d44f6dcf7dac0e85909329cdc51b10cce608d09c032f9179493d80a75",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpu_count": 12,
+  "loadavg_before": [
+    2.9462890625,
+    3.3623046875,
+    2.84619140625
+  ],
+  "loadavg_after": [
+    2.71337890625,
+    3.27783203125,
+    2.84130859375
+  ],
+  "binaries_sha256": {
+    "before": "3c1393fa583d17453a4e74d9570a5aadc051e9aab73aba9a105af988006773e9",
+    "after": "98b9a45b575cbb46f476519a3c1b0e3b2099b86ab0183736ac1180427bd5c7dd"
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "verified_timed_invocations": 112,
+  "results": [
+    {
+      "task": "repeated-callee",
+      "args": [
+        "callees",
+        "caller",
+        "--examples",
+        "--limit",
+        "0"
+      ],
+      "dimensions": {
+        "source_bytes": 628911,
+        "source_sha256": "7d59b1f9c252d7b064df8a6db94c0d6321d0a00c2c3b31fe671708e4212ad590",
+        "call_sites": 5000,
+        "distinct_callees": 1,
+        "same_named_definitions": 1,
+        "old_newline_scan_bytes": 2944500000,
+        "line_index_scan_bytes": 548908,
+        "verified_indexed_calls": 5000
+      },
+      "stdout_bytes": 81,
+      "answer_sha256": "54ee6950bb5138cbae8aa1393d88eb4150abcedefc814cf0f9b78b7d7096e4b1",
+      "samples_ms": {
+        "before": [
+          1448.929366,
+          1371.559882,
+          1337.146972,
+          1393.505802,
+          1480.009222,
+          1363.766176,
+          1295.955185
+        ],
+        "after": [
+          5.809016,
+          10.488684,
+          5.313681,
+          5.482127,
+          5.785923,
+          4.896509,
+          5.867466
+        ]
+      },
+      "median_ms": {
+        "before": 1371.559882,
+        "after": 5.785923
+      },
+      "range_ms": {
+        "before": [
+          1295.955185,
+          1480.009222
+        ],
+        "after": [
+          4.896509,
+          10.488684
+        ]
+      }
+    },
+    {
+      "task": "repeated-callee-without-examples",
+      "args": [
+        "callees",
+        "caller",
+        "--limit",
+        "0"
+      ],
+      "dimensions": null,
+      "stdout_bytes": 52,
+      "answer_sha256": "3406bf23f3a7afb9cfe217eb9079a3e3148283083fe318a0fcbffd82d4c4361f",
+      "samples_ms": {
+        "before": [
+          5.051292,
+          5.109473,
+          5.087531,
+          4.78612,
+          5.050382,
+          5.412114,
+          5.18802
+        ],
+        "after": [
+          4.97675,
+          5.668539,
+          4.97907,
+          5.410516,
+          5.386383,
+          5.003957,
+          5.077243
+        ]
+      },
+      "median_ms": {
+        "before": 5.087531,
+        "after": 5.077243
+      },
+      "range_ms": {
+        "before": [
+          4.78612,
+          5.412114
+        ],
+        "after": [
+          4.97675,
+          5.668539
+        ]
+      }
+    },
+    {
+      "task": "distinct-callees",
+      "args": [
+        "callees",
+        "caller",
+        "--examples",
+        "--limit",
+        "0"
+      ],
+      "dimensions": {
+        "source_bytes": 597662,
+        "source_sha256": "d5ce3d90fc21214372fa43d724816266bbd761daf2365d7bf04ece9db9148466",
+        "call_sites": 1000,
+        "distinct_callees": 1000,
+        "same_named_definitions": 1,
+        "old_newline_scan_bytes": 588655105,
+        "line_index_scan_bytes": 597641,
+        "verified_indexed_calls": 1000
+      },
+      "stdout_bytes": 87411,
+      "answer_sha256": "39039635d1fbd35bae6af80a9456fb0e8d22fd40de8b1dc8633fcd86ae889e11",
+      "samples_ms": {
+        "before": [
+          198.278364,
+          195.00775,
+          192.165519,
+          194.868707,
+          188.837696,
+          190.472432,
+          188.892658
+        ],
+        "after": [
+          6.91269,
+          6.562595,
+          6.776592,
+          6.463605,
+          7.022563,
+          6.431216,
+          6.986757
+        ]
+      },
+      "median_ms": {
+        "before": 192.165519,
+        "after": 6.776592
+      },
+      "range_ms": {
+        "before": [
+          188.837696,
+          198.278364
+        ],
+        "after": [
+          6.431216,
+          7.022563
+        ]
+      }
+    },
+    {
+      "task": "distinct-callees-without-examples",
+      "args": [
+        "callees",
+        "caller",
+        "--limit",
+        "0"
+      ],
+      "dimensions": null,
+      "stdout_bytes": 56521,
+      "answer_sha256": "638c8a15fa2c1d4992b7353243914f4c5af5f0ea4a5598d8943f9786a12414ae",
+      "samples_ms": {
+        "before": [
+          5.702849,
+          5.679853,
+          5.682712,
+          5.617417,
+          5.703008,
+          5.958107,
+          6.177033
+        ],
+        "after": [
+          5.68096,
+          5.641485,
+          6.217966,
+          5.734199,
+          6.047972,
+          5.864341,
+          6.258852
+        ]
+      },
+      "median_ms": {
+        "before": 5.702849,
+        "after": 5.864341
+      },
+      "range_ms": {
+        "before": [
+          5.617417,
+          6.177033
+        ],
+        "after": [
+          5.641485,
+          6.258852
+        ]
+      }
+    },
+    {
+      "task": "early-sparse-call",
+      "args": [
+        "callees",
+        "caller",
+        "--examples",
+        "--limit",
+        "0"
+      ],
+      "dimensions": {
+        "source_bytes": 548927,
+        "source_sha256": "a6511dfc8cb0c88fbd26836eb4d4ad3a1bc554c57101d709dacacdba03b5a720",
+        "call_sites": 1,
+        "distinct_callees": 1,
+        "same_named_definitions": 1,
+        "old_newline_scan_bytes": 44,
+        "line_index_scan_bytes": 44,
+        "verified_indexed_calls": 1
+      },
+      "stdout_bytes": 78,
+      "answer_sha256": "70fd14f05a29ba5e352318793aa0538142d57beba44b007d47eba10f37b4e728",
+      "samples_ms": {
+        "before": [
+          2.475672,
+          2.550292,
+          2.547532,
+          2.927702,
+          2.620039,
+          2.648929,
+          2.782349
+        ],
+        "after": [
+          2.559031,
+          2.36523,
+          2.636593,
+          2.418022,
+          2.708756,
+          2.596467,
+          2.674835
+        ]
+      },
+      "median_ms": {
+        "before": 2.620039,
+        "after": 2.596467
+      },
+      "range_ms": {
+        "before": [
+          2.475672,
+          2.927702
+        ],
+        "after": [
+          2.36523,
+          2.708756
+        ]
+      }
+    },
+    {
+      "task": "small-file",
+      "args": [
+        "callees",
+        "caller",
+        "--examples",
+        "--limit",
+        "0"
+      ],
+      "dimensions": {
+        "source_bytes": 95,
+        "source_sha256": "201b0f6f320a1a96cf3fcddc55e0aa0c0aef0cf33631d85738f3d05be5ea22da",
+        "call_sites": 3,
+        "distinct_callees": 1,
+        "same_named_definitions": 1,
+        "old_newline_scan_bytes": 180,
+        "line_index_scan_bytes": 44,
+        "verified_indexed_calls": 3
+      },
+      "stdout_bytes": 78,
+      "answer_sha256": "70fd14f05a29ba5e352318793aa0538142d57beba44b007d47eba10f37b4e728",
+      "samples_ms": {
+        "before": [
+          3.009407,
+          2.538726,
+          2.375642,
+          2.528619,
+          2.488927,
+          2.564706,
+          2.259306
+        ],
+        "after": [
+          2.645009,
+          2.792354,
+          2.499633,
+          2.423469,
+          2.512061,
+          2.368862,
+          2.466631
+        ]
+      },
+      "median_ms": {
+        "before": 2.528619,
+        "after": 2.499633
+      },
+      "range_ms": {
+        "before": [
+          2.259306,
+          3.009407
+        ],
+        "after": [
+          2.368862,
+          2.792354
+        ]
+      }
+    },
+    {
+      "task": "multiple-definitions",
+      "args": [
+        "callees",
+        "caller",
+        "--examples",
+        "--limit",
+        "0"
+      ],
+      "dimensions": {
+        "source_bytes": 1197,
+        "source_sha256": "9b2b068adbc301aa74d7ce024df507aebf76db2a9f625fe5c867bda099bb9aa2",
+        "call_sites": 2,
+        "distinct_callees": 2,
+        "same_named_definitions": 2,
+        "old_newline_scan_bytes": 2323,
+        "line_index_scan_bytes": 1178,
+        "verified_indexed_calls": 2
+      },
+      "stdout_bytes": 158,
+      "answer_sha256": "08ee3c41d53aa29dd3772c7c4a524ffe380c62e39b90fecef6ba58cb3faeee88",
+      "samples_ms": {
+        "before": [
+          2.473239,
+          2.617742,
+          2.47558,
+          2.777687,
+          2.665879,
+          2.633037,
+          2.672555
+        ],
+        "after": [
+          2.553194,
+          2.608896,
+          2.583066,
+          2.412552,
+          2.664906,
+          2.267863,
+          2.907598
+        ]
+      },
+      "median_ms": {
+        "before": 2.633037,
+        "after": 2.583066
+      },
+      "range_ms": {
+        "before": [
+          2.473239,
+          2.777687
+        ],
+        "after": [
+          2.267863,
+          2.907598
+        ]
+      }
+    },
+    {
+      "task": "repository-callees",
+      "args": [
+        "callees",
+        "scan_called_names",
+        "--path",
+        "src/commands/callgraph.rs",
+        "--examples",
+        "--limit",
+        "0"
+      ],
+      "dimensions": null,
+      "stdout_bytes": 1691,
+      "answer_sha256": "1a5568f1b307b98a29e7602317cb410e57ba47a27c374ec3a546c143338cfd2c",
+      "samples_ms": {
+        "before": [
+          4.396399,
+          4.376758,
+          4.176496,
+          4.369656,
+          4.054796,
+          4.40732,
+          4.18113
+        ],
+        "after": [
+          4.053411,
+          3.954299,
+          4.152563,
+          3.840535,
+          4.060963,
+          4.060065,
+          4.14512
+        ]
+      },
+      "median_ms": {
+        "before": 4.369656,
+        "after": 4.060065
+      },
+      "range_ms": {
+        "before": [
+          4.054796,
+          4.40732
+        ],
+        "after": [
+          3.840535,
+          4.152563
+        ]
+      }
+    }
+  ]
+}

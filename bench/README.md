@@ -95,6 +95,41 @@ including component script trees. Rust call sites retain the unrepaired tree,
 and SQL identifier repair still parses the original source for calls. The
 indexed facts and schema version remain unchanged.
 
+## Callee example latency (`callee_examples.py`)
+
+Compare two release binaries on complete warm `callees --examples` queries.
+The script alternates seven runs per side and checks exact stdout and stderr.
+Synthetic JSON checks also verify every callee name, expression, and first call
+line. Fixtures include a UTF-8 BOM, Unicode comments, and CRLF line endings.
+
+```sh
+python3 bench/callee_examples.py --before /tmp/codeq-before --after target/release/codeq --before-revision <commit>
+```
+
+The cases cover repeated calls, distinct callees, an early sparse call, a small
+file, multiple definitions in one file, and `scan_called_names` in this
+repository. Dense fixtures also run without examples as controls. Timings
+include process startup, freshness checking,
+callee resolution, and rendering. They exclude cold indexing and compilation.
+The JSON report records raw samples, binary hashes, source hashes, fixture sizes,
+and the byte counts for the old prefix scans and the new incremental line index.
+
+[The callee example results](results/callee_examples_20261014.json) compare
+baseline `da40fcb` with line offsets cached by file and extended only for retained
+examples. The 5,000-call fixture fell from a median of 1371.56 ms to 5.79 ms,
+with seven-run ranges of 1295.96 to 1480.01 ms before and 4.90 to 10.49 ms after.
+Its prefix scans totalled 2.94 GB before and 548,908 bytes after. The same query
+without examples stayed near 5 ms. The 1,000-distinct-callee fixture fell from
+192.17 ms to 6.78 ms. Every timed invocation returned identical stdout and stderr.
+
+[The separate baseline profile](results/callee_examples_profile_20261014.txt)
+placed 97.97% of CPU samples in the newline-count loop. The remaining work
+includes CLI startup, freshness checks, SQLite call reads, and callee resolution.
+Sparse and small-file sample ranges overlap, and the repository case does not
+establish a general query speedup. Another differential run was active in a
+separate checkout during measurement. Both binaries use the same release
+configuration, and alternating samples share that background load.
+
 ## Text-mode faithfulness (`textmode.py`)
 
 `differential.py`/`completion.py` only exercise `--json`, so the *text renderer* —
