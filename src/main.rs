@@ -93,6 +93,9 @@ enum Command {
         /// Discard the existing index and reparse every file.
         #[arg(long)]
         rebuild: bool,
+        /// Reclaim unused database pages. Rewrites the index and may wait for readers.
+        #[arg(long)]
+        compact: bool,
     },
     /// List indexed files, optionally filtered.
     Files {
@@ -976,7 +979,7 @@ fn main() -> ExitCode {
 /// matching `commands::cmd_*`.
 fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<()> {
     match command {
-        Command::Index { rebuild } => commands::cmd_index(cwd, rebuild, out),
+        Command::Index { rebuild, compact } => commands::cmd_index(cwd, rebuild, compact, out),
         Command::Files {
             pattern,
             language,

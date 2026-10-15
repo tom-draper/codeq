@@ -111,10 +111,6 @@ use rusqlite::Connection;
 // v50 propagates Rust enclosing module visibility to their declarations.
 pub const SCHEMA_VERSION: i64 = 51;
 
-/// Below this many free pages (1 MiB at the default page size) compaction is
-/// not worth a rewrite, whatever share of a small index they are.
-const COMPACT_MIN_FREE_PAGES: i64 = 256;
-
 pub struct Db {
     pub conn: Connection,
     /// The `.codeq` directory.
@@ -461,32 +457,18 @@ impl Db {
         self.create_fts()
     }
 
-    /// Give free pages back to the filesystem once they are a real share of the
-    /// file. SQLite never shrinks a database on its own — deleted rows leave
-    /// pages on a free list — so an index only ever grew: one measured 5.3 GB
-    /// held 3.1 GB of nothing. Thresholded because `VACUUM` rewrites every live
-    /// page: at a quarter free it reclaims at least a third of what it copies,
-    /// and a steady trickle of edits never reaches it.
-    ///
-    /// Best-effort throughout. A failure here (another process mid-read, a full
-    /// disk) leaves a correct index that is merely larger than it need be.
-    pub fn compact_if_bloated(&self) {
-        let pragma = |name: &str| -> i64 {
-            self.conn
-                .query_row(&format!("PRAGMA {name}"), [], |r| r.get(0))
-                .unwrap_or(0)
-        };
-        let (pages, free) = (pragma("page_count"), pragma("freelist_count"));
-        if free < COMPACT_MIN_FREE_PAGES || free * 4 < pages {
-            return;
-        }
-        if self.conn.execute_batch("VACUUM;").is_ok() {
-            // In WAL mode the rewrite lands in the log; the main file only
-            // shrinks, and the log only empties, at a checkpoint.
-            let _ = self
-                .conn
-                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
-        }
+    /// Reclaim unused pages during explicit maintenance, outside query refreshes.
+    pub fn compact(&self) -> Result<()> {
+        self.conn
+            .execute_batch("VACUUM;")
+            .context("compacting index")?;
+        // In WAL mode the rewrite reaches the main file at checkpoint time.
+        let busy: i64 = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))
+            .context("checkpointing compacted index")?;
+        anyhow::ensure!(busy == 0, "index compacted, but readers prevented WAL truncation; retry index --compact after readers finish");
+        Ok(())
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {

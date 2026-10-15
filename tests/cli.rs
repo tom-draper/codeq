@@ -13229,7 +13229,7 @@ fn indexing_a_file_is_linear_in_its_definitions() {
 }
 
 #[test]
-fn removing_content_shrinks_the_index_file() {
+fn explicit_compaction_reclaims_pages_left_by_refresh() {
     // SQLite parks deleted pages on a free list and never returns them, so an
     // index only grew: a real one was 5.3 GB with 3.1 GB of it free.
     let f = Fixture::new();
@@ -13241,8 +13241,23 @@ fn removing_content_shrinks_the_index_file() {
     remove_symbol_heavy_tree(&f);
     let files = f.run(&["files"]);
     assert_eq!(field_set(&files, "path"), ["src/lib.py"]);
+    let after_refresh = index_bytes(&f);
+    assert!(
+        after_refresh >= before,
+        "refresh unexpectedly compacted the index"
+    );
+    let conn = rusqlite::Connection::open(f.path().join(".codeq/index.db")).unwrap();
+    let free: i64 = conn
+        .query_row("PRAGMA freelist_count", [], |r| r.get(0))
+        .unwrap();
+    assert!(free >= 256, "deletion should leave free pages for reuse");
+    drop(conn);
+
+    f.run(&["index", "--compact"]);
     let after = index_bytes(&f);
     assert!(after * 4 < before, "index went {before} B -> {after} B");
+    f.run(&["index", "--compact"]);
+    assert_eq!(field_set(&f.run(&["files"]), "path"), ["src/lib.py"]);
 }
 
 #[test]
@@ -13261,9 +13276,9 @@ fn compaction_keeps_spans_and_calls_attached_to_their_file() {
     let before = index_bytes(&f);
 
     // Removing the generated files leaves gaps in the ids and frees enough
-    // pages to trigger the compaction.
+    // pages to exercise explicit compaction.
     remove_symbol_heavy_tree(&f);
-    f.run(&["files"]);
+    f.run(&["index", "--compact"]);
     assert!(index_bytes(&f) * 4 < before);
 
     let comments = f.run(&["search", "zebra", "--in", "comments"]);
@@ -14318,4 +14333,48 @@ fn search_word_alternatives_work_on_unindexed_files_and_stdin() {
             .collect::<Vec<_>>(),
         ["foobar", "foo"]
     );
+}
+
+#[test]
+fn explicit_compaction_reports_active_readers_and_can_be_retried() {
+    let f = Fixture::new();
+    f.write("a.py", "def helper():\n    return 1\n");
+    f.run(&["files"]);
+    let reader = rusqlite::Connection::open(f.path().join(".codeq/index.db")).unwrap();
+    reader.execute_batch("BEGIN; SELECT * FROM files;").unwrap();
+    let blocked = Command::cargo_bin("codeq")
+        .unwrap()
+        .current_dir(f.path())
+        .env("CODEQ_BUSY_TIMEOUT_MS", "0")
+        .args(["index", "--compact"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&blocked.stderr);
+    assert!(!blocked.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("readers prevented WAL truncation"),
+        "{stderr}"
+    );
+    let count: i64 = reader
+        .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 1);
+    reader.execute_batch("ROLLBACK").unwrap();
+    f.run(&["index", "--compact"]);
+    assert_eq!(
+        field_set(&f.run(&["symbols", "helper"]), "name"),
+        ["helper"]
+    );
+    let integrity: String = reader
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    assert!(!reader
+        .prepare("PRAGMA foreign_key_check")
+        .unwrap()
+        .query([])
+        .unwrap()
+        .next()
+        .unwrap()
+        .is_some());
 }
