@@ -1,0 +1,280 @@
+{
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpus": 12,
+  "load_before": [
+    1.87109375,
+    1.86474609375,
+    1.14697265625
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "9019fcda8afbc39c3393f841acad0d99e665f96e4d7ece3087154ac06953fc6a",
+    "after": "e66908a673ca7d6aba143702b14d0ee8299edf25a40edaa1fd1ccb3b77369ba1"
+  },
+  "state": "warm CLI queries; source tracing separate from timing",
+  "workloads": {
+    "selective": {
+      "command": [
+        "astgrep",
+        "selected_call($X)",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 4,
+      "source_opens": {
+        "before": 256,
+        "after": 4
+      },
+      "samples_ms": {
+        "before": [
+          29.002118,
+          24.558627,
+          20.110621,
+          24.194564,
+          19.910028,
+          22.365452,
+          22.857402
+        ],
+        "after": [
+          22.399691,
+          21.185646,
+          21.110698,
+          20.275201,
+          20.161485,
+          24.754251,
+          19.979166
+        ]
+      },
+      "median_ms": {
+        "before": 22.857402,
+        "after": 21.110698
+      },
+      "range_ms": {
+        "before": [
+          19.910028,
+          29.002118
+        ],
+        "after": [
+          19.979166,
+          24.754251
+        ]
+      }
+    },
+    "source": {
+      "command": [
+        "astgrep",
+        "selected_call($X)",
+        "--source",
+        "--max-tokens",
+        "4000",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 4,
+      "source_opens": {
+        "before": 260,
+        "after": 8
+      },
+      "samples_ms": {
+        "before": [
+          31.316698,
+          29.419769,
+          28.072829,
+          29.769214,
+          27.438224,
+          34.483593,
+          27.719278
+        ],
+        "after": [
+          25.948126,
+          26.92336,
+          27.640223,
+          25.021898,
+          25.366741,
+          24.587639,
+          26.348655
+        ]
+      },
+      "median_ms": {
+        "before": 29.419769,
+        "after": 25.948126
+      },
+      "range_ms": {
+        "before": [
+          27.438224,
+          34.483593
+        ],
+        "after": [
+          24.587639,
+          27.640223
+        ]
+      }
+    },
+    "scoped": {
+      "command": [
+        "astgrep",
+        "selected_call($X)",
+        "--path",
+        "file000.rs",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 1,
+      "source_opens": {
+        "before": 1,
+        "after": 1
+      },
+      "samples_ms": {
+        "before": [
+          14.511307,
+          14.484388,
+          14.279252,
+          14.360598,
+          14.70207,
+          14.306941,
+          14.07966
+        ],
+        "after": [
+          14.777975,
+          14.643375,
+          14.188978,
+          14.499553,
+          14.728686,
+          14.583204,
+          14.432211
+        ]
+      },
+      "median_ms": {
+        "before": 14.360598,
+        "after": 14.583204
+      },
+      "range_ms": {
+        "before": [
+          14.07966,
+          14.70207
+        ],
+        "after": [
+          14.188978,
+          14.777975
+        ]
+      }
+    },
+    "empty": {
+      "command": [
+        "astgrep",
+        "missing_call($X)",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 0,
+      "source_opens": {
+        "before": 256,
+        "after": 0
+      },
+      "samples_ms": {
+        "before": [
+          34.562272,
+          12.838338,
+          13.946364,
+          12.440223,
+          12.123881,
+          11.757867,
+          12.109761
+        ],
+        "after": [
+          5.332224,
+          4.249329,
+          4.545485,
+          4.508716,
+          3.872728,
+          3.792459,
+          4.171268
+        ]
+      },
+      "median_ms": {
+        "before": 12.440223,
+        "after": 4.249329
+      },
+      "range_ms": {
+        "before": [
+          11.757867,
+          34.562272
+        ],
+        "after": [
+          3.792459,
+          5.332224
+        ]
+      }
+    },
+    "empty_scope": {
+      "command": [
+        "astgrep",
+        "selected_call($X)",
+        "--path",
+        "absent",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 0,
+      "source_opens": {
+        "before": 0,
+        "after": 0
+      },
+      "samples_ms": {
+        "before": [
+          3.567218,
+          4.252557,
+          3.890999,
+          3.803666,
+          3.716254,
+          4.228711,
+          4.192637
+        ],
+        "after": [
+          4.103588,
+          3.967416,
+          3.974738,
+          4.512141,
+          4.809559,
+          5.494589,
+          4.795377
+        ]
+      },
+      "median_ms": {
+        "before": 3.890999,
+        "after": 4.512141
+      },
+      "range_ms": {
+        "before": [
+          3.567218,
+          4.252557
+        ],
+        "after": [
+          3.967416,
+          5.494589
+        ]
+      }
+    }
+  },
+  "fixture": {
+    "files": 256,
+    "bytes": 41952158
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    2.0419921875,
+    1.900390625,
+    1.16259765625
+  ]
+}
