@@ -416,11 +416,11 @@ with the lower value in bold:
     <tr>
       <td>Who imports a file (<code>importers</code>)</td>
       <td><code>rg</code> import lines naming the file</td>
-      <td align="right">22k</td>
-      <td align="right"><b>9.1k</b></td>
+      <td align="right"><b>6.5k</b></td>
+      <td align="right">9.1k</td>
       <td align="right">31</td>
       <td align="right">31</td>
-      <td align="right"><b>3 ms</b></td>
+      <td align="right"><b>4 ms</b></td>
       <td align="right">7 ms</td>
     </tr>
     <tr>
@@ -446,16 +446,16 @@ with the lower value in bold:
     <tr>
       <td><b>All 19 tasks</b></td>
       <td></td>
-      <td align="right"><b>1,009k</b></td>
+      <td align="right"><b>993k</b></td>
       <td align="right">1,474k</td>
       <td align="right"><b>580</b></td>
       <td align="right">968</td>
-      <td align="right"><b>146 ms</b></td>
-      <td align="right">1,257 ms</td>
+      <td align="right"><b>142 ms</b></td>
+      <td align="right">1,224 ms</td>
     </tr>
     <tr>
       <td colspan="2"><b>codeq improvement (generic ÷ codeq)</b></td>
-      <td colspan="2" align="center"><b>1.46x</b></td>
+      <td colspan="2" align="center"><b>1.48x</b></td>
       <td colspan="2" align="center"><b>1.67x</b></td>
       <td colspan="2" align="center"><b>8.6x</b></td>
     </tr>
@@ -463,8 +463,9 @@ with the lower value in bold:
 </table>
 
 codeq returns more on the API tasks, because it gives complete signatures where
-a grep gives first lines. `implementors` ran on the 24 repositories with extends or implements edges. `importers` matches a file's stem as a substring of
-each import string, so a short stem over-matches: `sr.js` also matches `../src`.
+a grep gives first lines. `implementors` ran on the 24 repositories with extends or implements edges.
+`importers` matches a file's stem as a whole name in each import, and drops an
+import the dependency graph resolves to a different file.
 On 2 JavaScript and TypeScript repositories `tests` found nothing where tests do
 use the name, because tests written as bare `it(...)` calls have no named test
 to report. Times are warm queries and exclude the agent's own turn.
