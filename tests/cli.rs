@@ -2342,6 +2342,34 @@ fn chunk_text_slices_the_same_text_the_offsets_were_measured_in() {
 }
 
 #[test]
+fn large_file_batches_keep_all_symbols_through_edits_and_deletions() {
+    let f = Fixture::new();
+    let padding = "x".repeat(600_000);
+    f.write("a.rs", &format!("//{padding}\npub fn rust_target() {{}}\n"));
+    f.write("b.py", &format!("#{padding}\ndef python_target(): pass\n"));
+    f.write(
+        "c.js",
+        &format!("//{padding}\nexport function js_target() {{}}\n"),
+    );
+    assert_eq!(
+        field_set(&f.run(&["symbols", "--limit", "0"]), "name"),
+        vec!["js_target", "python_target", "rust_target"]
+    );
+    f.write(
+        "a.rs",
+        &format!("//{padding}\npub fn edited_target() {{}}\n"),
+    );
+    f.remove("b.py");
+    f.write("d.go", "package sample\nfunc AddedTarget() {}\n");
+    assert_eq!(
+        field_set(&f.run(&["symbols", "--limit", "0"]), "name"),
+        vec!["AddedTarget", "edited_target", "js_target"]
+    );
+    let v = f.run(&["search", "rust_target|python_target", "--limit", "0"]);
+    assert!(v["data"]["matches"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn refresh_sees_an_edit_that_preserves_size_and_mtime() {
     // The freshness fast path skips a file whose stat looks unchanged. mtime is
     // settable from userspace (`touch -d`, `cp -p`, `rsync -a`, tar extraction),
