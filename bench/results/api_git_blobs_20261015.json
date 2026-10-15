@@ -1,0 +1,267 @@
+{
+  "metric": "end-to-end warm CLI wall time in milliseconds",
+  "limits": "sequential synthetic Rust queries with warm index and filesystem; excludes compilation and cold indexing; traces are untimed",
+  "before_revision": "f8e15db",
+  "after_revision": "f8e15dbb60f3d38d4608db82d59e9c5ca8d918d7",
+  "after_worktree_dirty": true,
+  "source_sha256": {
+    "src/repo.rs": "221983f9055d8e5a8517d5f3018d081e96d10e4cc37291bf367fba2f4e36dd69",
+    "src/commands/symbols.rs": "df97b72677f4a9d0100887bb706747cefcd5209f13efae6cd3ec9f349b09cb56",
+    "src/commands/project.rs": "f869cefa52f8fa91a674bbf33cc0d5540249c2eda9f1f6c3fe364e741fee9803"
+  },
+  "binaries_sha256": {
+    "before": "59135f1cd833bc2802cdc60181e586d7cb509908abe7b13551a1d1bcf8d5fe88",
+    "after": "443128d74f623be3d613b15557092e7e74691bc831d6e73f231e4c2c366400be"
+  },
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpu_count": 12,
+  "loadavg_before": [
+    2.19873046875,
+    1.3564453125,
+    0.66015625
+  ],
+  "loadavg_after": [
+    2.0185546875,
+    1.35595703125,
+    0.6708984375
+  ],
+  "errors": 0,
+  "answer_mismatches": 0,
+  "verified_timed_invocations": 56,
+  "results": [
+    {
+      "task": "changed-1",
+      "args": [
+        "api",
+        "--compare-to",
+        "HEAD",
+        "--limit",
+        "0"
+      ],
+      "changed_exports": 1,
+      "git_trace": {
+        "before": {
+          "merge-base": 2,
+          "show": 1,
+          "cat-file": 0
+        },
+        "after": {
+          "merge-base": 1,
+          "show": 0,
+          "cat-file": 1
+        }
+      },
+      "samples_ms": {
+        "before": [
+          18.72536,
+          18.633172,
+          19.097489,
+          20.975897,
+          20.710778,
+          18.847387,
+          19.162278
+        ],
+        "after": [
+          17.974959,
+          17.727207,
+          18.007566,
+          18.412366,
+          18.229022,
+          18.529012,
+          19.175968
+        ]
+      },
+      "median_ms": {
+        "before": 19.097489,
+        "after": 18.229022
+      },
+      "range_ms": {
+        "before": [
+          18.633172,
+          20.975897
+        ],
+        "after": [
+          17.727207,
+          19.175968
+        ]
+      },
+      "answer_sha256": "6d6c164dc47cca5683d8a642d1d64cec47eb54b5d8df6675e57d3fe6f37904c5"
+    },
+    {
+      "task": "changed-128",
+      "args": [
+        "api",
+        "--compare-to",
+        "HEAD",
+        "--limit",
+        "0"
+      ],
+      "changed_exports": 128,
+      "git_trace": {
+        "before": {
+          "merge-base": 129,
+          "show": 128,
+          "cat-file": 0
+        },
+        "after": {
+          "merge-base": 1,
+          "show": 0,
+          "cat-file": 1
+        }
+      },
+      "samples_ms": {
+        "before": [
+          314.099178,
+          306.858565,
+          316.227081,
+          317.597411,
+          321.271586,
+          316.759096,
+          324.091065
+        ],
+        "after": [
+          41.331989,
+          37.81697,
+          39.206941,
+          39.222014,
+          39.969241,
+          38.868338,
+          41.594876
+        ]
+      },
+      "median_ms": {
+        "before": 316.759096,
+        "after": 39.222014
+      },
+      "range_ms": {
+        "before": [
+          306.858565,
+          324.091065
+        ],
+        "after": [
+          37.81697,
+          41.594876
+        ]
+      },
+      "answer_sha256": "cfa869332aff74a586c0b4fb20e1f9e1b041403cb9cfbb54bf9fc6795907c3c1"
+    },
+    {
+      "task": "scoped-one",
+      "args": [
+        "api",
+        "file_000.rs",
+        "--compare-to",
+        "HEAD",
+        "--limit",
+        "0"
+      ],
+      "changed_exports": 1,
+      "git_trace": {
+        "before": {
+          "merge-base": 2,
+          "show": 1,
+          "cat-file": 0
+        },
+        "after": {
+          "merge-base": 1,
+          "show": 0,
+          "cat-file": 1
+        }
+      },
+      "samples_ms": {
+        "before": [
+          23.357309,
+          22.83949,
+          25.827398,
+          22.835304,
+          24.018002,
+          23.217013,
+          25.680804
+        ],
+        "after": [
+          22.401019,
+          21.379408,
+          21.930331,
+          21.538925,
+          21.855681,
+          21.680794,
+          24.411081
+        ]
+      },
+      "median_ms": {
+        "before": 23.357309,
+        "after": 21.855681
+      },
+      "range_ms": {
+        "before": [
+          22.835304,
+          25.827398
+        ],
+        "after": [
+          21.379408,
+          24.411081
+        ]
+      },
+      "answer_sha256": "6d6c164dc47cca5683d8a642d1d64cec47eb54b5d8df6675e57d3fe6f37904c5"
+    },
+    {
+      "task": "empty-scope",
+      "args": [
+        "api",
+        "missing",
+        "--compare-to",
+        "HEAD",
+        "--limit",
+        "0"
+      ],
+      "changed_exports": 0,
+      "git_trace": {
+        "before": {
+          "merge-base": 1,
+          "show": 0,
+          "cat-file": 0
+        },
+        "after": {
+          "merge-base": 1,
+          "show": 0,
+          "cat-file": 0
+        }
+      },
+      "samples_ms": {
+        "before": [
+          9.233898,
+          9.56206,
+          9.21921,
+          9.339746,
+          9.007508,
+          9.18758,
+          9.373585
+        ],
+        "after": [
+          9.522872,
+          9.495509,
+          9.553607,
+          9.263406,
+          9.219758,
+          9.430907,
+          11.094294
+        ]
+      },
+      "median_ms": {
+        "before": 9.233898,
+        "after": 9.495509
+      },
+      "range_ms": {
+        "before": [
+          9.007508,
+          9.56206
+        ],
+        "after": [
+          9.219758,
+          11.094294
+        ]
+      },
+      "answer_sha256": "765f4f59fa2df4618a36990a20f3affc77047d8c0aa36a358cbf992cd3de7318"
+    }
+  ]
+}
