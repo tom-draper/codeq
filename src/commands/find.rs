@@ -75,7 +75,7 @@ pub fn cmd_astgrep(
          WHERE path = ?1 AND kind <> 'import'",
     )?;
     let mut cur_path: Option<String> = None;
-    let mut defs: Vec<FileDef> = Vec::new();
+    let mut defs = DefIndex::default();
 
     #[derive(Serialize)]
     struct AstRow {
@@ -101,7 +101,7 @@ pub fn cmd_astgrep(
             defs = load_file_defs(&mut def_stmt, &m.path)?;
             cur_path = Some(m.path.clone());
         }
-        let symbol = innermost(&defs, m.start_byte).map(|d| d.name.clone());
+        let symbol = defs.innermost(m.start_byte).map(|d| d.name.clone());
         let binds = m
             .binds
             .into_iter()
