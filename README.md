@@ -227,21 +227,157 @@ The baselines read a 60-line window rather than a whole file, and get the names
 they need to check from codeq for free. Totals across 31 pinned open-source
 repositories in every supported language, with the lower value in bold:
 
-| Task | Generic approach | codeq tokens | generic tokens | codeq calls | generic calls | codeq time | generic time |
-| --- | --- | --: | --: | --: | --: | --: | --: |
-| Read a function (`read --symbol`) | `rg` to find it, `sed` a window | **4k** | 26k | **31** | 62 | **4 ms** | 9 ms |
-| Understand before editing (`about`) | find and read the definition and a caller | **17k** | 58k | **31** | 122 | **10 ms** | 16 ms |
-| Explore with source (`explore`) | read the definition, 3 call sites, 3 callees | **79k** | 598k | **31** | 272 | **10 ms** | 34 ms |
-| Who calls it (`callers`) | `rg 'NAME('`, read windows to find the callers | **2k** | 39k | **31** | 80 | **7 ms** | 9 ms |
-| 2-hop impact (`callers --depth 2`) | `rg` call sites, then `rg` each caller | **27k** | 55k | **31** | 126 | 11 ms | 11 ms |
-| Which tests use it (`tests`) | `rg` in test files, read each hit | **0.6k** | 26k | **31** | 78 | **6 ms** | 9 ms |
-| A file's dead code (`unused`) | `rg -w` each of the file's definitions | **38k** | 3,483k | **31** | 572 | **22 ms** | 126 ms |
-| A file's structure (`outline`) | `cat` the file | **84k** | 803k | 31 | 31 | 4 ms | **3 ms** |
-| A file's public API (`api FILE`) | `rg` declaration lines | 86k | **28k** | 31 | 31 | 5 ms | **4 ms** |
-| A package's public API (`api DIR`) | `cat` the files that hold it | **448k** | 1,613k | **31** | 295 | **7 ms** | 25 ms |
-| All references (`references`) | `rg -w` | **22k** | 25k | 31 | 31 | **6 ms** | 7 ms |
-| A file's imports (`imports`) | `rg` import lines, read grouped blocks | 9k | **8k** | **31** | 45 | 5 ms | **4 ms** |
-| **All 12 tasks** |  | **816k** | 6,763k | **372** | 1,745 | **97 ms** | 257 ms |
+<table>
+  <thead>
+    <tr>
+      <th rowspan="2" align="left">Task</th>
+      <th rowspan="2" align="left">Generic approach</th>
+      <th colspan="2">Tokens</th>
+      <th colspan="2">Tool calls</th>
+      <th colspan="2">Avg time per repo</th>
+    </tr>
+    <tr>
+      <th align="right">codeq</th>
+      <th align="right">generic</th>
+      <th align="right">codeq</th>
+      <th align="right">generic</th>
+      <th align="right">codeq</th>
+      <th align="right">generic</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Read a function (<code>read --symbol</code>)</td>
+      <td><code>rg</code> to find it, <code>sed</code> a window</td>
+      <td align="right"><b>4k</b></td>
+      <td align="right">26k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">62</td>
+      <td align="right"><b>4 ms</b></td>
+      <td align="right">9 ms</td>
+    </tr>
+    <tr>
+      <td>Understand before editing (<code>about</code>)</td>
+      <td>find and read the definition and a caller</td>
+      <td align="right"><b>17k</b></td>
+      <td align="right">58k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">122</td>
+      <td align="right"><b>10 ms</b></td>
+      <td align="right">16 ms</td>
+    </tr>
+    <tr>
+      <td>Explore with source (<code>explore</code>)</td>
+      <td>read the definition, 3 call sites, 3 callees</td>
+      <td align="right"><b>79k</b></td>
+      <td align="right">598k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">272</td>
+      <td align="right"><b>10 ms</b></td>
+      <td align="right">34 ms</td>
+    </tr>
+    <tr>
+      <td>Who calls it (<code>callers</code>)</td>
+      <td><code>rg 'NAME('</code>, read windows to find the callers</td>
+      <td align="right"><b>2k</b></td>
+      <td align="right">39k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">80</td>
+      <td align="right"><b>7 ms</b></td>
+      <td align="right">9 ms</td>
+    </tr>
+    <tr>
+      <td>2-hop impact (<code>callers --depth 2</code>)</td>
+      <td><code>rg</code> call sites, then <code>rg</code> each caller</td>
+      <td align="right"><b>27k</b></td>
+      <td align="right">55k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">126</td>
+      <td align="right">11 ms</td>
+      <td align="right">11 ms</td>
+    </tr>
+    <tr>
+      <td>Which tests use it (<code>tests</code>)</td>
+      <td><code>rg</code> in test files, read each hit</td>
+      <td align="right"><b>0.6k</b></td>
+      <td align="right">26k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">78</td>
+      <td align="right"><b>6 ms</b></td>
+      <td align="right">9 ms</td>
+    </tr>
+    <tr>
+      <td>A file's dead code (<code>unused</code>)</td>
+      <td><code>rg -w</code> each of the file's definitions</td>
+      <td align="right"><b>38k</b></td>
+      <td align="right">3,483k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">572</td>
+      <td align="right"><b>22 ms</b></td>
+      <td align="right">126 ms</td>
+    </tr>
+    <tr>
+      <td>A file's structure (<code>outline</code>)</td>
+      <td><code>cat</code> the file</td>
+      <td align="right"><b>84k</b></td>
+      <td align="right">803k</td>
+      <td align="right">31</td>
+      <td align="right">31</td>
+      <td align="right">4 ms</td>
+      <td align="right"><b>3 ms</b></td>
+    </tr>
+    <tr>
+      <td>A file's public API (<code>api FILE</code>)</td>
+      <td><code>rg</code> declaration lines</td>
+      <td align="right">86k</td>
+      <td align="right"><b>28k</b></td>
+      <td align="right">31</td>
+      <td align="right">31</td>
+      <td align="right">5 ms</td>
+      <td align="right"><b>4 ms</b></td>
+    </tr>
+    <tr>
+      <td>A package's public API (<code>api DIR</code>)</td>
+      <td><code>cat</code> the files that hold it</td>
+      <td align="right"><b>448k</b></td>
+      <td align="right">1,613k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">295</td>
+      <td align="right"><b>7 ms</b></td>
+      <td align="right">25 ms</td>
+    </tr>
+    <tr>
+      <td>All references (<code>references</code>)</td>
+      <td><code>rg -w</code></td>
+      <td align="right"><b>22k</b></td>
+      <td align="right">25k</td>
+      <td align="right">31</td>
+      <td align="right">31</td>
+      <td align="right"><b>6 ms</b></td>
+      <td align="right">7 ms</td>
+    </tr>
+    <tr>
+      <td>A file's imports (<code>imports</code>)</td>
+      <td><code>rg</code> import lines, read grouped blocks</td>
+      <td align="right">9k</td>
+      <td align="right"><b>8k</b></td>
+      <td align="right"><b>31</b></td>
+      <td align="right">45</td>
+      <td align="right">5 ms</td>
+      <td align="right"><b>4 ms</b></td>
+    </tr>
+    <tr>
+      <td><b>All 12 tasks</b></td>
+      <td></td>
+      <td align="right"><b>816k</b></td>
+      <td align="right">6,763k</td>
+      <td align="right"><b>372</b></td>
+      <td align="right">1,745</td>
+      <td align="right"><b>97 ms</b></td>
+      <td align="right">257 ms</td>
+    </tr>
+  </tbody>
+</table>
 
 The dead-code task is half of the generic total; without it codeq uses 4.2x
 fewer tokens rather than 8.3x. Times are warm queries and exclude the agent's own
