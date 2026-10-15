@@ -1,0 +1,145 @@
+{
+  "timestamp": "2026-10-15T15:55:15+00:00",
+  "codeq_commit": "73fc3da1c757",
+  "repos": 31,
+  "totals": {
+    "codeq_tokens": 982027,
+    "baseline_tokens": 1411111,
+    "token_ratio": 1.44,
+    "codeq_calls": 494,
+    "baseline_calls": 810,
+    "codeq_ms": 4285.4,
+    "baseline_ms": 27013.6,
+    "index_ms": 30064.8
+  },
+  "per_task": {
+    "find-def": {
+      "codeq_tokens": 7631,
+      "baseline_tokens": 17747,
+      "codeq_calls": 31,
+      "baseline_calls": 41,
+      "codeq_ms": 137.9,
+      "baseline_ms": 371.8
+    },
+    "enclosing-def": {
+      "codeq_tokens": 1456,
+      "baseline_tokens": 15238,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 136.3,
+      "baseline_ms": 55.6
+    },
+    "type-members": {
+      "codeq_tokens": 5630,
+      "baseline_tokens": 15282,
+      "codeq_calls": 29,
+      "baseline_calls": 58,
+      "codeq_ms": 153.3,
+      "baseline_ms": 325.2
+    },
+    "file-importers": {
+      "codeq_tokens": 22034,
+      "baseline_tokens": 9133,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 136.5,
+      "baseline_ms": 292.2
+    },
+    "read-impl": {
+      "codeq_tokens": 6898,
+      "baseline_tokens": 32835,
+      "codeq_calls": 31,
+      "baseline_calls": 72,
+      "codeq_ms": 146.7,
+      "baseline_ms": 461.8
+    },
+    "understand-sym": {
+      "codeq_tokens": 22244,
+      "baseline_tokens": 61784,
+      "codeq_calls": 31,
+      "baseline_calls": 62,
+      "codeq_ms": 439.2,
+      "baseline_ms": 636.1
+    },
+    "explore": {
+      "codeq_tokens": 123684,
+      "baseline_tokens": 157847,
+      "codeq_calls": 31,
+      "baseline_calls": 126,
+      "codeq_ms": 406.9,
+      "baseline_ms": 1218.0
+    },
+    "callsites": {
+      "codeq_tokens": 3736,
+      "baseline_tokens": 79064,
+      "codeq_calls": 31,
+      "baseline_calls": 59,
+      "codeq_ms": 275.6,
+      "baseline_ms": 431.3
+    },
+    "blast-radius": {
+      "codeq_tokens": 21358,
+      "baseline_tokens": 79367,
+      "codeq_calls": 31,
+      "baseline_calls": 59,
+      "codeq_ms": 484.7,
+      "baseline_ms": 414.9
+    },
+    "which-tests": {
+      "codeq_tokens": 2224,
+      "baseline_tokens": 42618,
+      "codeq_calls": 31,
+      "baseline_calls": 45,
+      "codeq_ms": 243.6,
+      "baseline_ms": 335.7
+    },
+    "dead-code": {
+      "codeq_tokens": 804,
+      "baseline_tokens": 29869,
+      "codeq_calls": 31,
+      "baseline_calls": 62,
+      "codeq_ms": 739.4,
+      "baseline_ms": 21583.2
+    },
+    "file-structure": {
+      "codeq_tokens": 59980,
+      "baseline_tokens": 482274,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 144.6,
+      "baseline_ms": 106.7
+    },
+    "public-api": {
+      "codeq_tokens": 56099,
+      "baseline_tokens": 20404,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 170.3,
+      "baseline_ms": 139.8
+    },
+    "package-api": {
+      "codeq_tokens": 612601,
+      "baseline_tokens": 332840,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 272.8,
+      "baseline_ms": 250.4
+    },
+    "usages": {
+      "codeq_tokens": 29486,
+      "baseline_tokens": 28472,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 233.7,
+      "baseline_ms": 245.0
+    },
+    "file-imports": {
+      "codeq_tokens": 6157,
+      "baseline_tokens": 6332,
+      "codeq_calls": 31,
+      "baseline_calls": 40,
+      "codeq_ms": 163.9,
+      "baseline_ms": 145.9
+    }
+  }
+}
