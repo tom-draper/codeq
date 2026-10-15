@@ -16,6 +16,7 @@
 //! return type); and it can't see inside macro invocations, whose bodies the
 //! grammar leaves as opaque token trees.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
@@ -166,55 +167,69 @@ fn variadic_name<'a>(pat: Node, psrc: &'a [u8]) -> Option<&'a str> {
     }
 }
 
-fn bind(binds: &mut HashMap<String, String>, name: &str, val: String) -> bool {
-    match binds.get(name) {
-        Some(prev) => prev == &val, // repeated metavar must bind identically
+/// Metavariable bindings accumulated while matching one candidate, in the order
+/// they were made. A binding borrows the matched source (only a named variadic
+/// run is joined into an owned string), and a failed trial is undone by
+/// truncating back to a mark, so an attempt that fails costs no allocation and
+/// no map clone. A pattern holds a handful of metavariables, so a linear scan
+/// beats hashing.
+type Binds<'p, 'c> = Vec<(&'p str, Cow<'c, str>)>;
+
+fn bind<'p, 'c>(binds: &mut Binds<'p, 'c>, name: &'p str, val: Cow<'c, str>) -> bool {
+    match binds.iter().find(|(n, _)| *n == name) {
+        Some((_, prev)) => *prev == val, // repeated metavar must bind identically
         None => {
-            binds.insert(name.to_string(), val);
+            binds.push((name, val));
             true
         }
     }
 }
 
-fn node_matches(
+fn node_matches<'p, 'c>(
     pat: Node,
     code: Node,
-    psrc: &[u8],
-    csrc: &[u8],
-    binds: &mut HashMap<String, String>,
+    psrc: &'p [u8],
+    csrc: &'c [u8],
+    binds: &mut Binds<'p, 'c>,
 ) -> bool {
     if let Some(name) = metavar_name(pat, psrc) {
         if name == "_" {
             return true; // anonymous metavar: any single node
         }
-        let ctext = match code.utf8_text(csrc) {
-            Ok(t) => t.to_string(),
-            Err(_) => return false,
+        return match code.utf8_text(csrc) {
+            Ok(t) => bind(binds, name, Cow::Borrowed(t)),
+            Err(_) => false,
         };
-        return bind(binds, name, ctext);
     }
     if pat.kind_id() != code.kind_id() {
         return false;
     }
-    let mut pc = pat.walk();
-    let mut cc = code.walk();
-    let pkids: Vec<Node> = pat.named_children(&mut pc).collect();
-    let ckids: Vec<Node> = code.named_children(&mut cc).collect();
-    if pkids.is_empty() {
+    if pat.named_child_count() == 0 {
         // Leaf (identifier, literal, operator): match text exactly.
         return pat.utf8_text(psrc).ok() == code.utf8_text(csrc).ok();
     }
+    let mut pc = pat.walk();
+    let pkids: Vec<Node> = pat.named_children(&mut pc).collect();
+    // Differing arities can only match through a variadic. Without one this is
+    // a near miss, and the code's children need never be collected.
+    if pkids.len() != code.named_child_count()
+        && !pkids.iter().any(|p| variadic_name(*p, psrc).is_some())
+    {
+        return false;
+    }
+    let mut cc = code.walk();
+    let ckids: Vec<Node> = code.named_children(&mut cc).collect();
     match_children(&pkids, &ckids, psrc, csrc, binds)
 }
 
 /// Match a pattern child list against a code child list, where the pattern may
 /// contain one variadic (`$$$`) that absorbs a run of zero or more code nodes.
-fn match_children(
+fn match_children<'p, 'c>(
     pkids: &[Node],
     ckids: &[Node],
-    psrc: &[u8],
-    csrc: &[u8],
-    binds: &mut HashMap<String, String>,
+    psrc: &'p [u8],
+    csrc: &'c [u8],
+    binds: &mut Binds<'p, 'c>,
 ) -> bool {
     // `variadic_name` deliberately sees through single-child wrappers, because a
     // `$$$` in statement position parses as an `expression_statement` around the
@@ -227,15 +242,15 @@ fn match_children(
     // and let the recursion absorb inside each child; fall back to absorbing at
     // this level only when they don't.
     if pkids.len() == ckids.len() {
-        let mut trial = binds.clone();
+        let mark = binds.len();
         if pkids
             .iter()
             .zip(ckids)
-            .all(|(p, c)| node_matches(*p, *c, psrc, csrc, &mut trial))
+            .all(|(p, c)| node_matches(*p, *c, psrc, csrc, binds))
         {
-            *binds = trial;
             return true;
         }
+        binds.truncate(mark);
     }
 
     let vpos: Vec<usize> = pkids
@@ -278,7 +293,7 @@ fn match_children(
                 .map(|n| n.utf8_text(csrc).unwrap_or(""))
                 .collect::<Vec<_>>()
                 .join("\u{0}");
-            return bind(binds, name, joined);
+            return bind(binds, name, Cow::Owned(joined));
         }
     }
     true
@@ -325,11 +340,14 @@ fn match_file(
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         if node.kind_id() == pat_kind {
-            let mut binds = HashMap::new();
+            let mut binds = Binds::new();
             if node_matches(pat_node, node, psrc, csrc, &mut binds) {
                 let sp = node.start_position();
                 let ep = node.end_position();
-                let mut b: Vec<(String, String)> = binds.into_iter().collect();
+                let mut b: Vec<(String, String)> = binds
+                    .into_iter()
+                    .map(|(n, v)| (n.to_string(), v.into_owned()))
+                    .collect();
                 b.sort();
                 out.push(Match {
                     path: path.to_string(),
