@@ -6654,6 +6654,50 @@ fn astgrep_matches_method_calls_structurally() {
 }
 
 #[test]
+fn astgrep_limit_returns_the_leading_matches_in_path_order() {
+    // A limited search stops early, so which matches it keeps must be the same
+    // ones an exhaustive search ranks first, across files, with the truncation
+    // flag set exactly when more existed.
+    let f = Fixture::new();
+    for i in 0..30 {
+        // Matches inside one file are discovered out of position order.
+        f.write(
+            &format!("src/m{i:02}.rs"),
+            "fn a() {\n    x.unwrap();\n    if true { y.unwrap(); }\n    z.unwrap();\n}\n",
+        );
+    }
+    let rows = |args: &[&str]| -> (Vec<(String, u64, u64)>, bool) {
+        let mut a = vec!["astgrep", "$X.unwrap()", "--language", "rust"];
+        a.extend_from_slice(args);
+        let v = f.run(&a);
+        let rows = v["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["path"].as_str().unwrap().to_string(),
+                    r["line"].as_u64().unwrap(),
+                    r["col"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        (rows, v["data"]["truncated"].as_bool().unwrap_or(false))
+    };
+    let (all, truncated) = rows(&["--limit", "0"]);
+    assert_eq!(all.len(), 90);
+    assert!(!truncated);
+    let mut sorted = all.clone();
+    sorted.sort();
+    assert_eq!(all, sorted, "exhaustive result is path then position order");
+    for limit in [1usize, 2, 3, 4, 31, 89, 90, 91] {
+        let (got, truncated) = rows(&["--limit", &limit.to_string()]);
+        assert_eq!(got, all[..limit.min(90)], "limit {limit}");
+        assert_eq!(truncated, limit < 90, "truncated flag at limit {limit}");
+    }
+}
+
+#[test]
 fn astgrep_metavariable_binds_consistently() {
     let f = Fixture::new();
     f.write(
