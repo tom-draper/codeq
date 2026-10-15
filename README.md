@@ -211,7 +211,14 @@ Treat `unused`, `untested`, and `affected` as investigation aids. They cannot
 prove that code is dead, that tests cover behavior, or that every runtime effect
 of a change has been found.
 
-## Evaluation
+## Benchmarks and development
+
+The benchmarks compare output size and tool calls for complete navigation tasks,
+and check correctness on fixtures and pinned repositories. Results depend on
+the task, source budget, and repository. See [benchmark methodology](bench/README.md)
+and [real workflow results](bench/REAL_WORKFLOWS.md).
+
+### Evaluation
 
 [`bench/completion.py`](bench/completion.py) runs each task with codeq and with
 the commands a competent agent would otherwise use to reach the same answer, then
@@ -243,12 +250,7 @@ approximate and targets are picked automatically, so treat these as indicative
 rather than a model-agent evaluation. Rerun with `python3 bench/completion.py`
 after `cargo build --release`.
 
-## Benchmarks and development
-
-The benchmarks compare output size and tool calls for complete navigation tasks,
-and check correctness on fixtures and pinned repositories. Results depend on
-the task, source budget, and repository. See [benchmark methodology](bench/README.md)
-and [real workflow results](bench/REAL_WORKFLOWS.md).
+### Development
 
 For local development:
 
