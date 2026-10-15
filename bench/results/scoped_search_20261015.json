@@ -1,0 +1,588 @@
+{
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpus": 12,
+  "load": [
+    5.60595703125,
+    2.7861328125,
+    1.265625
+  ],
+  "files": 4000,
+  "runs": 9,
+  "binary_sha256": {
+    "before": "9b7205511780beb7f1cdce2efecbdf6f1b4d71e20b4edb15b1d3635ed325e41e",
+    "after": "cf2daae1481bfc9a290e5131b87bb048b439c0e8060a665f48011c840bd28d96"
+  },
+  "workloads": {
+    "language_literal": {
+      "command": [
+        "search",
+        "needle",
+        "--language",
+        "python",
+        "-l",
+        "--limit",
+        "0"
+      ],
+      "expected_rows": 10,
+      "samples_ms": {
+        "before": [
+          10.617498,
+          9.667098,
+          9.316521,
+          10.091926,
+          9.913351,
+          11.270824,
+          10.173274,
+          12.605979,
+          10.607883
+        ],
+        "after": [
+          9.052311,
+          8.522974,
+          8.648625,
+          8.749353,
+          10.33455,
+          10.873124,
+          10.095361,
+          9.755153,
+          9.257175
+        ]
+      },
+      "candidate_queries": {
+        "before": {
+          "sql": "SELECT path, language FROM files WHERE is_text = 1 AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?) ORDER BY path",
+          "parameters": [
+            "\"nee\" AND \"eed\" AND \"edl\" AND \"dle\""
+          ],
+          "returned_candidates": 4000,
+          "explain": [
+            [
+              3,
+              0,
+              0,
+              "SEARCH files USING INTEGER PRIMARY KEY (rowid=?)"
+            ],
+            [
+              7,
+              0,
+              0,
+              "LIST SUBQUERY 1"
+            ],
+            [
+              9,
+              7,
+              0,
+              "SCAN content_fts VIRTUAL TABLE INDEX 0:M1"
+            ],
+            [
+              31,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        },
+        "after": {
+          "sql": "SELECT path, language FROM files WHERE is_text = 1 AND language = ? AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?) ORDER BY path",
+          "parameters": [
+            "python",
+            "\"nee\" AND \"eed\" AND \"edl\" AND \"dle\""
+          ],
+          "returned_candidates": 10,
+          "explain": [
+            [
+              4,
+              0,
+              0,
+              "SEARCH files USING INDEX files_language (language=? AND rowid=?)"
+            ],
+            [
+              10,
+              0,
+              0,
+              "LIST SUBQUERY 1"
+            ],
+            [
+              12,
+              10,
+              0,
+              "SCAN content_fts VIRTUAL TABLE INDEX 0:M1"
+            ],
+            [
+              41,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        }
+      },
+      "median_ms": {
+        "before": 10.173274,
+        "after": 9.257175
+      },
+      "range_ms": {
+        "before": [
+          9.316521,
+          12.605979
+        ],
+        "after": [
+          8.522974,
+          10.873124
+        ]
+      }
+    },
+    "language_regex": {
+      "command": [
+        "search",
+        "n.e",
+        "--language",
+        "python",
+        "-l",
+        "--limit",
+        "0"
+      ],
+      "expected_rows": 10,
+      "samples_ms": {
+        "before": [
+          9.295196,
+          7.989337,
+          8.819934,
+          10.735123,
+          8.749547,
+          8.963212,
+          9.168339,
+          7.942897,
+          7.851215
+        ],
+        "after": [
+          7.404499,
+          7.109882,
+          7.335525,
+          7.891567,
+          7.444722,
+          7.594786,
+          7.230319,
+          6.90168,
+          6.93681
+        ]
+      },
+      "candidate_queries": {
+        "before": {
+          "sql": "SELECT path, language FROM files WHERE is_text = 1 ORDER BY path",
+          "parameters": [],
+          "returned_candidates": 4000,
+          "explain": [
+            [
+              4,
+              0,
+              0,
+              "SCAN files USING INDEX sqlite_autoindex_files_1"
+            ]
+          ]
+        },
+        "after": {
+          "sql": "SELECT path, language FROM files WHERE is_text = 1 AND language = ? ORDER BY path",
+          "parameters": [
+            "python"
+          ],
+          "returned_candidates": 10,
+          "explain": [
+            [
+              4,
+              0,
+              0,
+              "SEARCH files USING INDEX files_language (language=?)"
+            ],
+            [
+              18,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        }
+      },
+      "median_ms": {
+        "before": 8.819934,
+        "after": 7.335525
+      },
+      "range_ms": {
+        "before": [
+          7.851215,
+          10.735123
+        ],
+        "after": [
+          6.90168,
+          7.891567
+        ]
+      }
+    },
+    "path_literal": {
+      "command": [
+        "search",
+        "needle",
+        "--path",
+        "file00000",
+        "-l",
+        "--limit",
+        "0"
+      ],
+      "expected_rows": 1,
+      "samples_ms": {
+        "before": [
+          9.62746,
+          8.99895,
+          8.952371,
+          9.66155,
+          10.436663,
+          10.145445,
+          12.15496,
+          10.244005,
+          10.122499
+        ],
+        "after": [
+          8.531134,
+          8.115159,
+          8.61905,
+          8.83614,
+          9.130413,
+          10.144087,
+          9.414156,
+          9.010825,
+          8.899179
+        ]
+      },
+      "candidate_queries": {
+        "before": {
+          "sql": "SELECT path, language FROM files WHERE is_text = 1 AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?) ORDER BY path",
+          "parameters": [
+            "\"nee\" AND \"eed\" AND \"edl\" AND \"dle\""
+          ],
+          "returned_candidates": 4000,
+          "explain": [
+            [
+              3,
+              0,
+              0,
+              "SEARCH files USING INTEGER PRIMARY KEY (rowid=?)"
+            ],
+            [
+              7,
+              0,
+              0,
+              "LIST SUBQUERY 1"
+            ],
+            [
+              9,
+              7,
+              0,
+              "SCAN content_fts VIRTUAL TABLE INDEX 0:M1"
+            ],
+            [
+              31,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        },
+        "after": {
+          "sql": "SELECT path, language FROM files WHERE is_text = 1 AND instr(path, ?) > 0 AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?) ORDER BY path",
+          "parameters": [
+            "file00000",
+            "\"nee\" AND \"eed\" AND \"edl\" AND \"dle\""
+          ],
+          "returned_candidates": 1,
+          "explain": [
+            [
+              3,
+              0,
+              0,
+              "SEARCH files USING INTEGER PRIMARY KEY (rowid=?)"
+            ],
+            [
+              7,
+              0,
+              0,
+              "LIST SUBQUERY 1"
+            ],
+            [
+              9,
+              7,
+              0,
+              "SCAN content_fts VIRTUAL TABLE INDEX 0:M1"
+            ],
+            [
+              34,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        }
+      },
+      "median_ms": {
+        "before": 10.122499,
+        "after": 8.899179
+      },
+      "range_ms": {
+        "before": [
+          8.952371,
+          12.15496
+        ],
+        "after": [
+          8.115159,
+          10.144087
+        ]
+      }
+    },
+    "positional_literal": {
+      "command": [
+        "search",
+        "needle",
+        "file00000.py",
+        "file00001.py",
+        "-l",
+        "--limit",
+        "0"
+      ],
+      "expected_rows": 2,
+      "samples_ms": {
+        "before": [
+          9.894618,
+          10.926187,
+          10.646011,
+          9.627695,
+          9.741944,
+          9.629692,
+          9.678239,
+          9.474989,
+          10.20272
+        ],
+        "after": [
+          9.599107,
+          10.012471,
+          10.919874,
+          10.351719,
+          9.646858,
+          9.341731,
+          9.899737,
+          10.826035,
+          9.911846
+        ]
+      },
+      "candidate_queries": {
+        "before": {
+          "sql": "SELECT path, language FROM files WHERE is_text = 1 AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?) ORDER BY path",
+          "parameters": [
+            "\"nee\" AND \"eed\" AND \"edl\" AND \"dle\""
+          ],
+          "returned_candidates": 4000,
+          "explain": [
+            [
+              3,
+              0,
+              0,
+              "SEARCH files USING INTEGER PRIMARY KEY (rowid=?)"
+            ],
+            [
+              7,
+              0,
+              0,
+              "LIST SUBQUERY 1"
+            ],
+            [
+              9,
+              7,
+              0,
+              "SCAN content_fts VIRTUAL TABLE INDEX 0:M1"
+            ],
+            [
+              31,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        },
+        "after": {
+          "sql": "SELECT path, language FROM files WHERE is_text = 1 AND EXISTS (SELECT 1 FROM json_each(?) WHERE instr(files.path, value) > 0) AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?) ORDER BY path",
+          "parameters": [
+            "[\"file00000.py\", \"file00001.py\"]",
+            "\"nee\" AND \"eed\" AND \"edl\" AND \"dle\""
+          ],
+          "returned_candidates": 2,
+          "explain": [
+            [
+              3,
+              0,
+              0,
+              "SEARCH files USING INTEGER PRIMARY KEY (rowid=?)"
+            ],
+            [
+              7,
+              0,
+              0,
+              "LIST SUBQUERY 2"
+            ],
+            [
+              9,
+              7,
+              0,
+              "SCAN content_fts VIRTUAL TABLE INDEX 0:M1"
+            ],
+            [
+              27,
+              0,
+              0,
+              "CORRELATED SCALAR SUBQUERY 1"
+            ],
+            [
+              31,
+              27,
+              0,
+              "SCAN json_each VIRTUAL TABLE INDEX 1:"
+            ],
+            [
+              50,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        }
+      },
+      "median_ms": {
+        "before": 9.741944,
+        "after": 9.911846
+      },
+      "range_ms": {
+        "before": [
+          9.474989,
+          10.926187
+        ],
+        "after": [
+          9.341731,
+          10.919874
+        ]
+      }
+    },
+    "broad_literal": {
+      "command": [
+        "search",
+        "needle",
+        "-l",
+        "--limit",
+        "0"
+      ],
+      "expected_rows": 4000,
+      "samples_ms": {
+        "before": [
+          19.738766,
+          18.86772,
+          18.902741,
+          19.175024,
+          19.340919,
+          21.101936,
+          21.037639,
+          19.930827,
+          18.469824
+        ],
+        "after": [
+          18.666986,
+          19.085323,
+          19.771051,
+          19.809045,
+          19.816229,
+          19.398824,
+          19.562538,
+          20.29848,
+          17.96008
+        ]
+      },
+      "candidate_queries": {
+        "before": {
+          "sql": "SELECT path, language FROM files WHERE is_text = 1 AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?) ORDER BY path",
+          "parameters": [
+            "\"nee\" AND \"eed\" AND \"edl\" AND \"dle\""
+          ],
+          "returned_candidates": 4000,
+          "explain": [
+            [
+              3,
+              0,
+              0,
+              "SEARCH files USING INTEGER PRIMARY KEY (rowid=?)"
+            ],
+            [
+              7,
+              0,
+              0,
+              "LIST SUBQUERY 1"
+            ],
+            [
+              9,
+              7,
+              0,
+              "SCAN content_fts VIRTUAL TABLE INDEX 0:M1"
+            ],
+            [
+              31,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        },
+        "after": {
+          "sql": "SELECT path, language FROM files WHERE is_text = 1 AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?) ORDER BY path",
+          "parameters": [
+            "\"nee\" AND \"eed\" AND \"edl\" AND \"dle\""
+          ],
+          "returned_candidates": 4000,
+          "explain": [
+            [
+              3,
+              0,
+              0,
+              "SEARCH files USING INTEGER PRIMARY KEY (rowid=?)"
+            ],
+            [
+              7,
+              0,
+              0,
+              "LIST SUBQUERY 1"
+            ],
+            [
+              9,
+              7,
+              0,
+              "SCAN content_fts VIRTUAL TABLE INDEX 0:M1"
+            ],
+            [
+              31,
+              0,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ]
+          ]
+        }
+      },
+      "median_ms": {
+        "before": 19.340919,
+        "after": 19.562538
+      },
+      "range_ms": {
+        "before": [
+          18.469824,
+          21.101936
+        ],
+        "after": [
+          17.96008,
+          20.29848
+        ]
+      }
+    }
+  }
+}
