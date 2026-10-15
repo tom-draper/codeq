@@ -490,12 +490,7 @@ fn scan_called_names(
          WHERE file_id = (SELECT id FROM files WHERE path = ?1) ORDER BY start_byte",
     )?;
     let mut line_starts = HashMap::new();
-    for (path, sb, eb) in targets {
-        let body = crate::index::load_body(&s.repo.root, path);
-        let Some(b) = body else { continue };
-        let Some(slice) = b.get(*sb..(*eb).min(b.len())) else {
-            continue;
-        };
+    'targets: for (path, sb, eb) in targets {
         // Prefer the syntax-derived callsites collected during indexing: they
         // know exactly which identifiers are called, without reparsing this
         // file for every `callees` query. Unsupported/opaque grammars keep
@@ -510,13 +505,26 @@ fn scan_called_names(
                         r.get::<_, Option<String>>(2)?,
                     ))
                 })?;
+            let source = OnceCell::new();
             for row in rows {
                 let (off, word, recv) = row?;
+                // Cached calls need no source except for Rust's `::` evidence
+                // and example line numbers. Load only once the first call needs it.
+                let body = if lang == "rust" || examples {
+                    let Some(body) = source.get_or_init(|| s.source_body(path)) else {
+                        continue 'targets;
+                    };
+                    Some(body.as_str())
+                } else {
+                    None
+                };
                 let (lookup, pinned) = resolve_syntax_call(graph, path, &word, recv.as_deref());
                 // An empty target set is no evidence: it may be an external
                 // module or a value receiver. `pinned` is `None` then, so
                 // candidate filtering remains conservative.
-                let owner = if lang == "rust" && b[..off.min(b.len())].trim_end().ends_with("::") {
+                let owner = if lang == "rust"
+                    && body.is_some_and(|b| b[..off.min(b.len())].trim_end().ends_with("::"))
+                {
                     rust_call_owner(s, graph, path, recv.as_deref(), pinned.as_ref(), &lookup)?
                 } else {
                     None
@@ -529,7 +537,7 @@ fn scan_called_names(
                         files: pinned,
                         owner,
                     });
-                if examples {
+                if let Some(b) = body.filter(|_| examples) {
                     called.sites.entry(lookup.clone()).or_insert_with(|| {
                         let expr = match &recv {
                             Some(r) => format!("{r}.{word}"),
@@ -555,6 +563,12 @@ fn scan_called_names(
             }
             continue;
         }
+        let Some(b) = s.source_body(path) else {
+            continue;
+        };
+        let Some(slice) = b.get(*sb..(*eb).min(b.len())) else {
+            continue;
+        };
         // No grammar for this language: fall back to the identifier scan,
         // still skipping comment and string spans.
         let prose: Vec<(usize, usize)> = span_stmt

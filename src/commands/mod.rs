@@ -6,6 +6,7 @@
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+use std::rc::Rc;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
@@ -18,8 +19,8 @@ use crate::envelope::{Envelope, IndexMeta, Render, RepoMeta, RESULT_SCHEMA};
 use crate::index::{language_for, refresh};
 use crate::repo::Repo;
 use crate::search::{
-    self, load_file_defs, prefilter_of, regex_prefilter, run_search, run_search_acc,
-    scan_stdin, scan_unindexed, DefIndex, Hit, InFilter, OutMode, ScanOpts, ScanScope, SearchData,
+    self, load_file_defs, prefilter_of, regex_prefilter, run_search, run_search_acc, scan_stdin,
+    scan_unindexed, DefIndex, Hit, InFilter, OutMode, ScanOpts, ScanScope, SearchData,
 };
 
 mod analysis;
@@ -91,6 +92,7 @@ struct Session {
     test_scopes: OnceCell<testing::TestScopes>,
     import_lines: RefCell<HashMap<String, HashSet<i64>>>,
     aliased_names: OnceCell<HashSet<String>>,
+    source_bodies: RefCell<HashMap<String, Option<Rc<String>>>>,
 }
 
 /// Set by `--root`: the tree was named explicitly, so discovery must take it
@@ -127,7 +129,17 @@ impl Session {
             test_scopes: OnceCell::new(),
             import_lines: RefCell::new(HashMap::new()),
             aliased_names: OnceCell::new(),
+            source_bodies: RefCell::new(HashMap::new()),
         })
+    }
+
+    /// Decoded source shared by callee scans throughout this query.
+    fn source_body(&self, path: &str) -> Option<Rc<String>> {
+        self.source_bodies
+            .borrow_mut()
+            .entry(path.to_string())
+            .or_insert_with(|| crate::index::load_body(&self.repo.root, path).map(Rc::new))
+            .clone()
     }
 
     /// The internal import graph, built on first use.
