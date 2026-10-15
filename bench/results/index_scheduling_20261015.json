@@ -1,0 +1,385 @@
+{
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpus": 12,
+  "load_before": [
+    0.88916015625,
+    1.9833984375,
+    1.5849609375
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "9019fcda8afbc39c3393f841acad0d99e665f96e4d7ece3087154ac06953fc6a",
+    "after": "fa04b27162d426d8ef8229576b1da7cd24fac36794511222382a244eba330ae5"
+  },
+  "state": "fresh database per invocation; filesystem cache warm; edited cases prebuild outside timing",
+  "workloads": {
+    "few_large_cold": {
+      "files": 8,
+      "source_bytes": 1556884,
+      "rows": {
+        "files": 8,
+        "facts": 4800,
+        "impls": 0,
+        "calls": 4800,
+        "spans": 8
+      },
+      "samples_ms": {
+        "before": [
+          673.91383,
+          683.440478,
+          655.101861,
+          649.073946,
+          652.561165,
+          669.855597,
+          645.932818
+        ],
+        "after": [
+          348.452736,
+          326.901973,
+          323.637238,
+          336.313699,
+          335.480451,
+          327.344186,
+          324.102169
+        ]
+      },
+      "profiles_untimed": {
+        "before": {
+          "peak_rss_kib": 27616,
+          "user_seconds": 0.7,
+          "system_seconds": 0.13,
+          "threads_created": 1,
+          "main_cpu_seconds_approx": 0.04,
+          "worker_cpu_seconds_approx": [
+            0.64
+          ],
+          "sampling": "maximum observed per-thread CPU ticks, sampled every 5 ms; may miss final ticks"
+        },
+        "after": {
+          "peak_rss_kib": 54896,
+          "user_seconds": 0.93,
+          "system_seconds": 0.44,
+          "threads_created": 3,
+          "main_cpu_seconds_approx": 0.07,
+          "worker_cpu_seconds_approx": [
+            0.21,
+            0.28,
+            0.29
+          ],
+          "sampling": "maximum observed per-thread CPU ticks, sampled every 5 ms; may miss final ticks"
+        }
+      },
+      "median_ms": {
+        "before": 655.101861,
+        "after": 327.344186
+      },
+      "range_ms": {
+        "before": [
+          645.932818,
+          683.440478
+        ],
+        "after": [
+          323.637238,
+          348.452736
+        ]
+      }
+    },
+    "few_large_edited": {
+      "files": 8,
+      "source_bytes": 1561684,
+      "rows": {
+        "files": 8,
+        "facts": 4800,
+        "impls": 0,
+        "calls": 4800,
+        "spans": 8
+      },
+      "samples_ms": {
+        "before": [
+          651.466827,
+          667.616757,
+          655.798858,
+          643.812099,
+          674.386303,
+          820.257351,
+          777.384851
+        ],
+        "after": [
+          349.703787,
+          335.19538,
+          370.221613,
+          366.607932,
+          465.365517,
+          623.448934,
+          664.2407
+        ]
+      },
+      "profiles_untimed": {
+        "before": {
+          "peak_rss_kib": 27484,
+          "user_seconds": 1.05,
+          "system_seconds": 0.14,
+          "threads_created": 1,
+          "main_cpu_seconds_approx": 0.09,
+          "worker_cpu_seconds_approx": [
+            0.91
+          ],
+          "sampling": "maximum observed per-thread CPU ticks, sampled every 5 ms; may miss final ticks"
+        },
+        "after": {
+          "peak_rss_kib": 54388,
+          "user_seconds": 2.13,
+          "system_seconds": 1.01,
+          "threads_created": 3,
+          "main_cpu_seconds_approx": 0.18,
+          "worker_cpu_seconds_approx": [
+            0.5,
+            0.64,
+            0.67
+          ],
+          "sampling": "maximum observed per-thread CPU ticks, sampled every 5 ms; may miss final ticks"
+        }
+      },
+      "median_ms": {
+        "before": 667.616757,
+        "after": 370.221613
+      },
+      "range_ms": {
+        "before": [
+          643.812099,
+          820.257351
+        ],
+        "after": [
+          335.19538,
+          664.2407
+        ]
+      }
+    },
+    "skewed_cold": {
+      "files": 128,
+      "source_bytes": 1596364,
+      "rows": {
+        "files": 128,
+        "facts": 4920,
+        "impls": 0,
+        "calls": 4920,
+        "spans": 128
+      },
+      "samples_ms": {
+        "before": [
+          1102.127273,
+          976.538164,
+          902.69949,
+          930.5001,
+          877.016755,
+          854.978229,
+          890.749637
+        ],
+        "after": [
+          586.692713,
+          553.834427,
+          396.642985,
+          443.81896,
+          408.389043,
+          418.014731,
+          469.360999
+        ]
+      },
+      "profiles_untimed": {
+        "before": {
+          "peak_rss_kib": 31984,
+          "user_seconds": 0.9,
+          "system_seconds": 0.25,
+          "threads_created": 4,
+          "main_cpu_seconds_approx": 0.07,
+          "worker_cpu_seconds_approx": [
+            0.01,
+            0.01,
+            0.01,
+            0.78
+          ],
+          "sampling": "maximum observed per-thread CPU ticks, sampled every 5 ms; may miss final ticks"
+        },
+        "after": {
+          "peak_rss_kib": 68112,
+          "user_seconds": 1.44,
+          "system_seconds": 0.87,
+          "threads_created": 4,
+          "main_cpu_seconds_approx": 0.12,
+          "worker_cpu_seconds_approx": [
+            0.34,
+            0.34,
+            0.35,
+            0.37
+          ],
+          "sampling": "maximum observed per-thread CPU ticks, sampled every 5 ms; may miss final ticks"
+        }
+      },
+      "median_ms": {
+        "before": 902.69949,
+        "after": 443.81896
+      },
+      "range_ms": {
+        "before": [
+          854.978229,
+          1102.127273
+        ],
+        "after": [
+          396.642985,
+          586.692713
+        ]
+      }
+    },
+    "skewed_edited": {
+      "files": 128,
+      "source_bytes": 1601284,
+      "rows": {
+        "files": 128,
+        "facts": 4920,
+        "impls": 0,
+        "calls": 4920,
+        "spans": 128
+      },
+      "samples_ms": {
+        "before": [
+          763.354572,
+          757.729879,
+          744.403794,
+          799.825866,
+          766.011433,
+          765.983571,
+          802.09446
+        ],
+        "after": [
+          415.382565,
+          442.424297,
+          407.599468,
+          423.74693,
+          408.309436,
+          464.780165,
+          441.38154
+        ]
+      },
+      "profiles_untimed": {
+        "before": {
+          "peak_rss_kib": 31936,
+          "user_seconds": 0.93,
+          "system_seconds": 0.19,
+          "threads_created": 4,
+          "main_cpu_seconds_approx": 0.09,
+          "worker_cpu_seconds_approx": [
+            0.01,
+            0.01,
+            0.01,
+            0.74
+          ],
+          "sampling": "maximum observed per-thread CPU ticks, sampled every 5 ms; may miss final ticks"
+        },
+        "after": {
+          "peak_rss_kib": 68104,
+          "user_seconds": 1.54,
+          "system_seconds": 0.97,
+          "threads_created": 4,
+          "main_cpu_seconds_approx": 0.14,
+          "worker_cpu_seconds_approx": [
+            0.38,
+            0.38,
+            0.38,
+            0.39
+          ],
+          "sampling": "maximum observed per-thread CPU ticks, sampled every 5 ms; may miss final ticks"
+        }
+      },
+      "median_ms": {
+        "before": 765.983571,
+        "after": 423.74693
+      },
+      "range_ms": {
+        "before": [
+          744.403794,
+          802.09446
+        ],
+        "after": [
+          407.599468,
+          464.780165
+        ]
+      }
+    },
+    "small_cold": {
+      "files": 8,
+      "source_bytes": 2632,
+      "rows": {
+        "files": 8,
+        "facts": 8,
+        "impls": 0,
+        "calls": 8,
+        "spans": 8
+      },
+      "samples_ms": {
+        "before": [
+          20.852998,
+          22.368041,
+          20.930491,
+          22.039155,
+          19.87912,
+          18.644403,
+          19.72819
+        ],
+        "after": [
+          20.534747,
+          20.765793,
+          21.40308,
+          19.588589,
+          18.548283,
+          19.875149,
+          19.582194
+        ]
+      },
+      "profiles_untimed": {
+        "before": {
+          "peak_rss_kib": 11760,
+          "user_seconds": 0.01,
+          "system_seconds": 0.02,
+          "threads_created": 1,
+          "main_cpu_seconds_approx": 0.0,
+          "worker_cpu_seconds_approx": [
+            0.0
+          ],
+          "sampling": "maximum observed per-thread CPU ticks, sampled every 5 ms; may miss final ticks"
+        },
+        "after": {
+          "peak_rss_kib": 12056,
+          "user_seconds": 0.01,
+          "system_seconds": 0.02,
+          "threads_created": 1,
+          "main_cpu_seconds_approx": 0.0,
+          "worker_cpu_seconds_approx": [
+            0.0
+          ],
+          "sampling": "maximum observed per-thread CPU ticks, sampled every 5 ms; may miss final ticks"
+        }
+      },
+      "median_ms": {
+        "before": 20.852998,
+        "after": 19.875149
+      },
+      "range_ms": {
+        "before": [
+          18.644403,
+          22.368041
+        ],
+        "after": [
+          18.548283,
+          21.40308
+        ]
+      }
+    }
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    1.96875,
+    2.09814453125,
+    1.6591796875
+  ]
+}
