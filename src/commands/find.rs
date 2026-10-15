@@ -438,7 +438,11 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         } else {
             None
         },
-        per_file: out.max_per_file,
+        // A symbol search ranks definitions by every matching line, so it
+        // needs the rows a cap would count without keeping.
+        per_file: out
+            .max_per_file
+            .filter(|&n| n > 0 && !args.symbols && !args.source),
         only_matching: args.only_matching,
         invert: args.invert,
     };
@@ -447,6 +451,11 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     // database. That keeps codeq usable as a plain filter outside a repository,
     // and keeps this branch entirely off the indexed path the MCP server uses.
     if args.stdin {
+        // Piped output is never capped per file, so nothing is counted away.
+        let opts = ScanOpts {
+            per_file: None,
+            ..opts
+        };
         let data = scan_stdin(&re, &opts, args.language, search::STDIN_LABEL)?;
         return emit_sessionless(&data, out);
     }
@@ -527,7 +536,10 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         };
         scan_unindexed(&unindexed, &disk_accept, &re, &opts, &mut acc);
     }
-    let data = acc.finish_for(&opts);
+    let mut data = acc.finish_for(&opts);
+    if let SearchData::Matches { overflow, .. } = &mut data {
+        s.add_overflow(std::mem::take(overflow));
+    }
     let quoted = |ps: &mut dyn Iterator<Item = &str>| {
         ps.map(|p| format!("'{p}'")).collect::<Vec<_>>().join(", ")
     };
@@ -576,7 +588,10 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     };
     let note = note.or((!path_notes.is_empty()).then(|| path_notes.join("; ")));
     if args.symbols || args.source {
-        let SearchData::Matches { matches, truncated } = data else {
+        let SearchData::Matches {
+            matches, truncated, ..
+        } = data
+        else {
             unreachable!("symbol search uses match rows")
         };
         let mut symbols =
@@ -748,7 +763,6 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         call_only,
         qualifier,
     } = args;
-    let per_file = out.max_per_file;
     let s = Session::open(cwd, false, out)?;
 
     let expr = regex::escape(name);
@@ -775,7 +789,9 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         qualifier: qualifier.map(str::to_string),
         identifier_boundary: true,
         word_regex: None,
-        per_file,
+        // Not capped here: `--limit` below counts every hit, the ones a per-file
+        // cap withholds included, and the totals follow from the rows kept.
+        per_file: None,
         only_matching: false,
         invert: false,
     };
@@ -791,7 +807,9 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         },
         &opts,
     )? {
-        SearchData::Matches { matches, truncated } => (matches, truncated),
+        SearchData::Matches {
+            matches, truncated, ..
+        } => (matches, truncated),
         _ => unreachable!("references always uses Matches mode"),
     };
     hits.extend(alias_hits(&s, name, path, language, &opts)?);

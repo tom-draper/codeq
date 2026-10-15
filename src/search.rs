@@ -11,6 +11,7 @@
 //! Both share [`scan_doc`] with the indexed path, so all three answer
 //! identically.
 
+use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
@@ -69,6 +70,11 @@ pub(crate) enum SearchData {
     Matches {
         matches: Vec<Hit>,
         truncated: bool,
+        /// Matches past `--max-per-file`, counted per file but never built.
+        /// Not part of the result: the renderer adds them to the totals it
+        /// reports for a capped file.
+        #[serde(skip)]
+        overflow: BTreeMap<String, usize>,
     },
     Files {
         files: Vec<String>,
@@ -884,10 +890,9 @@ pub(crate) struct ScanAcc {
     counts: Vec<FileCount>,
     hits: Vec<Hit>,
     truncated: bool,
-    /// Hits that count against `limit`. Equal to `hits.len()` unless
-    /// `ScanOpts::per_file` is set, when the overflow a file keeps only so its
-    /// true count can be reported is excluded.
-    kept: usize,
+    /// Per file, how many matches fell past `ScanOpts::per_file`. Only the
+    /// count is kept: a file's true total is its rows in `hits` plus this.
+    overflow: BTreeMap<String, usize>,
 }
 
 impl ScanAcc {
@@ -939,6 +944,7 @@ impl ScanAcc {
                     self.hits
                 },
                 truncated,
+                overflow: self.overflow,
             },
         }
     }
@@ -1051,6 +1057,7 @@ pub(crate) fn scan_doc(
             let mut defs: Option<DefIndex> = None;
             let mut last_line = usize::MAX;
             let mut kept_here = 0usize;
+            let mut dropped = 0usize;
             let mut stop = false;
             for m in matches() {
                 if !bounded(&m) {
@@ -1100,6 +1107,16 @@ pub(crate) fn scan_doc(
                 }
                 last_line = line_idx;
 
+                // Past this file's cap the match is counted and nothing else:
+                // building the row would cost its path, text, context and
+                // enclosing symbol for output that is never shown. It must not
+                // consume `limit` either, or the survey stops early on rows
+                // nobody will ever see.
+                if opts.per_file.is_some_and(|n| kept_here >= n) {
+                    dropped += 1;
+                    continue;
+                }
+
                 let d = defs.get_or_insert_with(|| load_defs(path));
                 let enclosing = d.innermost(off);
                 acc.hits.push(Hit {
@@ -1120,23 +1137,20 @@ pub(crate) fn scan_doc(
                     before: context_lines(body, s, line_idx.saturating_sub(opts.before)..line_idx),
                     after: context_lines(body, s, (line_idx + 1)..(line_idx + 1 + opts.after)),
                 });
-                // Past this file's cap the hit is carried for its count only, so
-                // it must not consume `limit` — otherwise the survey stops early
-                // on rows nobody will ever see.
-                if opts.per_file.is_none_or(|n| kept_here < n) {
-                    kept_here += 1;
-                    acc.kept += 1;
-                    if acc.kept >= cap {
-                        acc.truncated = true;
-                        // Under a per-file cap, stopping mid-file would report
-                        // this file's partial count as its total — the one file
-                        // in the survey that lies. Finish counting it, then stop.
-                        if opts.per_file.is_none() {
-                            return true;
-                        }
-                        stop = true;
+                kept_here += 1;
+                if acc.hits.len() >= cap {
+                    acc.truncated = true;
+                    // Under a per-file cap, stopping mid-file would report
+                    // this file's partial count as its total — the one file
+                    // in the survey that lies. Finish counting it, then stop.
+                    if opts.per_file.is_none() {
+                        return true;
                     }
+                    stop = true;
                 }
+            }
+            if dropped > 0 {
+                acc.overflow.insert(path.to_string(), dropped);
             }
             if stop {
                 return true;
@@ -1196,8 +1210,14 @@ fn scan_inverted<'a>(
         OutMode::Matches => {
             let mut defs: Option<DefIndex> = None;
             let mut kept_here = 0usize;
+            let mut dropped = 0usize;
             let mut stop = false;
             for i in free {
+                // Counted, not built, past this file's cap: see `scan_doc`.
+                if opts.per_file.is_some_and(|n| kept_here >= n) {
+                    dropped += 1;
+                    continue;
+                }
                 let d = defs.get_or_insert_with(|| load_defs(path));
                 let enclosing = d.innermost(starts[i]);
                 acc.hits.push(Hit {
@@ -1213,18 +1233,17 @@ fn scan_inverted<'a>(
                     before: context_lines(body, &starts, i.saturating_sub(opts.before)..i),
                     after: context_lines(body, &starts, (i + 1)..(i + 1 + opts.after)),
                 });
-                // The same two budgets as the ordinary scan: see there.
-                if opts.per_file.is_none_or(|n| kept_here < n) {
-                    kept_here += 1;
-                    acc.kept += 1;
-                    if acc.kept >= cap {
-                        acc.truncated = true;
-                        if opts.per_file.is_none() {
-                            return true;
-                        }
-                        stop = true;
+                kept_here += 1;
+                if acc.hits.len() >= cap {
+                    acc.truncated = true;
+                    if opts.per_file.is_none() {
+                        return true;
                     }
+                    stop = true;
                 }
+            }
+            if dropped > 0 {
+                acc.overflow.insert(path.to_string(), dropped);
             }
             return stop;
         }
