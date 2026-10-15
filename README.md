@@ -1,6 +1,6 @@
 # codeq
 
-codeq helps AI coding agents query a codebase returning only what it needs with
+`codeq` helps AI coding agents query a codebase returning only what it needs with
 fewer tool calls. It finds definitions, traces callers, and reads complete
 functions without guessing line ranges.
 
