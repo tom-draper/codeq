@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
@@ -373,20 +373,33 @@ fn parse_and_write(
 ) -> Result<u64> {
     // Worker-local extractors compile only the languages they encounter.
     // A malformed query remains fatal, rolling back the refresh transaction.
+    let bytes: u64 = work.iter().map(|item| item.2.max(0) as u64).sum();
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
         .clamp(1, 8)
-        // Keep at least 32 files per worker to amortize parser/query setup.
-        .min(work.len().div_ceil(32).max(1));
-    let chunk = work.len().div_ceil(workers).max(1);
+        // Small files amortize parser setup by count; large files can justify
+        // parallel parsing even when the whole refresh has fewer than 32 files.
+        .min(
+            work.len()
+                .div_ceil(32)
+                .max(bytes.div_ceil(512 * 1024).min(8) as usize)
+                .max(1),
+        )
+        .min(work.len());
+    let mut jobs: Vec<usize> = (0..work.len()).collect();
+    jobs.sort_unstable_by_key(|&i| std::cmp::Reverse(work[i].2));
+    let next = AtomicUsize::new(0);
     let (res_tx, res_rx) = std::sync::mpsc::sync_channel::<Parsed>(256);
     std::thread::scope(|scope| -> Result<u64> {
-        for c in work.chunks(chunk) {
+        for _ in 0..workers {
             let sender = res_tx.clone();
+            let jobs = &jobs;
+            let next = &next;
             scope.spawn(move || {
                 let mut ex = Extractor::default();
-                for (rel, abs, size, mtime, ctime) in c {
+                while let Some(&i) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    let (rel, abs, size, mtime, ctime) = &work[i];
                     match parse_one(existing, &mut ex, rel, abs, *size, *mtime, *ctime) {
                         Ok(Some(p)) => {
                             if sender.send(p).is_err() {
