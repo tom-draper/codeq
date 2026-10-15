@@ -19,6 +19,7 @@ Usage:
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -40,8 +41,35 @@ def run(cmd, path):
     return secs * 1000, out
 
 
+class Agent:
+    """What one generic-tool agent pays for a task: output bytes, wall time, and
+    tool calls. A call is one model turn, so commands that don't depend on each
+    other's output share a call, the way Claude Code issues parallel tool calls
+    and Codex joins commands in one shell invocation. Only a step that needs the
+    previous step's output costs another call."""
+
+    def __init__(self, path):
+        self.path, self.calls, self.bytes, self.ms = path, 0, 0, 0.0
+
+    def call(self, *cmds):
+        if not cmds:
+            return []
+        self.calls += 1
+        outs = []
+        for c in cmds:
+            dt, out = run(c, self.path)
+            self.bytes += len(out)
+            self.ms += dt
+            outs.append(out)
+        return outs
+
+    def cost(self):
+        return self.calls, self.bytes, self.ms
+
+
 def measure(cmds, path):
-    """Run a fixed argv sequence; return (calls, bytes, ms)."""
+    """Run a fixed argv sequence; return (calls, bytes, ms). Used for codeq,
+    where every task is one command."""
     calls = nbytes = 0
     ms = 0.0
     for c in cmds:
@@ -52,110 +80,181 @@ def measure(cmds, path):
     return calls, nbytes, ms
 
 
-def first_hits(rg_out, k):
-    hits = []
-    for line in rg_out.decode("utf-8", "replace").splitlines():
+def rg(*args):
+    """An agent's grep. Long lines are cut, so minified or generated files
+    (docs HTML, bundles) don't flood the output and inflate the baseline."""
+    return ["rg", "-n", "--no-heading", "--no-messages", "--max-columns", "300", *args]
+
+
+def hits(out):
+    """(file, line, text) for each `file:line:text` row of rg output."""
+    rows = []
+    for line in out.decode("utf-8", "replace").splitlines():
         p = line.split(":", 2)
-        if len(p) >= 2 and p[1].isdigit():
-            hits.append((p[0], int(p[1])))
-        if len(hits) >= k:
-            break
-    return hits
+        if len(p) == 3 and p[1].isdigit():
+            rows.append((p[0], int(p[1]), p[2]))
+    return rows
 
 
-def windows(hits):
-    return [["sed", "-n", f"{max(1, ln - 3)},{ln + WINDOW}p", f] for f, ln in hits]
+def def_window(f, ln):
+    """Read a definition from its first line, like a Read with offset/limit."""
+    return ["sed", "-n", f"{max(1, ln - 3)},{ln + WINDOW}p", f]
 
 
-# ---- baselines: the generic-tool sequence a good agent runs for the same answer
+def site_window(f, ln):
+    """Read around a hit, enough above it to see the enclosing definition."""
+    return ["sed", "-n", f"{max(1, ln - WINDOW // 2)},{ln + WINDOW // 2}p", f]
+
+
+# How an agent greps for a definition. Languages whose methods carry no keyword
+# (Java, C#, C++) miss here, and the agent falls back to `rg -w`.
+DECL = r"\b(fn|def|func|fun|function|class|struct|interface|trait|enum|type|module)\s+"
+IMPORT = r"^\s*(import|from|require|use|include|using)\b"
+PUBLIC = r"^\s*(pub |export |public |private |protected |func |def |class |struct |interface |fn |impl |type )"
+
+
+def pick(rows, known):
+    """The hit an agent reading the output takes as the definition: the real one
+    when it is listed (the agent recognises it), otherwise the first."""
+    for r in rows:
+        if known and (r[0], r[1]) == known:
+            return r[0], r[1]
+    return (rows[0][0], rows[0][1]) if rows else None
+
+
+def locate(agent, names, known=None):
+    """Find definitions: one declaration grep for every name, then one batched
+    `rg -w` for the names it missed. Returns {name: (file, line)}."""
+    known = known or {}
+    pat = DECL + "(" + "|".join(re.escape(n) for n in names) + r")\b"
+    (out,) = agent.call(rg("-e", pat))
+    by_name = {}
+    for f, ln, text in hits(out):
+        for n in names:
+            if re.search(DECL + re.escape(n) + r"\b", text):
+                by_name.setdefault(n, []).append((f, ln, text))
+    missing = [n for n in names if n not in by_name]
+    for n, o in zip(missing, agent.call(*[rg("-w", n) for n in missing])):
+        by_name[n] = hits(o)
+    found = {}
+    for n in names:
+        loc = pick(by_name.get(n, []), known.get(n))
+        if loc:
+            found[n] = loc
+    return found
+
+
+def call_sites(out, exclude, k):
+    """Up to k call-site hits from a `NAME(` grep, skipping the definition."""
+    return [(f, ln) for f, ln, _ in hits(out) if (f, ln) != exclude][:k]
+
+
+# ---- baselines: the generic-tool sequence an agent runs for the same answer
+def base_find_def(path, S, F, m):
+    """Jump to a definition: a declaration grep, `rg -w` if it misses."""
+    a = Agent(path)
+    locate(a, [S], {S: (F, m["def_line"])})
+    return a.cost()
+
+
+def base_enclosing(path, S, F, m):
+    """Which definition encloses a line (a stack frame, a diff hunk): read the
+    lines above it. Enough when the definition starts within 50 lines."""
+    a = Agent(path)
+    a.call(["sed", "-n", f"{max(1, m['line'] - 50)},{m['line'] + 10}p", F])
+    return a.cost()
+
+
+def base_members(path, S, F, m):
+    """A type's fields and methods: find the declaration, read from it."""
+    a = Agent(path)
+    loc = locate(a, [m["type"]], {m["type"]: (m["type_file"], m["type_line"])})
+    if m["type"] in loc:
+        a.call(def_window(*loc[m["type"]]))
+    return a.cost()
+
+
+def base_importers(path, S, F, m):
+    """Who imports a file: grep import lines naming its stem."""
+    a = Agent(path)
+    stem = re.escape(os.path.splitext(os.path.basename(F))[0])
+    a.call(rg("-e", IMPORT + r".*\b" + stem + r"\b"))
+    return a.cost()
+
+
 def base_locate_read(path, S, F, m):
-    """Read a function's implementation: grep to locate, read a window."""
-    ms, rout = run(["rg", "-nw", "--no-heading", "--no-messages", "-m", "1", S], path)
-    c, b, t = measure(windows(first_hits(rout, 1)), path)
-    return 1 + c, len(rout) + b, ms + t
+    """Read a function's implementation: find it, read from its first line."""
+    a = Agent(path)
+    loc = locate(a, [S], {S: (F, m["def_line"])})
+    if S in loc:
+        a.call(def_window(*loc[S]))
+    return a.cost()
 
 
 def base_understand(path, S, F, m):
-    """Understand before editing: locate + read def, then find + read a caller."""
-    ms1, rloc = run(["rg", "-nw", "--no-heading", "--no-messages", "-m", "1", S], path)
-    c1, b1, t1 = measure(windows(first_hits(rloc, 1)), path)
-    ms2, rcall = run(["rg", "-n", "--no-heading", "--no-messages", rf"{S}\("], path)
-    c2, b2, t2 = measure(windows(first_hits(rcall, 1)), path)
-    return 2 + c1 + c2, len(rloc) + b1 + len(rcall) + b2, ms1 + t1 + ms2 + t2
+    """Understand before editing: grep the definition and the call sites
+    together, then read the definition and one caller."""
+    a = Agent(path)
+    decl, calls = a.call(rg("-e", DECL + re.escape(S) + r"\b"), rg("-e", re.escape(S) + r"\("))
+    loc = pick(hits(decl) or hits(calls), (F, m["def_line"]))
+    reads = [def_window(*loc)] if loc else []
+    reads += [site_window(*h) for h in call_sites(calls, loc, 1)]
+    a.call(*reads)
+    return a.cost()
 
 
 def base_callsites(path, S, F, m):
-    """Who calls S and their context: grep call sites, read a window at each of 2."""
-    ms, rcall = run(["rg", "-n", "--no-heading", "--no-messages", rf"{S}\("], path)
-    c, b, t = measure(windows(first_hits(rcall, 2)), path)
-    return 1 + c, len(rcall) + b, ms + t
+    """Who calls S: grep the call sites, then read around up to 5 of them to see
+    which function each is in. codeq lists every caller, so the cap
+    under-charges the baseline."""
+    a = Agent(path)
+    (calls,) = a.call(rg("-e", re.escape(S) + r"\("))
+    a.call(*[site_window(*h) for h in call_sites(calls, (F, m["def_line"]), 5)])
+    return a.cost()
 
 
 def base_read_file(path, S, F, m):
-    """Learn a file's structure: no generic shortcut — read the file."""
-    return measure([["cat", F]], path)
+    """Learn a file's structure: no generic shortcut, read the file."""
+    a = Agent(path)
+    a.call(["cat", F])
+    return a.cost()
 
 
 def base_rg_word(path, S, F, m):
-    return measure([["rg", "-nw", "--no-heading", "--no-messages", S]], path)
+    a = Agent(path)
+    a.call(rg("-w", S))
+    return a.cost()
 
 
 def base_public_api(path, S, F, m):
-    """A file's public API the generic way: grep declaration lines (their
-    single-line signatures come with the hit) and eyeball which are exported —
-    there's no cross-language grep for *visibility*, so this over-returns
-    (privates included) and the agent still filters. codeq `api` returns just the
-    public surface. A distinct baseline from file-structure (which reads the whole
-    file), so the two tasks don't double-count the same action."""
-    return measure([["rg", "-n", "--no-heading", "--no-messages",
-                     r"^\s*(pub |export |public |private |protected |func |def |class |struct |interface |fn |impl |type )",
-                     F]], path)
+    """A file's public API: grep declaration lines (their single-line signatures
+    come with the hit). There's no cross-language grep for visibility, so this
+    over-returns (privates included) and the agent still filters."""
+    a = Agent(path)
+    a.call(rg("-e", PUBLIC, F))
+    return a.cost()
 
 
 def base_package_api(path, S, F, m):
-    """A whole package's public API the generic way: to enumerate what a directory
-    exports (with complete signatures and visibility), an agent reads the files
-    that hold it — a decl grep gives incomplete first-lines and can't filter
-    public. We charge reading exactly the files the package's API lives in (the
-    distinct files codeq `api <dir>` draws from), capped so one big package can't
-    dominate — which *under*-charges the baseline. codeq does it in one call."""
-    scope = os.path.dirname(F) or "."
-    p = subprocess.run([CODEQ, "--json", "api", scope, "--limit", "0"],
-                       cwd=path, capture_output=True).stdout
-    try:
-        rows = json.loads(p)["data"]
-    except (ValueError, KeyError):
-        rows = []
-    files, seen = [], set()
-    for r in rows:
-        fp = r.get("path")
-        if fp and fp not in seen:
-            seen.add(fp)
-            files.append(fp)
-    if not files:
-        return 1, len(p), 0.0
-    return measure([["cat", fp] for fp in files[:15]], path)  # cap: undercharges
+    """A package's public API: the same declaration grep over the directory."""
+    a = Agent(path)
+    a.call(rg("-e", PUBLIC, os.path.dirname(F) or "."))
+    return a.cost()
 
 
 def base_rg_imports(path, S, F, m):
-    """The file's imports the generic way. A line grep for import keywords finds
-    single-line imports, but a block/grouped import (`import (` in Go, `use a::{`
-    in Rust) matches only the opener line — its members are on following lines. To
-    reach the SAME module list codeq returns, the agent must read each opened
-    block, so we charge that read (and only that — single-line imports add nothing,
-    keeping the comparison honest near-parity where codeq has no structural edge)."""
-    ms, r = run(["rg", "-n", "--no-heading", "--no-messages",
-                 r"^\s*(import|from|require|use|include|using)\b", F], path)
-    calls, nbytes, tms = 1, len(r), ms
+    """The file's imports. A line grep finds single-line imports, but a grouped
+    import (`import (` in Go, `use a::{` in Rust) matches only its opener, so the
+    agent reads each opened block, all in one follow-up call."""
+    a = Agent(path)
+    (r,) = a.call(rg("-e", IMPORT, F))
+    blocks = []
     for line in r.decode("utf-8", "replace").splitlines():
         num, _, text = line.partition(":")
-        if num.isdigit() and text.rstrip().endswith(("(", "{")):  # a block opener
-            ln = int(num)
-            dt, w = run(["sed", "-n", f"{ln},{ln + 20}p", F], path)  # read its members
-            calls += 1
-            nbytes += len(w)
-            tms += dt
-    return calls, nbytes, tms
+        if num.isdigit() and text.rstrip().endswith(("(", "{")):
+            blocks.append(["sed", "-n", f"{num},{int(num) + 20}p", F])
+    a.call(*blocks)
+    return a.cost()
 
 
 def codeq_caller_syms(path, S):
@@ -193,42 +292,32 @@ def codeq_callee_syms(path, S):
 
 
 def base_explore(path, S, F, m):
-    """Understand a symbol AND its neighbourhood with source — what `explore`
-    returns in one call: the definition, its callers, and its callees, each with
-    code. The generic way is a locate+read loop: read the def, read a window at up
-    to 3 call sites, and locate+read up to 3 of the callees. codeq does it once."""
-    ms, rloc = run(["rg", "-nw", "--no-heading", "--no-messages", "-m", "1", S], path)
-    c, b, t = measure(windows(first_hits(rloc, 1)), path)
-    calls, nbytes, tms = 1 + c, len(rloc) + b, ms + t
-    # callers: grep call sites, read a window at up to 3 to see the calling code.
-    ms2, rcall = run(["rg", "-n", "--no-heading", "--no-messages", rf"{S}\("], path)
-    c2, b2, t2 = measure(windows(first_hits(rcall, 3)), path)
-    calls += 1 + c2
-    nbytes += len(rcall) + b2
-    tms += ms2 + t2
-    # callees: reach codeq's callee set, locate+read up to 3 of them.
-    for name in codeq_callee_syms(path, S)[:3]:
-        ms3, rc = run(["rg", "-nw", "--no-heading", "--no-messages", "-m", "1", name], path)
-        cc, bb, tt = measure(windows(first_hits(rc, 1)), path)
-        calls += 1 + cc
-        nbytes += len(rc) + bb
-        tms += ms3 + tt
-    return calls, nbytes, tms
+    """A symbol and its neighbourhood with source, what `explore` returns in one
+    call. Grep the definition and call sites together, read the definition and
+    up to 3 call sites, then find and read up to 3 of the callees it names."""
+    a = Agent(path)
+    decl, calls = a.call(rg("-e", DECL + re.escape(S) + r"\b"), rg("-e", re.escape(S) + r"\("))
+    loc = pick(hits(decl) or hits(calls), (F, m["def_line"]))
+    reads = [def_window(*loc)] if loc else []
+    reads += [site_window(*h) for h in call_sites(calls, loc, 3)]
+    a.call(*reads)
+    callees = codeq_callee_syms(path, S)[:3]
+    if callees:
+        found = locate(a, callees)
+        a.call(*[def_window(*found[n]) for n in callees if n in found])
+    return a.cost()
 
 
 def base_blast_radius(path, S, F, m):
-    """Two-hop blast radius the honest generic way: grep S's call sites and read a
-    window at each to learn the enclosing callers (hop 1), then grep each of those
-    to reach hop 2. codeq does it in one `callers --depth 2` call."""
-    ms1, r1 = run(["rg", "-n", "--no-heading", "--no-messages", rf"{S}\("], path)
-    c1, b1, t1 = measure(windows(first_hits(r1, 5)), path)  # read to identify enclosers
-    calls, nbytes, ms = 1 + c1, len(r1) + b1, ms1 + t1
-    for sym in codeq_caller_syms(path, S)[:5]:               # hop 2: re-grep each
-        dt, r2 = run(["rg", "-n", "--no-heading", "--no-messages", rf"{sym}\("], path)
-        calls += 1
-        nbytes += len(r2)
-        ms += dt
-    return calls, nbytes, ms
+    """Two-hop impact: grep S's call sites, read around up to 5 to learn the
+    enclosing callers, then grep calls to all of those in one search."""
+    a = Agent(path)
+    (calls,) = a.call(rg("-e", re.escape(S) + r"\("))
+    a.call(*[site_window(*h) for h in call_sites(calls, (F, m["def_line"]), 5)])
+    callers = codeq_caller_syms(path, S)[:5]
+    if callers:
+        a.call(rg("-e", "(" + "|".join(re.escape(c) for c in callers) + r")\("))
+    return a.cost()
 
 
 def file_def_names(path, F):
@@ -249,32 +338,41 @@ def file_def_names(path, F):
 
 
 def base_dead_code(path, S, F, m):
-    """Find a file's dead code the generic way: list its definitions, then grep
-    each name across the repo to see if anything uses it — the loop codeq's one
-    `unused <file>` call replaces. Capped at 20 symbols, which under-charges the
-    baseline (a real hunt checks them all)."""
-    ms, r = run(["rg", "-n", "--no-heading", "--no-messages",
-                 r"^\s*(pub |export |public |func |def |class |struct |fn |type )", F], path)
-    calls, nbytes, tms = 1, len(r), ms  # locate the file's definitions
-    for name in file_def_names(path, F)[:20]:
-        dt, hits = run(["rg", "-nw", "--no-heading", "--no-messages", name], path)
-        calls += 1
-        nbytes += len(hits)
-        tms += dt
-    return calls, nbytes, tms
+    """A file's dead code: list its definitions, then count the lines naming
+    each one across the repo in one shell loop. A count of 1 is the definition
+    alone, so the name is a candidate."""
+    a = Agent(path)
+    a.call(rg("-e", PUBLIC, F))
+    names = file_def_names(path, F)
+    if names:
+        a.call(["sh", "-c",
+                'for n in "$@"; do echo "$n $(rg -w --no-messages -- "$n" | wc -l)"; done',
+                "sh", *names])
+    return a.cost()
+
+
+TEST_GLOBS = ("*test*", "*spec*", "*Test*", "**/test*/**", "**/spec/**", "**/Test*/**")
 
 
 def base_which_tests(path, S, F, m):
-    """Which tests exercise S: grep S within test-looking files, then read a window
-    at each hit to confirm it's a test. codeq does it in one `tests` call."""
-    ms, r = run(["rg", "-nw", "--no-heading", "--no-messages",
-                 "-g", "*test*", "-g", "*spec*", "-g", "*Test*", "-g", "*_test*", S], path)
-    c, b, t = measure(windows(first_hits(r, 5)), path)
-    return 1 + c, len(r) + b, ms + t
+    """Which tests exercise S: grep S in test-looking files, then read around up
+    to 5 hits to see which test each is in."""
+    a = Agent(path)
+    (r,) = a.call(rg("-w", *[a for g in TEST_GLOBS for a in ("-g", g)], S))
+    a.call(*[site_window(f, ln) for f, ln, _ in hits(r)[:5]])
+    return a.cost()
 
 
 # ---- tasks: (name, codeq argv builder, baseline fn, note)
 TASKS = [
+    ("find-def",        lambda S, F, m: [CODEQ, "definitions", S],
+     base_find_def,     "jump to a definition (near parity)"),
+    ("enclosing-def",   lambda S, F, m: [CODEQ, "at", f"{F}:{m['line']}"],
+     base_enclosing,    "which definition encloses a line"),
+    ("type-members",    lambda S, F, m: [CODEQ, "members", m["type"], "--path", m["type_file"]],
+     base_members,      "a type's fields and methods vs locate + read"),
+    ("file-importers",  lambda S, F, m: [CODEQ, "importers", F],
+     base_importers,    "who imports a file (near parity)"),
     ("read-impl",       lambda S, F, m: [CODEQ, "read", F, "--symbol", S],
      base_locate_read,  "read a function's body"),
     ("understand-sym",  lambda S, F, m: [CODEQ, "about", S],
@@ -282,19 +380,19 @@ TASKS = [
     ("explore",         lambda S, F, m: [CODEQ, "explore", S, "--max-tokens", "8000"],
      base_explore,      "def + callers + callees WITH source, one call vs a grep+read loop"),
     ("callsites",       lambda S, F, m: [CODEQ, "callers", S],
-     base_callsites,    "who calls it, with context"),
+     base_callsites,    "who calls it"),
     ("blast-radius",    lambda S, F, m: [CODEQ, "callers", S, "--depth", "2"],
      base_blast_radius, "2-hop caller tree vs iterative grep rounds"),
     ("which-tests",     lambda S, F, m: [CODEQ, "tests", S],
      base_which_tests,  "tests exercising S vs grep-in-tests + read"),
     ("dead-code",       lambda S, F, m: [CODEQ, "unused", F, "--include-tests"],
-     base_dead_code,    "a file's dead code vs grepping each symbol for uses"),
+     base_dead_code,    "a file's dead code vs counting each symbol's uses"),
     ("file-structure",  lambda S, F, m: [CODEQ, "outline", F],
      base_read_file,    "learn a file's API/shape"),
     ("public-api",      lambda S, F, m: [CODEQ, "api", F],
      base_public_api,   "a file's exported API vs grepping decls and filtering"),
     ("package-api",     lambda S, F, m: [CODEQ, "api", os.path.dirname(F) or "."],
-     base_package_api,  "a package's exported API vs reading its files"),
+     base_package_api,  "a package's exported API vs grepping decls"),
     ("usages",          lambda S, F, m: [CODEQ, "references", S, "--limit", "0"],
      base_rg_word,      "all references (near-parity with rg)"),
     ("file-imports",    lambda S, F, m: [CODEQ, "imports", F],
@@ -302,10 +400,19 @@ TASKS = [
 ]
 
 
+def is_test(d):
+    """A test, by path or name. Asking who calls a test, or which tests use it,
+    has no meaningful answer, so targets skip them."""
+    return (re.search(r"(^|/)(tests?|spec|__tests__)(/|$)|[._-](test|spec)\.|_test\.|Tests?\.",
+                      d["path"]) is not None
+            or re.match(r"(test|Test|spec)", d.get("name", "")) is not None)
+
+
 def pick_target(path):
     # --json here: we parse the symbol table. The task commands below measure the
     # default (text) output — the real agent cost we're comparing.
-    p = subprocess.run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,line", "--limit", "0"],
+    p = subprocess.run([CODEQ, "--json", "symbols", "--fields", "name,kind,path,line,end_line",
+                        "--limit", "0"],
                        cwd=path, capture_output=True).stdout
     try:
         data = json.loads(p)["data"]
@@ -314,12 +421,24 @@ def pick_target(path):
     cand = [d for d in data
             if d.get("kind") in ("function", "method")
             and d.get("name", "").isidentifier() and len(d.get("name", "")) >= 5
-            and not any(v in "/" + d["path"] for v in VENDORED)]
+            and not any(v in "/" + d["path"] for v in VENDORED)
+            and not is_test(d)]
     cand.sort(key=lambda d: (d["path"], d.get("line", 0)))
     if not cand:
         return None
     s = cand[len(cand) // 2]
-    return s["name"], s["path"], None
+    # A line inside the body, for `at`, and a type for `members` (the median type,
+    # chosen the same way). Repos with no type skip that task.
+    m = {"def_line": s["line"], "line": (s["line"] + s.get("end_line", s["line"])) // 2}
+    types = [d for d in data
+             if d.get("kind") in ("struct", "class", "interface", "trait", "enum")
+             and d.get("name", "").isidentifier() and len(d.get("name", "")) >= 3
+             and not any(v in "/" + d["path"] for v in VENDORED)]
+    types.sort(key=lambda d: (d["path"], d.get("line", 0)))
+    if types:
+        t = types[len(types) // 2]
+        m["type"], m["type_file"], m["type_line"] = t["name"], t["path"], t["line"]
+    return s["name"], s["path"], m
 
 
 def run_repo(path):
@@ -331,6 +450,8 @@ def run_repo(path):
     S, F, m = tgt
     out = {}
     for name, cq_build, base_fn, _note in TASKS:
+        if name == "type-members" and "type" not in m:
+            continue
         cc, cb, ct = measure([cq_build(S, F, m)], path)
         bc, bb, bt = base_fn(path, S, F, m)
         out[name] = {"codeq": {"calls": cc, "bytes": cb, "ms": round(ct, 1)},
