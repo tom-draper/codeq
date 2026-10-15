@@ -350,182 +350,195 @@ fn match_file(
     }
 }
 
-/// Compile `pattern` for `lang_name` and return every structural match across
-/// `files` (each `(path, source)`), in deterministic path+position order.
-///
-/// With `stop_after = Some(n)` the scan ends as soon as `n` matches are known to
-/// precede everything not yet looked at, and at most `n` matches are returned. The caller passes `limit + 1` to learn whether the
-/// result was truncated.
-///
-/// `files` must arrive in ascending path order for that to mean "the first `n`
-/// matches": results are consumed in input order, and a file's own matches are
-/// ordered by position, so the first `n` are exactly what an exhaustive search
-/// followed by a sort would have kept. Worker lookahead is bounded, so a stopped
-/// scan parses only a few files past the one that settled the answer.
-pub fn search<I>(
-    lang_name: &str,
-    pattern: &str,
-    files: I,
-    stop_after: Option<usize>,
-) -> Result<Vec<Match>>
-where
-    I: IntoIterator<Item = (String, String)>,
-{
-    let lang = ts_language(lang_name).ok_or_else(|| anyhow!("unknown language: {lang_name}"))?;
-    let substituted = substitute_metavars(pattern)?;
+/// A validated structural pattern and the literal bytes every match requires.
+pub struct Pattern {
+    lang: tree_sitter::Language,
+    substituted: String,
+    literals: Vec<Vec<u8>>,
+}
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&lang)
-        .map_err(|e| anyhow!("set language: {e}"))?;
-    let pat_tree = parser
-        .parse(&substituted, None)
-        .ok_or_else(|| anyhow!("failed to parse pattern"))?;
-    let psrc = substituted.as_bytes();
-    let pat_node = significant(pat_tree.root_node());
-    if pat_node.is_error() || pat_node.has_error() {
-        return Err(anyhow!(
-            "pattern did not parse as valid {lang_name}; write it as a complete construct"
-        ));
+impl Pattern {
+    pub fn new(lang_name: &str, pattern: &str) -> Result<Self> {
+        let lang =
+            ts_language(lang_name).ok_or_else(|| anyhow!("unknown language: {lang_name}"))?;
+        let substituted = substitute_metavars(pattern)?;
+
+        let mut parser = Parser::new();
+        parser
+            .set_language(&lang)
+            .map_err(|e| anyhow!("set language: {e}"))?;
+        let pat_tree = parser
+            .parse(&substituted, None)
+            .ok_or_else(|| anyhow!("failed to parse pattern"))?;
+        let psrc = substituted.as_bytes();
+        let pat_node = significant(pat_tree.root_node());
+        if pat_node.is_error() || pat_node.has_error() {
+            return Err(anyhow!(
+                "pattern did not parse as valid {lang_name}; write it as a complete construct"
+            ));
+        }
+        // `significant` descends through ERROR nodes, because a bare expression is not
+        // a valid top-level item in some grammars and only survives via error
+        // recovery. The cost is that a genuinely malformed pattern also parses — the
+        // parser discards what it can't use, and the descent lands on whichever
+        // fragment survived, error-free. `if { }` quietly became "an empty block" and
+        // `garbage $$$` became a lone identifier: both then reported zero matches and
+        // exit 0, which reads as "no such code exists" rather than "your pattern is
+        // wrong". Requiring the chosen node to span the whole pattern separates the
+        // two, since recovery is exactly what drops part of the input.
+        let covered = std::str::from_utf8(&psrc[pat_node.start_byte()..pat_node.end_byte()])
+            .unwrap_or_default();
+        if covered.trim() != substituted.trim() {
+            return Err(anyhow!(
+                "pattern did not parse as valid {lang_name}; write it as a complete construct"
+            ));
+        }
+        if metavar_name(pat_node, psrc).is_some() || variadic_name(pat_node, psrc).is_some() {
+            return Err(anyhow!(
+                "pattern is a bare metavariable — it would match everything"
+            ));
+        }
+        // A file can only match if it holds every literal the pattern spells out,
+        // so most files are ruled out by a substring test and never parsed. What
+        // survives is parsed on every core: re-parsing is the whole cost here, and
+        // one file's parse owes nothing to another's.
+        let literals = required_literals(pat_node, psrc)
+            .into_iter()
+            .map(<[u8]>::to_vec)
+            .collect();
+        Ok(Self {
+            lang,
+            substituted,
+            literals,
+        })
     }
-    // `significant` descends through ERROR nodes, because a bare expression is not
-    // a valid top-level item in some grammars and only survives via error
-    // recovery. The cost is that a genuinely malformed pattern also parses — the
-    // parser discards what it can't use, and the descent lands on whichever
-    // fragment survived, error-free. `if { }` quietly became "an empty block" and
-    // `garbage $$$` became a lone identifier: both then reported zero matches and
-    // exit 0, which reads as "no such code exists" rather than "your pattern is
-    // wrong". Requiring the chosen node to span the whole pattern separates the
-    // two, since recovery is exactly what drops part of the input.
-    let covered =
-        std::str::from_utf8(&psrc[pat_node.start_byte()..pat_node.end_byte()]).unwrap_or_default();
-    if covered.trim() != substituted.trim() {
-        return Err(anyhow!(
-            "pattern did not parse as valid {lang_name}; write it as a complete construct"
-        ));
+
+    pub fn required_literals(&self) -> impl Iterator<Item = &[u8]> {
+        self.literals.iter().map(Vec::as_slice)
     }
-    if metavar_name(pat_node, psrc).is_some() || variadic_name(pat_node, psrc).is_some() {
-        return Err(anyhow!(
-            "pattern is a bare metavariable — it would match everything"
-        ));
-    }
-    // A file can only match if it holds every literal the pattern spells out,
-    // so most files are ruled out by a substring test and never parsed. What
-    // survives is parsed on every core: re-parsing is the whole cost here, and
-    // one file's parse owes nothing to another's.
-    let literals = required_literals(pat_node, psrc);
-    let finders: Vec<memchr::memmem::Finder> = literals
-        .iter()
-        .map(|lit| memchr::memmem::Finder::new(lit))
-        .collect();
-    let workers = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
-        .clamp(1, 8);
-    // Files are numbered as they are sent and their results re-assembled in that
-    // order, so "the first n matches" is well defined however the workers race.
-    // The window bounds how far past the oldest unfinished file the producer
-    // runs, which bounds both the bodies in flight and the results held back.
-    let window = workers * 4;
-    let (work_tx, work_rx) = std::sync::mpsc::channel::<(usize, String, String)>();
-    let work_rx = std::sync::Mutex::new(work_rx);
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<(usize, Vec<Match>)>();
-    let mut out = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..workers)
-            .map(|_| {
-                let done_tx = done_tx.clone();
-                let (lang, substituted, work_rx) = (&lang, &substituted, &work_rx);
-                scope.spawn(move || {
-                    // A parser and a pattern tree per worker: neither is shared.
-                    let mut parser = Parser::new();
-                    if parser.set_language(lang).is_err() {
-                        return;
-                    }
-                    let Some(pat_tree) = parser.parse(substituted, None) else {
-                        return;
-                    };
-                    let pat_node = significant(pat_tree.root_node());
-                    loop {
-                        let next = work_rx.lock().unwrap().recv();
-                        let Ok((seq, path, body)) = next else {
-                            return;
-                        };
-                        let mut found = Vec::new();
-                        match_file(&mut parser, pat_node, psrc, &path, &body, &mut found);
-                        // The DFS yields a file's matches in stack order; the
-                        // reassembly below relies on position order.
-                        found.sort_by_key(|m| (m.start_line, m.start_col));
-                        if done_tx.send((seq, found)).is_err() {
+
+    /// Search files in ascending path order, stopping after the first `n`
+    /// matches when requested. Worker lookahead is bounded.
+    pub fn search<I>(&self, files: I, stop_after: Option<usize>) -> Vec<Match>
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        let (lang, substituted) = (&self.lang, &self.substituted);
+        let psrc = substituted.as_bytes();
+        let finders: Vec<memchr::memmem::Finder> = self
+            .literals
+            .iter()
+            .map(|lit| memchr::memmem::Finder::new(lit))
+            .collect();
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .clamp(1, 8);
+        // Files are numbered as they are sent and their results re-assembled in that
+        // order, so "the first n matches" is well defined however the workers race.
+        // The window bounds how far past the oldest unfinished file the producer
+        // runs, which bounds both the bodies in flight and the results held back.
+        let window = workers * 4;
+        let (work_tx, work_rx) = std::sync::mpsc::channel::<(usize, String, String)>();
+        let work_rx = std::sync::Mutex::new(work_rx);
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<(usize, Vec<Match>)>();
+        let mut out = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..workers)
+                .map(|_| {
+                    let done_tx = done_tx.clone();
+                    let (lang, substituted, work_rx) = (lang, substituted, &work_rx);
+                    scope.spawn(move || {
+                        // A parser and a pattern tree per worker: neither is shared.
+                        let mut parser = Parser::new();
+                        if parser.set_language(lang).is_err() {
                             return;
                         }
-                    }
+                        let Some(pat_tree) = parser.parse(substituted, None) else {
+                            return;
+                        };
+                        let pat_node = significant(pat_tree.root_node());
+                        loop {
+                            let next = work_rx.lock().unwrap().recv();
+                            let Ok((seq, path, body)) = next else {
+                                return;
+                            };
+                            let mut found = Vec::new();
+                            match_file(&mut parser, pat_node, psrc, &path, &body, &mut found);
+                            // The DFS yields a file's matches in stack order; the
+                            // reassembly below relies on position order.
+                            found.sort_by_key(|m| (m.start_line, m.start_col));
+                            if done_tx.send((seq, found)).is_err() {
+                                return;
+                            }
+                        }
+                    })
                 })
-            })
-            .collect();
-        drop(done_tx);
+                .collect();
+            drop(done_tx);
 
-        let mut out: Vec<Match> = Vec::new();
-        let mut pending: HashMap<usize, Vec<Match>> = HashMap::new();
-        let (mut sent, mut next) = (0usize, 0usize);
-        let mut full = false;
-        // Fold completed results into `out` in sequence order.
-        let mut absorb = |seq: usize,
-                          found: Vec<Match>,
-                          out: &mut Vec<Match>,
-                          next: &mut usize,
-                          full: &mut bool| {
-            pending.insert(seq, found);
-            while let Some(found) = pending.remove(next) {
-                *next += 1;
-                if !*full {
-                    out.extend(found);
-                    if stop_after.is_some_and(|n| out.len() >= n) {
-                        *full = true;
+            let mut out: Vec<Match> = Vec::new();
+            let mut pending: HashMap<usize, Vec<Match>> = HashMap::new();
+            let (mut sent, mut next) = (0usize, 0usize);
+            let mut full = false;
+            // Fold completed results into `out` in sequence order.
+            let mut absorb = |seq: usize,
+                              found: Vec<Match>,
+                              out: &mut Vec<Match>,
+                              next: &mut usize,
+                              full: &mut bool| {
+                pending.insert(seq, found);
+                while let Some(found) = pending.remove(next) {
+                    *next += 1;
+                    if !*full {
+                        out.extend(found);
+                        if stop_after.is_some_and(|n| out.len() >= n) {
+                            *full = true;
+                        }
                     }
                 }
+            };
+            'send: for (path, body) in files {
+                let possible = finders.iter().all(|f| f.find(body.as_bytes()).is_some());
+                if !possible {
+                    continue;
+                }
+                while sent - next >= window && !full {
+                    match done_rx.recv() {
+                        Ok((seq, found)) => absorb(seq, found, &mut out, &mut next, &mut full),
+                        Err(_) => break 'send,
+                    }
+                }
+                while let Ok((seq, found)) = done_rx.try_recv() {
+                    absorb(seq, found, &mut out, &mut next, &mut full);
+                }
+                if full || work_tx.send((sent, path, body)).is_err() {
+                    break;
+                }
+                sent += 1;
             }
-        };
-        'send: for (path, body) in files {
-            let possible = finders.iter().all(|f| f.find(body.as_bytes()).is_some());
-            if !possible {
-                continue;
-            }
-            while sent - next >= window && !full {
+            drop(work_tx);
+            while !full && next < sent {
                 match done_rx.recv() {
                     Ok((seq, found)) => absorb(seq, found, &mut out, &mut next, &mut full),
-                    Err(_) => break 'send,
+                    Err(_) => break,
                 }
             }
-            while let Ok((seq, found)) = done_rx.try_recv() {
-                absorb(seq, found, &mut out, &mut next, &mut full);
+            for h in handles {
+                h.join().expect("astgrep worker panicked");
             }
-            if full || work_tx.send((sent, path, body)).is_err() {
-                break;
+            if let Some(n) = stop_after {
+                out.truncate(n);
             }
-            sent += 1;
-        }
-        drop(work_tx);
-        while !full && next < sent {
-            match done_rx.recv() {
-                Ok((seq, found)) => absorb(seq, found, &mut out, &mut next, &mut full),
-                Err(_) => break,
-            }
-        }
-        for h in handles {
-            h.join().expect("astgrep worker panicked");
-        }
-        if let Some(n) = stop_after {
-            out.truncate(n);
-        }
+            out
+        });
+        out.sort_by(|a, b| {
+            a.path
+                .cmp(&b.path)
+                .then(a.start_line.cmp(&b.start_line))
+                .then(a.start_col.cmp(&b.start_col))
+        });
         out
-    });
-    out.sort_by(|a, b| {
-        a.path
-            .cmp(&b.path)
-            .then(a.start_line.cmp(&b.start_line))
-            .then(a.start_col.cmp(&b.start_col))
-    });
-    Ok(out)
+    }
 }
 
 /// One node in an `--explain` tree walk: what a pattern would have to name.

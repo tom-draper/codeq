@@ -6708,6 +6708,52 @@ fn astgrep_matches_method_calls_structurally() {
 }
 
 #[test]
+fn astgrep_candidate_filter_keeps_unicode_escapes_and_literal_free_patterns() {
+    let f = Fixture::new();
+    f.write(
+        "src/A%_é.rs",
+        "fn sample() { café(value); emit(\"a\\\"b\"); xy(value); left + right; }\n",
+    );
+    f.write(
+        "src/other.rs",
+        "fn other() { cafe(value); emit(\"different\"); xyz(value); }\n",
+    );
+    for (pattern, expected) in [
+        ("café($X)", "café(value)"),
+        ("emit(\"a\\\"b\")", "emit(\"a\\\"b\")"),
+        ("xy($X)", "xy(value)"),
+        ("$X + $Y", "left + right"),
+    ] {
+        let v = f.run(&["astgrep", pattern, "--language", "rust", "--limit", "0"]);
+        let rows = v["data"]["matches"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{pattern}: {v}");
+        assert_eq!(rows[0]["text"], expected);
+        assert_eq!(rows[0]["path"], "src/A%_é.rs");
+    }
+    let v = f.run(&[
+        "astgrep",
+        "café($X)",
+        "--language",
+        "rust",
+        "--path",
+        "A%_é",
+    ]);
+    assert_eq!(v["data"]["matches"].as_array().unwrap().len(), 1);
+    let out = f.raw(&[
+        "astgrep",
+        "missing_literal($X)",
+        "--language",
+        "rust",
+        "--path",
+        "src",
+    ]);
+    assert!(out.status.success());
+    assert!(String::from_utf8(out.stderr)
+        .unwrap()
+        .contains("pattern ran over 2 rust file(s)"));
+}
+
+#[test]
 fn astgrep_limit_returns_the_leading_matches_in_path_order() {
     // A limited search stops early, so which matches it keeps must be the same
     // ones an exhaustive search ranks first, across files, with the truncation
