@@ -59,7 +59,7 @@ codeq read src/index.rs --symbol language_for
 ```
 
 No initial indexing command is needed. The first query creates the index;
-later queries refresh changed files before answering.
+later queries refresh changed files before answering. Nothing runs in the background.
 
 ## Choose a command by task
 
