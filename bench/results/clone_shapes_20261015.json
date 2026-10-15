@@ -1,0 +1,62 @@
+{
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpus": 12,
+  "load": [
+    0.79296875,
+    1.8486328125,
+    1.16259765625
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "9b7205511780beb7f1cdce2efecbdf6f1b4d71e20b4edb15b1d3635ed325e41e",
+    "after": "694d8480d938d4274073a6813c51a137def8d95ea4c0b454b4828af2dbc35847"
+  },
+  "intercepted_allocations_untimed": {
+    "before": [
+      4279516,
+      4279516
+    ],
+    "after": [
+      2337116,
+      2337116
+    ]
+  },
+  "files": 16,
+  "facts": 6720,
+  "source_bytes": 2345120,
+  "samples_ms": {
+    "before": [
+      814.853015,
+      804.351971,
+      793.13059,
+      1189.782962,
+      1206.68821,
+      1141.491393,
+      1123.978368
+    ],
+    "after": [
+      813.242442,
+      803.271189,
+      804.64015,
+      854.673258,
+      1235.030485,
+      1069.264501,
+      1074.46558
+    ]
+  },
+  "median_ms": {
+    "before": 1123.978368,
+    "after": 854.673258
+  },
+  "range_ms": {
+    "before": [
+      793.13059,
+      1206.68821
+    ],
+    "after": [
+      803.271189,
+      1235.030485
+    ]
+  },
+  "state": "fresh database each run, filesystem cache warm, alternating binaries"
+}
