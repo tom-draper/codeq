@@ -61,56 +61,6 @@ codeq read src/index.rs --symbol language_for
 No initial indexing command is needed. The first query creates the index;
 later queries refresh changed files before answering. Nothing runs in the background.
 
-## Compared with rg, sed, and cat
-
-For each task, [`bench/completion.py`](bench/completion.py) runs the commands a
-competent agent would use to reach the same answer with generic tools, and
-records what the agent reads: output tokens (bytes / 4), tool calls, and wall
-time. The baselines are not strawmen. To read a function, the agent finds it with
-`rg` and reads a 60-line window instead of the whole file. Where the baseline
-needs to know which names to check, such as callees or a file's definitions, it
-gets them from codeq for free.
-
-Totals across 31 pinned open-source repositories in every supported language,
-one target symbol and file per repository:
-
-| Task | Generic approach | Tokens (codeq / generic) | Calls | Avg time per repo |
-| --- | --- | --: | --: | --: |
-| Read a function (`read --symbol`) | `rg` to find it, `sed` a window | 4k / 26k | 31 / 62 | 4 / 9 ms |
-| Understand before editing (`about`) | find and read the definition and a caller | 17k / 58k | 31 / 122 | 10 / 16 ms |
-| Explore with source (`explore`) | read the definition, 3 call sites, 3 callees | 79k / 598k | 31 / 272 | 10 / 34 ms |
-| Who calls it (`callers`) | `rg 'NAME('`, read windows to find the callers | 2k / 39k | 31 / 80 | 7 / 9 ms |
-| 2-hop impact (`callers --depth 2`) | `rg` call sites, then `rg` each caller | 27k / 55k | 31 / 126 | 11 / 11 ms |
-| Which tests use it (`tests`) | `rg` in test files, read each hit | 0.6k / 26k | 31 / 78 | 6 / 9 ms |
-| A file's dead code (`unused`) | `rg -w` each of the file's definitions | 38k / 3,483k | 31 / 572 | 22 / 126 ms |
-| A file's structure (`outline`) | `cat` the file | 84k / 803k | 31 / 31 | 4 / 3 ms |
-| A file's public API (`api FILE`) | `rg` declaration lines | 86k / 28k | 31 / 31 | 5 / 4 ms |
-| A package's public API (`api DIR`) | `cat` the files that hold it | 448k / 1,613k | 31 / 295 | 7 / 25 ms |
-| All references (`references`) | `rg -w` | 22k / 25k | 31 / 31 | 6 / 7 ms |
-| A file's imports (`imports`) | `rg` import lines, read grouped blocks | 9k / 8k | 31 / 45 | 5 / 4 ms |
-| **All 12 tasks** | | **816k / 6,763k (8.3x)** | **372 / 1,745** | **97 / 257 ms** |
-
-How to read this fairly:
-
-- The dead-code task accounts for half of the baseline's tokens. Without it,
-  codeq uses 4.2x fewer tokens, not 8.3x.
-- codeq is not ahead on every task. `rg` matches it on references and imports,
-  and `cat` is faster on a single file. `api FILE` returns more tokens than a
-  declaration grep because it returns complete signatures with visibility. The
-  grep returns only first lines and includes private definitions.
-- `callers` and `tests` return locations and enclosing names, not source. The
-  baseline has to read source to learn the same names, so it pays more.
-- Times are for one warm query and exclude the agent's own turn, which usually
-  takes far longer than either tool. Tool calls are the bigger saving in
-  practice. Building the index took 30 s across all 31 repositories, under 1 s
-  each, and later queries only reparse changed files.
-- Tokens are an approximation and the targets are chosen automatically, so
-  these are indicative numbers, not a model-agent evaluation.
-
-Rerun with `python3 bench/completion.py` after `cargo build --release`. Each run
-is written to `bench/results/`. [Real workflow results](bench/REAL_WORKFLOWS.md)
-check that each answer is complete before comparing costs.
-
 ## Choose a command by task
 
 These are useful starting points. Replace `NAME`, `FILE`, and `PATH` with names
@@ -260,6 +210,38 @@ lists ambiguous candidates and omits their bodies unless you pass
 Treat `unused`, `untested`, and `affected` as investigation aids. They cannot
 prove that code is dead, that tests cover behavior, or that every runtime effect
 of a change has been found.
+
+## Evaluation
+
+[`bench/completion.py`](bench/completion.py) runs each task with codeq and with
+the commands a competent agent would otherwise use to reach the same answer, then
+records output tokens (bytes / 4), tool calls, and average time per repository.
+The baselines read a 60-line window rather than a whole file, and get the names
+they need to check from codeq for free. Totals across 31 pinned open-source
+repositories in every supported language, with the lower value in bold:
+
+| Task | Generic approach | codeq tokens | generic tokens | codeq calls | generic calls | codeq time | generic time |
+| --- | --- | --: | --: | --: | --: | --: | --: |
+| Read a function (`read --symbol`) | `rg` to find it, `sed` a window | **4k** | 26k | **31** | 62 | **4 ms** | 9 ms |
+| Understand before editing (`about`) | find and read the definition and a caller | **17k** | 58k | **31** | 122 | **10 ms** | 16 ms |
+| Explore with source (`explore`) | read the definition, 3 call sites, 3 callees | **79k** | 598k | **31** | 272 | **10 ms** | 34 ms |
+| Who calls it (`callers`) | `rg 'NAME('`, read windows to find the callers | **2k** | 39k | **31** | 80 | **7 ms** | 9 ms |
+| 2-hop impact (`callers --depth 2`) | `rg` call sites, then `rg` each caller | **27k** | 55k | **31** | 126 | 11 ms | 11 ms |
+| Which tests use it (`tests`) | `rg` in test files, read each hit | **0.6k** | 26k | **31** | 78 | **6 ms** | 9 ms |
+| A file's dead code (`unused`) | `rg -w` each of the file's definitions | **38k** | 3,483k | **31** | 572 | **22 ms** | 126 ms |
+| A file's structure (`outline`) | `cat` the file | **84k** | 803k | 31 | 31 | 4 ms | **3 ms** |
+| A file's public API (`api FILE`) | `rg` declaration lines | 86k | **28k** | 31 | 31 | 5 ms | **4 ms** |
+| A package's public API (`api DIR`) | `cat` the files that hold it | **448k** | 1,613k | **31** | 295 | **7 ms** | 25 ms |
+| All references (`references`) | `rg -w` | **22k** | 25k | 31 | 31 | **6 ms** | 7 ms |
+| A file's imports (`imports`) | `rg` import lines, read grouped blocks | 9k | **8k** | **31** | 45 | 5 ms | **4 ms** |
+| **All 12 tasks** |  | **816k** | 6,763k | **372** | 1,745 | **97 ms** | 257 ms |
+
+The dead-code task is half of the generic total; without it codeq uses 4.2x
+fewer tokens rather than 8.3x. Times are warm queries and exclude the agent's own
+turn. Building the index took under 1 s per repository. Token counts are
+approximate and targets are picked automatically, so treat these as indicative
+rather than a model-agent evaluation. Rerun with `python3 bench/completion.py`
+after `cargo build --release`.
 
 ## Benchmarks and development
 
