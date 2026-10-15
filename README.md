@@ -221,11 +221,14 @@ and [real workflow results](bench/REAL_WORKFLOWS.md).
 ### Evaluation
 
 [`bench/completion.py`](bench/completion.py) runs each task with codeq and with
-the commands a competent agent would otherwise use to reach the same answer, then
+the commands Claude Code or Codex would run to reach the same answer, then
 records output tokens (bytes / 4), tool calls, and average time per repository.
-The baselines read a 60-line window rather than a whole file, and get the names
-they need to check from codeq for free. Totals across 31 pinned open-source
-repositories in every supported language, with the lower value in bold:
+A tool call is one agent turn: independent commands share a call, as parallel
+tool calls or one shell invocation do. Searches find a definition with a
+declaration pattern and read a 60-line window, not the whole file. Where the
+baseline needs to know which names to check, it gets them from codeq for free.
+Totals across 31 pinned open-source repositories in every supported language,
+with the lower value in bold:
 
 <table>
   <thead>
@@ -247,144 +250,188 @@ repositories in every supported language, with the lower value in bold:
   </thead>
   <tbody>
     <tr>
-      <td>Read a function (<code>read --symbol</code>)</td>
-      <td><code>rg</code> to find it, <code>sed</code> a window</td>
-      <td align="right"><b>4k</b></td>
-      <td align="right">26k</td>
+      <td>Find a definition (<code>definitions</code>)</td>
+      <td>declaration <code>rg</code>, then <code>rg -w</code> if it misses</td>
+      <td align="right"><b>7.6k</b></td>
+      <td align="right">18k</td>
       <td align="right"><b>31</b></td>
-      <td align="right">62</td>
+      <td align="right">41</td>
       <td align="right"><b>4 ms</b></td>
-      <td align="right">9 ms</td>
+      <td align="right">12 ms</td>
     </tr>
     <tr>
-      <td>Understand before editing (<code>about</code>)</td>
-      <td>find and read the definition and a caller</td>
-      <td align="right"><b>17k</b></td>
-      <td align="right">58k</td>
+      <td>Read a function (<code>read --symbol</code>)</td>
+      <td>find it, read 60 lines from it</td>
+      <td align="right"><b>6.9k</b></td>
+      <td align="right">33k</td>
       <td align="right"><b>31</b></td>
-      <td align="right">122</td>
-      <td align="right"><b>10 ms</b></td>
-      <td align="right">16 ms</td>
+      <td align="right">72</td>
+      <td align="right"><b>5 ms</b></td>
+      <td align="right">15 ms</td>
     </tr>
     <tr>
-      <td>Explore with source (<code>explore</code>)</td>
-      <td>read the definition, 3 call sites, 3 callees</td>
-      <td align="right"><b>79k</b></td>
-      <td align="right">598k</td>
-      <td align="right"><b>31</b></td>
-      <td align="right">272</td>
-      <td align="right"><b>10 ms</b></td>
-      <td align="right">34 ms</td>
-    </tr>
-    <tr>
-      <td>Who calls it (<code>callers</code>)</td>
-      <td><code>rg 'NAME('</code>, read windows to find the callers</td>
-      <td align="right"><b>2k</b></td>
-      <td align="right">39k</td>
-      <td align="right"><b>31</b></td>
-      <td align="right">80</td>
-      <td align="right"><b>7 ms</b></td>
-      <td align="right">9 ms</td>
-    </tr>
-    <tr>
-      <td>2-hop impact (<code>callers --depth 2</code>)</td>
-      <td><code>rg</code> call sites, then <code>rg</code> each caller</td>
-      <td align="right"><b>27k</b></td>
-      <td align="right">55k</td>
-      <td align="right"><b>31</b></td>
-      <td align="right">126</td>
-      <td align="right">11 ms</td>
-      <td align="right">11 ms</td>
-    </tr>
-    <tr>
-      <td>Which tests use it (<code>tests</code>)</td>
-      <td><code>rg</code> in test files, read each hit</td>
-      <td align="right"><b>0.6k</b></td>
-      <td align="right">26k</td>
-      <td align="right"><b>31</b></td>
-      <td align="right">78</td>
-      <td align="right"><b>6 ms</b></td>
-      <td align="right">9 ms</td>
-    </tr>
-    <tr>
-      <td>A file's dead code (<code>unused</code>)</td>
-      <td><code>rg -w</code> each of the file's definitions</td>
-      <td align="right"><b>38k</b></td>
-      <td align="right">3,483k</td>
-      <td align="right"><b>31</b></td>
-      <td align="right">572</td>
-      <td align="right"><b>22 ms</b></td>
-      <td align="right">126 ms</td>
-    </tr>
-    <tr>
-      <td>A file's structure (<code>outline</code>)</td>
-      <td><code>cat</code> the file</td>
-      <td align="right"><b>84k</b></td>
-      <td align="right">803k</td>
+      <td>Definition enclosing a line (<code>at</code>)</td>
+      <td>read the 50 lines above it</td>
+      <td align="right"><b>1.5k</b></td>
+      <td align="right">15k</td>
       <td align="right">31</td>
       <td align="right">31</td>
       <td align="right">4 ms</td>
-      <td align="right"><b>3 ms</b></td>
+      <td align="right"><b>2 ms</b></td>
     </tr>
     <tr>
-      <td>A file's public API (<code>api FILE</code>)</td>
-      <td><code>rg</code> declaration lines</td>
-      <td align="right">86k</td>
-      <td align="right"><b>28k</b></td>
-      <td align="right">31</td>
-      <td align="right">31</td>
-      <td align="right">5 ms</td>
-      <td align="right"><b>4 ms</b></td>
+      <td>A type's members (<code>members</code>)</td>
+      <td>find the type, read 60 lines from it</td>
+      <td align="right"><b>5.6k</b></td>
+      <td align="right">15k</td>
+      <td align="right"><b>29</b></td>
+      <td align="right">58</td>
+      <td align="right"><b>5 ms</b></td>
+      <td align="right">11 ms</td>
     </tr>
     <tr>
-      <td>A package's public API (<code>api DIR</code>)</td>
-      <td><code>cat</code> the files that hold it</td>
-      <td align="right"><b>448k</b></td>
-      <td align="right">1,613k</td>
+      <td>Understand before editing (<code>about</code>)</td>
+      <td><code>rg</code> the definition and call sites, read both</td>
+      <td align="right"><b>22k</b></td>
+      <td align="right">62k</td>
       <td align="right"><b>31</b></td>
-      <td align="right">295</td>
-      <td align="right"><b>7 ms</b></td>
-      <td align="right">25 ms</td>
+      <td align="right">62</td>
+      <td align="right"><b>14 ms</b></td>
+      <td align="right">21 ms</td>
+    </tr>
+    <tr>
+      <td>Explore with source (<code>explore</code>)</td>
+      <td>read the definition and 3 call sites, then 3 callees</td>
+      <td align="right"><b>124k</b></td>
+      <td align="right">158k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">126</td>
+      <td align="right"><b>13 ms</b></td>
+      <td align="right">39 ms</td>
+    </tr>
+    <tr>
+      <td>Who calls it (<code>callers</code>)</td>
+      <td><code>rg 'NAME('</code>, read around 5 call sites</td>
+      <td align="right"><b>3.7k</b></td>
+      <td align="right">79k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">59</td>
+      <td align="right"><b>9 ms</b></td>
+      <td align="right">14 ms</td>
+    </tr>
+    <tr>
+      <td>2-hop impact (<code>callers --depth 2</code>)</td>
+      <td>as above, then <code>rg</code> calls to those callers</td>
+      <td align="right"><b>21k</b></td>
+      <td align="right">79k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">59</td>
+      <td align="right">16 ms</td>
+      <td align="right"><b>13 ms</b></td>
+    </tr>
+    <tr>
+      <td>Which tests use it (<code>tests</code>)</td>
+      <td><code>rg -w</code> in test files, read around 5 hits</td>
+      <td align="right"><b>2.2k</b></td>
+      <td align="right">43k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">45</td>
+      <td align="right"><b>8 ms</b></td>
+      <td align="right">11 ms</td>
     </tr>
     <tr>
       <td>All references (<code>references</code>)</td>
       <td><code>rg -w</code></td>
-      <td align="right"><b>22k</b></td>
-      <td align="right">25k</td>
+      <td align="right">29k</td>
+      <td align="right"><b>28k</b></td>
       <td align="right">31</td>
       <td align="right">31</td>
-      <td align="right"><b>6 ms</b></td>
-      <td align="right">7 ms</td>
+      <td align="right">8 ms</td>
+      <td align="right">8 ms</td>
+    </tr>
+    <tr>
+      <td>A file's structure (<code>outline</code>)</td>
+      <td>read the whole file</td>
+      <td align="right"><b>60k</b></td>
+      <td align="right">482k</td>
+      <td align="right">31</td>
+      <td align="right">31</td>
+      <td align="right">5 ms</td>
+      <td align="right"><b>3 ms</b></td>
+    </tr>
+    <tr>
+      <td>A file's public API (<code>api FILE</code>)</td>
+      <td><code>rg</code> declaration lines in the file</td>
+      <td align="right">56k</td>
+      <td align="right"><b>20k</b></td>
+      <td align="right">31</td>
+      <td align="right">31</td>
+      <td align="right">5 ms</td>
+      <td align="right">5 ms</td>
+    </tr>
+    <tr>
+      <td>A package's public API (<code>api DIR</code>)</td>
+      <td><code>rg</code> declaration lines in the directory</td>
+      <td align="right">613k</td>
+      <td align="right"><b>333k</b></td>
+      <td align="right">31</td>
+      <td align="right">31</td>
+      <td align="right">9 ms</td>
+      <td align="right"><b>8 ms</b></td>
     </tr>
     <tr>
       <td>A file's imports (<code>imports</code>)</td>
       <td><code>rg</code> import lines, read grouped blocks</td>
-      <td align="right">9k</td>
-      <td align="right"><b>8k</b></td>
+      <td align="right"><b>6.2k</b></td>
+      <td align="right">6.3k</td>
       <td align="right"><b>31</b></td>
-      <td align="right">45</td>
+      <td align="right">40</td>
       <td align="right">5 ms</td>
-      <td align="right"><b>4 ms</b></td>
+      <td align="right">5 ms</td>
     </tr>
     <tr>
-      <td><b>All 12 tasks</b></td>
+      <td>Who imports a file (<code>importers</code>)</td>
+      <td><code>rg</code> import lines naming the file</td>
+      <td align="right">22k</td>
+      <td align="right"><b>9.1k</b></td>
+      <td align="right">31</td>
+      <td align="right">31</td>
+      <td align="right"><b>4 ms</b></td>
+      <td align="right">9 ms</td>
+    </tr>
+    <tr>
+      <td>A file's dead code (<code>unused</code>)</td>
+      <td><code>rg -w NAME | wc -l</code> per definition, in one loop</td>
+      <td align="right"><b>0.8k</b></td>
+      <td align="right">30k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">62</td>
+      <td align="right"><b>24 ms</b></td>
+      <td align="right">696 ms</td>
+    </tr>
+    <tr>
+      <td><b>All 16 tasks</b></td>
       <td></td>
-      <td align="right"><b>816k</b></td>
-      <td align="right">6,763k</td>
-      <td align="right"><b>372</b></td>
-      <td align="right">1,745</td>
-      <td align="right"><b>97 ms</b></td>
-      <td align="right">257 ms</td>
+      <td align="right"><b>982k</b></td>
+      <td align="right">1,411k</td>
+      <td align="right"><b>494</b></td>
+      <td align="right">810</td>
+      <td align="right"><b>138 ms</b></td>
+      <td align="right">871 ms</td>
     </tr>
   </tbody>
 </table>
 
-The dead-code task is half of the generic total; without it codeq uses 4.2x
-fewer tokens rather than 8.3x. Times are warm queries and exclude the agent's own
-turn. Building the index took under 1 s per repository. Token counts are
-approximate and targets are picked automatically, so treat these as indicative
-rather than a model-agent evaluation. Rerun with `python3 bench/completion.py`
-after `cargo build --release`.
+codeq returns more on the API tasks, because it gives complete signatures where
+a grep gives first lines. `importers` matches a file's stem as a substring of
+each import string, so a short stem over-matches: `sr.js` also matches `../src`.
+On 2 JavaScript and TypeScript repositories `tests` found nothing where tests do
+use the name, because tests written as bare `it(...)` calls have no named test
+to report. Times are warm queries and exclude the agent's own turn.
+Building the index took under 1 s per repository. Token counts are approximate
+and targets are picked automatically, so treat these as indicative rather than a
+model-agent evaluation. Rerun with `python3 bench/completion.py` after
+`cargo build --release`.
 
 ### Development
 
