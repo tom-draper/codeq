@@ -489,6 +489,54 @@ fn extracts_rust_symbols_and_imports() {
     );
 }
 
+/// A short file stem must not match inside a longer name: `sr` is in `./locale/sr`
+/// and not in `./src/util`, and `Buffer` is `okio.Buffer`, not `okio.BufferedSource`.
+#[test]
+fn importers_match_the_stem_as_a_whole_name() {
+    let f = Fixture::new();
+    f.write("locale/sr.js", "export default {};\n");
+    f.write("src/util.js", "export const u = 1;\n");
+    f.write(
+        "app.js",
+        "import sr from './locale/sr';\nimport u from './src/util';\n",
+    );
+    let rows = f.run(&["importers", "locale/sr.js"]);
+    let modules = field_set(&rows, "module");
+    assert_eq!(modules, vec!["./locale/sr".to_string()], "{rows}");
+
+    f.write(
+        "Main.java",
+        "import okio.Buffer;\nimport okio.BufferedSource;\nclass Main {}\n",
+    );
+    let modules = field_set(&f.run(&["importers", "Buffer"]), "module");
+    assert_eq!(modules, vec!["okio.Buffer".to_string()]);
+}
+
+/// A query that names one file drops an import the graph resolves to a different
+/// file, even when the stem matches whole: `./de` in `a/` is `a/de.js`, not `b/de.js`.
+#[test]
+fn importers_drop_an_import_that_resolves_to_another_file() {
+    let f = Fixture::new();
+    f.write("a/de.js", "export const de = 1;\n");
+    f.write("b/de.js", "export const de = 2;\n");
+    f.write("a/main.js", "import { de } from './de';\n");
+    f.write("b/main.js", "import { de } from './de';\n");
+    // A named import also records the member it binds, so a file can appear twice.
+    let importers = |q: &str| {
+        let mut paths = field_set(&f.run(&["importers", q]), "path");
+        paths.dedup();
+        paths
+    };
+    assert_eq!(importers("a/de.js"), vec!["a/main.js".to_string()]);
+    assert_eq!(importers("b/de.js"), vec!["b/main.js".to_string()]);
+
+    // An import that resolves to nothing in the repo is kept: the graph is a
+    // heuristic, so a miss there must not hide a real importer.
+    f.write("c/main.js", "import { de } from 'de';\n");
+    let paths = importers("a/de.js");
+    assert!(paths.contains(&"c/main.js".to_string()), "{paths:?}");
+}
+
 #[test]
 fn rust_parser_recovery_keeps_definitions_after_a_valid_trailing_closure_comma() {
     // Rust accepts a trailing comma in closure parameters. Older bundled
