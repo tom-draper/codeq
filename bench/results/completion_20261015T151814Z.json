@@ -1,0 +1,113 @@
+{
+  "timestamp": "2026-10-15T15:18:14+00:00",
+  "codeq_commit": "cf6cec3b3ccb",
+  "repos": 31,
+  "totals": {
+    "codeq_tokens": 816224,
+    "baseline_tokens": 6763192,
+    "token_ratio": 8.29,
+    "codeq_calls": 372,
+    "baseline_calls": 1745,
+    "codeq_ms": 3011.4,
+    "baseline_ms": 7954.8,
+    "index_ms": 30077.4
+  },
+  "per_task": {
+    "read-impl": {
+      "codeq_tokens": 4290,
+      "baseline_tokens": 26054,
+      "codeq_calls": 31,
+      "baseline_calls": 62,
+      "codeq_ms": 123.3,
+      "baseline_ms": 282.6
+    },
+    "understand-sym": {
+      "codeq_tokens": 17313,
+      "baseline_tokens": 57630,
+      "codeq_calls": 31,
+      "baseline_calls": 122,
+      "codeq_ms": 317.1,
+      "baseline_ms": 501.8
+    },
+    "explore": {
+      "codeq_tokens": 79385,
+      "baseline_tokens": 598028,
+      "codeq_calls": 31,
+      "baseline_calls": 272,
+      "codeq_ms": 306.8,
+      "baseline_ms": 1045.6
+    },
+    "callsites": {
+      "codeq_tokens": 1512,
+      "baseline_tokens": 39174,
+      "codeq_calls": 31,
+      "baseline_calls": 80,
+      "codeq_ms": 210.8,
+      "baseline_ms": 274.4
+    },
+    "blast-radius": {
+      "codeq_tokens": 26606,
+      "baseline_tokens": 55041,
+      "codeq_calls": 31,
+      "baseline_calls": 126,
+      "codeq_ms": 332.7,
+      "baseline_ms": 341.7
+    },
+    "which-tests": {
+      "codeq_tokens": 649,
+      "baseline_tokens": 26234,
+      "codeq_calls": 31,
+      "baseline_calls": 78,
+      "codeq_ms": 198.4,
+      "baseline_ms": 268.6
+    },
+    "dead-code": {
+      "codeq_tokens": 37632,
+      "baseline_tokens": 3483055,
+      "codeq_calls": 31,
+      "baseline_calls": 572,
+      "codeq_ms": 677.8,
+      "baseline_ms": 3915.8
+    },
+    "file-structure": {
+      "codeq_tokens": 83713,
+      "baseline_tokens": 803099,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 139.5,
+      "baseline_ms": 90.6
+    },
+    "public-api": {
+      "codeq_tokens": 85596,
+      "baseline_tokens": 28184,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 156.6,
+      "baseline_ms": 119.5
+    },
+    "package-api": {
+      "codeq_tokens": 448173,
+      "baseline_tokens": 1613039,
+      "codeq_calls": 31,
+      "baseline_calls": 295,
+      "codeq_ms": 212.2,
+      "baseline_ms": 765.2
+    },
+    "usages": {
+      "codeq_tokens": 22007,
+      "baseline_tokens": 25246,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 191.0,
+      "baseline_ms": 220.9
+    },
+    "file-imports": {
+      "codeq_tokens": 9344,
+      "baseline_tokens": 8403,
+      "codeq_calls": 31,
+      "baseline_calls": 45,
+      "codeq_ms": 145.2,
+      "baseline_ms": 128.1
+    }
+  }
+}

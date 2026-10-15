@@ -324,7 +324,7 @@ def pick_target(path):
 
 def run_repo(path):
     shutil.rmtree(os.path.join(path, ".codeq"), ignore_errors=True)
-    run([CODEQ, "index"], path)
+    index_ms, _ = run([CODEQ, "index"], path)  # one-off cost, reported separately
     tgt = pick_target(path)
     if not tgt:
         return None
@@ -335,7 +335,7 @@ def run_repo(path):
         bc, bb, bt = base_fn(path, S, F, m)
         out[name] = {"codeq": {"calls": cc, "bytes": cb, "ms": round(ct, 1)},
                      "baseline": {"calls": bc, "bytes": bb, "ms": round(bt, 1)}}
-    return {"target": S, "file": F, "tasks": out}
+    return {"target": S, "file": F, "index_ms": round(index_ms, 1), "tasks": out}
 
 
 def main():
@@ -365,7 +365,7 @@ def main():
     tot = {"codeq": [0, 0, 0.0], "baseline": [0, 0, 0.0]}
     print(f"\n  {len(repos)} repos | token-to-completion per task (summed across repos)")
     print(f"  {'task':16} {'codeq tok':>10} {'base tok':>10} {'saving':>8} "
-          f"{'cq calls':>9} {'base calls':>11}")
+          f"{'cq calls':>9} {'base calls':>11} {'cq ms':>8} {'base ms':>8}")
     for name, *_ in TASKS:
         cq, bl = agg[name]["codeq"], agg[name]["baseline"]
         for side, v in (("codeq", cq), ("baseline", bl)):
@@ -373,11 +373,14 @@ def main():
                 tot[side][i] += v[i]
         ratio = f"{tok(bl[1]) / max(tok(cq[1]), 1):.1f}x"
         print(f"  {name:16} {tok(cq[1]):>10} {tok(bl[1]):>10} {ratio:>8} "
-              f"{cq[0]:>9} {bl[0]:>11}")
+              f"{cq[0]:>9} {bl[0]:>11} {cq[2]:>8.0f} {bl[2]:>8.0f}")
     cqt, blt = tok(tot["codeq"][1]), tok(tot["baseline"][1])
     print(f"  {'-'*16}")
     print(f"  {'TOTAL':16} {cqt:>10} {blt:>10} {blt / max(cqt,1):>7.1f}x "
-          f"{tot['codeq'][0]:>9} {tot['baseline'][0]:>11}")
+          f"{tot['codeq'][0]:>9} {tot['baseline'][0]:>11} "
+          f"{tot['codeq'][2]:>8.0f} {tot['baseline'][2]:>8.0f}")
+    index_ms = sum(r["index_ms"] for r in repos.values())
+    print(f"  one-off index build across {len(repos)} repos: {index_ms:.0f} ms")
     print(f"\n  Across {len(repos)} repos, completing these {len(TASKS)} tasks costs an agent "
           f"{blt/max(cqt,1):.1f}x the tokens\n  and {tot['baseline'][0]}/{tot['codeq'][0]} "
           f"the tool calls with generic tools vs codeq.")
@@ -388,9 +391,16 @@ def main():
         "repos": len(repos),
         "totals": {"codeq_tokens": cqt, "baseline_tokens": blt,
                    "token_ratio": round(blt / max(cqt, 1), 2),
-                   "codeq_calls": tot["codeq"][0], "baseline_calls": tot["baseline"][0]},
+                   "codeq_calls": tot["codeq"][0], "baseline_calls": tot["baseline"][0],
+                   "codeq_ms": round(tot["codeq"][2], 1),
+                   "baseline_ms": round(tot["baseline"][2], 1),
+                   "index_ms": round(index_ms, 1)},
         "per_task": {name: {"codeq_tokens": tok(agg[name]["codeq"][1]),
-                            "baseline_tokens": tok(agg[name]["baseline"][1])}
+                            "baseline_tokens": tok(agg[name]["baseline"][1]),
+                            "codeq_calls": agg[name]["codeq"][0],
+                            "baseline_calls": agg[name]["baseline"][0],
+                            "codeq_ms": round(agg[name]["codeq"][2], 1),
+                            "baseline_ms": round(agg[name]["baseline"][2], 1)}
                      for name, *_ in TASKS},
     }
     os.makedirs(RESULTS, exist_ok=True)
