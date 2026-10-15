@@ -1,0 +1,233 @@
+{
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "cpus": 12,
+  "load_before": [
+    0.87646484375,
+    1.8203125,
+    0.96044921875
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "0f62806c3947b96903fe2e4239e642d7fa80b18c9f5165f7c97677c6a67923c6",
+    "after": "4d74a991d177e16c8a61cdd22e6b85ff4b3e0281e2930871342e2ab4cad894fb"
+  },
+  "workloads": {
+    "python_cached": {
+      "command": [
+        "callees",
+        "caller"
+      ],
+      "definitions": 128,
+      "source_bytes": 2100629,
+      "samples_ms": {
+        "before": [
+          37.835291,
+          32.863509,
+          28.278925,
+          29.774827,
+          29.821194,
+          28.786483,
+          30.043272
+        ],
+        "after": [
+          2.821067,
+          3.2555,
+          2.826557,
+          3.076194,
+          2.676797,
+          3.447218,
+          2.568577
+        ]
+      },
+      "source_traces_untimed": {
+        "before": {
+          "source_opens": 128,
+          "source_bytes_read": 268880512
+        },
+        "after": {
+          "source_opens": 0,
+          "source_bytes_read": 0
+        }
+      },
+      "median_ms": {
+        "before": 29.821194,
+        "after": 2.826557
+      },
+      "range_ms": {
+        "before": [
+          28.278925,
+          37.835291
+        ],
+        "after": [
+          2.568577,
+          3.447218
+        ]
+      }
+    },
+    "python_examples": {
+      "command": [
+        "callees",
+        "caller",
+        "--examples"
+      ],
+      "definitions": 128,
+      "source_bytes": 2100629,
+      "samples_ms": {
+        "before": [
+          27.891688,
+          30.124922,
+          31.41722,
+          30.411165,
+          28.730023,
+          26.280081,
+          27.325417
+        ],
+        "after": [
+          6.98259,
+          4.173045,
+          3.643511,
+          3.769794,
+          9.222615,
+          4.87294,
+          3.561529
+        ]
+      },
+      "source_traces_untimed": {
+        "before": {
+          "source_opens": 128,
+          "source_bytes_read": 268880512
+        },
+        "after": {
+          "source_opens": 1,
+          "source_bytes_read": 2100629
+        }
+      },
+      "median_ms": {
+        "before": 28.730023,
+        "after": 4.173045
+      },
+      "range_ms": {
+        "before": [
+          26.280081,
+          31.41722
+        ],
+        "after": [
+          3.561529,
+          9.222615
+        ]
+      }
+    },
+    "rust_cached": {
+      "command": [
+        "callees",
+        "caller"
+      ],
+      "definitions": 64,
+      "source_bytes": 2099246,
+      "samples_ms": {
+        "before": [
+          15.546863,
+          16.213211,
+          16.688372,
+          15.507952,
+          15.730675,
+          15.772023,
+          15.304704
+        ],
+        "after": [
+          4.00758,
+          3.740778,
+          4.203503,
+          3.990202,
+          3.982568,
+          3.639538,
+          4.849201
+        ]
+      },
+      "source_traces_untimed": {
+        "before": {
+          "source_opens": 64,
+          "source_bytes_read": 134351744
+        },
+        "after": {
+          "source_opens": 1,
+          "source_bytes_read": 2099246
+        }
+      },
+      "median_ms": {
+        "before": 15.730675,
+        "after": 3.990202
+      },
+      "range_ms": {
+        "before": [
+          15.304704,
+          16.688372
+        ],
+        "after": [
+          3.639538,
+          4.849201
+        ]
+      }
+    },
+    "rust_examples": {
+      "command": [
+        "callees",
+        "caller",
+        "--examples"
+      ],
+      "definitions": 64,
+      "source_bytes": 2099246,
+      "samples_ms": {
+        "before": [
+          15.196433,
+          16.508568,
+          15.859887,
+          15.566161,
+          15.526935,
+          16.254372,
+          15.663236
+        ],
+        "after": [
+          3.96838,
+          3.790484,
+          3.930157,
+          3.638299,
+          3.87259,
+          3.805549,
+          3.84248
+        ]
+      },
+      "source_traces_untimed": {
+        "before": {
+          "source_opens": 64,
+          "source_bytes_read": 134351744
+        },
+        "after": {
+          "source_opens": 1,
+          "source_bytes_read": 2099246
+        }
+      },
+      "median_ms": {
+        "before": 15.663236,
+        "after": 3.84248
+      },
+      "range_ms": {
+        "before": [
+          15.196433,
+          16.508568
+        ],
+        "after": [
+          3.638299,
+          3.96838
+        ]
+      }
+    }
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    0.87646484375,
+    1.8203125,
+    0.96044921875
+  ]
+}
