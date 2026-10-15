@@ -173,12 +173,13 @@ pub(crate) fn class_at(spans: &[(usize, usize, Span)], off: usize) -> Option<Spa
     }
 }
 
-/// Which files a scan covers. Every filter is applied per candidate row, and a
-/// file must pass all of them.
+/// Which files a scan covers. A file must pass every filter.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ScanScope<'a> {
     /// Path substring, as `--path` takes it.
     pub path: Option<&'a str>,
+    /// Positional path substrings. Empty means unrestricted.
+    pub paths: &'a [String],
     /// Exact language name.
     pub language: Option<&'a str>,
     /// A predicate over the repo-relative path, for scopes a substring cannot
@@ -696,13 +697,26 @@ pub(crate) fn run_search_acc(
     // trigrams; any one literal suffices, so the clauses are OR-ed.
     let clauses = prefilter.filter(|l| !l.is_empty() && !opts.wants_non_matching());
     let mut sql = String::from("SELECT path, language FROM files WHERE is_text = 1");
-    if clauses.is_some() {
-        sql.push_str(" AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?1)");
+    let mut params = Vec::<rusqlite::types::Value>::new();
+    if let Some(language) = scope.language {
+        sql.push_str(" AND language = ?");
+        params.push(language.to_string().into());
+    }
+    if let Some(path) = scope.path {
+        // instr preserves Rust's case-sensitive substring semantics, including
+        // literal '%' and '_' characters that LIKE would treat as wildcards.
+        sql.push_str(" AND instr(path, ?) > 0");
+        params.push(path.to_string().into());
+    }
+    if !scope.paths.is_empty() {
+        sql.push_str(" AND EXISTS (SELECT 1 FROM json_each(?) WHERE instr(files.path, value) > 0)");
+        params.push(serde_json::to_string(scope.paths)?.into());
+    }
+    if let Some(clauses) = clauses {
+        sql.push_str(" AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?)");
+        params.push(clauses.join(" OR ").into());
     }
     sql.push_str(" ORDER BY path");
-    let query = clauses.map(|c| c.join(" OR "));
-    let params: Vec<&dyn rusqlite::ToSql> =
-        query.iter().map(|q| q as &dyn rusqlite::ToSql).collect();
 
     let mut def_stmt = conn.prepare(
         "SELECT name, kind, start_byte, end_byte FROM facts
@@ -724,25 +738,15 @@ pub(crate) fn run_search_acc(
     let mut stopped = false;
 
     let mut fts_stmt = conn.prepare(&sql)?;
-    let mut rows = fts_stmt.query(params.as_slice())?;
+    let mut rows = fts_stmt.query(rusqlite::params_from_iter(params.iter()))?;
     'outer: while let Some(row) = rows.next()? {
         let rel = row.get_ref(0)?.as_str()?;
-        if let Some(pf) = scope.path {
-            if !rel.contains(pf) {
-                continue;
-            }
-        }
         if let Some(accept) = scope.accept {
             if !accept(rel) {
                 continue;
             }
         }
         let lang: Option<String> = row.get(1)?;
-        if let Some(lf) = scope.language {
-            if lang.as_deref() != Some(lf) {
-                continue;
-            }
-        }
         // The index holds trigrams, not text: the file itself is the body.
         let Some(body) = crate::index::load_body(root, rel) else {
             continue;

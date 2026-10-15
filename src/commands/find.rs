@@ -464,12 +464,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     drop(indexed);
 
     let skip_index = !args.paths.is_empty() && paths.is_empty();
-    let accept = (glob.is_some() || !args.paths.is_empty()).then_some({
-        |p: &str| {
-            glob.as_ref().is_none_or(|gf| gf.accepts(p))
-                && (args.paths.is_empty() || paths.iter().any(|q| p.contains(q.as_str())))
-        }
-    });
+    let accept = glob.as_ref().map(|gf| move |p: &str| gf.accepts(p));
     let path_accept = accept.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
     let (mut acc, stopped) = if skip_index {
         (search::ScanAcc::default(), false)
@@ -481,6 +476,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
             match_query.as_deref(),
             ScanScope {
                 path: args.path,
+                paths: &paths,
                 language: args.language,
                 accept: path_accept,
             },
@@ -763,7 +759,7 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         ScanScope {
             path,
             language,
-            accept: None,
+            ..Default::default()
         },
         &opts,
     )? {
