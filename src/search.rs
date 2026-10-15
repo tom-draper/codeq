@@ -492,6 +492,97 @@ pub(crate) struct FileDef {
     pub(crate) end_byte: usize,
 }
 
+/// Below this many definitions a linear scan beats building the tree.
+const DEF_INDEX_MIN: usize = 24;
+
+/// One file's definitions, indexed to answer "which definition encloses this
+/// byte" in `O(log n)` rather than by scanning every definition per match.
+///
+/// Definitions are ordered by `(start_byte, load order)` and a max-`end_byte`
+/// tree is laid over that order. The innermost containing definition is the
+/// rightmost entry that starts at or before the offset and ends after it, so it
+/// is one descent. That keeps the scan's tie rule exactly: the greatest start
+/// wins, and among equal starts the one loaded last.
+#[derive(Default)]
+pub(crate) struct DefIndex {
+    defs: Vec<FileDef>,
+    /// Indices into `defs`, ordered by `(start_byte, index)`.
+    order: Vec<u32>,
+    /// `defs[order[i]].start_byte`, for the offset's partition point.
+    starts: Vec<usize>,
+    /// Segment tree of `end_byte` maxima over `order`; empty for small files.
+    tree: Vec<usize>,
+    leaves: usize,
+}
+
+impl From<Vec<FileDef>> for DefIndex {
+    fn from(defs: Vec<FileDef>) -> Self {
+        if defs.len() < DEF_INDEX_MIN {
+            return DefIndex {
+                defs,
+                ..DefIndex::default()
+            };
+        }
+        let mut order: Vec<u32> = (0..defs.len() as u32).collect();
+        order.sort_by_key(|&i| (defs[i as usize].start_byte, i));
+        let starts = order.iter().map(|&i| defs[i as usize].start_byte).collect();
+        let leaves = defs.len().next_power_of_two();
+        let mut tree = vec![0usize; leaves * 2];
+        for (slot, &i) in order.iter().enumerate() {
+            tree[leaves + slot] = defs[i as usize].end_byte;
+        }
+        for node in (1..leaves).rev() {
+            tree[node] = tree[node * 2].max(tree[node * 2 + 1]);
+        }
+        DefIndex {
+            defs,
+            order,
+            starts,
+            tree,
+            leaves,
+        }
+    }
+}
+
+impl DefIndex {
+    /// The innermost definition whose byte range contains `off`.
+    pub(crate) fn innermost(&self, off: usize) -> Option<&FileDef> {
+        if self.tree.is_empty() {
+            return self
+                .defs
+                .iter()
+                .filter(|d| d.start_byte <= off && off < d.end_byte)
+                .max_by_key(|d| d.start_byte);
+        }
+        // Entries [0, p) start at or before `off`; of those, take the rightmost
+        // that has not ended yet.
+        let p = self.starts.partition_point(|&s| s <= off);
+        let slot = self.rightmost_ending_after(1, 0, self.leaves, p, off)?;
+        Some(&self.defs[self.order[slot] as usize])
+    }
+
+    /// The rightmost slot in `[0, limit)` whose end exceeds `off`, searching the
+    /// subtree `node` that covers `[lo, hi)`.
+    fn rightmost_ending_after(
+        &self,
+        node: usize,
+        lo: usize,
+        hi: usize,
+        limit: usize,
+        off: usize,
+    ) -> Option<usize> {
+        if lo >= limit || self.tree[node] <= off {
+            return None;
+        }
+        if hi - lo == 1 {
+            return Some(lo);
+        }
+        let mid = (lo + hi) / 2;
+        self.rightmost_ending_after(node * 2 + 1, mid, hi, limit, off)
+            .or_else(|| self.rightmost_ending_after(node * 2, lo, mid, limit, off))
+    }
+}
+
 /// Byte offset of the start of each line.
 pub(crate) fn line_starts_of(text: &str) -> Vec<usize> {
     let mut v = vec![0usize];
@@ -530,8 +621,8 @@ fn context_lines(text: &str, line_starts: &[usize], range: std::ops::Range<usize
         .collect()
 }
 
-pub(crate) fn load_file_defs(stmt: &mut rusqlite::Statement, path: &str) -> Result<Vec<FileDef>> {
-    let defs = stmt
+pub(crate) fn load_file_defs(stmt: &mut rusqlite::Statement, path: &str) -> Result<DefIndex> {
+    let defs: Vec<FileDef> = stmt
         .query_map([path], |r| {
             Ok(FileDef {
                 name: r.get(0)?,
@@ -541,14 +632,7 @@ pub(crate) fn load_file_defs(stmt: &mut rusqlite::Statement, path: &str) -> Resu
             })
         })?
         .collect::<std::result::Result<_, _>>()?;
-    Ok(defs)
-}
-
-/// The innermost definition whose byte range contains `off`.
-pub(crate) fn innermost(defs: &[FileDef], off: usize) -> Option<&FileDef> {
-    defs.iter()
-        .filter(|d| d.start_byte <= off && off < d.end_byte)
-        .max_by_key(|d| d.start_byte)
+    Ok(defs.into())
 }
 
 /// Run `re` over candidate bodies and shape the output per `opts.out`.
@@ -757,7 +841,7 @@ pub(crate) fn scan_unindexed(
             &body,
             &[],
             None,
-            &mut |_| Vec::new(),
+            &mut |_| DefIndex::default(),
             re,
             opts,
             cap,
@@ -871,7 +955,7 @@ pub(crate) fn scan_doc(
     body: &str,
     spans: &[(usize, usize, Span)],
     calls: Option<&CallMap>,
-    load_defs: &mut dyn FnMut(&str) -> Vec<FileDef>,
+    load_defs: &mut dyn FnMut(&str) -> DefIndex,
     re: &regex::Regex,
     opts: &ScanOpts,
     cap: usize,
@@ -960,7 +1044,7 @@ pub(crate) fn scan_doc(
         }
         OutMode::Matches => {
             let bytes = body.as_bytes();
-            let mut defs: Option<Vec<FileDef>> = None;
+            let mut defs: Option<DefIndex> = None;
             let mut last_line = usize::MAX;
             let mut kept_here = 0usize;
             let mut stop = false;
@@ -1013,7 +1097,7 @@ pub(crate) fn scan_doc(
                 last_line = line_idx;
 
                 let d = defs.get_or_insert_with(|| load_defs(path));
-                let enclosing = innermost(d, off);
+                let enclosing = d.innermost(off);
                 acc.hits.push(Hit {
                     path: path.to_string(),
                     line: line_idx + 1,
@@ -1065,7 +1149,7 @@ pub(crate) fn scan_doc(
 fn scan_inverted<'a>(
     path: &str,
     body: &str,
-    load_defs: &mut dyn FnMut(&str) -> Vec<FileDef>,
+    load_defs: &mut dyn FnMut(&str) -> DefIndex,
     opts: &ScanOpts,
     cap: usize,
     acc: &mut ScanAcc,
@@ -1106,12 +1190,12 @@ fn scan_inverted<'a>(
             }
         }
         OutMode::Matches => {
-            let mut defs: Option<Vec<FileDef>> = None;
+            let mut defs: Option<DefIndex> = None;
             let mut kept_here = 0usize;
             let mut stop = false;
             for i in free {
                 let d = defs.get_or_insert_with(|| load_defs(path));
-                let enclosing = innermost(d, starts[i]);
+                let enclosing = d.innermost(starts[i]);
                 acc.hits.push(Hit {
                     path: path.to_string(),
                     line: i + 1,
@@ -1193,7 +1277,7 @@ pub(crate) fn scan_stdin(
             // formats use it (to name the component after its file), and a
             // piped Svelte buffer has no file to be named after.
             let ((facts, spans, _), _, sites) = ex.extract(lang, "", body.as_bytes())?;
-            let defs: Vec<FileDef> = facts
+            let defs: DefIndex = facts
                 .into_iter()
                 .filter(|f| f.kind != "import")
                 .map(|f| FileDef {
@@ -1202,7 +1286,8 @@ pub(crate) fn scan_stdin(
                     start_byte: f.start_byte,
                     end_byte: f.end_byte,
                 })
-                .collect();
+                .collect::<Vec<_>>()
+                .into();
             (defs, spans, sites)
         }
         None => {
@@ -1211,7 +1296,7 @@ pub(crate) fn scan_stdin(
                     "--in needs to know the language of piped input: add --language <lang>"
                 ));
             }
-            (Vec::new(), Vec::new(), Vec::new())
+            (DefIndex::default(), Vec::new(), Vec::new())
         }
     };
 
@@ -1373,5 +1458,57 @@ fn cap_str(s: &str, max: usize) -> String {
     } else {
         let t: String = s.chars().take(max).collect();
         format!("{t}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DefIndex, FileDef};
+
+    fn linear(defs: &[FileDef], off: usize) -> Option<usize> {
+        defs.iter()
+            .enumerate()
+            .filter(|(_, d)| d.start_byte <= off && off < d.end_byte)
+            .max_by_key(|(_, d)| d.start_byte)
+            .map(|(i, _)| i)
+    }
+
+    /// Deterministic xorshift, so the test needs no RNG dependency.
+    fn next(state: &mut u64) -> usize {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        (*state >> 33) as usize
+    }
+
+    #[test]
+    fn def_index_agrees_with_a_linear_scan() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        for count in [0usize, 1, 5, 23, 24, 25, 100, 400] {
+            for _ in 0..8 {
+                // Nested, overlapping, adjacent and equal-start ranges, in
+                // arbitrary load order: the tie rule is what is being checked.
+                let defs: Vec<FileDef> = (0..count)
+                    .map(|i| {
+                        let start = next(&mut state) % 500;
+                        let end = start + next(&mut state) % 120;
+                        FileDef {
+                            name: format!("d{i}"),
+                            kind: "function".into(),
+                            start_byte: start,
+                            end_byte: end,
+                        }
+                    })
+                    .collect();
+                let expected: Vec<Option<String>> = (0..640)
+                    .map(|off| linear(&defs, off).map(|i| defs[i].name.clone()))
+                    .collect();
+                let index = DefIndex::from(defs);
+                for (off, want) in expected.iter().enumerate() {
+                    let got = index.innermost(off).map(|d| d.name.clone());
+                    assert_eq!(&got, want, "count {count} offset {off}");
+                }
+            }
+        }
     }
 }
