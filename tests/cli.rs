@@ -2167,7 +2167,7 @@ fn concurrent_invocations_all_succeed() {
             .map(|_| {
                 PCommand::cargo_bin("codeq")
                     .unwrap()
-                    .args(["--json", "symbols", "--limit", "0"])
+                    .args(["--json", "--meta", "symbols", "--limit", "0"])
                     .current_dir(f.path())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -2188,25 +2188,19 @@ fn concurrent_invocations_all_succeed() {
             .collect()
     };
 
-    for body in spawn_all(&f) {
-        let v: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["data"].as_array().unwrap().len(), 12, "cold: {body}");
-    }
-
-    // Warm, and then warm-after-an-edit: the other two shapes of contention.
-    for body in spawn_all(&f) {
-        let v: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["data"].as_array().unwrap().len(), 12, "warm: {body}");
-    }
+    let assert_round = |expected_rows, expected_reindexed| {
+        let mut reindexed = 0;
+        for body in spawn_all(&f) {
+            let v: Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(v["data"].as_array().unwrap().len(), expected_rows, "{body}");
+            reindexed += v["index"]["reindexed_files"].as_u64().unwrap_or(0);
+        }
+        assert_eq!(reindexed, expected_reindexed);
+    };
+    assert_round(12, 12);
+    assert_round(12, 0);
     f.write("src/extra.rs", "pub fn extra() {}\n");
-    for body in spawn_all(&f) {
-        let v: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(
-            v["data"].as_array().unwrap().len(),
-            13,
-            "after edit: {body}"
-        );
-    }
+    assert_round(13, 1);
 }
 
 #[test]
@@ -13645,6 +13639,21 @@ fn a_lock_held_past_the_timeout_is_explained_not_leaked() {
     // Another process mid-build: the write lock is taken and not released.
     let writer = rusqlite::Connection::open(f.path().join(".codeq/index.db")).unwrap();
     writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    // A fresh WAL reader must finish even while another connection owns writes.
+    let fresh = Command::cargo_bin("codeq")
+        .unwrap()
+        .current_dir(f.path())
+        .env("CODEQ_BUSY_TIMEOUT_MS", "0")
+        .args(["symbols", "first"])
+        .output()
+        .unwrap();
+    assert!(
+        fresh.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fresh.stderr)
+    );
+    assert!(String::from_utf8_lossy(&fresh.stdout).contains("first"));
+
     // An edit, so the next query has to write too.
     f.write("a.rs", "pub fn second() {}\n");
 
