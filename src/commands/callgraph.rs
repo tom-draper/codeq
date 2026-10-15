@@ -216,7 +216,7 @@ pub(super) fn alias_hits(
             ScanScope {
                 path: Some(&file),
                 language,
-                accept: None,
+                ..Default::default()
             },
             opts,
         )?;

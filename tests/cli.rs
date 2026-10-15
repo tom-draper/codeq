@@ -6205,6 +6205,60 @@ fn python_import_forms_all_capture_the_module() {
 }
 
 #[test]
+fn search_sql_scopes_preserve_literal_substrings_and_order() {
+    let f = Fixture::new();
+    f.write("src/A%_é.rs", "fn needle() {}\n");
+    f.write("src/prefixA%_é.rs", "fn needle() {}\n");
+    f.write("src/Axxé.rs", "fn needle() {}\n");
+    f.write("src/a%_é.rs", "fn needle() {}\n");
+    f.write("src/A%_é.py", "def needle(): pass\n");
+    f.write("other/end.rs", "fn needle() {}\n");
+    for pattern in ["needle", "n.e"] {
+        let v = f.run(&[
+            "search",
+            pattern,
+            "--path",
+            "A%_é",
+            "--language",
+            "rust",
+            "-l",
+        ]);
+        assert_eq!(
+            v["data"]["files"],
+            serde_json::json!(["src/A%_é.rs", "src/prefixA%_é.rs"])
+        );
+        let v = f.run(&[
+            "search",
+            pattern,
+            "A%_é.rs",
+            "other",
+            "--language",
+            "rust",
+            "-l",
+            "-g",
+            "!**/prefix*",
+        ]);
+        assert_eq!(
+            v["data"]["files"],
+            serde_json::json!(["other/end.rs", "src/A%_é.rs"])
+        );
+    }
+    let v = f.run(&[
+        "search",
+        "absent",
+        "--path",
+        "A%_é",
+        "--language",
+        "rust",
+        "-L",
+    ]);
+    assert_eq!(
+        v["data"]["files"],
+        serde_json::json!(["src/A%_é.rs", "src/prefixA%_é.rs"])
+    );
+}
+
+#[test]
 fn search_composes_word_language_and_path_filters() {
     let f = Fixture::new();
     f.write("a.rs", "fn value() {}\nlet value = 1;\n");
