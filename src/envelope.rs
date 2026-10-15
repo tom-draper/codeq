@@ -84,6 +84,10 @@ pub struct Envelope<T: Serialize> {
     /// it is exactly who needs to know the difference between "none" and "you
     /// asked the wrong question".
     note: Option<String>,
+    /// Per file, rows a `--max-per-file` scan counted without producing. The
+    /// cap adds them to the rows it sees, so a file's reported total is the
+    /// same as if every row had been built and then dropped.
+    overflow: BTreeMap<String, usize>,
 }
 
 impl<T: Serialize> Envelope<T> {
@@ -93,7 +97,13 @@ impl<T: Serialize> Envelope<T> {
             index,
             data,
             note: None,
+            overflow: BTreeMap::new(),
         }
+    }
+
+    pub fn overflow(mut self, overflow: BTreeMap<String, usize>) -> Self {
+        self.overflow = overflow;
+        self
     }
 
     pub fn note(mut self, note: Option<String>) -> Self {
@@ -119,7 +129,7 @@ impl<T: Serialize> Envelope<T> {
         // find no paths and silently keep every row — two token-reducing flags
         // where asking for both gives you less reduction than asking for one.
         let truncated = match r.max_per_file {
-            Some(n) if n > 0 => cap_per_file(&mut data, n),
+            Some(n) if n > 0 => cap_per_file(&mut data, n, &self.overflow),
             _ => BTreeMap::new(),
         };
 
@@ -320,11 +330,15 @@ fn rows_pointer(data: &Value) -> Option<String> {
     }
 }
 
-fn cap_per_file(data: &mut Value, n: usize) -> BTreeMap<String, usize> {
+fn cap_per_file(
+    data: &mut Value,
+    n: usize,
+    overflow: &BTreeMap<String, usize>,
+) -> BTreeMap<String, usize> {
     let mut truncated = BTreeMap::new();
     if let Some(results) = data.get_mut("results").and_then(Value::as_array_mut) {
         for result in results {
-            let counts = cap_per_file(&mut result["data"], n);
+            let counts = cap_per_file(&mut result["data"], n, &BTreeMap::new());
             if !counts.is_empty() {
                 result["truncated_per_file"] = serde_json::to_value(counts).unwrap();
             }
@@ -332,11 +346,11 @@ fn cap_per_file(data: &mut Value, n: usize) -> BTreeMap<String, usize> {
         return truncated;
     }
     match data {
-        Value::Array(rows) => cap_rows(rows, n, &mut truncated),
+        Value::Array(rows) => cap_rows(rows, n, overflow, &mut truncated),
         Value::Object(map) => {
             for v in map.values_mut() {
                 if let Value::Array(rows) = v {
-                    cap_rows(rows, n, &mut truncated);
+                    cap_rows(rows, n, overflow, &mut truncated);
                 }
             }
         }
@@ -345,12 +359,22 @@ fn cap_per_file(data: &mut Value, n: usize) -> BTreeMap<String, usize> {
     truncated
 }
 
-fn cap_rows(rows: &mut Vec<Value>, n: usize, truncated: &mut BTreeMap<String, usize>) {
+fn cap_rows(
+    rows: &mut Vec<Value>,
+    n: usize,
+    overflow: &BTreeMap<String, usize>,
+    truncated: &mut BTreeMap<String, usize>,
+) {
     let mut totals: BTreeMap<String, usize> = BTreeMap::new();
     for r in rows.iter() {
         if let Some(p) = r.get("path").and_then(|v| v.as_str()) {
             *totals.entry(p.to_string()).or_insert(0) += 1;
         }
+    }
+    // Only files that still have a row: `--resolved` can drop a whole file
+    // after the scan, and its overflow goes with it.
+    for (p, total) in totals.iter_mut() {
+        *total += overflow.get(p).copied().unwrap_or(0);
     }
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     rows.retain(|r| match r.get("path").and_then(|v| v.as_str()) {

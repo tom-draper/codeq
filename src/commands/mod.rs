@@ -93,6 +93,10 @@ struct Session {
     import_lines: RefCell<HashMap<String, HashSet<i64>>>,
     aliased_names: OnceCell<HashSet<String>>,
     source_bodies: RefCell<HashMap<String, Option<Rc<String>>>>,
+    /// Matches a `--max-per-file` scan counted without building rows, per file.
+    /// The renderer adds them to the rows it caps, so the totals it reports
+    /// still describe every match.
+    overflow: RefCell<BTreeMap<String, usize>>,
 }
 
 /// Set by `--root`: the tree was named explicitly, so discovery must take it
@@ -130,7 +134,17 @@ impl Session {
             import_lines: RefCell::new(HashMap::new()),
             aliased_names: OnceCell::new(),
             source_bodies: RefCell::new(HashMap::new()),
+            overflow: RefCell::new(BTreeMap::new()),
         })
+    }
+
+    /// Record the matches a capped scan counted but did not keep, for the
+    /// envelope to fold into its per-file totals.
+    fn add_overflow(&self, more: BTreeMap<String, usize>) {
+        let mut all = self.overflow.borrow_mut();
+        for (path, n) in more {
+            *all.entry(path).or_insert(0) += n;
+        }
     }
 
     /// Decoded source shared by callee scans throughout this query.
@@ -248,7 +262,10 @@ impl Session {
             head: if shown { self.repo.head() } else { None },
             dirty: if shown { self.repo.dirty() } else { None },
         };
-        Envelope::new(repo, index, data).note(note).print(render)
+        Envelope::new(repo, index, data)
+            .note(note)
+            .overflow(self.overflow.take())
+            .print(render)
     }
 }
 

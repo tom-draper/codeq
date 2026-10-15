@@ -10093,6 +10093,77 @@ fn max_per_file_surveys_every_file_not_just_the_first_limit_rows() {
 }
 
 #[test]
+fn max_per_file_totals_survive_rows_that_are_counted_and_not_built() {
+    // A capped scan counts the matches past the cap instead of building rows
+    // for them. The totals, the context on kept rows and the one-row-per-line
+    // rule must all read as if every row had been built and then dropped.
+    let f = Fixture::new();
+    let body: String = (0..6)
+        .map(|i| format!("// before {i}\nfn a{i}() {{ t(); t(); }}\n"))
+        .collect();
+    f.write("a.rs", &body);
+    f.write("b.rs", "fn b() { t(); }\n");
+
+    let v = f.run(&["search", "t()", "--max-per-file", "2", "-B", "1"]);
+    let rows = v["data"]["matches"].as_array().unwrap();
+    let a: Vec<_> = rows.iter().filter(|r| r["path"] == "a.rs").collect();
+    assert_eq!(a.len(), 2, "{rows:?}");
+    assert_eq!(a[0]["before"][0], "// before 0", "context lost: {:?}", a[0]);
+    assert_eq!(
+        v["notes"]["truncated_per_file"]["a.rs"], 6,
+        "two matches on one line are one row; {:?}",
+        v["notes"]
+    );
+    assert!(v["notes"]["truncated_per_file"].get("b.rs").is_none());
+
+    let refs = f.run(&["references", "t", "--max-per-file", "2"]);
+    assert_eq!(
+        refs["data"]["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["path"] == "a.rs")
+            .count(),
+        2,
+        "{refs}"
+    );
+    assert_eq!(
+        refs["notes"]["truncated_per_file"]["a.rs"], 6,
+        "{:?}",
+        refs["notes"]
+    );
+
+    let inverted = f.run(&["search", "fn", "-v", "--max-per-file", "2"]);
+    let kept = inverted["data"]["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["path"] == "a.rs")
+        .count();
+    assert_eq!(kept, 2, "{inverted}");
+    assert_eq!(
+        inverted["notes"]["truncated_per_file"]["a.rs"], 6,
+        "{:?}",
+        inverted["notes"]
+    );
+}
+
+#[test]
+fn max_per_file_does_not_thin_the_matches_a_symbol_search_ranks() {
+    // `--symbols` ranks definitions by how many lines matched in them, so the
+    // rows past a per-file cap are still evidence there.
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn busy() {\n    t();\n    t();\n    t();\n}\nfn quiet() { t(); }\n",
+    );
+    let v = f.run(&["search", "t()", "--symbols", "--max-per-file", "1"]);
+    let symbols = v["data"]["symbols"].as_array().unwrap();
+    let busy = symbols.iter().find(|s| s["name"] == "busy");
+    assert_eq!(busy.map(|s| &s["hits"]), Some(&serde_json::json!(3)), "{v}");
+}
+
+#[test]
 fn fields_projection_does_not_disable_max_per_file() {
     // Both flags exist to cut tokens, so asking for both is natural -- and used
     // to give *less* reduction than either alone: --fields ran first and removed
