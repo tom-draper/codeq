@@ -611,7 +611,9 @@ enum Command {
         #[arg(long, default_value_t = 200)]
         limit: usize,
     },
-    /// Files that import a module matching the query (raw string match).
+    /// Files that import a module matching the query. The query must be a whole
+    /// name in the import (`sr` matches `./locale/sr`, not `../src`), and a file
+    /// path also drops imports that resolve to a different file.
     Importers {
         /// Module token or file path to match against import statements.
         /// A path (e.g. `src/db.rs`) is reduced to its stem (`db`).

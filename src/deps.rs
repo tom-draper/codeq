@@ -593,6 +593,18 @@ impl Graph {
             .is_some_and(|es| es.iter().any(|e| e.module == module))
     }
 
+    /// The internal files the import `module`, written in `from`, resolved to.
+    /// Empty when it points outside the repo, as [`Graph::resolves`] reports.
+    pub fn targets(&self, from: &str, module: &str) -> Vec<&str> {
+        self.edges
+            .get(from)
+            .into_iter()
+            .flatten()
+            .filter(|e| e.module == module)
+            .map(|e| e.to.as_str())
+            .collect()
+    }
+
     /// Direct internal targets of an import whose path explicitly contains the
     /// single-segment module name `receiver`. This is deliberately narrower
     /// than general dependency resolution: it is used to disambiguate a call
