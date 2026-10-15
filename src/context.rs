@@ -47,6 +47,7 @@ pub struct Request {
 }
 
 /// A definition loaded from the index.
+#[derive(Clone)]
 struct Def {
     name: String,
     kind: String,
@@ -463,11 +464,7 @@ fn source_for_impl(
     // definition sets its role (pass focus seeds first).
     let mut cands: Vec<(Def, &'static str, bool)> = Vec::new();
     let mut seen: HashSet<(String, usize)> = HashSet::new();
-    for seed in seeds {
-        let defs = match seed.start_byte {
-            Some(byte) => defs_enclosing_byte(db, &seed.path, byte)?,
-            None => defs_by_name_in_path(db, &seed.name, &seed.path)?,
-        };
+    for (seed, defs) in seeds.iter().zip(resolve_source_seeds(db, seeds)?) {
         for d in defs {
             if seen.insert((d.path.clone(), d.start_byte)) {
                 cands.push((d, seed.role, seed.forced));
@@ -584,18 +581,81 @@ fn source_for_impl(
     })
 }
 
+/// Resolve each file's seeds together, then return results in seed order.
+/// Single-seed files retain the narrow lookup so sparse queries do not decode
+/// every definition in a large file.
+fn resolve_source_seeds(db: &Db, seeds: &[Seed]) -> Result<Vec<Vec<Def>>> {
+    let mut by_path: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, seed) in seeds.iter().enumerate() {
+        by_path.entry(&seed.path).or_default().push(i);
+    }
+    let mut resolved: Vec<Vec<Def>> = (0..seeds.len()).map(|_| Vec::new()).collect();
+    for (path, indices) in by_path {
+        if indices.len() == 1 {
+            let i = indices[0];
+            let seed = &seeds[i];
+            resolved[i] = match seed.start_byte {
+                Some(byte) => defs_enclosing_byte(db, path, byte)?,
+                None => defs_by_name_in_path(db, &seed.name, path)?,
+            };
+            continue;
+        }
+        let all = indices.iter().any(|&i| seeds[i].start_byte.is_some());
+        let names: Vec<&str> = indices.iter().map(|&i| seeds[i].name.as_str()).collect();
+        let names = serde_json::to_string(&names)?;
+        let sql = format!(
+            "SELECT {DEF_COLUMNS} FROM facts WHERE path = ?1 AND kind <> 'import'{} ORDER BY rowid",
+            if all {
+                ""
+            } else {
+                " AND name IN (SELECT value FROM json_each(?2))"
+            }
+        );
+        let mut stmt = db.conn.prepare_cached(&sql)?;
+        let mut params = vec![path];
+        if !all {
+            params.push(&names);
+        }
+        let defs = stmt
+            .query_map(rusqlite::params_from_iter(params), row_to_def)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut by_name: HashMap<&str, Vec<&Def>> = HashMap::new();
+        for d in &defs {
+            by_name.entry(&d.name).or_default().push(d);
+        }
+        for i in indices {
+            resolved[i] = match seeds[i].start_byte {
+                Some(byte) => defs
+                    .iter()
+                    .filter(|d| d.start_byte <= byte && byte < d.end_byte)
+                    .min_by_key(|d| (d.end_byte - d.start_byte, std::cmp::Reverse(d.start_byte)))
+                    .cloned()
+                    .into_iter()
+                    .collect(),
+                None => by_name
+                    .get(seeds[i].name.as_str())
+                    .into_iter()
+                    .flatten()
+                    .map(|d| (*d).clone())
+                    .collect(),
+            };
+        }
+    }
+    Ok(resolved)
+}
+
 /// Definitions of an exact name within one file, via the facts(name) index.
 fn defs_by_name_in_path(db: &Db, name: &str, path: &str) -> Result<Vec<Def>> {
     let sql =
         format!("SELECT {DEF_COLUMNS} FROM facts WHERE name = ? AND path = ? AND kind <> 'import'");
-    let mut stmt = db.conn.prepare(&sql)?;
+    let mut stmt = db.conn.prepare_cached(&sql)?;
     let rows = stmt.query_map(rusqlite::params![name, path], row_to_def)?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
 fn defs_enclosing_byte(db: &Db, path: &str, byte: usize) -> Result<Vec<Def>> {
     let sql = format!("SELECT {DEF_COLUMNS} FROM facts WHERE path = ? AND kind <> 'import' AND start_byte <= ? AND end_byte > ? ORDER BY end_byte - start_byte, start_byte DESC LIMIT 1");
-    let mut stmt = db.conn.prepare(&sql)?;
+    let mut stmt = db.conn.prepare_cached(&sql)?;
     let rows = stmt.query_map(rusqlite::params![path, byte, byte], row_to_def)?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
@@ -895,5 +955,46 @@ fn collect_identifiers(text: &str, out: &mut HashSet<String>) {
     }
     if cur.len() >= 2 {
         out.insert(cur);
+    }
+}
+
+#[cfg(test)]
+mod source_seed_tests {
+    use super::*;
+
+    #[test]
+    fn batched_source_seeds_preserve_ranges_rank_and_first_claim() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let text = "class Outer:\n    def inner(self):\n        helper()\n\ndef duplicate(): first()\ndef duplicate(): second()\n";
+        std::fs::write(dir.path().join("a.py"), text).unwrap();
+        std::fs::write(dir.path().join("b.py"), "def other(): pass\n").unwrap();
+        let repo = Repo::at(dir.path(), true).unwrap();
+        let db = Db::open(&repo.root).unwrap();
+        crate::index::refresh(&db, &repo).unwrap();
+        let seed = |name: &str, path: &str, role, forced, start_byte| Seed {
+            name: name.into(),
+            path: path.into(),
+            role,
+            forced,
+            start_byte,
+        };
+        let seeds = vec![
+            seed("duplicate", "a.py", "neighbor", false, None),
+            seed("ignored", "a.py", "focus", true, text.find("helper()")),
+            seed("duplicate", "a.py", "focus", true, None),
+            seed("absent", "a.py", "neighbor", false, None),
+            seed("end", "a.py", "neighbor", false, Some(text.len())),
+            seed("other", "b.py", "neighbor", false, None),
+        ];
+        let result = source_for_ranked(&db, &repo, &seeds, 1000).unwrap();
+        let names: Vec<_> = result.chunks.iter().map(|c| c.symbol.as_str()).collect();
+        assert_eq!(names, ["inner", "duplicate", "duplicate", "other"]);
+        let roles: Vec<_> = result.chunks.iter().map(|c| c.reason).collect();
+        assert_eq!(roles, ["focus", "neighbor", "neighbor", "neighbor"]);
+        assert_eq!(
+            result.chunks[0].text.as_deref(),
+            Some("def inner(self):\n        helper()")
+        );
+        assert!(result.omitted.is_empty());
     }
 }
