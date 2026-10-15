@@ -5,7 +5,7 @@ fewer tool calls. It finds definitions, traces callers, and reads complete
 functions without guessing line ranges.
 
 It runs as a CLI or an MCP server. Tree-sitter extracts code structure into a
-local SQLite index, which codeq keeps up to date as files change. Queries run
+local SQLite index, which `codeq` keeps up to date as files change. Queries run
 locally, with no model or remote service.
 
 ## Install
