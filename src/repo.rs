@@ -5,8 +5,9 @@
 //! report a HEAD/dirty state without it.
 
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use anyhow::{anyhow, Result};
 
@@ -17,6 +18,76 @@ pub struct Repo {
     /// The root was named explicitly with `--root`, so the walk must not consult
     /// a parent repository's ignore files.
     pub pinned: bool,
+}
+
+pub struct Changes {
+    pub base: String,
+    pub paths: Vec<String>,
+}
+
+/// One request at a time keeps memory bounded by the largest historical file.
+pub struct GitBlobs {
+    child: Child,
+    input: ChildStdin,
+    output: BufReader<ChildStdout>,
+    base: String,
+}
+
+impl GitBlobs {
+    pub fn open(repo: &Repo, base: String) -> Result<Self> {
+        let mut child = Command::new("git")
+            .arg("-C")
+            .arg(&repo.root)
+            .args(["cat-file", "--batch", "-z"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let input = child.stdin.take().unwrap();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        Ok(Self {
+            child,
+            input,
+            output,
+            base,
+        })
+    }
+
+    pub fn read(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
+        let request = format!("{}:{path}", self.base);
+        self.input.write_all(request.as_bytes())?;
+        self.input.write_all(&[0])?;
+        self.input.flush()?;
+        let mut header = Vec::new();
+        self.output.read_until(b'\n', &mut header)?;
+        // With -z only requests are NUL-delimited. Missing responses echo the
+        // request verbatim, including any newlines in its filename.
+        let missing = format!("{request} missing\n").into_bytes();
+        if !header.is_empty() && missing.starts_with(&header) {
+            let read = header.len();
+            header.resize(missing.len(), 0);
+            self.output.read_exact(&mut header[read..])?;
+            anyhow::ensure!(header == missing, "invalid git cat-file missing response");
+            return Ok(None);
+        }
+        let fields: Vec<_> = std::str::from_utf8(&header)?.split_whitespace().collect();
+        anyhow::ensure!(fields.len() == 3, "invalid git cat-file header");
+        let size: usize = fields[2].parse()?;
+        let mut bytes = vec![0; size];
+        self.output.read_exact(&mut bytes)?;
+        let mut newline = [0];
+        self.output.read_exact(&mut newline)?;
+        anyhow::ensure!(newline == [b'\n'], "invalid git cat-file terminator");
+        Ok((fields[1] == "blob").then_some(bytes))
+    }
+}
+
+impl Drop for GitBlobs {
+    fn drop(&mut self) {
+        // Also reap the process on early returns, including extraction errors.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 impl Repo {
@@ -91,24 +162,8 @@ impl Repo {
     // own index cache (per-file size/mtime + per-directory mtime) and checks it
     // natively — git-free, and faster on a clean tree than spawning git.
 
-    /// Paths changed relative to `reference` (a ref, or the working tree vs a
-    /// ref). Returns repo-relative paths.
-    /// The contents of `path` as of `reference`, or `None` when the file did not
-    /// exist there (which is how an added file is recognised).
-    pub fn file_at(&self, reference: &str, path: &str) -> Option<Vec<u8>> {
-        let base = git(&self.root, &["merge-base", reference, "HEAD"])
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| reference.to_string());
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&self.root)
-            .args(["show", &format!("{base}:{path}")])
-            .output()
-            .ok()?;
-        out.status.success().then_some(out.stdout)
-    }
-
-    pub fn changed_since(&self, reference: &str) -> Result<Vec<String>> {
+    /// Changed paths and the resolved comparison base, shared with blob reads.
+    pub fn changed_since(&self, reference: &str) -> Result<Changes> {
         if !self.is_git {
             return Err(anyhow!("`changed` requires a Git repository"));
         }
@@ -136,7 +191,7 @@ impl Repo {
         paths.extend(nul_separated(&untracked).map(str::to_string));
         paths.sort();
         paths.dedup();
-        Ok(paths)
+        Ok(Changes { base, paths })
     }
 
     /// New-side changed line ranges per file, relative to `reference` (merge-base
@@ -410,6 +465,48 @@ mod tests {
             Some("ü.rs".to_string())
         );
         assert_eq!(new_side_path("/dev/null"), None);
+    }
+
+    #[test]
+    fn historical_blobs_preserve_bytes_and_missing_response_alignment() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args([
+                    "-c",
+                    "user.name=test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        let name = " leading\nline\t:ü.rs";
+        let bytes = [
+            b"pub fn old() {}\n\0\xff".as_slice(),
+            &vec![b'x'; 256 * 1024],
+        ]
+        .concat();
+        std::fs::write(dir.path().join(name), &bytes).unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "initial"]);
+        let repo = Repo::at(dir.path(), false).unwrap();
+        let mut blobs = GitBlobs::open(&repo, "HEAD".into()).unwrap();
+        assert_eq!(blobs.read("absent\n\t:ü.rs").unwrap(), None);
+        assert_eq!(blobs.read(name).unwrap(), Some(bytes.clone()));
+        assert_eq!(blobs.read("missing.rs").unwrap(), None);
+        assert_eq!(blobs.read(name).unwrap(), Some(bytes));
     }
 
     #[test]

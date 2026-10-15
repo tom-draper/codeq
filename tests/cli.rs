@@ -8953,6 +8953,56 @@ fn api_diff_reports_public_exports_moved_by_file_rename() {
 }
 
 #[test]
+fn api_diff_batches_unusual_paths_additions_and_deletions() {
+    let f = Fixture::new();
+    let changed = "b line\n\t:ü.rs";
+    f.write(changed, "pub fn shape(a: u32) {}\n");
+    f.write("c deleted.rs", "pub fn gone() {}\n");
+    f.git_init_commit();
+    f.write("a new\nfile.rs", "pub fn fresh() {}\n");
+    f.write(changed, "pub fn shape(a: u64) {}\n");
+    f.remove("c deleted.rs");
+
+    let diff = f.run(&["api", "--compare-to", "HEAD"]);
+    assert_eq!(diff["data"]["added"].as_array().unwrap().len(), 1, "{diff}");
+    assert_eq!(diff["data"]["added"][0]["name"], "fresh");
+    assert_eq!(diff["data"]["removed"][0]["name"], "gone");
+    assert_eq!(diff["data"]["changed"][0]["path"], changed);
+    assert_eq!(diff["data"]["changed"][0]["name"], "shape");
+    assert!(diff["data"]["changed"][0]["was"]
+        .as_str()
+        .unwrap()
+        .contains("a: u32"));
+
+    let scoped = f.run(&["api", "b line", "--compare-to", "HEAD"]);
+    assert!(scoped["data"]["added"].as_array().unwrap().is_empty());
+    assert!(scoped["data"]["removed"].as_array().unwrap().is_empty());
+    assert_eq!(scoped["data"]["changed"][0]["path"], changed);
+    assert!(!f
+        .raw(&["api", "--compare-to", "no-such-reference"])
+        .status
+        .success());
+}
+
+#[test]
+fn api_diff_reads_blobs_from_the_merge_base() {
+    let f = Fixture::new();
+    f.write("lib.rs", "pub fn shape(a: u32) {}\n");
+    f.git_init_commit();
+    f.git(&["checkout", "-qb", "other"]);
+    f.write("lib.rs", "pub fn shape(a: u64) {}\n");
+    f.git(&["commit", "-qam", "other branch"]);
+    f.git(&["checkout", "-q", "main"]);
+    f.write("lib.rs", "pub fn shape(a: u8) {}\n");
+    let diff = f.run(&["api", "--compare-to", "other"]);
+    assert_eq!(diff["data"]["changed"].as_array().unwrap().len(), 1);
+    assert!(diff["data"]["changed"][0]["was"]
+        .as_str()
+        .unwrap()
+        .contains("a: u32"));
+}
+
+#[test]
 fn api_empty_scope_note_uses_literal_path_matching() {
     let f = Fixture::new();
     f.write("pkg/acb.rs", "fn private() {}\n");

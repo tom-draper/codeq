@@ -103,7 +103,7 @@ pub fn cmd_changed(
         return changed_symbols(&s, compare_to, limit);
     }
 
-    let mut paths = s.repo.changed_since(compare_to)?;
+    let mut paths = s.repo.changed_since(compare_to)?.paths;
     if limit > 0 && paths.len() > limit {
         paths.truncate(limit);
     }
