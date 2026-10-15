@@ -812,6 +812,130 @@ pub(crate) fn run_search_acc(
     Ok((acc, stopped))
 }
 
+/// A whole-word search for each of `names`, reading each file once however many
+/// of them it may mention.
+///
+/// The same candidates, matcher and enclosing-symbol rows as a [`run_search`] per
+/// name with `identifier_boundary` on: each name's candidate files come from its
+/// own trigram query, and a file is then read once and handed to [`scan_doc`] for
+/// the names that listed it. What a name finds is exactly what the single search
+/// would. `visit(i, hits)` receives the hits of `names[i]` in one file, in path
+/// order; returning true says that name has what it needs and it is not searched
+/// again. A file with no name left to search is never read.
+pub(crate) fn scan_names(
+    conn: &rusqlite::Connection,
+    root: &Path,
+    names: &[&str],
+    path: Option<&str>,
+    visit: &mut dyn FnMut(usize, Vec<Hit>) -> bool,
+) -> Result<()> {
+    let opts = ScanOpts {
+        before: 0,
+        after: 0,
+        out: OutMode::Matches,
+        in_filter: InFilter::Any,
+        limit: 0,
+        call_only: false,
+        qualifier: None,
+        identifier_boundary: true,
+        word_regex: None,
+        per_file: None,
+        only_matching: false,
+        invert: false,
+    };
+    let res = names
+        .iter()
+        .map(|n| regex::Regex::new(&regex::escape(n)).map_err(|e| anyhow!("invalid name: {e}")))
+        .collect::<Result<Vec<_>>>()?;
+
+    // Which names may match in which file, from the same trigram query a lone
+    // search would run. The query is cheap next to reading the bodies, and a
+    // file several names share is then read once.
+    let mut sql = String::from("SELECT path, language FROM files WHERE is_text = 1");
+    if path.is_some() {
+        sql.push_str(" AND instr(path, ?) > 0");
+    }
+    let mut every = conn.prepare(&sql)?;
+    sql.push_str(" AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?)");
+    let mut narrowed = conn.prepare(&sql)?;
+    let mut candidates: std::collections::BTreeMap<String, (Option<String>, Vec<usize>)> =
+        Default::default();
+    for (i, name) in names.iter().enumerate() {
+        // No clause (shorter than a trigram) makes every text file a candidate,
+        // as it does for the single search.
+        let clause = prefilter_of(name)
+            .filter(|l| !l.is_empty())
+            .map(|l| l.join(" OR "));
+        let mut params: Vec<&dyn rusqlite::ToSql> =
+            path.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        let mut rows = match &clause {
+            Some(c) => {
+                params.push(c);
+                narrowed.query(params.as_slice())?
+            }
+            None => every.query(params.as_slice())?,
+        };
+        while let Some(row) = rows.next()? {
+            let entry = candidates
+                .entry(row.get::<_, String>(0)?)
+                .or_insert_with(|| (row.get::<_, Option<String>>(1).ok().flatten(), Vec::new()));
+            entry.1.push(i);
+        }
+    }
+
+    let mut def_stmt = conn.prepare(
+        "SELECT name, kind, start_byte, end_byte FROM facts
+         WHERE path = ?1 AND kind <> 'import'",
+    )?;
+    let mut span_stmt = conn.prepare(SPANS_SQL)?;
+    let mut done = vec![false; names.len()];
+    let mut remaining = names.len();
+    for (rel, (lang, indices)) in &candidates {
+        if remaining == 0 {
+            break;
+        }
+        let todo: Vec<usize> = indices.iter().copied().filter(|&i| !done[i]).collect();
+        if todo.is_empty() {
+            continue;
+        }
+        let Some(body) = crate::index::load_body(root, rel) else {
+            continue;
+        };
+        let body = body.as_str();
+        let lang = lang.as_deref();
+        // Spans decide whether a `$` continues a name, as in `run_search_acc`.
+        let spans = if dollar_binds(lang) && has_spans(lang.unwrap_or("")) {
+            span_stmt
+                .query_map([rel.as_str()], span_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+        for i in todo {
+            let mut load_defs =
+                |path: &str| load_file_defs(&mut def_stmt, path).unwrap_or_default();
+            let mut acc = ScanAcc::default();
+            scan_doc(
+                rel,
+                lang,
+                body,
+                &spans,
+                None,
+                &mut load_defs,
+                &res[i],
+                &opts,
+                usize::MAX,
+                &mut acc,
+            );
+            if !acc.hits.is_empty() && visit(i, acc.hits) {
+                done[i] = true;
+                remaining -= 1;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Scan files that are on disk but not in the index — gitignored build output,
 /// a log, a path outside the repository — into `acc`. `(label, path)` pairs: the
 /// label is the path as the caller wrote it, which is what each row reports.

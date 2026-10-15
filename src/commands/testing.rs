@@ -132,50 +132,38 @@ pub(super) fn test_sites(
     name: &str,
     path: Option<&str>,
 ) -> Result<std::collections::BTreeSet<(String, String)>> {
-    let expr = regex::escape(name);
-    let re = regex::Regex::new(&expr).map_err(|e| anyhow!("invalid name: {e}"))?;
-    let opts = ScanOpts {
-        before: 0,
-        after: 0,
-        out: OutMode::Matches,
-        in_filter: InFilter::Any,
-        limit: 0,
-        call_only: false,
-        qualifier: None,
-        identifier_boundary: true,
-        word_regex: None,
-        per_file: None,
-        only_matching: false,
-        invert: false,
-    };
-    let hits = match run_search(
-        &s.db.conn,
-        &s.repo.root,
-        &re,
-        prefilter_of(name).as_deref(),
-        ScanScope {
-            path,
-            ..Default::default()
-        },
-        &opts,
-    )? {
-        SearchData::Matches { matches, .. } => matches,
-        _ => unreachable!("tests always uses Matches mode"),
-    };
+    Ok(test_sites_for(s, &[name], path, false)?.remove(0))
+}
 
+/// [`test_sites`] for several names in one pass over the files, so a file that
+/// mentions many of them is read once rather than once per name. One set per
+/// name, in the order given.
+///
+/// With `first_only` a name stops being searched at its first test site: the
+/// set is then "empty or not", which is all a coverage check needs, and the
+/// rest of the repository is never read for a name that is already covered.
+pub(super) fn test_sites_for(
+    s: &Session,
+    names: &[&str],
+    path: Option<&str>,
+    first_only: bool,
+) -> Result<Vec<std::collections::BTreeSet<(String, String)>>> {
     let scopes = s.test_scopes()?;
-    let mut tests: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
-    for h in &hits {
-        let sym = match &h.symbol {
-            Some(sy) if sy != name => sy,
-            _ => continue,
-        };
-        let is_fn = matches!(h.kind.as_deref(), Some("function") | Some("method"));
-        if is_fn && is_test_site(&h.path, Some(sym), h.line as i64, scopes) {
-            tests.insert((h.path.clone(), sym.clone()));
+    let mut sites = vec![std::collections::BTreeSet::new(); names.len()];
+    scan_names(&s.db.conn, &s.repo.root, names, path, &mut |i, hits| {
+        for h in &hits {
+            let sym = match &h.symbol {
+                Some(sy) if sy != names[i] => sy,
+                _ => continue,
+            };
+            let is_fn = matches!(h.kind.as_deref(), Some("function") | Some("method"));
+            if is_fn && is_test_site(&h.path, Some(sym), h.line as i64, scopes) {
+                sites[i].insert((h.path.clone(), sym.clone()));
+            }
         }
-    }
-    Ok(tests)
+        first_only && !sites[i].is_empty()
+    })?;
+    Ok(sites)
 }
 
 /// Resolve (path, test-name) sites to their definition rows (line, kind), sorted
@@ -233,7 +221,12 @@ fn resolve_test_rows(
     Ok((rows, truncated))
 }
 
-#[derive(Serialize)]
+/// Names whose coverage `untested` checks in one pass over the files. Each name
+/// adds its trigram clauses to the candidate query, so this bounds that query as
+/// much as the work a pass does.
+pub(super) const NAMES_PER_SCAN: usize = 128;
+
+#[derive(Serialize, Clone)]
 struct UntestedRow {
     name: String,
     kind: String,
@@ -293,32 +286,56 @@ pub fn cmd_untested(
         rows.collect::<std::result::Result<_, _>>()?
     };
 
-    // One lookup per distinct name, not per definition.
     let scopes = s.test_scopes()?;
+    // Test scaffolding is not production code that needs covering. Same rule
+    // `unused` applies, via the same predicate: this used to be a path-only
+    // check, so a `pub fn` inside a `#[cfg(test)] mod tests` in a production
+    // file was reported as untested public API — which `unused`, asking the
+    // identical question one screen away, already knew better than to do.
+    let candidates: Vec<UntestedRow> = candidates
+        .into_iter()
+        .filter(|c| !is_test_site(&c.path, Some(&c.name), c.line, scopes))
+        .collect();
+
+    // One lookup per distinct name, not per definition, and a batch of names
+    // per pass over the files rather than a pass each. The batch is the next
+    // names in report order. Under a `--limit` it starts at the number of rows
+    // wanted and doubles, so a small limit does not look far past the rows it
+    // can stop at.
+    let mut batch = if limit > 0 {
+        limit.clamp(8, NAMES_PER_SCAN)
+    } else {
+        NAMES_PER_SCAN
+    };
     let mut stopped_at_limit = false;
     let mut covered: HashMap<String, bool> = HashMap::new();
     let mut data: Vec<UntestedRow> = Vec::new();
     let mut checked = 0usize;
-    for cand in candidates {
-        // Test scaffolding is not production code that needs covering. Same rule
-        // `unused` applies, via the same predicate: this used to be a path-only
-        // check, so a `pub fn` inside a `#[cfg(test)] mod tests` in a production
-        // file was reported as untested public API — which `unused`, asking the
-        // identical question one screen away, already knew better than to do.
-        if is_test_site(&cand.path, Some(&cand.name), cand.line, scopes) {
-            continue;
-        }
+    for (i, cand) in candidates.iter().enumerate() {
         checked += 1;
         let has_test = match covered.get(&cand.name) {
             Some(&c) => c,
             None => {
-                let c = !test_sites(&s, &cand.name, None)?.is_empty();
-                covered.insert(cand.name.clone(), c);
-                c
+                let mut ahead: Vec<&str> = Vec::with_capacity(batch);
+                for c in &candidates[i..] {
+                    let n = c.name.as_str();
+                    if !covered.contains_key(n) && !ahead.contains(&n) {
+                        ahead.push(n);
+                        if ahead.len() == batch {
+                            break;
+                        }
+                    }
+                }
+                let found = test_sites_for(&s, &ahead, None, true)?;
+                for (n, sites) in ahead.iter().zip(found) {
+                    covered.insert((*n).to_string(), !sites.is_empty());
+                }
+                batch = (batch * 2).min(NAMES_PER_SCAN);
+                covered[&cand.name]
             }
         };
         if !has_test {
-            data.push(cand);
+            data.push(cand.clone());
             if limit > 0 && data.len() >= limit {
                 // Stop rather than count the rest: the per-candidate test lookup
                 // is the expensive part, so the exact total is not worth a full

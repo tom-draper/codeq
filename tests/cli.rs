@@ -9058,6 +9058,53 @@ fn untested_reports_public_definitions_no_test_names() {
     );
 }
 
+#[test]
+fn untested_checks_many_names_in_one_pass_exactly_as_one_at_a_time() {
+    // Coverage is decided for a batch of names per pass over the files. The
+    // batch must not change what counts: a name that only appears inside a
+    // longer identifier is not covered, a name shorter than a trigram still is
+    // when a test names it, and a test that is merely named like the candidate
+    // is not a test *of* it.
+    let f = Fixture::new();
+    f.write(
+        "src/lib.rs",
+        "pub fn parse() {}
+pub fn parse_all() {}
+pub fn ab() {}
+pub fn lonely() {}
+pub fn echo() {}
+",
+    );
+    f.write(
+        "tests/t.rs",
+        "#[test]
+fn t_parse_all() { parse_all(); }
+#[test]
+fn t_short() { ab(); }
+#[test]
+fn echo() { let _ = 1; }
+",
+    );
+    let names = field_set(&f.run(&["untested"]), "name");
+    assert!(
+        names.iter().any(|n| n == "parse"),
+        "parse is only a prefix: {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "lonely"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "parse_all"), "{names:?}");
+    assert!(
+        !names.iter().any(|n| n == "ab"),
+        "short name missed: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "echo"),
+        "a test named like the candidate does not cover it: {names:?}"
+    );
+
+    let limited = f.run(&["untested", "--limit", "1"]);
+    assert_eq!(field_set(&limited, "name").len(), 1, "{limited}");
+}
+
 /// "Does this break anyone" is not answerable from a diff, which shows every
 /// edited line. This reports only the exported declarations that moved.
 #[test]

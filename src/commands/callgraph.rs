@@ -1352,9 +1352,10 @@ pub fn cmd_affected(
     // with a per-file count of matching test-like functions — the actionable
     // "what to run", without one row per individual test.
     let mut sites: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
-    for name in &in_scope {
-        for site in test_sites(&s, name, None)? {
-            sites.insert(site);
+    let scoped: Vec<&str> = in_scope.iter().map(String::as_str).collect();
+    for chunk in scoped.chunks(super::testing::NAMES_PER_SCAN) {
+        for found in test_sites_for(&s, chunk, None, false)? {
+            sites.extend(found);
         }
     }
     let mut by_file: BTreeMap<String, usize> = BTreeMap::new();
