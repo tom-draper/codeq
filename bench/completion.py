@@ -351,6 +351,44 @@ def base_dead_code(path, S, F, m):
     return a.cost()
 
 
+def base_callees(path, S, F, m):
+    """What S calls: find S, then read its body. The calls are in the source, so
+    one window is enough to list them (and to read what each is passed)."""
+    a = Agent(path)
+    loc = locate(a, [S], {S: (F, m["def_line"])})
+    if S in loc:
+        a.call(def_window(*loc[S]))
+    return a.cost()
+
+
+# A declaration that names the type in its header: `class X(T)`, `class X
+# extends T`, `impl T for X`, `struct X : T`, `interface X extends T`.
+HEADER = r"\b(class|struct|interface|impl|trait|enum|object|type)\b[^\n{;=]*\b"
+
+
+def base_implementors(path, S, F, m):
+    """Who implements or extends a type: one grep for declaration headers that
+    name it. Cheap, but it cannot tell `extends T` from a field of type T."""
+    a = Agent(path)
+    a.call(rg("-e", HEADER + re.escape(m["impl_type"]) + r"\b"))
+    return a.cost()
+
+
+def base_untested(path, S, F, m):
+    """A file's public definitions with no test: list its declarations, then count
+    the uses of each name inside test-looking files in one shell loop."""
+    a = Agent(path)
+    a.call(rg("-e", PUBLIC, F))
+    names = file_def_names(path, F)
+    if names:
+        globs = [x for g in TEST_GLOBS for x in ("-g", g)]
+        a.call(["sh", "-c",
+                'for n in "$@"; do echo "$n $(rg -w --no-messages ' + " ".join(f"'{g}'" for g in globs)
+                + ' -- "$n" | wc -l)"; done',
+                "sh", *names])
+    return a.cost()
+
+
 TEST_GLOBS = ("*test*", "*spec*", "*Test*", "**/test*/**", "**/spec/**", "**/Test*/**")
 
 
@@ -381,10 +419,16 @@ TASKS = [
      base_explore,      "def + callers + callees WITH source, one call vs a grep+read loop"),
     ("callsites",       lambda S, F, m: [CODEQ, "callers", S],
      base_callsites,    "who calls it"),
+    ("callees",         lambda S, F, m: [CODEQ, "callees", S, "--path", F],
+     base_callees,      "what a function calls vs locate + read its body"),
+    ("implementors",    lambda S, F, m: [CODEQ, "implementors", m["impl_type"]],
+     base_implementors, "who extends or implements a type vs a header grep"),
     ("blast-radius",    lambda S, F, m: [CODEQ, "callers", S, "--depth", "2"],
      base_blast_radius, "2-hop caller tree vs iterative grep rounds"),
     ("which-tests",     lambda S, F, m: [CODEQ, "tests", S],
      base_which_tests,  "tests exercising S vs grep-in-tests + read"),
+    ("untested-api",    lambda S, F, m: [CODEQ, "untested", F],
+     base_untested,     "a file's public definitions with no test vs counting uses in tests"),
     ("dead-code",       lambda S, F, m: [CODEQ, "unused", F, "--include-tests"],
      base_dead_code,    "a file's dead code vs counting each symbol's uses"),
     ("file-structure",  lambda S, F, m: [CODEQ, "outline", F],
@@ -438,6 +482,19 @@ def pick_target(path):
     if types:
         t = types[len(types) // 2]
         m["type"], m["type_file"], m["type_line"] = t["name"], t["path"], t["line"]
+    # A type something extends or implements, for `implementors`: the median
+    # such type by name. Repos with no relation edges skip that task.
+    g = subprocess.run([CODEQ, "--json", "graph", "--limit", "0"],
+                       cwd=path, capture_output=True).stdout
+    try:
+        edges = json.loads(g)["data"]
+    except (ValueError, KeyError):
+        edges = []
+    bases = sorted({e["to"] for e in edges
+                    if e.get("relation") in ("extends", "implements")
+                    and e.get("to", "").isidentifier() and len(e["to"]) >= 3})
+    if bases:
+        m["impl_type"] = bases[len(bases) // 2]
     return s["name"], s["path"], m
 
 
@@ -451,6 +508,8 @@ def run_repo(path):
     out = {}
     for name, cq_build, base_fn, _note in TASKS:
         if name == "type-members" and "type" not in m:
+            continue
+        if name == "implementors" and "impl_type" not in m:
             continue
         cc, cb, ct = measure([cq_build(S, F, m)], path)
         bc, bb, bt = base_fn(path, S, F, m)
