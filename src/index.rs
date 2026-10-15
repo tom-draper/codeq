@@ -180,6 +180,25 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
         });
     }
 
+    // BEGIN IMMEDIATE, not the default DEFERRED. A deferred transaction takes its
+    // write lock lazily, on the first write — and SQLite refuses to make a reader
+    // wait for that upgrade, returning SQLITE_BUSY *immediately* and bypassing the
+    // busy timeout entirely, because two readers both upgrading would deadlock.
+    // Claim ownership before loading the manifest or walking, so concurrent
+    // refreshes queue before doing that work. Fresh WAL readers above stay free
+    // to proceed without this lock.
+    let tx =
+        rusqlite::Transaction::new_unchecked(&db.conn, rusqlite::TransactionBehavior::Immediate)?;
+    // Whoever held the lock may have just done exactly this work: several agent
+    // invocations noticing the same edit at once all decide to refresh, then
+    // queue here. Re-check before the manifest load and walk as well as parsing
+    // and writes. Dropping `tx` unwritten rolls back cleanly.
+    if is_fresh(db, repo_root)? {
+        return Ok(RefreshStats {
+            reindexed: 0,
+            partial_failures: 0,
+        });
+    }
     // Not fresh: load the full manifest (with hashes, to tell a real content
     // change from a mere mtime bump) and walk the tree to reconcile.
     let existing = load_manifest(db)?;
@@ -192,24 +211,6 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
         mut partial_failures,
     } = walk_tree(repo, &existing);
 
-    // BEGIN IMMEDIATE, not the default DEFERRED. A deferred transaction takes its
-    // write lock lazily, on the first write — and SQLite refuses to make a reader
-    // wait for that upgrade, returning SQLITE_BUSY *immediately* and bypassing the
-    // busy timeout entirely, because two readers both upgrading would deadlock.
-    // Taking the write lock up front is what lets the busy handler do its job, so
-    // concurrent refreshes queue instead of failing.
-    let tx =
-        rusqlite::Transaction::new_unchecked(&db.conn, rusqlite::TransactionBehavior::Immediate)?;
-    // Whoever held the lock may have just done exactly this work: several agent
-    // invocations noticing the same edit at once all decide to refresh, then
-    // queue here. Re-check now that the lock is ours, and skip the parse and the
-    // writes rather than redo them. Dropping `tx` unwritten rolls back cleanly.
-    if is_fresh(db, repo_root)? {
-        return Ok(RefreshStats {
-            reindexed: 0,
-            partial_failures,
-        });
-    }
     let parse_failures = AtomicU64::new(0);
     let reindexed = parse_and_write(&tx, &work, &existing, now, &parse_failures)?;
     partial_failures += parse_failures.load(Ordering::Relaxed);
