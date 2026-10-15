@@ -221,9 +221,6 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
     tx.commit()?;
     db.set_meta("last_indexed_at", &now_ns().to_string())?;
-    // Only a refresh that wrote can have freed pages, so this is the one place
-    // worth asking; the fresh fast path above never reaches it.
-    db.compact_if_bloated();
     Ok(RefreshStats {
         reindexed,
         partial_failures,

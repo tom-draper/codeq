@@ -8,8 +8,11 @@ struct IndexReport {
     reindexed: u64,
 }
 
-pub fn cmd_index(cwd: &Path, rebuild: bool, out: Out) -> Result<()> {
+pub fn cmd_index(cwd: &Path, rebuild: bool, compact: bool, out: Out) -> Result<()> {
     let s = Session::open(cwd, rebuild, out)?;
+    if compact {
+        s.db.compact()?;
+    }
     let total = s.db.file_count()?;
     let data = IndexReport {
         indexed_files: total,
