@@ -14,20 +14,37 @@ pub fn cmd_astgrep(
 ) -> Result<()> {
     let s = Session::open(cwd, false, out)?;
 
-    // Every text file in the requested language; structural search re-parses
-    // each, so the source is read from disk as the matcher asks for it. The
-    // path filter runs first, so a narrowed query reads only what it names.
-    let mut stmt =
-        s.db.conn
-            .prepare("SELECT path FROM files WHERE language = ?1 AND is_text = 1 ORDER BY path")?;
+    let compiled = crate::astgrep::Pattern::new(language, pattern)?;
+    // Required literals are conjunctive. An unusable short or non-UTF-8
+    // literal contributes no clause, leaving the other literals as safe filters.
+    let clauses: Vec<String> = compiled
+        .required_literals()
+        .filter_map(|lit| std::str::from_utf8(lit).ok())
+        .filter_map(crate::search::trigram_clause)
+        .collect();
+    let prefilter = (!clauses.is_empty()).then(|| clauses.join(" AND "));
+    let mut scope_sql = String::from(" FROM files WHERE language = ? AND is_text = 1");
+    let mut params = vec![language.to_string()];
+    if let Some(path) = &path {
+        scope_sql.push_str(" AND instr(path, ?) > 0");
+        params.push(path.clone());
+    }
+    let mut sql = format!("SELECT path{scope_sql}");
+    if let Some(query) = &prefilter {
+        sql.push_str(" AND id IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?)");
+        params.push(query.clone());
+    }
+    sql.push_str(" ORDER BY path");
+    let mut stmt = s.db.conn.prepare(&sql)?;
     let mut scanned = 0usize;
     // Stream the bodies into the matcher one at a time (it re-parses each and
     // keeps only matches), so a big single-language repo isn't all held in memory
     // at once — the astgrep matcher takes an iterator, so no Vec is needed.
     let files = stmt
-        .query_map([&language], |r| r.get::<_, String>(0))?
+        .query_map(rusqlite::params_from_iter(params.iter()), |r| {
+            r.get::<_, String>(0)
+        })?
         .filter_map(|r| r.ok())
-        .filter(|p| path.as_deref().is_none_or(|q| p.contains(q)))
         .filter_map(|p| {
             let body = crate::index::load_body(&s.repo.root, &p)?;
             Some((p, body))
@@ -42,7 +59,18 @@ pub fn cmd_astgrep(
     } else {
         None
     };
-    let mut matches = crate::astgrep::search(language, pattern, files, stop_after)?;
+    let mut matches = compiled.search(files, stop_after);
+    if matches.is_empty() && prefilter.is_some() {
+        // Files rejected by the index were still checked. Include them in the
+        // empty-result diagnostic, so a prefilter miss cannot look like an
+        // invalid --path, and existing survey counts stay meaningful.
+        let sql = format!("SELECT COUNT(*){scope_sql} AND id NOT IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?)");
+        scanned +=
+            s.db.conn
+                .query_row(&sql, rusqlite::params_from_iter(params.iter()), |row| {
+                    row.get::<_, usize>(0)
+                })?;
+    }
     if let Some(max_tokens) = source_budget {
         let total = matches.len();
         let mut symbols =
