@@ -165,6 +165,10 @@ codeq --root node_modules/lodash api
 The index lives at `.codeq/index.db` under the selected root. It is ignored by
 Git and safe to delete. Codeq needs no background indexing process.
 
+To reclaim disk space after large deletions or branch switches, run
+`codeq index --compact`. This rewrites the database and may wait for active
+readers. Ordinary queries reuse freed pages without compacting the index.
+
 ## Output contract
 
 Most commands return compact text. Add `--json` for the `codeq.result.v2`
