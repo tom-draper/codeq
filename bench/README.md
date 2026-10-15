@@ -156,6 +156,32 @@ the folded token estimate. Small-seed, folded-seed, ordinary text, and real
 repository sample ranges overlap, so those cases establish no speedup. These
 measurements use warm filesystem caches and do not estimate cold-disk latency.
 
+## Historical API blobs (`api_git_blobs.py`)
+
+Compare two release binaries on complete warm `api --compare-to HEAD` queries.
+Seven samples per side alternate execution order and require identical stdout
+and stderr. JSON assertions check the changed export count and both signatures.
+Optional Linux traces count merge-base, show, and cat-file launches separately
+from timing. Single-file, scoped-file, and empty-scope cases act as controls.
+
+```sh
+python3 bench/api_git_blobs.py --before /tmp/codeq-before --after target/release/codeq --before-revision <commit> --trace
+```
+
+[The API results](results/api_git_blobs_20261015.json) compare baseline `f8e15db`
+with historical blobs streamed through one Git process. Across 128 changed Rust
+files, median latency fell from 316.76 ms to 39.22 ms. Seven-run ranges were
+306.86 to 324.09 ms before and 37.82 to 41.59 ms after. The separate traces show
+129 merge-base calls and 128 show calls before, versus one merge-base call and
+one cat-file process after. Removing repeated Git launches explains the gain;
+Git diff discovery, historical extraction, freshness checks, and rendering still
+run inside every timed query.
+
+Single-file, scoped-file, and empty-scope ranges overlap, so those cases establish
+no speedup. Empty scopes start no blob reader. These are sequential synthetic
+queries with warm indexes and filesystem caches, and do not estimate cold-index
+or cold-disk latency. Load averages were about 2.0 to 2.2 on 12 CPUs.
+
 ## Text-mode faithfulness (`textmode.py`)
 
 `differential.py`/`completion.py` only exercise `--json`, so the *text renderer* —
