@@ -327,7 +327,8 @@ fn api_diff(
     // and it is not the same fact as "nothing happened".
     let mut moved: Vec<String> = Vec::new();
 
-    for file in changed {
+    let mut blobs = None;
+    for file in changed.paths {
         if path.is_some_and(|p| !file.contains(p)) {
             continue;
         }
@@ -339,7 +340,10 @@ fn api_diff(
         // Each version also keeps the line it was declared on at `compare_to`: a
         // removed export has no line now, and the old one is the only true place.
         let mut old: HashMap<String, Vec<(String, String, i64)>> = HashMap::new();
-        if let Some(bytes) = s.repo.file_at(compare_to, &file) {
+        if blobs.is_none() {
+            blobs = Some(crate::repo::GitBlobs::open(&s.repo, changed.base.clone())?);
+        }
+        if let Some(bytes) = blobs.as_mut().unwrap().read(&file)? {
             for fact in ex
                 .extract(lang, &file, &bytes)?
                 .0
