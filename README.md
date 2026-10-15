@@ -256,18 +256,18 @@ with the lower value in bold:
       <td align="right">18k</td>
       <td align="right"><b>31</b></td>
       <td align="right">41</td>
-      <td align="right"><b>4 ms</b></td>
-      <td align="right">12 ms</td>
+      <td align="right"><b>3 ms</b></td>
+      <td align="right">10 ms</td>
     </tr>
     <tr>
       <td>Read a function (<code>read --symbol</code>)</td>
       <td>find it, read 60 lines from it</td>
       <td align="right"><b>6.9k</b></td>
-      <td align="right">33k</td>
+      <td align="right">31k</td>
       <td align="right"><b>31</b></td>
       <td align="right">72</td>
-      <td align="right"><b>5 ms</b></td>
-      <td align="right">15 ms</td>
+      <td align="right"><b>3 ms</b></td>
+      <td align="right">10 ms</td>
     </tr>
     <tr>
       <td>Definition enclosing a line (<code>at</code>)</td>
@@ -276,8 +276,8 @@ with the lower value in bold:
       <td align="right">15k</td>
       <td align="right">31</td>
       <td align="right">31</td>
-      <td align="right">4 ms</td>
-      <td align="right"><b>2 ms</b></td>
+      <td align="right">3 ms</td>
+      <td align="right"><b>1 ms</b></td>
     </tr>
     <tr>
       <td>A type's members (<code>members</code>)</td>
@@ -286,18 +286,18 @@ with the lower value in bold:
       <td align="right">15k</td>
       <td align="right"><b>29</b></td>
       <td align="right">58</td>
-      <td align="right"><b>5 ms</b></td>
-      <td align="right">11 ms</td>
+      <td align="right"><b>4 ms</b></td>
+      <td align="right">8 ms</td>
     </tr>
     <tr>
       <td>Understand before editing (<code>about</code>)</td>
       <td><code>rg</code> the definition and call sites, read both</td>
       <td align="right"><b>22k</b></td>
-      <td align="right">62k</td>
+      <td align="right">61k</td>
       <td align="right"><b>31</b></td>
       <td align="right">62</td>
-      <td align="right"><b>14 ms</b></td>
-      <td align="right">21 ms</td>
+      <td align="right"><b>9 ms</b></td>
+      <td align="right">16 ms</td>
     </tr>
     <tr>
       <td>Explore with source (<code>explore</code>)</td>
@@ -306,18 +306,28 @@ with the lower value in bold:
       <td align="right">158k</td>
       <td align="right"><b>31</b></td>
       <td align="right">126</td>
-      <td align="right"><b>13 ms</b></td>
-      <td align="right">39 ms</td>
+      <td align="right"><b>9 ms</b></td>
+      <td align="right">29 ms</td>
     </tr>
     <tr>
       <td>Who calls it (<code>callers</code>)</td>
       <td><code>rg 'NAME('</code>, read around 5 call sites</td>
       <td align="right"><b>3.7k</b></td>
-      <td align="right">79k</td>
+      <td align="right">78k</td>
       <td align="right"><b>31</b></td>
       <td align="right">59</td>
-      <td align="right"><b>9 ms</b></td>
-      <td align="right">14 ms</td>
+      <td align="right"><b>6 ms</b></td>
+      <td align="right">10 ms</td>
+    </tr>
+    <tr>
+      <td>What it calls (<code>callees</code>)</td>
+      <td>find the definition, read 60 lines from it</td>
+      <td align="right"><b>6.9k</b></td>
+      <td align="right">33k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">72</td>
+      <td align="right"><b>6 ms</b></td>
+      <td align="right">10 ms</td>
     </tr>
     <tr>
       <td>2-hop impact (<code>callers --depth 2</code>)</td>
@@ -326,18 +336,28 @@ with the lower value in bold:
       <td align="right">79k</td>
       <td align="right"><b>31</b></td>
       <td align="right">59</td>
-      <td align="right">16 ms</td>
-      <td align="right"><b>13 ms</b></td>
+      <td align="right">11 ms</td>
+      <td align="right"><b>10 ms</b></td>
     </tr>
     <tr>
       <td>Which tests use it (<code>tests</code>)</td>
       <td><code>rg -w</code> in test files, read around 5 hits</td>
       <td align="right"><b>2.2k</b></td>
-      <td align="right">43k</td>
+      <td align="right">39k</td>
       <td align="right"><b>31</b></td>
       <td align="right">45</td>
-      <td align="right"><b>8 ms</b></td>
-      <td align="right">11 ms</td>
+      <td align="right"><b>5 ms</b></td>
+      <td align="right">8 ms</td>
+    </tr>
+    <tr>
+      <td>Who extends or implements a type (<code>implementors</code>)</td>
+      <td><code>rg</code> declaration headers that name the type</td>
+      <td align="right"><b>1.1k</b></td>
+      <td align="right">6.5k</td>
+      <td align="right">24</td>
+      <td align="right">24</td>
+      <td align="right"><b>2 ms</b></td>
+      <td align="right">6 ms</td>
     </tr>
     <tr>
       <td>All references (<code>references</code>)</td>
@@ -346,8 +366,8 @@ with the lower value in bold:
       <td align="right"><b>28k</b></td>
       <td align="right">31</td>
       <td align="right">31</td>
-      <td align="right">8 ms</td>
-      <td align="right">8 ms</td>
+      <td align="right">6 ms</td>
+      <td align="right">6 ms</td>
     </tr>
     <tr>
       <td>A file's structure (<code>outline</code>)</td>
@@ -356,8 +376,8 @@ with the lower value in bold:
       <td align="right">482k</td>
       <td align="right">31</td>
       <td align="right">31</td>
-      <td align="right">5 ms</td>
-      <td align="right"><b>3 ms</b></td>
+      <td align="right">4 ms</td>
+      <td align="right"><b>2 ms</b></td>
     </tr>
     <tr>
       <td>A file's public API (<code>api FILE</code>)</td>
@@ -366,8 +386,8 @@ with the lower value in bold:
       <td align="right"><b>20k</b></td>
       <td align="right">31</td>
       <td align="right">31</td>
-      <td align="right">5 ms</td>
-      <td align="right">5 ms</td>
+      <td align="right">4 ms</td>
+      <td align="right"><b>3 ms</b></td>
     </tr>
     <tr>
       <td>A package's public API (<code>api DIR</code>)</td>
@@ -376,8 +396,8 @@ with the lower value in bold:
       <td align="right"><b>333k</b></td>
       <td align="right">31</td>
       <td align="right">31</td>
-      <td align="right">9 ms</td>
-      <td align="right"><b>8 ms</b></td>
+      <td align="right"><b>6 ms</b></td>
+      <td align="right">7 ms</td>
     </tr>
     <tr>
       <td>A file's imports (<code>imports</code>)</td>
@@ -386,8 +406,8 @@ with the lower value in bold:
       <td align="right">6.3k</td>
       <td align="right"><b>31</b></td>
       <td align="right">40</td>
-      <td align="right">5 ms</td>
-      <td align="right">5 ms</td>
+      <td align="right">4 ms</td>
+      <td align="right"><b>3 ms</b></td>
     </tr>
     <tr>
       <td>Who imports a file (<code>importers</code>)</td>
@@ -396,8 +416,18 @@ with the lower value in bold:
       <td align="right"><b>9.1k</b></td>
       <td align="right">31</td>
       <td align="right">31</td>
-      <td align="right"><b>4 ms</b></td>
-      <td align="right">9 ms</td>
+      <td align="right"><b>3 ms</b></td>
+      <td align="right">7 ms</td>
+    </tr>
+    <tr>
+      <td>A file's untested API (<code>untested</code>)</td>
+      <td><code>rg</code> declaration lines, then <code>rg -w</code> per name in test files</td>
+      <td align="right"><b>19k</b></td>
+      <td align="right">30k</td>
+      <td align="right"><b>31</b></td>
+      <td align="right">62</td>
+      <td align="right"><b>36 ms</b></td>
+      <td align="right">519 ms</td>
     </tr>
     <tr>
       <td>A file's dead code (<code>unused</code>)</td>
@@ -406,24 +436,30 @@ with the lower value in bold:
       <td align="right">30k</td>
       <td align="right"><b>31</b></td>
       <td align="right">62</td>
-      <td align="right"><b>24 ms</b></td>
-      <td align="right">696 ms</td>
+      <td align="right"><b>20 ms</b></td>
+      <td align="right">590 ms</td>
     </tr>
     <tr>
-      <td><b>All 16 tasks</b></td>
+      <td><b>All 19 tasks</b></td>
       <td></td>
-      <td align="right"><b>982k</b></td>
-      <td align="right">1,411k</td>
-      <td align="right"><b>494</b></td>
-      <td align="right">810</td>
-      <td align="right"><b>138 ms</b></td>
-      <td align="right">871 ms</td>
+      <td align="right"><b>1,009k</b></td>
+      <td align="right">1,474k</td>
+      <td align="right"><b>580</b></td>
+      <td align="right">968</td>
+      <td align="right"><b>146 ms</b></td>
+      <td align="right">1,257 ms</td>
+    </tr>
+    <tr>
+      <td colspan="2"><b>codeq improvement (generic ÷ codeq)</b></td>
+      <td colspan="2" align="center"><b>1.46x</b></td>
+      <td colspan="2" align="center"><b>1.67x</b></td>
+      <td colspan="2" align="center"><b>8.6x</b></td>
     </tr>
   </tbody>
 </table>
 
 codeq returns more on the API tasks, because it gives complete signatures where
-a grep gives first lines. `importers` matches a file's stem as a substring of
+a grep gives first lines. `implementors` ran on the 24 repositories with extends or implements edges. `importers` matches a file's stem as a substring of
 each import string, so a short stem over-matches: `sr.js` also matches `../src`.
 On 2 JavaScript and TypeScript repositories `tests` found nothing where tests do
 use the name, because tests written as bare `it(...)` calls have no named test
