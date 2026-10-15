@@ -803,6 +803,7 @@ pub(crate) fn run_search_acc(
             &spans,
             calls.as_ref(),
             &mut load_defs,
+            &mut DocCache::default(),
             re,
             opts,
             cap,
@@ -917,6 +918,9 @@ pub(crate) fn scan_names(
         } else {
             Vec::new()
         };
+        // One cache per file: the newline index and the definitions are a
+        // property of the body, not of the name being searched for.
+        let mut cache = DocCache::default();
         for i in todo {
             let mut load_defs =
                 |path: &str| load_file_defs(&mut def_stmt, path).unwrap_or_default();
@@ -928,6 +932,7 @@ pub(crate) fn scan_names(
                 &spans,
                 None,
                 &mut load_defs,
+                &mut cache,
                 &res[i],
                 &opts,
                 usize::MAX,
@@ -976,6 +981,7 @@ pub(crate) fn scan_unindexed(
             &[],
             None,
             &mut |_| DefIndex::default(),
+            &mut DocCache::default(),
             re,
             opts,
             cap,
@@ -1074,6 +1080,20 @@ impl ScanAcc {
     }
 }
 
+/// What [`scan_doc`] derives from one document's text and keeps once it has: the
+/// byte offset of each line start, and the file's definitions for naming the
+/// symbol around a match.
+///
+/// A caller that scans one body for several patterns passes the same cache to
+/// each call, so a file read for a hundred names has its newlines indexed and
+/// its definitions loaded once instead of a hundred times. A fresh default is
+/// exactly the old per-call behaviour.
+#[derive(Default)]
+pub(crate) struct DocCache {
+    starts: Option<Vec<usize>>,
+    defs: Option<DefIndex>,
+}
+
 /// Scan one document — an indexed file, or a buffer piped in on stdin — for
 /// `re`, applying every [`ScanOpts`] filter and appending to `acc`. Returns true
 /// when the limit is reached and the caller should stop.
@@ -1090,6 +1110,7 @@ pub(crate) fn scan_doc(
     spans: &[(usize, usize, Span)],
     calls: Option<&CallMap>,
     load_defs: &mut dyn FnMut(&str) -> DefIndex,
+    cache: &mut DocCache,
     re: &regex::Regex,
     opts: &ScanOpts,
     cap: usize,
@@ -1120,9 +1141,8 @@ pub(crate) fn scan_doc(
             )
     };
     // Line starts are only needed once there's a match (Files mode never needs
-    // them). Compute lazily, so a non-matching candidate — and every candidate
-    // in Files mode — skips the full-body newline scan.
-    let mut starts: Option<Vec<usize>> = None;
+    // them). Compute lazily into `cache`, so a non-matching candidate — and every
+    // candidate in Files mode — skips the full-body newline scan.
 
     if opts.invert {
         return scan_inverted(
@@ -1158,7 +1178,7 @@ pub(crate) fn scan_doc(
                 if !accept(m.start()) {
                     continue;
                 }
-                let s = starts.get_or_insert_with(|| line_starts_of(body));
+                let s = cache.starts.get_or_insert_with(|| line_starts_of(body));
                 let li = s.partition_point(|&x| x <= m.start()) - 1;
                 if li != last {
                     last = li;
@@ -1178,7 +1198,6 @@ pub(crate) fn scan_doc(
         }
         OutMode::Matches => {
             let bytes = body.as_bytes();
-            let mut defs: Option<DefIndex> = None;
             let mut last_line = usize::MAX;
             let mut kept_here = 0usize;
             let mut dropped = 0usize;
@@ -1224,7 +1243,7 @@ pub(crate) fn scan_doc(
                         }
                     }
                 }
-                let s = starts.get_or_insert_with(|| line_starts_of(body));
+                let s = cache.starts.get_or_insert_with(|| line_starts_of(body));
                 let line_idx = s.partition_point(|&x| x <= off) - 1;
                 if line_idx == last_line && !opts.only_matching {
                     continue; // one row per line
@@ -1241,7 +1260,7 @@ pub(crate) fn scan_doc(
                     continue;
                 }
 
-                let d = defs.get_or_insert_with(|| load_defs(path));
+                let d = cache.defs.get_or_insert_with(|| load_defs(path));
                 let enclosing = d.innermost(off);
                 acc.hits.push(Hit {
                     path: path.to_string(),
@@ -1475,6 +1494,7 @@ pub(crate) fn scan_stdin(
         &spans,
         calls.as_ref(),
         &mut load_defs,
+        &mut DocCache::default(),
         re,
         opts,
         cap,
