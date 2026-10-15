@@ -125,7 +125,9 @@ def timed_run(cmd, cwd):
     times subprocesses the same way, so they share one clock — measuring with
     per-script copies invites them to drift apart and stop being comparable."""
     t0 = time.perf_counter()
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True)
+    # stdin is closed: rg with no path searches stdin when it is a pipe, so an
+    # inherited pipe would hang the run instead of searching the repo.
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, stdin=subprocess.DEVNULL)
     return time.perf_counter() - t0, p.stdout
 
 
