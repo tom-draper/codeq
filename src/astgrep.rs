@@ -352,7 +352,22 @@ fn match_file(
 
 /// Compile `pattern` for `lang_name` and return every structural match across
 /// `files` (each `(path, source)`), in deterministic path+position order.
-pub fn search<I>(lang_name: &str, pattern: &str, files: I) -> Result<Vec<Match>>
+///
+/// With `stop_after = Some(n)` the scan ends as soon as `n` matches are known to
+/// precede everything not yet looked at, and at most `n` matches are returned. The caller passes `limit + 1` to learn whether the
+/// result was truncated.
+///
+/// `files` must arrive in ascending path order for that to mean "the first `n`
+/// matches": results are consumed in input order, and a file's own matches are
+/// ordered by position, so the first `n` are exactly what an exhaustive search
+/// followed by a sort would have kept. Worker lookahead is bounded, so a stopped
+/// scan parses only a few files past the one that settled the answer.
+pub fn search<I>(
+    lang_name: &str,
+    pattern: &str,
+    files: I,
+    stop_after: Option<usize>,
+) -> Result<Vec<Match>>
 where
     I: IntoIterator<Item = (String, String)>,
 {
@@ -407,44 +422,102 @@ where
         .map(|n| n.get())
         .unwrap_or(1)
         .clamp(1, 8);
-    // Bounded, so bodies are still streamed rather than all held at once.
-    let (work_tx, work_rx) = std::sync::mpsc::sync_channel::<(String, String)>(workers * 2);
+    // Files are numbered as they are sent and their results re-assembled in that
+    // order, so "the first n matches" is well defined however the workers race.
+    // The window bounds how far past the oldest unfinished file the producer
+    // runs, which bounds both the bodies in flight and the results held back.
+    let window = workers * 4;
+    let (work_tx, work_rx) = std::sync::mpsc::channel::<(usize, String, String)>();
     let work_rx = std::sync::Mutex::new(work_rx);
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<(usize, Vec<Match>)>();
     let mut out = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
-                scope.spawn(|| {
+                let done_tx = done_tx.clone();
+                let (lang, substituted, work_rx) = (&lang, &substituted, &work_rx);
+                scope.spawn(move || {
                     // A parser and a pattern tree per worker: neither is shared.
-                    let mut out = Vec::new();
                     let mut parser = Parser::new();
-                    if parser.set_language(&lang).is_err() {
-                        return out;
+                    if parser.set_language(lang).is_err() {
+                        return;
                     }
-                    let Some(pat_tree) = parser.parse(&substituted, None) else {
-                        return out;
+                    let Some(pat_tree) = parser.parse(substituted, None) else {
+                        return;
                     };
                     let pat_node = significant(pat_tree.root_node());
                     loop {
                         let next = work_rx.lock().unwrap().recv();
-                        let Ok((path, body)) = next else {
-                            return out;
+                        let Ok((seq, path, body)) = next else {
+                            return;
                         };
-                        match_file(&mut parser, pat_node, psrc, &path, &body, &mut out);
+                        let mut found = Vec::new();
+                        match_file(&mut parser, pat_node, psrc, &path, &body, &mut found);
+                        // The DFS yields a file's matches in stack order; the
+                        // reassembly below relies on position order.
+                        found.sort_by_key(|m| (m.start_line, m.start_col));
+                        if done_tx.send((seq, found)).is_err() {
+                            return;
+                        }
                     }
                 })
             })
             .collect();
-        for (path, body) in files {
+        drop(done_tx);
+
+        let mut out: Vec<Match> = Vec::new();
+        let mut pending: HashMap<usize, Vec<Match>> = HashMap::new();
+        let (mut sent, mut next) = (0usize, 0usize);
+        let mut full = false;
+        // Fold completed results into `out` in sequence order.
+        let mut absorb = |seq: usize,
+                          found: Vec<Match>,
+                          out: &mut Vec<Match>,
+                          next: &mut usize,
+                          full: &mut bool| {
+            pending.insert(seq, found);
+            while let Some(found) = pending.remove(next) {
+                *next += 1;
+                if !*full {
+                    out.extend(found);
+                    if stop_after.is_some_and(|n| out.len() >= n) {
+                        *full = true;
+                    }
+                }
+            }
+        };
+        'send: for (path, body) in files {
             let possible = finders.iter().all(|f| f.find(body.as_bytes()).is_some());
-            if possible && work_tx.send((path, body)).is_err() {
+            if !possible {
+                continue;
+            }
+            while sent - next >= window && !full {
+                match done_rx.recv() {
+                    Ok((seq, found)) => absorb(seq, found, &mut out, &mut next, &mut full),
+                    Err(_) => break 'send,
+                }
+            }
+            while let Ok((seq, found)) = done_rx.try_recv() {
+                absorb(seq, found, &mut out, &mut next, &mut full);
+            }
+            if full || work_tx.send((sent, path, body)).is_err() {
                 break;
             }
+            sent += 1;
         }
         drop(work_tx);
-        handles
-            .into_iter()
-            .flat_map(|h| h.join().expect("astgrep worker panicked"))
-            .collect::<Vec<Match>>()
+        while !full && next < sent {
+            match done_rx.recv() {
+                Ok((seq, found)) => absorb(seq, found, &mut out, &mut next, &mut full),
+                Err(_) => break,
+            }
+        }
+        for h in handles {
+            h.join().expect("astgrep worker panicked");
+        }
+        if let Some(n) = stop_after {
+            out.truncate(n);
+        }
+        out
     });
     out.sort_by(|a, b| {
         a.path

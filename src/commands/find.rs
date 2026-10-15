@@ -34,7 +34,15 @@ pub fn cmd_astgrep(
         })
         .inspect(|_| scanned += 1);
 
-    let mut matches = crate::astgrep::search(language, pattern, files)?;
+    // Source mode ranks definitions by how many matches each holds, which needs
+    // the whole survey. Ordinary mode only needs the first `limit` rows plus one
+    // to know the answer was cut, and `files` is already in path order.
+    let stop_after = if source_budget.is_none() && limit > 0 {
+        Some(limit + 1)
+    } else {
+        None
+    };
+    let mut matches = crate::astgrep::search(language, pattern, files, stop_after)?;
     if let Some(max_tokens) = source_budget {
         let total = matches.len();
         let mut symbols =
