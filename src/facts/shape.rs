@@ -22,6 +22,9 @@ pub(super) fn shape_of(node: Node) -> (Option<String>, i64) {
     // (node, entered) — the close marker is what makes sibling structure matter,
     // so `f(g(x))` and `f(g, x)` cannot collide.
     let mut stack: Vec<(Node, bool)> = vec![(node, false)];
+    // One cursor for the whole walk, repositioned per node, rather than a child
+    // `Vec` allocated at every visited node.
+    let mut cursor = node.walk();
     while let Some((n, entered)) = stack.pop() {
         if entered {
             h.update(b")");
@@ -34,10 +37,15 @@ pub(super) fn shape_of(node: Node) -> (Option<String>, i64) {
         // Anonymous children include punctuation and operators. Keep them in the
         // shape: dropping the operator tokens makes `a != b` and `a == b`
         // indistinguishable even though the two expressions do different work.
-        let mut c = n.walk();
-        let kids: Vec<Node> = n.children(&mut c).collect();
-        for child in kids.into_iter().rev() {
-            stack.push((child, false));
+        // Pushed last to first so the first child is popped first.
+        cursor.reset(n);
+        if cursor.goto_last_child() {
+            loop {
+                stack.push((cursor.node(), false));
+                if !cursor.goto_previous_sibling() {
+                    break;
+                }
+            }
         }
     }
     if count < MIN_SHAPE_NODES {

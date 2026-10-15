@@ -429,10 +429,10 @@ impl LangSpec {
                 // function — and an owner-less `field` is exactly the bare
                 // name this fact kind exists to avoid.
                 let owner = owner_of(self.lang, kind, node, src);
-                let (shape, shape_nodes) = shape_of(node);
                 if matches!(kind, "field" | "variant") && owner.is_none() {
                     continue;
                 }
+                let (shape, shape_nodes) = shape_of(node);
                 let (start_byte, start_line, start_col, signature) = if self.lang == "sql"
                     && kind == "field"
                     && node.start_byte() > 0
