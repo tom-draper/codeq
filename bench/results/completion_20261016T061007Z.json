@@ -1,0 +1,169 @@
+{
+  "timestamp": "2026-10-16T06:10:07+00:00",
+  "codeq_commit": "8485c5d85e5d",
+  "repos": 31,
+  "totals": {
+    "codeq_tokens": 993130,
+    "baseline_tokens": 1473849,
+    "token_ratio": 1.48,
+    "codeq_calls": 580,
+    "baseline_calls": 968,
+    "codeq_ms": 3920.0,
+    "baseline_ms": 38873.0,
+    "index_ms": 28674.9
+  },
+  "per_task": {
+    "find-def": {
+      "codeq_tokens": 7631,
+      "baseline_tokens": 17747,
+      "codeq_calls": 31,
+      "baseline_calls": 41,
+      "codeq_ms": 94.8,
+      "baseline_ms": 294.2
+    },
+    "enclosing-def": {
+      "codeq_tokens": 1456,
+      "baseline_tokens": 15238,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 97.7,
+      "baseline_ms": 40.9
+    },
+    "type-members": {
+      "codeq_tokens": 5630,
+      "baseline_tokens": 15282,
+      "codeq_calls": 29,
+      "baseline_calls": 58,
+      "codeq_ms": 104.8,
+      "baseline_ms": 238.4
+    },
+    "file-importers": {
+      "codeq_tokens": 6472,
+      "baseline_tokens": 9133,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 108.8,
+      "baseline_ms": 221.0
+    },
+    "read-impl": {
+      "codeq_tokens": 6898,
+      "baseline_tokens": 31202,
+      "codeq_calls": 31,
+      "baseline_calls": 72,
+      "codeq_ms": 103.2,
+      "baseline_ms": 314.4
+    },
+    "understand-sym": {
+      "codeq_tokens": 22244,
+      "baseline_tokens": 61518,
+      "codeq_calls": 31,
+      "baseline_calls": 62,
+      "codeq_ms": 277.3,
+      "baseline_ms": 479.7
+    },
+    "explore": {
+      "codeq_tokens": 123684,
+      "baseline_tokens": 158848,
+      "codeq_calls": 31,
+      "baseline_calls": 126,
+      "codeq_ms": 277.0,
+      "baseline_ms": 861.9
+    },
+    "callsites": {
+      "codeq_tokens": 3736,
+      "baseline_tokens": 77638,
+      "codeq_calls": 31,
+      "baseline_calls": 59,
+      "codeq_ms": 186.1,
+      "baseline_ms": 301.7
+    },
+    "callees": {
+      "codeq_tokens": 6912,
+      "baseline_tokens": 32583,
+      "codeq_calls": 31,
+      "baseline_calls": 72,
+      "codeq_ms": 174.1,
+      "baseline_ms": 307.1
+    },
+    "implementors": {
+      "codeq_tokens": 1109,
+      "baseline_tokens": 6462,
+      "codeq_calls": 24,
+      "baseline_calls": 24,
+      "codeq_ms": 75.2,
+      "baseline_ms": 183.3
+    },
+    "blast-radius": {
+      "codeq_tokens": 21358,
+      "baseline_tokens": 78968,
+      "codeq_calls": 31,
+      "baseline_calls": 59,
+      "codeq_ms": 325.6,
+      "baseline_ms": 304.2
+    },
+    "which-tests": {
+      "codeq_tokens": 2224,
+      "baseline_tokens": 39384,
+      "codeq_calls": 31,
+      "baseline_calls": 45,
+      "codeq_ms": 165.9,
+      "baseline_ms": 245.7
+    },
+    "untested-api": {
+      "codeq_tokens": 18643,
+      "baseline_tokens": 29651,
+      "codeq_calls": 31,
+      "baseline_calls": 62,
+      "codeq_ms": 537.2,
+      "baseline_ms": 16267.3
+    },
+    "dead-code": {
+      "codeq_tokens": 804,
+      "baseline_tokens": 29869,
+      "codeq_calls": 31,
+      "baseline_calls": 62,
+      "codeq_ms": 608.7,
+      "baseline_ms": 18090.2
+    },
+    "file-structure": {
+      "codeq_tokens": 59980,
+      "baseline_tokens": 482274,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 121.6,
+      "baseline_ms": 80.3
+    },
+    "public-api": {
+      "codeq_tokens": 56099,
+      "baseline_tokens": 20404,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 136.1,
+      "baseline_ms": 109.4
+    },
+    "package-api": {
+      "codeq_tokens": 612601,
+      "baseline_tokens": 332840,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 205.2,
+      "baseline_ms": 209.4
+    },
+    "usages": {
+      "codeq_tokens": 29486,
+      "baseline_tokens": 28472,
+      "codeq_calls": 31,
+      "baseline_calls": 31,
+      "codeq_ms": 188.2,
+      "baseline_ms": 211.4
+    },
+    "file-imports": {
+      "codeq_tokens": 6157,
+      "baseline_tokens": 6332,
+      "codeq_calls": 31,
+      "baseline_calls": 40,
+      "codeq_ms": 132.5,
+      "baseline_ms": 112.5
+    }
+  }
+}
