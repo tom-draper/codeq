@@ -261,7 +261,7 @@ with the lower value in bold:
       <td align="right"><b>31</b></td>
       <td align="right">41</td>
       <td align="right"><b>3 ms</b></td>
-      <td align="right">10 ms</td>
+      <td align="right">9 ms</td>
     </tr>
     <tr>
       <td>Read a function (<code>read --symbol</code>)</td>
@@ -290,28 +290,28 @@ with the lower value in bold:
       <td align="right">15k</td>
       <td align="right"><b>29</b></td>
       <td align="right">58</td>
-      <td align="right"><b>4 ms</b></td>
+      <td align="right"><b>3 ms</b></td>
       <td align="right">8 ms</td>
     </tr>
     <tr>
       <td>Understand before editing (<code>about</code>)</td>
       <td><code>rg</code> the definition and call sites, read both</td>
       <td align="right"><b>22k</b></td>
-      <td align="right">61k</td>
+      <td align="right">62k</td>
       <td align="right"><b>31</b></td>
       <td align="right">62</td>
       <td align="right"><b>9 ms</b></td>
-      <td align="right">16 ms</td>
+      <td align="right">15 ms</td>
     </tr>
     <tr>
       <td>Explore with source (<code>explore</code>)</td>
       <td>read the definition and 3 call sites, then 3 callees</td>
       <td align="right"><b>124k</b></td>
-      <td align="right">158k</td>
+      <td align="right">159k</td>
       <td align="right"><b>31</b></td>
       <td align="right">126</td>
       <td align="right"><b>9 ms</b></td>
-      <td align="right">29 ms</td>
+      <td align="right">28 ms</td>
     </tr>
     <tr>
       <td>Who calls it (<code>callers</code>)</td>
@@ -370,8 +370,8 @@ with the lower value in bold:
       <td align="right"><b>28k</b></td>
       <td align="right">31</td>
       <td align="right">31</td>
-      <td align="right">6 ms</td>
-      <td align="right">6 ms</td>
+      <td align="right"><b>6 ms</b></td>
+      <td align="right">7 ms</td>
     </tr>
     <tr>
       <td>A file's structure (<code>outline</code>)</td>
@@ -381,7 +381,7 @@ with the lower value in bold:
       <td align="right">31</td>
       <td align="right">31</td>
       <td align="right">4 ms</td>
-      <td align="right"><b>2 ms</b></td>
+      <td align="right"><b>3 ms</b></td>
     </tr>
     <tr>
       <td>A file's public API (<code>api FILE</code>)</td>
@@ -391,7 +391,7 @@ with the lower value in bold:
       <td align="right">31</td>
       <td align="right">31</td>
       <td align="right">4 ms</td>
-      <td align="right"><b>3 ms</b></td>
+      <td align="right">4 ms</td>
     </tr>
     <tr>
       <td>A package's public API (<code>api DIR</code>)</td>
@@ -400,7 +400,7 @@ with the lower value in bold:
       <td align="right"><b>333k</b></td>
       <td align="right">31</td>
       <td align="right">31</td>
-      <td align="right"><b>6 ms</b></td>
+      <td align="right">7 ms</td>
       <td align="right">7 ms</td>
     </tr>
     <tr>
@@ -411,7 +411,7 @@ with the lower value in bold:
       <td align="right"><b>31</b></td>
       <td align="right">40</td>
       <td align="right">4 ms</td>
-      <td align="right"><b>3 ms</b></td>
+      <td align="right">4 ms</td>
     </tr>
     <tr>
       <td>Who imports a file (<code>importers</code>)</td>
@@ -430,8 +430,8 @@ with the lower value in bold:
       <td align="right">30k</td>
       <td align="right"><b>31</b></td>
       <td align="right">62</td>
-      <td align="right"><b>36 ms</b></td>
-      <td align="right">519 ms</td>
+      <td align="right"><b>17 ms</b></td>
+      <td align="right">525 ms</td>
     </tr>
     <tr>
       <td>A file's dead code (<code>unused</code>)</td>
@@ -441,7 +441,7 @@ with the lower value in bold:
       <td align="right"><b>31</b></td>
       <td align="right">62</td>
       <td align="right"><b>20 ms</b></td>
-      <td align="right">590 ms</td>
+      <td align="right">584 ms</td>
     </tr>
     <tr>
       <td><b>All 19 tasks</b></td>
@@ -450,14 +450,14 @@ with the lower value in bold:
       <td align="right">1,474k</td>
       <td align="right"><b>580</b></td>
       <td align="right">968</td>
-      <td align="right"><b>142 ms</b></td>
-      <td align="right">1,224 ms</td>
+      <td align="right"><b>126 ms</b></td>
+      <td align="right">1,254 ms</td>
     </tr>
     <tr>
       <td colspan="2"><b>codeq improvement (generic ÷ codeq)</b></td>
       <td colspan="2" align="center"><b>1.48x</b></td>
       <td colspan="2" align="center"><b>1.67x</b></td>
-      <td colspan="2" align="center"><b>8.6x</b></td>
+      <td colspan="2" align="center"><b>9.9x</b></td>
     </tr>
   </tbody>
 </table>
