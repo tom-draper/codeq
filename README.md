@@ -444,8 +444,7 @@ with the lower value in bold:
       <td align="right">584 ms</td>
     </tr>
     <tr>
-      <td><b>All 19 tasks</b></td>
-      <td></td>
+      <td colspan="2"><b>All 19 tasks</b></td>
       <td align="right"><b>993k</b></td>
       <td align="right">1,474k</td>
       <td align="right"><b>580</b></td>
@@ -454,7 +453,7 @@ with the lower value in bold:
       <td align="right">1,254 ms</td>
     </tr>
     <tr>
-      <td colspan="2"><b>codeq improvement (generic ÷ codeq)</b></td>
+      <td colspan="2"></td>
       <td colspan="2" align="center"><b>1.48x</b></td>
       <td colspan="2" align="center"><b>1.67x</b></td>
       <td colspan="2" align="center"><b>9.9x</b></td>
