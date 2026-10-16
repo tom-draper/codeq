@@ -384,26 +384,6 @@ with the lower value in bold:
       <td align="right"><b>3 ms</b></td>
     </tr>
     <tr>
-      <td>A file's public API (<code>api FILE</code>)</td>
-      <td><code>rg</code> declaration lines in the file</td>
-      <td align="right">56k</td>
-      <td align="right"><b>20k</b></td>
-      <td align="right">31</td>
-      <td align="right">31</td>
-      <td align="right">4 ms</td>
-      <td align="right">4 ms</td>
-    </tr>
-    <tr>
-      <td>A package's public API (<code>api DIR</code>)</td>
-      <td><code>rg</code> declaration lines in the directory</td>
-      <td align="right">613k</td>
-      <td align="right"><b>333k</b></td>
-      <td align="right">31</td>
-      <td align="right">31</td>
-      <td align="right">7 ms</td>
-      <td align="right">7 ms</td>
-    </tr>
-    <tr>
       <td>A file's imports (<code>imports</code>)</td>
       <td><code>rg</code> import lines, read grouped blocks</td>
       <td align="right"><b>6.2k</b></td>
@@ -444,25 +424,24 @@ with the lower value in bold:
       <td align="right">584 ms</td>
     </tr>
     <tr>
-      <td colspan="2"><b>All 19 tasks</b></td>
-      <td align="right"><b>993k</b></td>
-      <td align="right">1,474k</td>
-      <td align="right"><b>580</b></td>
-      <td align="right">968</td>
-      <td align="right"><b>126 ms</b></td>
-      <td align="right">1,254 ms</td>
+      <td colspan="2"><b>All 17 tasks</b></td>
+      <td align="right"><b>324k</b></td>
+      <td align="right">1,121k</td>
+      <td align="right"><b>518</b></td>
+      <td align="right">906</td>
+      <td align="right"><b>115 ms</b></td>
+      <td align="right">1,244 ms</td>
     </tr>
     <tr>
       <td colspan="2"></td>
-      <td colspan="2" align="center"><b>1.48x</b></td>
-      <td colspan="2" align="center"><b>1.67x</b></td>
-      <td colspan="2" align="center"><b>9.9x</b></td>
+      <td colspan="2" align="center"><b>3.45x</b></td>
+      <td colspan="2" align="center"><b>1.75x</b></td>
+      <td colspan="2" align="center"><b>10.8x</b></td>
     </tr>
   </tbody>
 </table>
 
-codeq returns more on the API tasks, because it gives complete signatures where
-a grep gives first lines. `implementors` ran on the 24 repositories with extends or implements edges.
+`implementors` ran on the 24 repositories with extends or implements edges.
 `importers` matches a file's stem as a whole name in each import, and drops an
 import the dependency graph resolves to a different file.
 On 2 JavaScript and TypeScript repositories `tests` found nothing where tests do
