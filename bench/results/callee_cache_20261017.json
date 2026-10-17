@@ -1,0 +1,391 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    1.6318359375,
+    1.50537109375,
+    0.88623046875
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "10d83ed04c072a6f31bb163901e5f1d74ffb113b6d36f5f32ea4c07223015d3b",
+    "after": "0638bf579e9d736579bfa858c4b55607a16e97be81abcb542bcf1dec953cd36f"
+  },
+  "limits": "Whole warm CLI requests, including refresh, graph construction and rendering. Peak RSS measured separately. SQL query reuse is checked by the separate resolver trace unit test.",
+  "workloads": {
+    "wide": {
+      "command": [
+        "--json",
+        "callees",
+        "entry",
+        "--depth",
+        "3",
+        "--limit",
+        "0"
+      ],
+      "rows": 481,
+      "answer_sha256": "0a55fcd01db4b871579190f9993767cb52aa35ec19a0129a9c4f52c554250e87",
+      "samples_ms": {
+        "before": [
+          117.857073,
+          117.910589,
+          119.077044,
+          118.061047,
+          118.881308,
+          119.000188,
+          118.060181
+        ],
+        "after": [
+          41.000862,
+          42.886503,
+          40.854714,
+          41.544289,
+          41.235996,
+          40.512858,
+          41.554401
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14672,
+        "after": 14676
+      },
+      "median_ms": {
+        "before": 118.061047,
+        "after": 41.235996
+      }
+    },
+    "early_path": {
+      "command": [
+        "--json",
+        "callpath",
+        "entry",
+        "leaf159",
+        "--max-depth",
+        "2"
+      ],
+      "rows": 3,
+      "answer_sha256": "a7a3e8ed0b3810b40132b24a90e093914b05fec12ed045dd251f25cc8566a56d",
+      "samples_ms": {
+        "before": [
+          4.246443,
+          4.272167,
+          4.188776,
+          4.258296,
+          4.18349,
+          4.30877,
+          4.191822
+        ],
+        "after": [
+          4.402632,
+          4.299208,
+          4.357643,
+          4.27876,
+          4.30234,
+          4.309233,
+          4.331272
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14612,
+        "after": 14668
+      },
+      "median_ms": {
+        "before": 4.246443,
+        "after": 4.309233
+      }
+    },
+    "late_path": {
+      "command": [
+        "--json",
+        "callpath",
+        "entry",
+        "target",
+        "--max-depth",
+        "2"
+      ],
+      "rows": 3,
+      "answer_sha256": "0c767ddba5d0676dd1172a1c8c9b79342514af9ce676a44055e4ff77bfd9aa96",
+      "samples_ms": {
+        "before": [
+          116.885657,
+          116.201049,
+          116.763646,
+          116.264267,
+          115.679976,
+          114.697134,
+          115.776438
+        ],
+        "after": [
+          35.830461,
+          35.740571,
+          35.447801,
+          36.016181,
+          35.566017,
+          35.459592,
+          35.241118
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14672,
+        "after": 14672
+      },
+      "median_ms": {
+        "before": 116.201049,
+        "after": 35.566017
+      }
+    },
+    "no_path": {
+      "command": [
+        "--json",
+        "callpath",
+        "entry",
+        "unreachable",
+        "--max-depth",
+        "4"
+      ],
+      "rows": 0,
+      "answer_sha256": "3f76eec8d1e5c95449c0a8ec607cd668b7d0fe7d3b3ac2d65822466d99418403",
+      "samples_ms": {
+        "before": [
+          120.031253,
+          120.282355,
+          118.91061,
+          120.200346,
+          119.012131,
+          119.325569,
+          121.198825
+        ],
+        "after": [
+          39.920931,
+          39.604491,
+          40.197358,
+          40.12995,
+          39.700412,
+          39.865918,
+          39.68901
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14672,
+        "after": 14636
+      },
+      "median_ms": {
+        "before": 120.031253,
+        "after": 39.865918
+      }
+    },
+    "scoped": {
+      "command": [
+        "--json",
+        "callpath",
+        "entry",
+        "target",
+        "--path",
+        "graph.py",
+        "--max-depth",
+        "2"
+      ],
+      "rows": 3,
+      "answer_sha256": "0c767ddba5d0676dd1172a1c8c9b79342514af9ce676a44055e4ff77bfd9aa96",
+      "samples_ms": {
+        "before": [
+          114.029663,
+          116.791394,
+          116.821508,
+          119.362862,
+          114.525137,
+          114.184807,
+          116.332836
+        ],
+        "after": [
+          35.533925,
+          35.836175,
+          35.689793,
+          35.836277,
+          36.029604,
+          35.437034,
+          36.081464
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14680,
+        "after": 14632
+      },
+      "median_ms": {
+        "before": 116.332836,
+        "after": 35.836175
+      }
+    },
+    "limited": {
+      "command": [
+        "--json",
+        "callees",
+        "entry",
+        "--depth",
+        "3",
+        "--limit",
+        "8"
+      ],
+      "rows": 8,
+      "answer_sha256": "4d62a0934896887ff2a48811e950533439c0229c6266a11b81d619e943091798",
+      "samples_ms": {
+        "before": [
+          117.700636,
+          117.48884,
+          117.704396,
+          117.465323,
+          117.35941,
+          118.613167,
+          116.929232
+        ],
+        "after": [
+          40.571787,
+          40.527867,
+          40.462413,
+          40.594607,
+          41.018195,
+          41.042233,
+          40.852642
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14672,
+        "after": 14664
+      },
+      "median_ms": {
+        "before": 117.48884,
+        "after": 40.594607
+      }
+    },
+    "cycle": {
+      "command": [
+        "--json",
+        "callees",
+        "top",
+        "--depth",
+        "6",
+        "--limit",
+        "0"
+      ],
+      "rows": 6,
+      "answer_sha256": "9f45623def52803e579a708650761b64a59a4f244df5bd25cd4a2939c93d5c55",
+      "samples_ms": {
+        "before": [
+          2.799209,
+          2.749781,
+          2.8204,
+          2.762517,
+          2.68842,
+          2.791235,
+          2.663761
+        ],
+        "after": [
+          2.80556,
+          2.640376,
+          2.815789,
+          2.676994,
+          2.74691,
+          2.696176,
+          2.794409
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14676,
+        "after": 14672
+      },
+      "median_ms": {
+        "before": 2.762517,
+        "after": 2.74691
+      }
+    },
+    "cycle_path": {
+      "command": [
+        "--json",
+        "callpath",
+        "top",
+        "finish",
+        "--max-depth",
+        "6"
+      ],
+      "rows": 5,
+      "answer_sha256": "bc74160d80290111a39c0aafee6ef6e0d5b984059ce9f2423c78028a5fa83281",
+      "samples_ms": {
+        "before": [
+          2.893659,
+          2.835954,
+          2.819009,
+          2.904416,
+          2.851966,
+          2.948806,
+          2.793372
+        ],
+        "after": [
+          2.828689,
+          2.857744,
+          2.847397,
+          2.789659,
+          2.803304,
+          2.769713,
+          2.852256
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14664,
+        "after": 14672
+      },
+      "median_ms": {
+        "before": 2.851966,
+        "after": 2.828689
+      }
+    },
+    "hop_cap": {
+      "command": [
+        "--json",
+        "callees",
+        "entry",
+        "--depth",
+        "2",
+        "--limit",
+        "0"
+      ],
+      "rows": 2000,
+      "answer_sha256": "217010b2685fdbdb1a726afa3481495577041fea8f4626f7aa6b376df0f6110d",
+      "samples_ms": {
+        "before": [
+          18.763808,
+          19.2415,
+          19.069241,
+          19.173276,
+          18.928866,
+          18.812179,
+          18.903588
+        ],
+        "after": [
+          20.646722,
+          20.93942,
+          21.019077,
+          21.035177,
+          20.803924,
+          21.137341,
+          20.88467
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14676,
+        "after": 16124
+      },
+      "median_ms": {
+        "before": 18.928866,
+        "after": 20.93942
+      }
+    }
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    1.5810546875,
+    1.49658203125,
+    0.88720703125
+  ],
+  "baseline_revision": "632382c56e2efd2a8a9a91d1389eed742d63ef44",
+  "candidate_revision": "0f1c2291d7bce7b34551c0e5cc8dffd4b27ab0fb"
+}
