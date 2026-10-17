@@ -1,0 +1,197 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    1.3701171875,
+    2.8232421875,
+    1.67138671875
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "b9d00310071d8abf95daacb0b58c23b3820b59e1e5d3ab36c758b348593a928b",
+    "after": "a719fa32c811e1afc065c6578bf611c4507c9e9bf5526b9a9d1d1a343dac3854"
+  },
+  "limits": "Warm whole CLI process, including parsing and rendering. Allocation probe includes all intercepted malloc/calloc/realloc calls, not matcher-only allocations.",
+  "workloads": {
+    "repeated_near_misses": {
+      "command": [
+        "--json",
+        "astgrep",
+        "foo($X, $Y, $X)",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 5000,
+      "stdout_bytes": 682314,
+      "answer_sha256": "2ad2c0df42ee790db2b6f5cd31dc0e613c1ea6661b3bfc82d86f0ccc43bf5945",
+      "samples_ms": {
+        "before": [
+          215.924134,
+          220.681898,
+          214.239459,
+          214.214809,
+          212.796547,
+          237.223459,
+          212.76984
+        ],
+        "after": [
+          198.152247,
+          197.408073,
+          201.42435,
+          199.712925,
+          206.340256,
+          221.792767,
+          200.313461
+        ]
+      },
+      "allocations": {
+        "before": 823160,
+        "after": 707867
+      },
+      "median_ms": {
+        "before": 214.239459,
+        "after": 200.313461
+      }
+    },
+    "named_variadic": {
+      "command": [
+        "--json",
+        "astgrep",
+        "foo($X, $$$REST, $X)",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 5000,
+      "stdout_bytes": 697314,
+      "answer_sha256": "81c18743ad6cb70f341d342233f2380e8135bc57f8fea2f54e97886b3226903c",
+      "samples_ms": {
+        "before": [
+          215.961507,
+          216.889171,
+          217.536002,
+          217.411749,
+          222.140493,
+          219.900817,
+          217.181015
+        ],
+        "after": [
+          205.592348,
+          205.025035,
+          205.049001,
+          203.801816,
+          206.735485,
+          204.633335,
+          205.503856
+        ]
+      },
+      "allocations": {
+        "before": 858160,
+        "after": 747868
+      },
+      "median_ms": {
+        "before": 217.411749,
+        "after": 205.049001
+      }
+    },
+    "repeated_variadic": {
+      "command": [
+        "--json",
+        "astgrep",
+        "pair(foo($$$ARGS), bar($$$ARGS))",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 5000,
+      "stdout_bytes": 786204,
+      "answer_sha256": "b5f316afbe589cb3b7b93cb0a2ac184078ee7d4827271b3d7381845e1de2ccc3",
+      "samples_ms": {
+        "before": [
+          203.546609,
+          211.828873,
+          204.713947,
+          207.257752,
+          202.851802,
+          202.595303,
+          204.628801
+        ],
+        "after": [
+          190.958647,
+          191.878804,
+          192.432613,
+          193.618915,
+          192.862081,
+          196.015368,
+          193.750504
+        ]
+      },
+      "allocations": {
+        "before": 773254,
+        "after": 652952
+      },
+      "median_ms": {
+        "before": 204.628801,
+        "after": 192.862081
+      }
+    },
+    "anonymous_variadic": {
+      "command": [
+        "--json",
+        "astgrep",
+        "foo($$$)",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 15000,
+      "stdout_bytes": 1519568,
+      "answer_sha256": "b6b8ef219f3921f6d1c718349cc9344f0f70ebf7ac2651424381086b0a7c7a26",
+      "samples_ms": {
+        "before": [
+          218.976069,
+          216.629534,
+          217.542469,
+          226.306954,
+          213.975936,
+          216.250343,
+          216.427402
+        ],
+        "after": [
+          210.062059,
+          208.053346,
+          205.866029,
+          207.904747,
+          207.46033,
+          209.449504,
+          217.219438
+        ]
+      },
+      "allocations": {
+        "before": 828118,
+        "after": 717852
+      },
+      "median_ms": {
+        "before": 216.629534,
+        "after": 208.053346
+      }
+    }
+  },
+  "fixture": {
+    "groups": 5000,
+    "bytes": 468911
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    1.26416015625,
+    2.705078125,
+    1.65576171875
+  ],
+  "baseline_revision": "c66b0fc4e42c4e55aa4bb2e6d0c19c14d5b0272e",
+  "candidate_revision": "bbbe1dc33892b3fa53388810cd73d8c758de5e0a"
+}
