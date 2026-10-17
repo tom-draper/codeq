@@ -36,6 +36,7 @@
 //! `render_row` carried an `or_else(start_line)` fallback to hide it in text.
 
 use std::collections::BTreeMap;
+use std::io::{BufWriter, Write};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -175,11 +176,15 @@ impl<T: Serialize> Envelope<T> {
                 out.insert("notes".into(), Value::Object(notes));
             }
             let value = Value::Object(out);
+            let stdout = std::io::stdout();
+            let mut out = BufWriter::new(stdout.lock());
             if r.pretty {
-                println!("{}", serde_json::to_string_pretty(&value)?);
+                serde_json::to_writer_pretty(&mut out, &value)?;
             } else {
-                println!("{}", serde_json::to_string(&value)?);
+                serde_json::to_writer(&mut out, &value)?;
             }
+            out.write_all(b"\n")?;
+            out.flush()?;
             return Ok(());
         }
 
