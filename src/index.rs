@@ -423,10 +423,11 @@ fn parse_and_write(
         let mut writer = RowWriter::new(tx, now)?;
         let mut reindexed: u64 = 0;
         for p in res_rx {
-            if writer.write(&p)? {
+            if writer.write(p)? {
                 reindexed += 1;
             }
         }
+        writer.flush_fts()?;
         Ok(reindexed)
     })
 }
@@ -445,7 +446,14 @@ struct RowWriter<'tx> {
     ins_impl: rusqlite::Statement<'tx>,
     del_calls: rusqlite::Statement<'tx>,
     ins_call: rusqlite::Statement<'tx>,
+    /// Bodies waiting for [`RowWriter::flush_fts`], with their total size.
+    pending_fts: Vec<(i64, String)>,
+    pending_fts_bytes: usize,
 }
+
+/// How much body text the writer holds before its trigrams are inserted.
+const FTS_BATCH_FILES: usize = 32;
+const FTS_BATCH_BYTES: usize = 4 << 20;
 
 impl<'tx> RowWriter<'tx> {
     fn new(tx: &'tx rusqlite::Transaction, now: i64) -> Result<Self> {
@@ -493,12 +501,24 @@ impl<'tx> RowWriter<'tx> {
             ins_call: tx.prepare(
                 "INSERT INTO calls(file_id, start_byte, name, receiver) VALUES(?1, ?2, ?3, ?4)",
             )?,
+            pending_fts: Vec::new(),
+            pending_fts_bytes: 0,
         })
+    }
+
+    /// Insert the queued bodies' trigrams. Must run before the transaction
+    /// commits.
+    fn flush_fts(&mut self) -> Result<()> {
+        for (file_id, body) in self.pending_fts.drain(..) {
+            self.ins_fts.execute((file_id, body.as_str()))?;
+        }
+        self.pending_fts_bytes = 0;
+        Ok(())
     }
 
     /// Store one parsed file. Returns whether its content was rewritten (false
     /// when only the stat columns changed).
-    fn write(&mut self, p: &Parsed) -> Result<bool> {
+    fn write(&mut self, mut p: Parsed) -> Result<bool> {
         let file_id: i64 = self.upsert.query_row(
             (
                 &p.rel,
@@ -526,7 +546,7 @@ impl<'tx> RowWriter<'tx> {
             self.del_impls.execute([&p.rel])?;
             self.del_calls.execute([file_id])?;
         }
-        if let Some(body) = &p.body {
+        if let Some(body) = p.body.take() {
             // Every text file's trigrams go in, whatever its size. A cap
             // was tried and reverted: it made a data-heavy repo's index
             // 200x smaller, and it also made `search` stop being a strict
@@ -539,7 +559,18 @@ impl<'tx> RowWriter<'tx> {
             // less per file instead: only the trigram set is kept, not the
             // text. `.codeqignore` is still the answer for data that should
             // not be searched at all.
-            self.ins_fts.execute((file_id, body.as_str()))?;
+            //
+            // Queued rather than inserted here: alternating FTS5 inserts with
+            // the ordinary tables made every statement on both sides several
+            // times slower (the upsert, the fact inserts), so the trigrams go
+            // in as a run.
+            self.pending_fts_bytes += body.len();
+            self.pending_fts.push((file_id, body));
+            if self.pending_fts.len() >= FTS_BATCH_FILES
+                || self.pending_fts_bytes >= FTS_BATCH_BYTES
+            {
+                self.flush_fts()?;
+            }
         }
         if let Some(lang) = p.language {
             for f in &p.facts {
