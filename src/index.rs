@@ -442,6 +442,7 @@ struct RowWriter<'tx> {
     ins_fts: rusqlite::Statement<'tx>,
     del_spans: rusqlite::Statement<'tx>,
     ins_span: rusqlite::Statement<'tx>,
+    ins_span_batch: rusqlite::Statement<'tx>,
     del_impls: rusqlite::Statement<'tx>,
     ins_impl: rusqlite::Statement<'tx>,
     del_calls: rusqlite::Statement<'tx>,
@@ -454,6 +455,7 @@ struct RowWriter<'tx> {
 /// How much body text the writer holds before its trigrams are inserted.
 const FTS_BATCH_FILES: usize = 32;
 const FTS_BATCH_BYTES: usize = 4 << 20;
+const SPAN_BATCH_ROWS: usize = 64;
 
 impl<'tx> RowWriter<'tx> {
     fn new(tx: &'tx rusqlite::Transaction, now: i64) -> Result<Self> {
@@ -492,6 +494,10 @@ impl<'tx> RowWriter<'tx> {
                 "INSERT OR IGNORE INTO spans(file_id, start_byte, end_byte, kind)
                  VALUES(?1, ?2, ?3, ?4)",
             )?,
+            ins_span_batch: tx.prepare(&format!(
+                "INSERT OR IGNORE INTO spans(file_id, start_byte, end_byte, kind) VALUES {}",
+                vec!["(?, ?, ?, ?)"; SPAN_BATCH_ROWS].join(","),
+            ))?,
             del_impls: tx.prepare("DELETE FROM impls WHERE path = ?1")?,
             ins_impl: tx.prepare(
                 "INSERT INTO impls(path, line, subtype, supertype, relation, language)
@@ -602,7 +608,15 @@ impl<'tx> RowWriter<'tx> {
                     f.contract.as_deref(),
                 ])?;
             }
-            for (sb, eb, sp) in &p.spans {
+            let mut spans = p.spans.chunks_exact(SPAN_BATCH_ROWS);
+            for batch in &mut spans {
+                self.ins_span_batch.execute(rusqlite::params_from_iter(
+                    batch
+                        .iter()
+                        .flat_map(|(sb, eb, sp)| [file_id, *sb as i64, *eb as i64, sp.as_i64()]),
+                ))?;
+            }
+            for (sb, eb, sp) in spans.remainder() {
                 self.ins_span
                     .execute((file_id, *sb as i64, *eb as i64, sp.as_i64()))?;
             }

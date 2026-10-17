@@ -4283,6 +4283,30 @@ fn search_count_per_file() {
 }
 
 #[test]
+fn span_batches_preserve_filters_across_batch_boundaries_and_edits() {
+    let f = Fixture::new();
+    for count in [31, 32, 33, 64, 65, 129, 1] {
+        let source: String = (0..count)
+            .map(|i| format!("value_{i} = \"needle\" # needle\n"))
+            .collect();
+        f.write("source.py", &source);
+        for class in ["comments", "strings"] {
+            let result = f.run(&["search", "needle", "--in", class, "--limit", "0"]);
+            let rows = result["data"]["matches"].as_array().unwrap();
+            assert_eq!(rows.len(), count, "{class}: {result}");
+            for (i, row) in rows.iter().enumerate() {
+                assert_eq!(row["line"], i + 1, "{result}");
+            }
+        }
+        let code = f.run(&["search", "needle", "--in", "code", "--limit", "0"]);
+        assert!(
+            code["data"]["matches"].as_array().unwrap().is_empty(),
+            "{code}"
+        );
+    }
+}
+
+#[test]
 fn search_in_filters_by_syntactic_class() {
     let f = Fixture::new();
     // 'needle' in a comment (l1), a string (l2), and code (l3).
