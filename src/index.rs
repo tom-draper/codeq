@@ -100,7 +100,10 @@ fn parse_one(
             // definition. For valid UTF-8, which is virtually every file, this is
             // byte-identical and free: the string is materialised for the FTS body
             // either way.
-            let text = String::from_utf8_lossy(&bytes).into_owned();
+            // Valid UTF-8 takes the buffer over as it is, so the file is not held
+            // twice while its facts are extracted; only invalid input is copied.
+            let text = String::from_utf8(bytes)
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
             let ((f, s, r), health, calls) = match language {
                 Some(lang) => extractor.extract(lang, rel, text.as_bytes())?,
                 None => ((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()),
