@@ -1,0 +1,202 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    1.64501953125,
+    3.33984375,
+    2.77490234375
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "4b9b1e3e154222982349f851e93a683266ad02ebbd94c6c98695dbde2bb8a7bc",
+    "after": "233b3726a10c6e1cdd873df86b05a65316cc5cf4849b45eb9593f627c4599482"
+  },
+  "limits": "Whole CLI indexing into a fresh database or after editing every fixture file. Filesystem caches warm. Peak RSS measured separately through a small interpreter. Database IDs normalized by path; all facts, spans, calls, relations, file hashes and parse health compared. Integrity and foreign keys checked.",
+  "workloads": {
+    "dense_cold": {
+      "source_bytes": 1408000,
+      "rows": {
+        "files": 8,
+        "facts": 0,
+        "impls": 0,
+        "calls": 0,
+        "spans": 128000
+      },
+      "index_sha256": "58f06fa2b852a09e98f9555c04630b70616d493c50b0230b261b65976386bf3e",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          328.696802,
+          340.048714,
+          331.590798,
+          330.073307,
+          325.98963,
+          332.448171,
+          327.826597
+        ],
+        "after": [
+          317.310105,
+          313.819271,
+          313.11183,
+          321.253746,
+          311.604911,
+          316.726264,
+          314.031629
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 42480,
+        "after": 41412
+      },
+      "database_bytes": {
+        "before": 2240512,
+        "after": 2240512
+      },
+      "median_ms": {
+        "before": 330.073307,
+        "after": 314.031629
+      }
+    },
+    "dense_edited": {
+      "source_bytes": 1408000,
+      "rows": {
+        "files": 8,
+        "facts": 0,
+        "impls": 0,
+        "calls": 0,
+        "spans": 128000
+      },
+      "index_sha256": "58f06fa2b852a09e98f9555c04630b70616d493c50b0230b261b65976386bf3e",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          356.208731,
+          353.063712,
+          353.77465,
+          355.403332,
+          361.169727,
+          351.978915,
+          349.60567
+        ],
+        "after": [
+          339.270018,
+          341.324492,
+          351.605606,
+          339.562856,
+          340.563463,
+          338.923532,
+          341.867152
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 42964,
+        "after": 42952
+      },
+      "database_bytes": {
+        "before": 2248704,
+        "after": 2248704
+      },
+      "median_ms": {
+        "before": 353.77465,
+        "after": 340.563463
+      }
+    },
+    "mixed_cold": {
+      "source_bytes": 475136,
+      "rows": {
+        "files": 32,
+        "facts": 8192,
+        "impls": 0,
+        "calls": 8192,
+        "spans": 16384
+      },
+      "index_sha256": "c82600aaaf503ccb34c35054ea6945230e059ca1893a6aede50fc0a898704a21",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          275.249148,
+          275.466166,
+          275.272762,
+          275.676454,
+          276.10409,
+          275.770723,
+          278.785152
+        ],
+        "after": [
+          275.786784,
+          274.504438,
+          275.386562,
+          274.843981,
+          275.498188,
+          276.88735,
+          275.321967
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14672,
+        "after": 14632
+      },
+      "database_bytes": {
+        "before": 2809856,
+        "after": 2809856
+      },
+      "median_ms": {
+        "before": 275.676454,
+        "after": 275.386562
+      }
+    },
+    "small_cold": {
+      "source_bytes": 1408,
+      "rows": {
+        "files": 32,
+        "facts": 32,
+        "impls": 0,
+        "calls": 0,
+        "spans": 64
+      },
+      "index_sha256": "d6471a0d706ee0348dfdbabcb15e36de9b168a3bbc3f86c2528c5dd38781c5bd",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          17.802334,
+          18.198595,
+          18.989572,
+          17.673866,
+          17.685693,
+          17.913906,
+          18.306807
+        ],
+        "after": [
+          17.983986,
+          17.844994,
+          17.808245,
+          17.681156,
+          18.125732,
+          17.909857,
+          18.200415
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14684,
+        "after": 14656
+      },
+      "database_bytes": {
+        "before": 114688,
+        "after": 114688
+      },
+      "median_ms": {
+        "before": 17.913906,
+        "after": 17.909857
+      }
+    }
+  },
+  "reader_snapshot": "old reader remains consistent while an edit commits; new reader sees replacement facts",
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    1.85107421875,
+    3.240234375,
+    2.7607421875
+  ],
+  "baseline_revision": "d3aa643f828705f69e186a2fbea0e32d9493c211",
+  "candidate_revision": "31250e34f3a515a24e2e65a7a5dfc1a32b27121f"
+}
