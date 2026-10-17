@@ -17,6 +17,8 @@ use crate::db::Db;
 use crate::facts::{Extractor, Fact, Relation, Span};
 use crate::repo::Repo;
 
+mod parsed_queue;
+
 /// Result of a refresh pass.
 pub struct RefreshStats {
     /// Files newly indexed or whose content hash changed.
@@ -59,6 +61,43 @@ struct Parsed {
     /// or the file is binary.
     parse_errors: Option<i64>,
     parse_recovered: bool,
+}
+
+impl Parsed {
+    fn estimated_bytes(&self) -> usize {
+        let mut bytes = std::mem::size_of::<Self>() + self.rel.capacity() + self.hash.capacity();
+        bytes += self.body.as_ref().map_or(0, String::capacity);
+        bytes += self.facts.capacity() * std::mem::size_of::<Fact>();
+        for fact in &self.facts {
+            bytes += fact.kind.capacity()
+                + fact.name.capacity()
+                + fact.signature.capacity()
+                + fact.source.capacity();
+            for text in [
+                &fact.doc,
+                &fact.visibility,
+                &fact.owner,
+                &fact.shape,
+                &fact.decorator,
+                &fact.contract,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                bytes += text.capacity();
+            }
+        }
+        bytes += self.spans.capacity() * std::mem::size_of::<(usize, usize, Span)>();
+        bytes += self.relations.capacity() * std::mem::size_of::<Relation>();
+        for relation in &self.relations {
+            bytes += relation.subtype.capacity() + relation.supertype.capacity();
+        }
+        bytes += self.calls.capacity() * std::mem::size_of::<crate::callsite::CallSite>();
+        for call in &self.calls {
+            bytes += call.name.capacity() + call.receiver.as_ref().map_or(0, String::capacity);
+        }
+        bytes
+    }
 }
 
 /// Read, hash, and (if the content changed) parse one file. Pure and
@@ -391,7 +430,7 @@ fn parse_and_write(
     let mut jobs: Vec<usize> = (0..work.len()).collect();
     jobs.sort_unstable_by_key(|&i| std::cmp::Reverse(work[i].2));
     let next = AtomicUsize::new(0);
-    let (res_tx, res_rx) = std::sync::mpsc::sync_channel::<Parsed>(256);
+    let (res_tx, res_rx) = parsed_queue::channel(16 << 20);
     std::thread::scope(|scope| -> Result<u64> {
         for _ in 0..workers {
             let sender = res_tx.clone();
@@ -403,7 +442,7 @@ fn parse_and_write(
                     let (rel, abs, size, mtime, ctime) = &work[i];
                     match parse_one(existing, &mut ex, rel, abs, *size, *mtime, *ctime) {
                         Ok(Some(p)) => {
-                            if sender.send(p).is_err() {
+                            if !sender.send(p) {
                                 return; // writer went away (error) — stop
                             }
                         }
