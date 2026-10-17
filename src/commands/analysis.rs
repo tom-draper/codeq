@@ -466,54 +466,64 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
     }
 
     // One pass over indexed bodies for normal hotspots, or only the opaque
-    // grammar fallback in --calls mode.
-    {
+    // grammar fallback in --calls mode. Files are independent and counts are
+    // sums, so the pass is split across workers (each with its own connection
+    // and local counts) and the counts added at the end: the totals, and so the
+    // ranking below, are the sequential ones.
+    let files: Vec<String> = {
         let mut stmt =
             s.db.conn
                 .prepare("SELECT path, language FROM files WHERE is_text = 1 ORDER BY path")?;
-        let mut span_stmt = s.db.conn.prepare(crate::search::SPANS_SQL)?;
         let mut rows = stmt.query([])?;
+        let mut files = Vec::new();
         while let Some(row) = rows.next()? {
-            let rel = row.get_ref(0)?.as_str()?;
             let lang: Option<String> = row.get(1)?;
-            if calls_only && crate::callsite::supports_syntax_calls(lang.as_deref().unwrap_or("")) {
+            let lang = lang.as_deref().unwrap_or("");
+            if calls_only && crate::callsite::supports_syntax_calls(lang) {
                 continue;
             }
             // Unparseable files have no comment/string spans, so every match in
             // them would look like code. `callers` skips them; so do we.
-            if !crate::facts::has_spans(lang.as_deref().unwrap_or("")) {
+            if !crate::facts::has_spans(lang) {
                 continue;
             }
-            let spans: Vec<_> = span_stmt
-                .query_map([rel], crate::search::span_row)?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            let Some(body) = crate::index::load_body(&s.repo.root, rel) else {
-                continue;
-            };
-            let body = body.as_str();
-            let bytes = body.as_bytes();
-            // Byte offset of each line start, so an occurrence can be matched
-            // against the definition sites recorded above (which are line-based).
-            let line_starts = crate::search::line_starts_of(body);
-            let file_sites = defsites.get(rel);
-            for_each_ident(body, |off, tok| {
-                if let Some(name) = wanted.get(tok) {
-                    if crate::search::class_at(&spans, off).is_some() {
-                        return; // inside a comment or string literal
-                    }
-                    if calls_only && !crate::search::is_call_position(bytes, off, off + tok.len()) {
-                        return;
-                    }
-                    let line = line_starts.partition_point(|&s| s <= off) as i64;
-                    if file_sites
-                        .and_then(|sites| sites.get(*name))
-                        .is_some_and(|lines| lines.contains(&line))
-                    {
-                        return; // this name's own declaration
-                    }
-                    *counts.entry(name).or_insert(0) += 1;
-                }
-            });
+            files.push(row.get(0)?);
+        }
+        files
+    };
+    // A thread and a connection cost more than a small repository's scan.
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 8)
+        .min(files.len().div_ceil(32).max(1));
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let scan = ScanRefs {
+        root: &s.repo.root,
+        wanted: &wanted,
+        defsites: &defsites,
+        files: &files,
+        next: &next,
+        calls_only,
+    };
+    // Opened here, since the session they come from cannot cross threads.
+    let conns = (0..workers)
+        .map(|_| s.db.open_reader())
+        .collect::<Result<Vec<_>>>()?;
+    let parts: Vec<Result<HashMap<&str, i64>>> = std::thread::scope(|scope| {
+        let scan = &scan;
+        let handles: Vec<_> = conns
+            .into_iter()
+            .map(|conn| scope.spawn(move || scan.run(&conn)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("hotspots worker panicked"))
+            .collect()
+    });
+    for part in parts {
+        for (name, n) in part? {
+            *counts.entry(name).or_insert(0) += n;
         }
     }
 
@@ -555,6 +565,64 @@ pub fn cmd_hotspots(cwd: &Path, args: HotspotsArgs, out: Out) -> Result<()> {
         None
     };
     s.emit_noted(data, note)
+}
+
+/// What one `hotspots` scan worker shares with the others: read-only inputs and
+/// a counter to split the files.
+struct ScanRefs<'a> {
+    root: &'a Path,
+    wanted: &'a HashSet<&'a str>,
+    defsites: &'a HashMap<String, HashMap<String, Vec<i64>>>,
+    files: &'a [String],
+    next: &'a std::sync::atomic::AtomicUsize,
+    calls_only: bool,
+}
+
+impl<'a> ScanRefs<'a> {
+    /// Claim files until none are left, returning this worker's reference
+    /// counts for the wanted names.
+    fn run(&self, conn: &rusqlite::Connection) -> Result<HashMap<&'a str, i64>> {
+        let mut span_stmt = conn.prepare(crate::search::SPANS_SQL)?;
+        let mut counts: HashMap<&'a str, i64> = HashMap::new();
+        loop {
+            let i = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(rel) = self.files.get(i) else {
+                return Ok(counts);
+            };
+            let spans: Vec<_> = span_stmt
+                .query_map([rel], crate::search::span_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let Some(body) = crate::index::load_body(self.root, rel) else {
+                continue;
+            };
+            let body = body.as_str();
+            let bytes = body.as_bytes();
+            // Byte offset of each line start, so an occurrence can be matched
+            // against the definition sites recorded earlier (which are line-based).
+            let line_starts = crate::search::line_starts_of(body);
+            let file_sites = self.defsites.get(rel);
+            for_each_ident(body, |off, tok| {
+                if let Some(name) = self.wanted.get(tok) {
+                    if crate::search::class_at(&spans, off).is_some() {
+                        return; // inside a comment or string literal
+                    }
+                    if self.calls_only
+                        && !crate::search::is_call_position(bytes, off, off + tok.len())
+                    {
+                        return;
+                    }
+                    let line = line_starts.partition_point(|&s| s <= off) as i64;
+                    if file_sites
+                        .and_then(|sites| sites.get(*name))
+                        .is_some_and(|lines| lines.contains(&line))
+                    {
+                        return; // this name's own declaration
+                    }
+                    *counts.entry(name).or_insert(0) += 1;
+                }
+            });
+        }
+    }
 }
 
 /// `unused [<path>]` — definitions with no reference anywhere outside their own
