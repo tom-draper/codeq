@@ -274,6 +274,70 @@ fn exact_module_match_score(
     }
 }
 
+/// The components a module path is compared against for a candidate file: its
+/// directories, then its stem, or just the directory when the file stands in
+/// for it (`pkg/__init__.py`, `pkg/mod.rs`, `pkg/index.ts` are imported as
+/// `pkg`). Depends on the path alone, so [`Graph::build`] computes it once per
+/// file instead of once per (import, candidate) pair.
+fn entry_parts(path: &str) -> Vec<&str> {
+    let mut parts: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+    let file = parts.pop().unwrap_or(path);
+    if !(matches!(file, "__init__.py" | "mod.rs") || file.starts_with("index.")) {
+        parts.push(stem(file));
+    }
+    parts
+}
+
+/// An import's module string, parsed once so it can be matched against every
+/// candidate file without re-splitting it each time.
+struct ModuleSpec<'a> {
+    raw: &'a str,
+    /// Relative (`./x`, `..x`) or a file reference: matched against the
+    /// importer's directory, so it needs the per-pair resolver.
+    path_like: bool,
+    segments: Vec<&'a str>,
+}
+
+impl<'a> ModuleSpec<'a> {
+    fn new(raw: &'a str) -> Self {
+        let path_like = raw.starts_with('.') || is_file_reference(raw);
+        Self {
+            raw,
+            path_like,
+            segments: if path_like { Vec::new() } else { segments(raw) },
+        }
+    }
+
+    /// The same answer as [`exact_module_match_score`] for this module. A
+    /// dotted or `::` module is compared against `parts`, the candidate's
+    /// precomputed [`entry_parts`]; a path-like one keeps the per-pair
+    /// resolver, whose candidates are already few.
+    fn score(
+        &self,
+        from: &str,
+        path: &str,
+        parts: &[&str],
+        allow_imported_name: bool,
+    ) -> Option<usize> {
+        if self.path_like {
+            return exact_module_match_score(from, path, self.raw, allow_imported_name);
+        }
+        let module = &self.segments;
+        if module.is_empty() || (!allow_imported_name && module.len() > parts.len()) {
+            return None;
+        }
+        if allow_imported_name {
+            (1..=parts.len().min(module.len()))
+                .rev()
+                .find(|&n| parts.ends_with(&module[..n]))
+        } else if parts.ends_with(module) {
+            Some(module.len())
+        } else {
+            None
+        }
+    }
+}
+
 fn exact_candidates<'a>(
     by_tail: &HashMap<&str, Vec<&'a str>>,
     from: &str,
@@ -411,6 +475,9 @@ impl Graph {
             .map(|p| (p.as_str(), path_components(p)))
             .collect();
 
+        let parts_of: HashMap<&str, Vec<&str>> =
+            paths.iter().map(|p| (p.as_str(), entry_parts(p))).collect();
+
         let mut edges: HashMap<String, Vec<Edge>> = HashMap::new();
         let mut bindings: HashMap<String, HashMap<String, HashSet<String>>> = HashMap::new();
         let mut binding_names: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -457,27 +524,25 @@ impl Graph {
             // source file merely because `flask` is one of its hyphen-separated
             // words. This also lets the Jinja ancestor rule above select its
             // template-root match.
-            let exact_files: Vec<&str> =
+            let spec = ModuleSpec::new(&module);
+            // Each candidate is scored once; a score exists exactly when the
+            // module structurally names the file.
+            let exact_files: Vec<(&str, usize)> =
                 exact_candidates(&by_exact_tail, &from, &module, allow_imported_name)
                     .into_iter()
-                    .filter(|path| {
-                        *path != from
-                            && exact_module_match(&from, path, &module, allow_imported_name)
+                    .filter(|path| *path != from)
+                    .filter_map(|path| {
+                        spec.score(&from, path, &parts_of[path], allow_imported_name)
+                            .map(|score| (path, score))
                     })
                     .collect();
-            if !exact_files.is_empty() {
-                let strongest = exact_files
-                    .iter()
-                    .filter_map(|path| {
-                        exact_module_match_score(&from, path, &module, allow_imported_name)
-                    })
-                    .max()
-                    .unwrap_or(0);
+            if let Some(strongest) = exact_files.iter().map(|&(_, score)| score).max() {
                 let bucket = edges.entry(from.clone()).or_default();
-                for cand in exact_files.into_iter().filter(|path| {
-                    exact_module_match_score(&from, path, &module, allow_imported_name)
-                        == Some(strongest)
-                }) {
+                for cand in exact_files
+                    .into_iter()
+                    .filter(|&(_, score)| score == strongest)
+                    .map(|(path, _)| path)
+                {
                     bucket.push(Edge {
                         to: cand.to_string(),
                         module: module.clone(),
@@ -539,7 +604,10 @@ impl Graph {
             let exact: Vec<&str> = best
                 .iter()
                 .copied()
-                .filter(|cand| exact_module_match(&from, cand, &module, allow_imported_name))
+                .filter(|cand| {
+                    spec.score(&from, cand, &parts_of[*cand], allow_imported_name)
+                        .is_some()
+                })
                 .collect();
             if !exact.is_empty() {
                 best = exact;
@@ -551,7 +619,9 @@ impl Graph {
                 bucket.push(Edge {
                     to: cand.to_string(),
                     module: module.clone(),
-                    exact: exact_module_match(&from, cand, &module, allow_imported_name),
+                    exact: spec
+                        .score(&from, cand, &parts_of[cand], allow_imported_name)
+                        .is_some(),
                 });
                 if let Some(binding) = &binding {
                     bindings
@@ -945,4 +1015,66 @@ fn canonical_cycle(cyc: Vec<String>) -> Option<Vec<String>> {
     out.extend_from_slice(&cyc[min..]);
     out.extend_from_slice(&cyc[..min]);
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The precomputed matcher must give the answer the per-pair one does, for
+    /// every kind of module string and every kind of candidate file.
+    #[test]
+    fn module_spec_scores_match_the_per_pair_resolver() {
+        let paths = [
+            "src/db.rs",
+            "src/util/mod.rs",
+            "pkg/__init__.py",
+            "pkg/mod.py",
+            "pkg/sub/mod.py",
+            "app/models.py",
+            "other/models.py",
+            "web/index.ts",
+            "web/ui/index.tsx",
+            "templates/base.html",
+            "templates/blog/post.html",
+            "docs/guide.rst",
+            "main.go",
+            "a\\b\\c.py",
+        ];
+        let froms = ["src/main.rs", "pkg/sub/mod.py", "templates/blog/post.html", "x.py"];
+        let modules = [
+            "crate::db",
+            "crate::util",
+            "db",
+            "pkg",
+            "pkg.mod",
+            "pkg.mod.run",
+            "pkg.sub.mod",
+            "django.db.models",
+            "app.models.User",
+            "models",
+            "./web",
+            "../util",
+            ".models",
+            "base.html",
+            "./guide.rst",
+            "",
+            "self",
+            "b.c",
+        ];
+        for module in modules {
+            let spec = ModuleSpec::new(module);
+            for allow in [false, true] {
+                for from in froms {
+                    for path in paths {
+                        assert_eq!(
+                            spec.score(from, path, &entry_parts(path), allow),
+                            exact_module_match_score(from, path, module, allow),
+                            "{from} -> {path} via {module:?} (allow_imported_name={allow})",
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
