@@ -14493,3 +14493,33 @@ fn explicit_compaction_reports_active_readers_and_can_be_retried() {
         .unwrap()
         .is_some());
 }
+
+#[test]
+fn an_index_write_failure_stops_parse_workers_and_rolls_back() {
+    let f = Fixture::new();
+    f.write("seed.txt", "original marker\n");
+    f.run(&["files"]);
+    let db = rusqlite::Connection::open(f.path().join(".codeq/index.db")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER reject_file BEFORE INSERT ON files BEGIN
+         SELECT RAISE(ABORT, 'intentional indexing failure'); END;",
+    )
+    .unwrap();
+    let body = "payload marker\n".repeat(32768);
+    for i in 0..64 {
+        f.write(&format!("new{i:03}.txt"), &body);
+    }
+    let output = assert_cmd::Command::cargo_bin("codeq")
+        .unwrap()
+        .current_dir(f.path())
+        .timeout(std::time::Duration::from_secs(10))
+        .arg("files")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("intentional indexing failure"));
+    let files: i64 = db
+        .query_row("SELECT count(*) FROM files", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(files, 1);
+}
