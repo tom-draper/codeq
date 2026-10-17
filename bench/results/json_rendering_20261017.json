@@ -1,0 +1,274 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    4.59521484375,
+    3.369140625,
+    1.958984375
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "b9d00310071d8abf95daacb0b58c23b3820b59e1e5d3ab36c758b348593a928b",
+    "after": "b88074223349ceab29d4c3728b5cc581c4c5f5feb74efb913ac6cd520b585037"
+  },
+  "limits": "Warm whole CLI process. Linux wait4 peak RSS is measured separately through a fresh small interpreter, avoiding the benchmark driver RSS floor at fork. Output is redirected to temporary files. Only index.elapsed_ms is normalized for meta/pretty output parity.",
+  "workloads": {
+    "compact": {
+      "command": [
+        "--json",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 7914539,
+      "answer_sha256": "d2fa07891b3fd03c9d32c7332c95eb252468f09089551168b4099385b5ac490d",
+      "samples_ms": {
+        "before": [
+          96.773505,
+          93.983474,
+          90.395777,
+          93.900744,
+          98.005374,
+          96.382103,
+          98.55836
+        ],
+        "after": [
+          105.863718,
+          91.533912,
+          98.736048,
+          93.846699,
+          97.416338,
+          91.150599,
+          94.806056
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 76668,
+        "after": 63212
+      },
+      "median_ms": {
+        "before": 96.382103,
+        "after": 94.806056
+      }
+    },
+    "pretty": {
+      "command": [
+        "--pretty",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 10134722,
+      "answer_sha256": "9c983ff5cc1145f41c07f4e5a197c6d77e9a55765a06185c99280c8e6c57e0f2",
+      "samples_ms": {
+        "before": [
+          100.241033,
+          98.325684,
+          99.348696,
+          100.06061,
+          106.500398,
+          102.222863,
+          104.658094
+        ],
+        "after": [
+          98.602477,
+          97.355468,
+          98.894734,
+          100.841181,
+          104.524762,
+          98.770998,
+          99.974354
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 80376,
+        "after": 62944
+      },
+      "median_ms": {
+        "before": 100.241033,
+        "after": 98.894734
+      }
+    },
+    "fields": {
+      "command": [
+        "--json",
+        "--fields",
+        "path,line,missing",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 1014644,
+      "answer_sha256": "29341a23cd1f53c5a5c254caf01f2ec507b1f897f50067fe8bd9f8cf28544030",
+      "samples_ms": {
+        "before": [
+          105.923989,
+          115.036364,
+          114.636143,
+          103.606781,
+          112.03292,
+          103.803206,
+          104.630894
+        ],
+        "after": [
+          114.599544,
+          109.144683,
+          116.658141,
+          133.306988,
+          123.429708,
+          102.797419,
+          108.811515
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 64028,
+        "after": 63452
+      },
+      "median_ms": {
+        "before": 105.923989,
+        "after": 114.599544
+      }
+    },
+    "capped": {
+      "command": [
+        "--json",
+        "--max-per-file",
+        "2",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 2,
+      "stdout_bytes": 661,
+      "answer_sha256": "62e8069711cc3f4f12f4e12e75916b82c9f3b7b5c916dd00605feb5e28c89c58",
+      "samples_ms": {
+        "before": [
+          27.558043,
+          25.798294,
+          24.409304,
+          23.672914,
+          25.677327,
+          23.671952,
+          25.891325
+        ],
+        "after": [
+          26.166645,
+          24.04881,
+          23.306253,
+          24.306886,
+          24.240491,
+          25.769323,
+          25.987999
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 21708,
+        "after": 21576
+      },
+      "median_ms": {
+        "before": 25.677327,
+        "after": 24.306886
+      }
+    },
+    "group": {
+      "command": [
+        "--json",
+        "--group",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 7914539,
+      "answer_sha256": "d2fa07891b3fd03c9d32c7332c95eb252468f09089551168b4099385b5ac490d",
+      "samples_ms": {
+        "before": [
+          97.308965,
+          92.743839,
+          97.271651,
+          94.922159,
+          93.605603,
+          93.185195,
+          93.181634
+        ],
+        "after": [
+          92.093904,
+          92.621164,
+          91.972603,
+          93.194495,
+          92.255262,
+          93.896481,
+          94.997934
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 77836,
+        "after": 63516
+      },
+      "median_ms": {
+        "before": 93.605603,
+        "after": 92.621164
+      }
+    },
+    "text": {
+      "command": [
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": null,
+      "stdout_bytes": 5994449,
+      "answer_sha256": "1bc751176206046b4715c1e3fb587f4da14267b9315eae41cb73f2320b69c421",
+      "samples_ms": {
+        "before": [
+          194.86241,
+          123.882234,
+          124.386762,
+          122.176757,
+          125.350508,
+          124.377391,
+          122.162586
+        ],
+        "after": [
+          124.821953,
+          124.88891,
+          126.069885,
+          122.247574,
+          124.379577,
+          122.896153,
+          116.971434
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 72704,
+        "after": 73892
+      },
+      "median_ms": {
+        "before": 124.377391,
+        "after": 124.379577
+      }
+    }
+  },
+  "broken_pipe": "Both JSON modes terminate with SIGPIPE and empty stderr on both binaries",
+  "fixture": {
+    "rows": 30000,
+    "bytes": 5730000
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    4.388671875,
+    3.3837890625,
+    1.9873046875
+  ],
+  "baseline_revision": "c66b0fc4e42c4e55aa4bb2e6d0c19c14d5b0272e",
+  "candidate_revision": "a2ded33c33ca1426be955a29bf3c27874fb0e9e5"
+}
