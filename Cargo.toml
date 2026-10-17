@@ -67,4 +67,5 @@ panic = "abort"
 strip = true
 
 [dev-dependencies]
+rusqlite = { version = "0.32", features = ["trace"] }
 assert_cmd = "2.2.2"

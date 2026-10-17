@@ -1273,6 +1273,36 @@ fn callees_use_an_imported_module_receiver_to_narrow_same_named_defs() {
 }
 
 #[test]
+fn callees_cache_keeps_each_callers_module_constraints_and_refreshes_after_edits() {
+    let f = Fixture::new();
+    for module in ["context", "other", "third"] {
+        f.write(&format!("{module}.rs"), "pub fn build() {}\n");
+    }
+    let source = "use crate::context;\nuse crate::other;\nuse crate::third;\n                  fn left() { context::build(); }\n                  fn right() { other::build(); }\n                  fn entry() { left(); right(); }\n";
+    f.write("app.rs", source);
+    let paths = |v: &Value| {
+        let mut paths: Vec<_> = v["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["name"] == "build")
+            .map(|row| row["path"].as_str().unwrap().to_string())
+            .collect();
+        paths.sort();
+        paths
+    };
+    let first = f.run(&["callees", "entry", "--depth", "2", "--limit", "0"]);
+    assert_eq!(paths(&first), ["context.rs", "other.rs"]);
+    let scoped = f.run(&[
+        "callees", "entry", "--depth", "2", "--path", "app.rs", "--limit", "0",
+    ]);
+    assert_eq!(scoped["data"], first["data"]);
+    f.write("app.rs", &source.replace("context::build", "third::build"));
+    let edited = f.run(&["callees", "entry", "--depth", "2", "--limit", "0"]);
+    assert_eq!(paths(&edited), ["other.rs", "third.rs"]);
+}
+
+#[test]
 fn callees_do_not_treat_fields_or_variants_as_callable_definitions() {
     let f = Fixture::new();
     f.write(
