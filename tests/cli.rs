@@ -14553,3 +14553,34 @@ fn an_index_write_failure_stops_parse_workers_and_rolls_back() {
         .unwrap();
     assert_eq!(files, 1);
 }
+
+#[test]
+fn call_batches_preserve_offsets_and_receivers_across_edits() {
+    let f = Fixture::new();
+    for count in [63, 64, 65, 128, 129, 1, 0] {
+        let mut source = String::from("def run():\n    pass\n");
+        let mut expected = Vec::new();
+        for i in 0..count {
+            let receiver = (i % 2 == 1).then_some("service".to_string());
+            let name = format!("target{i}");
+            source.push_str("    ");
+            if receiver.is_some() {
+                source.push_str("service.");
+            }
+            let start = source.len() as i64;
+            source.push_str(&format!("{name}()\n"));
+            expected.push((start, name, receiver));
+        }
+        f.write("source.py", &source);
+        f.run(&["files"]);
+        let db = rusqlite::Connection::open(f.path().join(".codeq/index.db")).unwrap();
+        let actual: Vec<(i64, String, Option<String>)> = db
+            .prepare("SELECT start_byte, name, receiver FROM calls ORDER BY start_byte")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(actual, expected, "call count {count}");
+    }
+}
