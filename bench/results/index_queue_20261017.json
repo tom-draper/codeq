@@ -1,0 +1,245 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    1.70263671875,
+    3.18603515625,
+    2.74560546875
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "4b9b1e3e154222982349f851e93a683266ad02ebbd94c6c98695dbde2bb8a7bc",
+    "after": "09f56c11e0128697020a2927dd0bd1acad8d0a8137e0ff3adb02a8b24bc64fa0"
+  },
+  "limits": "Whole CLI indexing into a fresh database or after editing every fixture file. Filesystem caches warm. Peak RSS measured separately through a small interpreter. Database IDs normalized by path; all facts, spans, calls, relations, file hashes and parse health compared. Integrity and foreign keys checked.",
+  "workloads": {
+    "text_cold": {
+      "source_bytes": 83887772,
+      "rows": {
+        "files": 162,
+        "facts": 1,
+        "impls": 0,
+        "calls": 1,
+        "spans": 1
+      },
+      "index_sha256": "12c9fd139c48881c9cc9b08857d85d898411e38a093d24c8a6be47754e129a12",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          1907.598084,
+          1873.754846,
+          1949.75469,
+          1845.261252,
+          2020.415117,
+          1879.272482,
+          1961.443244
+        ],
+        "after": [
+          1926.776554,
+          1999.173571,
+          1988.46631,
+          1916.738308,
+          2006.860111,
+          1894.9169,
+          1949.412657
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 94876,
+        "after": 40316
+      },
+      "database_bytes": {
+        "before": 151552,
+        "after": 151552
+      },
+      "median_ms": {
+        "before": 1907.598084,
+        "after": 1949.412657
+      }
+    },
+    "text_edited": {
+      "source_bytes": 83887772,
+      "rows": {
+        "files": 162,
+        "facts": 1,
+        "impls": 0,
+        "calls": 1,
+        "spans": 1
+      },
+      "index_sha256": "12c9fd139c48881c9cc9b08857d85d898411e38a093d24c8a6be47754e129a12",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          2177.185966,
+          1849.28321,
+          1837.371603,
+          1902.008865,
+          1922.958811,
+          1853.563104,
+          1899.885897
+        ],
+        "after": [
+          1943.939249,
+          1981.140158,
+          2066.951219,
+          2319.894357,
+          2052.441226,
+          1892.616531,
+          1933.852906
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 92092,
+        "after": 36044
+      },
+      "database_bytes": {
+        "before": 163840,
+        "after": 163840
+      },
+      "median_ms": {
+        "before": 1899.885897,
+        "after": 1981.140158
+      }
+    },
+    "facts_cold": {
+      "source_bytes": 14450730,
+      "rows": {
+        "files": 50,
+        "facts": 6145,
+        "impls": 0,
+        "calls": 6145,
+        "spans": 6145
+      },
+      "index_sha256": "c76444c48727272bf796c08a81fd81b47677834382fb374ce6c802303f187e31",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          488.398462,
+          512.691721,
+          497.706485,
+          503.754037,
+          495.674689,
+          496.363443,
+          502.209572
+        ],
+        "after": [
+          561.283474,
+          480.967771,
+          461.373159,
+          501.610337,
+          517.015618,
+          471.529463,
+          503.308636
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 34280,
+        "after": 33812
+      },
+      "database_bytes": {
+        "before": 3694592,
+        "after": 3686400
+      },
+      "median_ms": {
+        "before": 497.706485,
+        "after": 501.610337
+      }
+    },
+    "oversized_cold": {
+      "source_bytes": 18874417,
+      "rows": {
+        "files": 3,
+        "facts": 1,
+        "impls": 0,
+        "calls": 1,
+        "spans": 1
+      },
+      "index_sha256": "2c6ae5080844eb9306de47936fb0d566c4415f053549dd0432cc1c462129bced",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          430.421071,
+          429.010733,
+          432.479116,
+          428.948908,
+          426.886455,
+          460.921782,
+          554.127602
+        ],
+        "after": [
+          426.649441,
+          468.450328,
+          428.422291,
+          445.086378,
+          429.259909,
+          427.768835,
+          427.578102
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 66256,
+        "after": 66328
+      },
+      "database_bytes": {
+        "before": 106496,
+        "after": 106496
+      },
+      "median_ms": {
+        "before": 430.421071,
+        "after": 428.422291
+      }
+    },
+    "small_cold": {
+      "source_bytes": 2154,
+      "rows": {
+        "files": 66,
+        "facts": 65,
+        "impls": 0,
+        "calls": 65,
+        "spans": 1
+      },
+      "index_sha256": "b25563f306a6e39071fbe4faa094b0e9b3640407cebf1a8ea563b05bbbbb73f1",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          32.980728,
+          32.371471,
+          32.386675,
+          32.445417,
+          32.144349,
+          32.216989,
+          31.636935
+        ],
+        "after": [
+          32.467675,
+          32.316219,
+          32.457197,
+          32.128319,
+          32.306255,
+          32.036247,
+          32.292474
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 17460,
+        "after": 17464
+      },
+      "database_bytes": {
+        "before": 131072,
+        "after": 131072
+      },
+      "median_ms": {
+        "before": 32.371471,
+        "after": 32.306255
+      }
+    }
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    1.0771484375,
+    2.48046875,
+    2.53662109375
+  ],
+  "baseline_revision": "d3aa643f828705f69e186a2fbea0e32d9493c211",
+  "candidate_revision": "46bb053dc103ea0851fee6cc7048b98decdd2aac"
+}
