@@ -486,6 +486,7 @@ struct RowWriter<'tx> {
     ins_impl: rusqlite::Statement<'tx>,
     del_calls: rusqlite::Statement<'tx>,
     ins_call: rusqlite::Statement<'tx>,
+    ins_call_batch: rusqlite::Statement<'tx>,
     /// Bodies waiting for [`RowWriter::flush_fts`], with their total size.
     pending_fts: Vec<(i64, String)>,
     pending_fts_bytes: usize,
@@ -495,6 +496,7 @@ struct RowWriter<'tx> {
 const FTS_BATCH_FILES: usize = 32;
 const FTS_BATCH_BYTES: usize = 4 << 20;
 const SPAN_BATCH_ROWS: usize = 64;
+const CALL_BATCH_ROWS: usize = 64;
 
 impl<'tx> RowWriter<'tx> {
     fn new(tx: &'tx rusqlite::Transaction, now: i64) -> Result<Self> {
@@ -546,6 +548,10 @@ impl<'tx> RowWriter<'tx> {
             ins_call: tx.prepare(
                 "INSERT INTO calls(file_id, start_byte, name, receiver) VALUES(?1, ?2, ?3, ?4)",
             )?,
+            ins_call_batch: tx.prepare(&format!(
+                "INSERT INTO calls(file_id, start_byte, name, receiver) VALUES {}",
+                vec!["(?, ?, ?, ?)"; CALL_BATCH_ROWS].join(","),
+            ))?,
             pending_fts: Vec::new(),
             pending_fts_bytes: 0,
         })
@@ -669,7 +675,21 @@ impl<'tx> RowWriter<'tx> {
                     lang,
                 ))?;
             }
-            for call in &p.calls {
+            let mut calls = p.calls.chunks_exact(CALL_BATCH_ROWS);
+            for batch in &mut calls {
+                for (i, call) in batch.iter().enumerate() {
+                    let parameter = i * 4 + 1;
+                    self.ins_call_batch.raw_bind_parameter(parameter, file_id)?;
+                    self.ins_call_batch
+                        .raw_bind_parameter(parameter + 1, call.start_byte as i64)?;
+                    self.ins_call_batch
+                        .raw_bind_parameter(parameter + 2, &call.name)?;
+                    self.ins_call_batch
+                        .raw_bind_parameter(parameter + 3, &call.receiver)?;
+                }
+                self.ins_call_batch.raw_execute()?;
+            }
+            for call in calls.remainder() {
                 self.ins_call.execute((
                     file_id,
                     call.start_byte as i64,
