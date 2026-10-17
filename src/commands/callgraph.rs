@@ -276,7 +276,8 @@ pub(super) fn callees_of(
     if called.idents.is_empty() {
         return Ok(Vec::new());
     }
-    let mut out = callee_definitions(s, name, &called)?;
+    let candidates = callee_candidates(s, &called.idents)?;
+    let mut out = select_callee_definitions(candidates, name, &called);
     if resolved {
         keep_reachable(s, &targets, &mut out)?;
     }
@@ -581,13 +582,8 @@ fn scan_called_names(
     Ok(called)
 }
 
-/// The definitions of the called names, other than `name` itself, that the call
-/// evidence allows. Looks up only the referenced names via the facts(name)
-/// index, in chunks to stay under SQLite's bound-parameter limit — instead of
-/// scanning every fact.
-fn callee_definitions(s: &Session, name: &str, called: &CalledNames) -> Result<Vec<Callee>> {
-    let ident_list: Vec<&String> = called.idents.iter().collect();
-    let mut seen: HashSet<(String, String, i64)> = HashSet::new();
+fn callee_candidates(s: &Session, idents: &HashSet<String>) -> Result<Vec<Callee>> {
+    let ident_list: Vec<&String> = idents.iter().collect();
     let mut out = Vec::new();
     for chunk in ident_list.chunks(500) {
         let placeholders = vec!["?"; chunk.len()].join(",");
@@ -610,28 +606,110 @@ fn callee_definitions(s: &Session, name: &str, called: &CalledNames) -> Result<V
         })?;
         for row in rows {
             let (n, k, p, l, owner, start_byte) = row?;
-            let allowed = called
-                .module_targets
-                .get(&n)
-                .is_none_or(|calls| calls.iter().any(|call| call.allows(&p, owner.as_deref())));
-            if n != name && allowed && seen.insert((n.clone(), p.clone(), l)) {
-                let site = called.sites.get(&n);
-                out.push(Callee {
-                    name: n,
-                    kind: k,
-                    path: p,
-                    line: l,
-                    start_byte,
-                    owner,
-                    resolution: "name-only",
-                    via: None,
-                    call: site.map(|(e, _)| e.clone()),
-                    call_line: site.map(|(_, l)| *l),
-                });
-            }
+            out.push(Callee {
+                name: n,
+                kind: k,
+                path: p,
+                line: l,
+                start_byte,
+                owner,
+                resolution: "name-only",
+                via: None,
+                call: None,
+                call_line: None,
+            });
         }
     }
     Ok(out)
+}
+
+fn callee_allowed(candidate: &Callee, name: &str, called: &CalledNames) -> bool {
+    candidate.name != name
+        && called
+            .module_targets
+            .get(&candidate.name)
+            .is_none_or(|calls| {
+                calls
+                    .iter()
+                    .any(|call| call.allows(&candidate.path, candidate.owner.as_deref()))
+            })
+}
+
+fn select_callee_definitions(
+    candidates: impl IntoIterator<Item = Callee>,
+    name: &str,
+    called: &CalledNames,
+) -> Vec<Callee> {
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter_map(|mut candidate| {
+            if !callee_allowed(&candidate, name, called)
+                || !seen.insert((
+                    candidate.name.clone(),
+                    candidate.path.clone(),
+                    candidate.line,
+                ))
+            {
+                return None;
+            }
+            let site = called.sites.get(&candidate.name);
+            candidate.call = site.map(|(expression, _)| expression.clone());
+            candidate.call_line = site.map(|(_, line)| *line);
+            Some(candidate)
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct CalleeResolver {
+    candidates: HashMap<String, Vec<Callee>>,
+}
+
+impl CalleeResolver {
+    fn resolve<'a>(
+        &'a mut self,
+        s: &Session,
+        name: &str,
+        path: Option<&str>,
+    ) -> Result<Vec<&'a Callee>> {
+        let targets = definition_ranges(s, name, path)?;
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut called = scan_called_names(s, &targets, false)?;
+        called.idents.remove(name);
+        let missing: HashSet<String> = called
+            .idents
+            .iter()
+            .filter(|ident| !self.candidates.contains_key(*ident))
+            .cloned()
+            .collect();
+        let loaded = callee_candidates(s, &missing)?;
+        for ident in missing {
+            self.candidates.insert(ident, Vec::new());
+        }
+        for candidate in loaded {
+            self.candidates
+                .get_mut(&candidate.name)
+                .unwrap()
+                .push(candidate);
+        }
+        let mut out: Vec<&Callee> = called
+            .idents
+            .iter()
+            .flat_map(|ident| self.candidates[ident].iter())
+            .filter(|candidate| callee_allowed(candidate, name, &called))
+            .collect();
+        out.sort_by(|a, b| {
+            (a.name.as_str(), a.path.as_str(), a.line).cmp(&(
+                b.name.as_str(),
+                b.path.as_str(),
+                b.line,
+            ))
+        });
+        Ok(out)
+    }
 }
 
 /// Import-scoped resolution: a genuine callee's definition should live in a
@@ -869,10 +947,11 @@ pub fn cmd_callees(cwd: &Path, args: CalleesArgs, out: Out) -> Result<()> {
     let mut expanded: HashSet<String> = HashSet::from([name.to_string()]);
     let mut frontier: Vec<String> = vec![name.to_string()];
     let mut hops: Vec<CalleeHop> = Vec::new();
+    let mut resolver = CalleeResolver::default();
     'walk: for d in 1..=depth {
         let mut next: Vec<String> = Vec::new();
         for sym in &frontier {
-            for c in callees_of(&s, sym, path, false, false)? {
+            for c in resolver.resolve(&s, sym, path)? {
                 if !reported.insert((c.path.clone(), c.name.clone())) {
                     continue;
                 }
@@ -880,9 +959,9 @@ pub fn cmd_callees(cwd: &Path, args: CalleesArgs, out: Out) -> Result<()> {
                     next.push(c.name.clone());
                 }
                 hops.push(CalleeHop {
-                    name: c.name,
-                    kind: c.kind,
-                    path: c.path,
+                    name: c.name.clone(),
+                    kind: c.kind.clone(),
+                    path: c.path.clone(),
                     line: c.line,
                     depth: d,
                 });
@@ -982,12 +1061,13 @@ pub fn cmd_callpath(
     let mut visited: HashSet<String> = HashSet::from([from.to_string()]);
     let mut frontier: Vec<String> = vec![from.to_string()];
     let mut found = false;
+    let mut resolver = CalleeResolver::default();
     'walk: for _ in 1..=max_depth {
         let mut next: Vec<String> = Vec::new();
         for node in &frontier {
             // Scope only the start symbol's callees; hops after it follow anywhere.
             let scope = if node.as_str() == from { path } else { None };
-            let mut callees = callees_of(&s, node, scope, false, false)?;
+            let mut callees = resolver.resolve(&s, node, scope)?;
             callees.sort_by(|a, b| {
                 a.name
                     .cmp(&b.name)
@@ -999,12 +1079,12 @@ pub fn cmd_callpath(
                     continue;
                 }
                 pred.insert(c.name.clone(), node.clone());
-                loc.insert(c.name.clone(), (c.kind, c.path, c.line));
+                loc.insert(c.name.clone(), (c.kind.clone(), c.path.clone(), c.line));
                 if c.name == to {
                     found = true;
                     break 'walk;
                 }
-                next.push(c.name);
+                next.push(c.name.clone());
                 if visited.len() >= HOP_CAP {
                     break 'walk;
                 }
@@ -1377,4 +1457,40 @@ pub fn cmd_affected(
         tests,
         truncated,
     })
+}
+
+#[cfg(test)]
+mod resolver_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static LOOKUPS: AtomicUsize = AtomicUsize::new(0);
+
+    fn count_lookup(sql: &str) {
+        if sql.contains("SELECT name, kind, path, start_line, owner, start_byte FROM facts") {
+            LOOKUPS.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn shared_and_missing_callees_are_queried_once_per_walk() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("source.py"),
+            "def leaf(): pass\ndef left(): leaf(); external()\ndef right(): leaf(); external()\n",
+        )
+        .unwrap();
+        let mut session = Session::open(dir.path(), false, Out::default()).unwrap();
+        session.db.conn.trace(Some(count_lookup));
+        LOOKUPS.store(0, Ordering::Relaxed);
+        let mut resolver = CalleeResolver::default();
+        let left = resolver.resolve(&session, "left", None).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].name, "leaf");
+        assert_eq!(LOOKUPS.load(Ordering::Relaxed), 1);
+        let right = resolver.resolve(&session, "right", None).unwrap();
+        assert_eq!(right.len(), 1);
+        assert_eq!(right[0].name, "leaf");
+        assert_eq!(LOOKUPS.load(Ordering::Relaxed), 1);
+    }
 }
