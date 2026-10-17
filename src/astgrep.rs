@@ -185,14 +185,49 @@ fn bind<'p, 'c>(binds: &mut Binds<'p, 'c>, name: &'p str, val: Cow<'c, str>) -> 
     }
 }
 
+struct PatternNode {
+    kind: u16,
+    metavar: Option<String>,
+    variadic: Option<String>,
+    text: String,
+    children: Vec<PatternNode>,
+    variadic_positions: Vec<usize>,
+}
+
+impl PatternNode {
+    fn compile(node: Node, source: &[u8]) -> Self {
+        let mut cursor = node.walk();
+        let children: Vec<_> = node
+            .named_children(&mut cursor)
+            .map(|child| Self::compile(child, source))
+            .collect();
+        let variadic_positions = children
+            .iter()
+            .enumerate()
+            .filter_map(|(i, child)| child.variadic.as_ref().map(|_| i))
+            .collect();
+        Self {
+            kind: node.kind_id(),
+            metavar: metavar_name(node, source).map(str::to_owned),
+            variadic: variadic_name(node, source).map(str::to_owned),
+            text: if children.is_empty() {
+                node.utf8_text(source).unwrap_or_default().to_owned()
+            } else {
+                String::new()
+            },
+            children,
+            variadic_positions,
+        }
+    }
+}
+
 fn node_matches<'p, 'c>(
-    pat: Node,
+    pat: &'p PatternNode,
     code: Node,
-    psrc: &'p [u8],
     csrc: &'c [u8],
     binds: &mut Binds<'p, 'c>,
 ) -> bool {
-    if let Some(name) = metavar_name(pat, psrc) {
+    if let Some(name) = pat.metavar.as_deref() {
         if name == "_" {
             return true; // anonymous metavar: any single node
         }
@@ -201,92 +236,65 @@ fn node_matches<'p, 'c>(
             Err(_) => false,
         };
     }
-    if pat.kind_id() != code.kind_id() {
+    if pat.kind != code.kind_id() {
         return false;
     }
-    if pat.named_child_count() == 0 {
+    if pat.children.is_empty() {
         // Leaf (identifier, literal, operator): match text exactly.
-        return pat.utf8_text(psrc).ok() == code.utf8_text(csrc).ok();
+        return Some(pat.text.as_str()) == code.utf8_text(csrc).ok();
     }
-    let mut pc = pat.walk();
-    let pkids: Vec<Node> = pat.named_children(&mut pc).collect();
-    // Differing arities can only match through a variadic. Without one this is
-    // a near miss, and the code's children need never be collected.
-    if pkids.len() != code.named_child_count()
-        && !pkids.iter().any(|p| variadic_name(*p, psrc).is_some())
-    {
+    if pat.children.len() != code.named_child_count() && pat.variadic_positions.is_empty() {
         return false;
     }
-    let mut cc = code.walk();
-    let ckids: Vec<Node> = code.named_children(&mut cc).collect();
-    match_children(&pkids, &ckids, psrc, csrc, binds)
+    match_children(pat, code, csrc, binds)
 }
 
 /// Match a pattern child list against a code child list, where the pattern may
 /// contain one variadic (`$$$`) that absorbs a run of zero or more code nodes.
 fn match_children<'p, 'c>(
-    pkids: &[Node],
-    ckids: &[Node],
-    psrc: &'p [u8],
+    pat: &'p PatternNode,
+    code: Node,
     csrc: &'c [u8],
     binds: &mut Binds<'p, 'c>,
 ) -> bool {
-    // `variadic_name` deliberately sees through single-child wrappers, because a
-    // `$$$` in statement position parses as an `expression_statement` around the
-    // sentinel. That over-reaches for a *list* node holding one `$$$`: the
-    // `parameters` of `fn $N($$$)` looks like a variadic itself, when really the
-    // absorption belongs one level down, inside it. With two such lists in one
-    // pattern — `fn $N($$$) { $$$ }`, the single most natural thing to write —
-    // the >1-variadic guard below then rejected the whole pattern and reported
-    // no matches at all. So when the arities already line up, match positionally
-    // and let the recursion absorb inside each child; fall back to absorbing at
-    // this level only when they don't.
-    if pkids.len() == ckids.len() {
+    let pkids = &pat.children;
+    if pkids.len() == code.named_child_count() {
         let mark = binds.len();
+        let mut cursor = code.walk();
         if pkids
             .iter()
-            .zip(ckids)
-            .all(|(p, c)| node_matches(*p, *c, psrc, csrc, binds))
+            .zip(code.named_children(&mut cursor))
+            .all(|(p, c)| node_matches(p, c, csrc, binds))
         {
             return true;
         }
         binds.truncate(mark);
     }
 
-    let vpos: Vec<usize> = pkids
-        .iter()
-        .enumerate()
-        .filter(|(_, n)| variadic_name(**n, psrc).is_some())
-        .map(|(i, _)| i)
-        .collect();
-
-    if vpos.is_empty() {
-        return false; // arities differ and there is nothing to absorb the gap
-    }
-    // A single variadic per list is supported (the common case); more would need
-    // backtracking, so treat it as no match rather than guess.
-    if vpos.len() > 1 {
+    let [vi] = pat.variadic_positions.as_slice() else {
         return false;
-    }
-    let vi = vpos[0];
+    };
+    let vi = *vi;
+    let mut cursor = code.walk();
+    let ckids: Vec<_> = code.named_children(&mut cursor).collect();
     let before = &pkids[..vi];
     let after = &pkids[vi + 1..];
     if ckids.len() < before.len() + after.len() {
         return false;
     }
     for (p, c) in before.iter().zip(&ckids[..before.len()]) {
-        if !node_matches(*p, *c, psrc, csrc, binds) {
+        if !node_matches(p, *c, csrc, binds) {
             return false;
         }
     }
     let a_start = ckids.len() - after.len();
     for (p, c) in after.iter().zip(&ckids[a_start..]) {
-        if !node_matches(*p, *c, psrc, csrc, binds) {
+        if !node_matches(p, *c, csrc, binds) {
             return false;
         }
     }
     // Bind the absorbed run (named variadic only), for consistency across repeats.
-    if let Some(name) = variadic_name(pkids[vi], psrc) {
+    if let Some(name) = pkids[vi].variadic.as_deref() {
         if !name.is_empty() {
             let joined = ckids[before.len()..a_start]
                 .iter()
@@ -324,8 +332,7 @@ fn required_literals<'a>(pat: Node, psrc: &'a [u8]) -> Vec<&'a [u8]> {
 /// Parse one file and append every node matching the pattern.
 fn match_file(
     parser: &mut Parser,
-    pat_node: Node,
-    psrc: &[u8],
+    pat_node: &PatternNode,
     path: &str,
     body: &str,
     out: &mut Vec<Match>,
@@ -333,7 +340,7 @@ fn match_file(
     let Some(tree) = parser.parse(body, None) else {
         return;
     };
-    let pat_kind = pat_node.kind_id();
+    let pat_kind = pat_node.kind;
     let csrc = body.as_bytes();
     // DFS; only same-kind nodes can match; a matched node's subtree is skipped
     // so nested duplicates of the same pattern aren't reported.
@@ -341,7 +348,7 @@ fn match_file(
     while let Some(node) = stack.pop() {
         if node.kind_id() == pat_kind {
             let mut binds = Binds::new();
-            if node_matches(pat_node, node, psrc, csrc, &mut binds) {
+            if node_matches(pat_node, node, csrc, &mut binds) {
                 let sp = node.start_position();
                 let ep = node.end_position();
                 let mut b: Vec<(String, String)> = binds
@@ -371,7 +378,7 @@ fn match_file(
 /// A validated structural pattern and the literal bytes every match requires.
 pub struct Pattern {
     lang: tree_sitter::Language,
-    substituted: String,
+    root: PatternNode,
     literals: Vec<Vec<u8>>,
 }
 
@@ -426,7 +433,7 @@ impl Pattern {
             .collect();
         Ok(Self {
             lang,
-            substituted,
+            root: PatternNode::compile(pat_node, psrc),
             literals,
         })
     }
@@ -441,8 +448,7 @@ impl Pattern {
     where
         I: IntoIterator<Item = (String, String)>,
     {
-        let (lang, substituted) = (&self.lang, &self.substituted);
-        let psrc = substituted.as_bytes();
+        let (lang, pat_node) = (&self.lang, &self.root);
         let finders: Vec<memchr::memmem::Finder> = self
             .literals
             .iter()
@@ -464,24 +470,19 @@ impl Pattern {
             let handles: Vec<_> = (0..workers)
                 .map(|_| {
                     let done_tx = done_tx.clone();
-                    let (lang, substituted, work_rx) = (lang, substituted, &work_rx);
+                    let work_rx = &work_rx;
                     scope.spawn(move || {
-                        // A parser and a pattern tree per worker: neither is shared.
                         let mut parser = Parser::new();
                         if parser.set_language(lang).is_err() {
                             return;
                         }
-                        let Some(pat_tree) = parser.parse(substituted, None) else {
-                            return;
-                        };
-                        let pat_node = significant(pat_tree.root_node());
                         loop {
                             let next = work_rx.lock().unwrap().recv();
                             let Ok((seq, path, body)) = next else {
                                 return;
                             };
                             let mut found = Vec::new();
-                            match_file(&mut parser, pat_node, psrc, &path, &body, &mut found);
+                            match_file(&mut parser, pat_node, &path, &body, &mut found);
                             // The DFS yields a file's matches in stack order; the
                             // reassembly below relies on position order.
                             found.sort_by_key(|m| (m.start_line, m.start_col));

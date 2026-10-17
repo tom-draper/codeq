@@ -6882,6 +6882,49 @@ fn astgrep_metavariable_binds_consistently() {
 }
 
 #[test]
+fn astgrep_named_variadics_preserve_repeated_bindings_and_rollback() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn f() {
+foo(a, b, a);
+foo(a, a);
+foo(a, b, c);
+         pair(foo(a, b), bar(a, b));
+pair(foo(a, b), bar(a, c));
+         pair(foo(), bar());
+}
+",
+    );
+    let matches = f.run(&[
+        "astgrep",
+        "foo($X, $$$REST, $X)",
+        "--language",
+        "rust",
+        "--limit",
+        "0",
+    ]);
+    let rows = matches["data"]["matches"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{matches}");
+    assert_eq!(rows[0]["binds"]["X"], "a");
+    assert_eq!(rows[0]["binds"]["REST"], "b");
+    assert_eq!(rows[1]["binds"]["REST"], "");
+
+    let repeated = f.run(&[
+        "astgrep",
+        "pair(foo($$$ARGS), bar($$$ARGS))",
+        "--language",
+        "rust",
+        "--limit",
+        "0",
+    ]);
+    let rows = repeated["data"]["matches"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{repeated}");
+    assert_eq!(rows[0]["binds"]["ARGS"], "a\u{0}b");
+    assert_eq!(rows[1]["binds"]["ARGS"], "");
+}
+
+#[test]
 fn astgrep_keeps_literals_and_keywords_exact() {
     let f = Fixture::new();
     f.write(
