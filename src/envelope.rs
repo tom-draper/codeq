@@ -226,9 +226,10 @@ impl<T: Serialize> Envelope<T> {
         if !r.fields.is_some_and(|f| f.iter().any(|k| k == "col")) {
             drop_col(&mut data);
         }
-        let mut s = String::new();
-        render_value(&data, r.group, &truncated, &mut s);
-        print!("{s}");
+        let stdout = std::io::stdout();
+        let mut out = BufWriter::new(stdout.lock());
+        render_value(&data, r.group, &truncated, &mut out)?;
+        out.flush()?;
         if let Some(results) = data.get("results").and_then(Value::as_array) {
             for result in results {
                 if let Some(counts) = result.get("truncated_per_file") {
@@ -271,9 +272,9 @@ impl<T: Serialize> Envelope<T> {
 pub fn render_data_text(data: &Value) -> String {
     let mut data = data.clone();
     drop_col(&mut data);
-    let mut s = String::new();
-    render_value(&data, false, &BTreeMap::new(), &mut s);
-    s
+    let mut bytes = Vec::new();
+    render_value(&data, false, &BTreeMap::new(), &mut bytes).unwrap();
+    String::from_utf8(bytes).unwrap()
 }
 
 /// Remove `col` from every row, wherever the rows sit in `data`.
@@ -397,26 +398,31 @@ fn cap_rows(
     }
 }
 
-fn render_value(data: &Value, group: bool, truncated: &BTreeMap<String, usize>, out: &mut String) {
+fn render_value(
+    data: &Value,
+    group: bool,
+    truncated: &BTreeMap<String, usize>,
+    out: &mut impl Write,
+) -> std::io::Result<()> {
     if let Some(results) = data.get("results").and_then(Value::as_array) {
         for result in results {
             let name = result["name"].as_str().unwrap();
-            out.push_str(&format!("# {name}\n"));
+            writeln!(out, "# {name}")?;
             let counts = result
                 .get("truncated_per_file")
                 .map(|v| serde_json::from_value(v.clone()).unwrap())
                 .unwrap_or_default();
-            render_value(&result["data"], group, &counts, out);
+            render_value(&result["data"], group, &counts, out)?;
         }
-        return;
+        return Ok(());
     }
     match data {
-        Value::Array(rows) => render_rows(rows, group, truncated, out),
+        Value::Array(rows) => render_rows(rows, group, truncated, out)?,
         Value::Object(map) => {
             let arrays = map.values().filter(|v| v.is_array()).count();
             if arrays == 0 {
                 for (k, v) in map {
-                    out.push_str(&format!("{k}: {}\n", inline(v)));
+                    writeln!(out, "{k}: {}", inline(v))?;
                 }
             } else if arrays == 1 && map.keys().all(|k| k == "truncated" || map[k].is_array()) {
                 // A single result list whose only companions are *metadata*: emit
@@ -427,45 +433,53 @@ fn render_value(data: &Value, group: bool, truncated: &BTreeMap<String, usize>, 
                 // the rule about what a field means rather than how many there are.
                 for v in map.values() {
                     if let Value::Array(rows) = v {
-                        render_rows(rows, group, truncated, out);
+                        render_rows(rows, group, truncated, out)?;
                     }
                 }
             } else {
                 for (k, v) in map {
                     match v {
                         Value::Array(rows) => {
-                            out.push_str(&format!("# {k}\n"));
-                            render_rows(rows, group, truncated, out);
+                            writeln!(out, "# {k}")?;
+                            render_rows(rows, group, truncated, out)?;
                         }
-                        _ => out.push_str(&format!("{k}: {}\n", inline(v))),
+                        _ => writeln!(out, "{k}: {}", inline(v))?,
                     }
                 }
             }
         }
         other => {
-            out.push_str(&inline(other));
-            out.push('\n');
+            writeln!(out, "{}", inline(other))?;
         }
     }
+    Ok(())
 }
 
 /// Render one list of rows, normalizing the `depth` column so indentation is
 /// relative to the shallowest row. `outline` numbers top-level definitions 0
 /// while `callers`/`callees`/`deps` number direct hits 1; without this every
 /// row of a `--depth` walk would carry a leading indent that means nothing.
-fn render_rows(rows: &[Value], group: bool, truncated: &BTreeMap<String, usize>, out: &mut String) {
+fn render_rows(
+    rows: &[Value],
+    group: bool,
+    truncated: &BTreeMap<String, usize>,
+    out: &mut impl Write,
+) -> std::io::Result<()> {
     let base = rows
         .iter()
         .filter_map(|r| r.get("depth").and_then(|v| v.as_i64()))
         .min()
         .unwrap_or(0);
     let mut cursor = ContextCursor::default();
+    let mut rendered = String::new();
     if !group && truncated.is_empty() {
         for (i, row) in rows.iter().enumerate() {
             let next = next_hit_line(rows, i);
-            render_row(row, base, false, &mut cursor, next, out);
+            render_row(row, base, false, &mut cursor, next, &mut rendered);
+            out.write_all(rendered.as_bytes())?;
+            rendered.clear();
         }
-        return;
+        return Ok(());
     }
     // Group *consecutive* runs of the same path rather than sorting into buckets:
     // row order is part of the answer (a caller walk is ordered by depth, search
@@ -478,7 +492,9 @@ fn render_rows(rows: &[Value], group: bool, truncated: &BTreeMap<String, usize>,
         let Some(p) = path else {
             // No path to hoist (a bare identifier row, a cycle, `--fields` having
             // dropped the column): nothing to group by, so render it flat.
-            render_row(&rows[i], base, false, &mut cursor, None, out);
+            render_row(&rows[i], base, false, &mut cursor, None, &mut rendered);
+            out.write_all(rendered.as_bytes())?;
+            rendered.clear();
             i += 1;
             continue;
         };
@@ -494,23 +510,26 @@ fn render_rows(rows: &[Value], group: bool, truncated: &BTreeMap<String, usize>,
             // says `3 of 240`, so a truncated answer can never read as a
             // complete one.
             match total {
-                Some(t) => out.push_str(&format!("{p} ({shown} of {t})\n")),
-                None => out.push_str(&format!("{p} ({shown})\n")),
+                Some(t) => writeln!(out, "{p} ({shown} of {t})")?,
+                None => writeln!(out, "{p} ({shown})")?,
             }
         }
         for k in i..j {
             let next = next_hit_line(rows, k);
-            render_row(&rows[k], base, group, &mut cursor, next, out);
+            render_row(&rows[k], base, group, &mut cursor, next, &mut rendered);
+            out.write_all(rendered.as_bytes())?;
+            rendered.clear();
         }
         // Flat rows carry no header, so a capped file needs its own marker —
         // led by the path, so the line stays self-describing like every other.
         if !group {
             if let Some(t) = total {
-                out.push_str(&format!("{p}: +{} more (of {t})\n", t - shown));
+                writeln!(out, "{p}: +{} more (of {t})", t - shown)?;
             }
         }
         i = j;
     }
+    Ok(())
 }
 
 /// The highest line already printed for one file. Search hits carry their own
