@@ -150,19 +150,26 @@ pub(super) fn test_sites_for(
 ) -> Result<Vec<std::collections::BTreeSet<(String, String)>>> {
     let scopes = s.test_scopes()?;
     let mut sites = vec![std::collections::BTreeSet::new(); names.len()];
-    scan_names(&s.db.conn, &s.repo.root, names, path, &mut |i, hits| {
-        for h in &hits {
-            let sym = match &h.symbol {
-                Some(sy) if sy != names[i] => sy,
-                _ => continue,
-            };
-            let is_fn = matches!(h.kind.as_deref(), Some("function") | Some("method"));
-            if is_fn && is_test_site(&h.path, Some(sym), h.line as i64, scopes) {
-                sites[i].insert((h.path.clone(), sym.clone()));
+    scan_names(
+        &s.db.conn,
+        &s.repo.root,
+        names,
+        path,
+        InFilter::Any,
+        &mut |i, hits| {
+            for h in &hits {
+                let sym = match &h.symbol {
+                    Some(sy) if sy != names[i] => sy,
+                    _ => continue,
+                };
+                let is_fn = matches!(h.kind.as_deref(), Some("function") | Some("method"));
+                if is_fn && is_test_site(&h.path, Some(sym), h.line as i64, scopes) {
+                    sites[i].insert((h.path.clone(), sym.clone()));
+                }
             }
-        }
-        first_only && !sites[i].is_empty()
-    })?;
+            first_only && !sites[i].is_empty()
+        },
+    )?;
     Ok(sites)
 }
 

@@ -82,20 +82,7 @@ pub(super) fn callers_of(
     let re = regex::Regex::new(&regex::escape(name))?;
     // Callers means references in *code* — not comments, strings, or prose in
     // unparseable files (which are excluded). Uses the cached comment/string spans.
-    let opts = ScanOpts {
-        before: 0,
-        after: 0,
-        out: OutMode::Matches,
-        in_filter: InFilter::Code,
-        limit: 0,
-        call_only,
-        qualifier: qualifier.map(str::to_string),
-        identifier_boundary: true,
-        word_regex: None,
-        per_file: None,
-        only_matching: false,
-        invert: false,
-    };
+    let opts = caller_scan_opts(call_only, qualifier);
     let mut hits = match run_search(
         &s.db.conn,
         &s.repo.root,
@@ -112,6 +99,68 @@ pub(super) fn callers_of(
     };
     hits.extend(alias_hits(s, name, path, None, &opts)?);
 
+    caller_rows(s, name, hits, call_only, qualifier, examples)
+}
+
+fn callers_for(s: &Session, names: &[String], path: Option<&str>) -> Result<Vec<Vec<Caller>>> {
+    if let [name] = names {
+        return Ok(vec![callers_of(s, name, path, false, None, false)?]);
+    }
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut hits: Vec<Vec<Hit>> = (0..names.len()).map(|_| Vec::new()).collect();
+    crate::search::scan_names(
+        &s.db.conn,
+        &s.repo.root,
+        &refs,
+        path,
+        InFilter::Code,
+        &mut |i, found| {
+            hits[i].extend(found);
+            false
+        },
+    )?;
+    names
+        .iter()
+        .zip(hits)
+        .map(|(name, hits)| {
+            let mut hits = hits;
+            hits.extend(alias_hits(
+                s,
+                name,
+                path,
+                None,
+                &caller_scan_opts(false, None),
+            )?);
+            caller_rows(s, name, hits, false, None, false)
+        })
+        .collect()
+}
+
+fn caller_scan_opts(call_only: bool, qualifier: Option<&str>) -> ScanOpts {
+    ScanOpts {
+        before: 0,
+        after: 0,
+        out: OutMode::Matches,
+        in_filter: InFilter::Code,
+        limit: 0,
+        call_only,
+        qualifier: qualifier.map(str::to_string),
+        identifier_boundary: true,
+        word_regex: None,
+        per_file: None,
+        only_matching: false,
+        invert: false,
+    }
+}
+
+fn caller_rows(
+    s: &Session,
+    name: &str,
+    hits: Vec<Hit>,
+    call_only: bool,
+    qualifier: Option<&str>,
+    examples: bool,
+) -> Result<Vec<Caller>> {
     // Where `name` is declared — an occurrence there is the def, not a call.
     let mut defsites = DeclSites::load(&s.db.conn, name)?;
 
@@ -876,26 +925,28 @@ pub fn cmd_callers(cwd: &Path, args: CallersArgs, out: Out) -> Result<()> {
     let mut hops: Vec<Hop> = Vec::new();
     'walk: for d in 1..=depth {
         let mut next: Vec<String> = Vec::new();
-        for sym in &frontier {
-            for c in callers_of(&s, sym, path, false, None, false)? {
-                if !reported.insert((c.path.clone(), c.symbol.clone())) {
-                    continue;
-                }
-                if let Some(cn) = &c.symbol {
-                    if expanded.insert(cn.clone()) {
-                        next.push(cn.clone());
+        for names in frontier.chunks(32) {
+            for callers in callers_for(&s, names, path)? {
+                for c in callers {
+                    if !reported.insert((c.path.clone(), c.symbol.clone())) {
+                        continue;
                     }
-                }
-                hops.push(Hop {
-                    symbol: c.symbol,
-                    kind: c.kind,
-                    path: c.path,
-                    line: c.line,
-                    depth: d,
-                    test: c.test,
-                });
-                if hops.len() >= HOP_CAP {
-                    break 'walk;
+                    if let Some(cn) = &c.symbol {
+                        if expanded.insert(cn.clone()) {
+                            next.push(cn.clone());
+                        }
+                    }
+                    hops.push(Hop {
+                        symbol: c.symbol,
+                        kind: c.kind,
+                        path: c.path,
+                        line: c.line,
+                        depth: d,
+                        test: c.test,
+                    });
+                    if hops.len() >= HOP_CAP {
+                        break 'walk;
+                    }
                 }
             }
         }
@@ -1368,30 +1419,32 @@ pub fn cmd_affected(
     frontier.sort();
     'walk: for d in 1..=depth {
         let mut next: Vec<String> = Vec::new();
-        for sym in &frontier {
-            for c in callers_of(&s, sym, None, false, None, false)? {
-                let Some(cname) = c.symbol.clone() else {
-                    continue;
-                };
-                if !reported.insert((c.path.clone(), cname.clone())) {
-                    continue;
-                }
-                impacted.push(ImpactNode {
-                    name: cname.clone(),
-                    kind: c.kind,
-                    path: c.path,
-                    // `callers_of` anchors a row at the *call site*. Resolved to
-                    // the definition's own line below; the call site keeps its
-                    // own field rather than being smuggled through `line`.
-                    line: 0,
-                    call_line: Some(c.line as i64),
-                    depth: d,
-                });
-                if in_scope.insert(cname.clone()) {
-                    next.push(cname);
-                }
-                if impacted.len() >= HOP_CAP {
-                    break 'walk;
+        for names in frontier.chunks(32) {
+            for callers in callers_for(&s, names, None)? {
+                for c in callers {
+                    let Some(cname) = c.symbol.clone() else {
+                        continue;
+                    };
+                    if !reported.insert((c.path.clone(), cname.clone())) {
+                        continue;
+                    }
+                    impacted.push(ImpactNode {
+                        name: cname.clone(),
+                        kind: c.kind,
+                        path: c.path,
+                        // `callers_of` anchors a row at the *call site*. Resolved to
+                        // the definition's own line below; the call site keeps its
+                        // own field rather than being smuggled through `line`.
+                        line: 0,
+                        call_line: Some(c.line as i64),
+                        depth: d,
+                    });
+                    if in_scope.insert(cname.clone()) {
+                        next.push(cname);
+                    }
+                    if impacted.len() >= HOP_CAP {
+                        break 'walk;
+                    }
                 }
             }
         }
