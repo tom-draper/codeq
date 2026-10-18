@@ -41,6 +41,8 @@ use std::io::{BufWriter, Write};
 use serde::Serialize;
 use serde_json::Value;
 
+mod sequence;
+
 pub const RESULT_SCHEMA: &str = "codeq.result.v2";
 
 /// Output rendering options, threaded from the CLI.
@@ -118,6 +120,37 @@ impl<T: Serialize> Envelope<T> {
     }
 
     pub fn print(&self, r: Render) -> anyhow::Result<()> {
+        if r.is_json()
+            && r.fields.is_none()
+            && !r.max_per_file.is_some_and(|n| n > 0)
+            && self.overflow.is_empty()
+            && sequence::is_sequence(&self.data)
+        {
+            #[derive(Serialize)]
+            struct Direct<'a, T> {
+                schema: &'static str,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                note: Option<&'a str>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                repo: Option<&'a RepoMeta>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                index: Option<&'a IndexMeta>,
+                rows: &'static str,
+                data: &'a T,
+            }
+            let meta = r.includes_meta(&self.index);
+            return print_json(
+                &Direct {
+                    schema: RESULT_SCHEMA,
+                    note: self.note.as_deref(),
+                    repo: meta.then_some(&self.repo),
+                    index: meta.then_some(&self.index),
+                    rows: "data",
+                    data: &self.data,
+                },
+                r.pretty,
+            );
+        }
         let mut data = serde_json::to_value(&self.data)?;
 
         // Lossy, so it happens here on `data` — the same place `--fields`
@@ -175,17 +208,7 @@ impl<T: Serialize> Envelope<T> {
                 }
                 out.insert("notes".into(), Value::Object(notes));
             }
-            let value = Value::Object(out);
-            let stdout = std::io::stdout();
-            let mut out = BufWriter::new(stdout.lock());
-            if r.pretty {
-                serde_json::to_writer_pretty(&mut out, &value)?;
-            } else {
-                serde_json::to_writer(&mut out, &value)?;
-            }
-            out.write_all(b"\n")?;
-            out.flush()?;
-            return Ok(());
+            return print_json(&Value::Object(out), r.pretty);
         }
 
         // Text mode: keep stdout pure data; surface noteworthy meta on stderr so
@@ -265,6 +288,19 @@ impl<T: Serialize> Envelope<T> {
         }
         Ok(())
     }
+}
+
+fn print_json(value: &impl Serialize, pretty: bool) -> anyhow::Result<()> {
+    let stdout = std::io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    if pretty {
+        serde_json::to_writer_pretty(&mut out, value)?;
+    } else {
+        serde_json::to_writer(&mut out, value)?;
+    }
+    out.write_all(b"\n")?;
+    out.flush()?;
+    Ok(())
 }
 
 /// Render a bare `data` value as codeq's compact text output, for commands that
