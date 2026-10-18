@@ -4397,6 +4397,45 @@ fn search_counts_only_lines_with_a_surviving_syntax_match() {
 }
 
 #[test]
+fn broad_unlimited_searches_preserve_order_filters_counts_and_file_caps() {
+    let f = Fixture::new();
+    let padding = format!("# {}\n", "x".repeat(1_050_000));
+    for i in (0..8).rev() {
+        f.write(
+            &format!("file{i}.py"),
+            &format!(
+                "{padding}# NEEDLE\nvalue = 'NEEDLE'\ndef sample{i}():\n    NEEDLE(); NEEDLE()\n"
+            ),
+        );
+    }
+    for (filter, expected) in [("code", 1), ("comments", 1), ("strings", 1), ("any", 3)] {
+        let mut args = vec!["search", "N.E.LE", "--limit", "0"];
+        if filter != "any" {
+            args.extend(["--in", filter]);
+        }
+        let matches = f.run(&args);
+        let rows = matches["data"]["matches"].as_array().unwrap();
+        assert_eq!(rows.len(), expected * 8, "{filter}: {matches}");
+        for (i, chunk) in rows.chunks(expected).enumerate() {
+            assert!(chunk.iter().all(|r| r["path"] == format!("file{i}.py")));
+        }
+        args.push("-c");
+        let counts = f.run(&args);
+        let counts = counts["data"]["counts"].as_array().unwrap();
+        assert_eq!(counts.len(), 8);
+        assert!(counts.iter().all(|r| r["count"] == expected));
+    }
+    let capped = f.run(&["search", "N.E.LE", "--limit", "0", "--max-per-file", "1"]);
+    assert_eq!(capped["data"]["matches"].as_array().unwrap().len(), 8);
+    assert_eq!(capped["notes"]["truncated_per_file"]["file0.py"], 3);
+    let limited = f.run(&["search", "N.E.LE", "--limit", "2"]);
+    assert_eq!(limited["data"]["matches"].as_array().unwrap().len(), 2);
+    assert_eq!(limited["data"]["truncated"], true);
+    let occurrences = f.run(&["search", "N.E.LE", "--limit", "0", "-o", "--in", "code"]);
+    assert_eq!(occurrences["data"]["matches"].as_array().unwrap().len(), 16);
+}
+
+#[test]
 fn search_count_per_file() {
     let f = Fixture::new();
     f.write("a.rs", "x x\nx\n"); // two lines contain x
