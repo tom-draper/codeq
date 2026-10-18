@@ -4303,6 +4303,54 @@ fn search_files_with_matches() {
 }
 
 #[test]
+fn search_counts_match_start_lines_across_line_endings_and_empty_matches() {
+    let f = Fixture::new();
+    for body in ["", "\n", "x x\r\n\néx tail", "x x\r\n\néx tail\n"] {
+        f.write("a.txt", body);
+        for pattern in [
+            "x",
+            "x|tail",
+            "é|x",
+            "^",
+            "$",
+            "",
+            r"\n",
+            r"x\r?\n\néx",
+            ".*",
+        ] {
+            let matches = f.run(&["search", pattern, "--limit", "0"]);
+            let lines: std::collections::HashSet<u64> = matches["data"]["matches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["line"].as_u64().unwrap())
+                .collect();
+            let counts = f.run(&["search", pattern, "-c", "--limit", "0"]);
+            let total: u64 = counts["data"]["counts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["count"].as_u64().unwrap())
+                .sum();
+            assert_eq!(total as usize, lines.len(), "{body:?}, {pattern:?}");
+        }
+    }
+}
+
+#[test]
+fn search_counts_only_lines_with_a_surviving_syntax_match() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "# needle needle\nvalue = 'needle'; needle()\nneedle() # needle\n",
+    );
+    for (class, expected) in [("code", 2), ("comments", 2), ("strings", 1)] {
+        let result = f.run(&["search", "needle", "-c", "-w", "--in", class]);
+        assert_eq!(result["data"]["counts"][0]["count"], expected, "{result}");
+    }
+}
+
+#[test]
 fn search_count_per_file() {
     let f = Fixture::new();
     f.write("a.rs", "x x\nx\n"); // two lines contain x
