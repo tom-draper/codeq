@@ -696,7 +696,6 @@ pub(crate) fn run_search_acc(
     opts: &ScanOpts,
 ) -> Result<(ScanAcc, bool)> {
     let cap = scan_cap(opts);
-    let filtering = opts.in_filter != InFilter::Any;
 
     // Candidates are every text file, or — given a prefilter — the ones whose
     // trigrams could hold a match. Each literal's clause is an AND of its
@@ -724,99 +723,207 @@ pub(crate) fn run_search_acc(
     }
     sql.push_str(" ORDER BY path");
 
-    let mut def_stmt = conn.prepare(
-        "SELECT name, kind, start_byte, end_byte FROM facts
-         WHERE path = ?1 AND kind <> 'import'",
-    )?;
-    // Comment/string spans are cached in the index (extracted once), so --in is
-    // a lookup, not a per-query re-parse.
-    let mut span_stmt = conn.prepare(SPANS_SQL)?;
-    let mut call_stmt = if opts.call_only || opts.qualifier.is_some() {
-        Some(conn.prepare(
-            "SELECT start_byte, receiver FROM calls
-             WHERE file_id = (SELECT id FROM files WHERE path = ?1)",
-        )?)
-    } else {
-        None
-    };
-
+    if clauses.is_none() && opts.limit == 0 {
+        if let Some(acc) = parallel_search(conn, root, re, &sql, &params, scope, opts)? {
+            return Ok((acc, false));
+        }
+    }
+    let mut scanner = FileScanner::new(conn, root, re, opts)?;
     let mut acc = ScanAcc::default();
     let mut stopped = false;
-
-    let mut fts_stmt = conn.prepare(&sql)?;
-    let mut rows = fts_stmt.query(rusqlite::params_from_iter(params.iter()))?;
-    'outer: while let Some(row) = rows.next()? {
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+    while let Some(row) = rows.next()? {
         let rel = row.get_ref(0)?.as_str()?;
-        if let Some(accept) = scope.accept {
-            if !accept(rel) {
-                continue;
-            }
+        if scope.accept.is_some_and(|accept| !accept(rel)) {
+            continue;
         }
         let lang: Option<String> = row.get(1)?;
-        // The index holds trigrams, not text: the file itself is the body.
-        let Some(body) = crate::index::load_body(root, rel) else {
-            continue;
+        if scanner.scan(rel, lang.as_deref(), cap, &mut acc)? {
+            stopped = true;
+            break;
+        }
+    }
+    Ok((acc, stopped))
+}
+
+struct FileScanner<'a> {
+    root: &'a Path,
+    re: &'a regex::Regex,
+    opts: &'a ScanOpts,
+    defs: rusqlite::Statement<'a>,
+    spans: rusqlite::Statement<'a>,
+    calls: Option<rusqlite::Statement<'a>>,
+}
+
+impl<'a> FileScanner<'a> {
+    fn new(
+        conn: &'a rusqlite::Connection,
+        root: &'a Path,
+        re: &'a regex::Regex,
+        opts: &'a ScanOpts,
+    ) -> Result<Self> {
+        Ok(Self {
+            root, re, opts,
+            defs: conn.prepare("SELECT name, kind, start_byte, end_byte FROM facts WHERE path = ?1 AND kind <> 'import'")?,
+            spans: conn.prepare(SPANS_SQL)?,
+            calls: if opts.call_only || opts.qualifier.is_some() {
+                Some(conn.prepare("SELECT start_byte, receiver FROM calls WHERE file_id = (SELECT id FROM files WHERE path = ?1)")?)
+            } else { None },
+        })
+    }
+
+    fn scan(
+        &mut self,
+        rel: &str,
+        lang: Option<&str>,
+        cap: usize,
+        acc: &mut ScanAcc,
+    ) -> Result<bool> {
+        let opts = self.opts;
+        let Some(body) = crate::index::load_body(self.root, rel) else {
+            return Ok(false);
         };
         let body = body.as_str();
-
-        // A `$`-binding language also needs spans, with no `--in` filter in
-        // sight: `$` is identifier syntax in code and something else inside a
-        // string, and only the spans tell the two apart. Narrow on purpose —
-        // word-bounded queries over JavaScript/TypeScript/Java-family files —
-        // so an ordinary search pays nothing for it.
-        let needs_spans_for_dollar = opts.identifier_boundary && dollar_binds(lang.as_deref());
-        // Load cached spans if filtering; skip files in a language we can't parse.
-        let spans = if filtering || needs_spans_for_dollar {
-            if !has_spans(lang.as_deref().unwrap_or("")) {
-                if filtering && opts.in_filter.requires_spans() {
-                    continue;
+        let needs_spans =
+            opts.in_filter != InFilter::Any || (opts.identifier_boundary && dollar_binds(lang));
+        let spans = if needs_spans {
+            if !has_spans(lang.unwrap_or("")) {
+                if opts.in_filter.requires_spans() {
+                    return Ok(false);
                 }
-                // Unclassifiable: treat every position as code rather than drop
-                // the file, so an exclusion filter cannot lose real matches.
                 Vec::new()
             } else {
-                let srows = span_stmt.query_map([rel], span_row)?;
-                srows.collect::<std::result::Result<Vec<_>, _>>()?
+                self.spans
+                    .query_map([rel], span_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
             }
         } else {
             Vec::new()
         };
-        // Defs are only loaded once a match survives the filters, so a candidate
-        // that matches the substring but not `\bword\b` (or is filtered by
-        // --calls/--on) costs neither a body scan nor a defs query.
-        let calls = if let Some(stmt) = call_stmt
+        let calls = if let Some(stmt) = self
+            .calls
             .as_mut()
-            .filter(|_| crate::callsite::supports_syntax_calls(lang.as_deref().unwrap_or("")))
+            .filter(|_| crate::callsite::supports_syntax_calls(lang.unwrap_or("")))
         {
-            let rows = stmt.query_map([rel], |r| {
-                Ok((r.get::<_, usize>(0)?, r.get::<_, Option<String>>(1)?))
-            })?;
-            Some(rows.collect::<rusqlite::Result<CallMap>>()?)
+            Some(
+                stmt.query_map([rel], |r| {
+                    Ok((r.get::<_, usize>(0)?, r.get::<_, Option<String>>(1)?))
+                })?
+                .collect::<rusqlite::Result<CallMap>>()?,
+            )
         } else {
             None
         };
-        let mut load_defs = |path: &str| load_file_defs(&mut def_stmt, path).unwrap_or_default();
-        if scan_doc(
+        let mut load_defs = |path: &str| load_file_defs(&mut self.defs, path).unwrap_or_default();
+        Ok(scan_doc(
             rel,
-            lang.as_deref(),
+            lang,
             body,
             &spans,
             calls.as_ref(),
             &mut load_defs,
             &mut DocCache::default(),
-            re,
+            self.re,
             opts,
             cap,
-            &mut acc,
-        ) {
-            stopped = true;
-            break 'outer;
+            acc,
+        ))
+    }
+}
+
+fn parallel_search(
+    conn: &rusqlite::Connection,
+    root: &Path,
+    re: &regex::Regex,
+    sql: &str,
+    params: &[rusqlite::types::Value],
+    scope: ScanScope,
+    opts: &ScanOpts,
+) -> Result<Option<ScanAcc>> {
+    let workers = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(4);
+    let Some(db_path) = conn.path().filter(|p| !p.is_empty()) else {
+        return Ok(None);
+    };
+    if workers < 2 || matches!(opts.out, OutMode::Files | OutMode::FilesWithout) {
+        return Ok(None);
+    }
+    let version: i64 = conn.query_row("PRAGMA data_version", [], |r| r.get(0))?;
+    let candidate_sql = sql.replacen(
+        "SELECT path, language",
+        "SELECT path, language, size_bytes",
+        1,
+    );
+    let mut stmt = conn.prepare(&candidate_sql)?;
+    let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+    let mut files = Vec::new();
+    let mut bytes = 0i64;
+    while let Some(row) = rows.next()? {
+        let path: String = row.get(0)?;
+        if scope.accept.is_some_and(|accept| !accept(&path)) {
+            continue;
         }
+        bytes += row.get::<_, i64>(2)?;
+        files.push((path, row.get::<_, Option<String>>(1)?));
     }
     drop(rows);
-    drop(fts_stmt);
-
-    Ok((acc, stopped))
+    drop(stmt);
+    if files.len() < 8 || bytes < 8 << 20 {
+        return Ok(None);
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::thread::scope(|threads| -> Result<Vec<(usize, ScanAcc)>> {
+        let mut handles = Vec::new();
+        for _ in 0..workers {
+            let files = &files;
+            let next = &next;
+            handles.push(threads.spawn(move || -> Result<Vec<(usize, ScanAcc)>> {
+                let conn = rusqlite::Connection::open_with_flags(
+                    db_path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                        | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+                )?;
+                conn.busy_timeout(crate::db::busy_timeout())?;
+                let mut scanner = FileScanner::new(&conn, root, re, opts)?;
+                let mut results = Vec::new();
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((path, language)) = files.get(i) else {
+                        break;
+                    };
+                    let mut acc = ScanAcc::default();
+                    scanner.scan(path, language.as_deref(), usize::MAX, &mut acc)?;
+                    results.push((i, acc));
+                }
+                Ok(results)
+            }));
+        }
+        let mut results = Vec::new();
+        for handle in handles {
+            results.extend(
+                handle
+                    .join()
+                    .map_err(|_| anyhow!("search worker panicked"))??,
+            );
+        }
+        Ok(results)
+    });
+    let current: i64 = conn.query_row("PRAGMA data_version", [], |r| r.get(0))?;
+    if current != version {
+        return Ok(None);
+    }
+    let mut results = results?;
+    results.sort_unstable_by_key(|(i, _)| *i);
+    let mut acc = ScanAcc::default();
+    for (_, mut result) in results {
+        acc.files.append(&mut result.files);
+        acc.counts.append(&mut result.counts);
+        acc.hits.append(&mut result.hits);
+        acc.overflow.append(&mut result.overflow);
+    }
+    Ok(Some(acc))
 }
 
 /// A whole-word search for each of `names`, reading each file once however many
@@ -1632,6 +1739,60 @@ fn cap_str(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{DefIndex, FileDef};
+
+    #[test]
+    fn parallel_search_discards_results_after_a_concurrent_index_commit() {
+        if std::thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
+            return;
+        }
+        let root = tempfile::TempDir::new().unwrap();
+        let db = crate::db::Db::open(root.path()).unwrap();
+        for i in 0..8 {
+            let path = format!("file{i}.txt");
+            std::fs::write(root.path().join(&path), "needle\n").unwrap();
+            db.conn.execute("INSERT INTO files(path, is_text, size_bytes, indexed_at) VALUES (?1, 1, 1100000, 0)", [path]).unwrap();
+        }
+        let writer = rusqlite::Connection::open(db.dir.join("index.db")).unwrap();
+        let wrote = std::cell::Cell::new(false);
+        let accept = |_: &str| {
+            if !wrote.replace(true) {
+                writer.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('concurrent_test', 'changed')", []).unwrap();
+            }
+            true
+        };
+        let opts = super::ScanOpts {
+            before: 0,
+            after: 0,
+            out: super::OutMode::Count,
+            in_filter: super::InFilter::Any,
+            limit: 0,
+            call_only: false,
+            qualifier: None,
+            identifier_boundary: false,
+            word_regex: None,
+            per_file: None,
+            only_matching: false,
+            invert: false,
+        };
+        let result = super::parallel_search(
+            &db.conn,
+            root.path(),
+            &regex::Regex::new("[a-z]+").unwrap(),
+            "SELECT path, language FROM files WHERE is_text = 1 ORDER BY path",
+            &[],
+            super::ScanScope {
+                accept: Some(&accept),
+                ..Default::default()
+            },
+            &opts,
+        )
+        .unwrap();
+        assert!(wrote.get());
+        assert!(
+            result.is_none(),
+            "a changed index must retry the serial scan"
+        );
+    }
 
     fn linear(defs: &[FileDef], off: usize) -> Option<usize> {
         defs.iter()
