@@ -1,0 +1,382 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    10.2412109375,
+    7.9853515625,
+    5.1923828125
+  ],
+  "runs": 9,
+  "binary_sha256": {
+    "before": "5296e7b3467f151519f0c59399ebff490d5ad0c65e04a2c7ea0e0778f789ba9a",
+    "after": "024bed6bfd2b1c620af3c2e2f643dfe86039260b6cf1aacd750c218a07f0fe2a"
+  },
+  "limits": "Warm whole CLI process. Linux wait4 peak RSS is measured separately through a fresh small interpreter, avoiding the benchmark driver RSS floor at fork. Output is redirected to temporary files. Only index.elapsed_ms is normalized for meta/pretty output parity.",
+  "source_sha256": {
+    "src/envelope.rs": "dfd8a63b00bc9deb33769ace9cf7c1542436e8c7389ff9ff3f9bdee878482cff",
+    "src/envelope/sequence.rs": "2d9fd9f30b7d1911af058d252ccd1607ec03e04ea97a94ea9c395d0b6bbfbfed"
+  },
+  "workloads": {
+    "compact": {
+      "command": [
+        "--json",
+        "symbols",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 3228946,
+      "answer_sha256": "9c5d80d830fc744ef764bc4d22232051fcbaa8485f3e1fabc9391e2136a37e2a",
+      "samples_ms": {
+        "before": [
+          412.769842,
+          448.391692,
+          314.43626,
+          397.000846,
+          335.453704,
+          375.871618,
+          463.905365,
+          245.539309,
+          269.536936
+        ],
+        "after": [
+          210.483785,
+          226.131403,
+          210.581484,
+          198.815279,
+          208.54974,
+          253.551847,
+          164.075041,
+          211.77974,
+          214.135395
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 51720,
+        "after": 18456
+      },
+      "median_ms": {
+        "before": 375.871618,
+        "after": 210.581484
+      }
+    },
+    "pretty": {
+      "command": [
+        "--pretty",
+        "symbols",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 4969112,
+      "answer_sha256": "72e7392da025673a01447bffc342cedeb476b87c447fa91865664507a36a0422",
+      "samples_ms": {
+        "before": [
+          421.168102,
+          296.222078,
+          292.724638,
+          308.954574,
+          257.905137,
+          317.879746,
+          299.541732,
+          318.005186,
+          319.198762
+        ],
+        "after": [
+          184.041284,
+          187.543432,
+          188.239332,
+          174.631809,
+          169.042761,
+          167.630219,
+          188.205336,
+          182.715379,
+          156.602652
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 51368,
+        "after": 18752
+      },
+      "median_ms": {
+        "before": 308.954574,
+        "after": 182.715379
+      }
+    },
+    "fields": {
+      "command": [
+        "--json",
+        "--fields",
+        "path,line,missing",
+        "symbols",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 1014609,
+      "answer_sha256": "a58228dbb68370581cfae3f6fca880ecbf5902eb356d3670b35b2b6c96a382f1",
+      "samples_ms": {
+        "before": [
+          323.74327,
+          313.884375,
+          343.136441,
+          358.833941,
+          315.16398,
+          333.775649,
+          311.650296,
+          374.837783,
+          325.130753
+        ],
+        "after": [
+          320.902268,
+          318.692636,
+          302.589721,
+          321.692023,
+          305.304064,
+          337.519869,
+          345.183115,
+          341.751382,
+          308.809715
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 51740,
+        "after": 51880
+      },
+      "median_ms": {
+        "before": 325.130753,
+        "after": 320.902268
+      }
+    },
+    "capped": {
+      "command": [
+        "--json",
+        "--max-per-file",
+        "2",
+        "symbols",
+        "--limit",
+        "0"
+      ],
+      "rows": 2,
+      "stdout_bytes": 303,
+      "answer_sha256": "5d34b2f61a06ccd33f2c2e278cf29f758275ea7d27f4d8e8c87aec1299dadf76",
+      "samples_ms": {
+        "before": [
+          268.92865,
+          292.655272,
+          305.313282,
+          291.752883,
+          282.816424,
+          319.838177,
+          312.621091,
+          295.89656,
+          189.534512
+        ],
+        "after": [
+          301.995384,
+          287.444037,
+          270.508327,
+          298.96149,
+          300.73777,
+          304.990219,
+          264.459887,
+          294.265888,
+          75.489202
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 51852,
+        "after": 51636
+      },
+      "median_ms": {
+        "before": 292.655272,
+        "after": 294.265888
+      }
+    },
+    "group": {
+      "command": [
+        "--json",
+        "--group",
+        "symbols",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 3228946,
+      "answer_sha256": "9c5d80d830fc744ef764bc4d22232051fcbaa8485f3e1fabc9391e2136a37e2a",
+      "samples_ms": {
+        "before": [
+          80.402379,
+          81.423534,
+          80.109332,
+          80.500271,
+          79.933366,
+          81.239396,
+          80.383037,
+          79.812842,
+          79.774887
+        ],
+        "after": [
+          45.966643,
+          45.651482,
+          45.310101,
+          44.778529,
+          45.734651,
+          46.036027,
+          44.975507,
+          45.193363,
+          45.419047
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 51728,
+        "after": 18644
+      },
+      "median_ms": {
+        "before": 80.383037,
+        "after": 45.419047
+      }
+    },
+    "text": {
+      "command": [
+        "symbols",
+        "--limit",
+        "0"
+      ],
+      "rows": null,
+      "stdout_bytes": 1074445,
+      "answer_sha256": "e6ba2ebcf466cfe31b93c694263e919e46d8532fbe561fb6e36cd8de85ad166c",
+      "samples_ms": {
+        "before": [
+          444.280477,
+          401.809266,
+          451.383578,
+          388.491894,
+          391.545218,
+          419.196612,
+          442.321458,
+          405.715555,
+          406.866223
+        ],
+        "after": [
+          390.104823,
+          419.873429,
+          423.63602,
+          426.76953,
+          394.838116,
+          420.191755,
+          417.219813,
+          383.41111,
+          376.855101
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 51256,
+        "after": 51592
+      },
+      "median_ms": {
+        "before": 406.866223,
+        "after": 417.219813
+      }
+    },
+    "structured_fallback": {
+      "command": [
+        "--json",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 7914539,
+      "answer_sha256": "d2fa07891b3fd03c9d32c7332c95eb252468f09089551168b4099385b5ac490d",
+      "samples_ms": {
+        "before": [
+          372.071241,
+          363.383308,
+          357.098655,
+          414.927481,
+          351.941,
+          358.511798,
+          380.035481,
+          335.270644,
+          344.462071
+        ],
+        "after": [
+          364.497538,
+          361.910907,
+          488.268388,
+          319.025493,
+          379.776364,
+          326.552484,
+          362.892825,
+          373.650371,
+          350.234434
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 63688,
+        "after": 63116
+      },
+      "median_ms": {
+        "before": 358.511798,
+        "after": 362.892825
+      }
+    },
+    "meta": {
+      "command": [
+        "--json",
+        "--meta",
+        "symbols",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 3229052,
+      "answer_sha256": "e9df0163f396553dfcf35232a9b434feca2dd9c80b339ed64c9f17d3480ce91d",
+      "samples_ms": {
+        "before": [
+          275.536785,
+          296.711154,
+          308.995605,
+          355.274287,
+          288.823832,
+          326.44121,
+          293.32583,
+          332.015945,
+          298.743293
+        ],
+        "after": [
+          173.904914,
+          168.003736,
+          177.378523,
+          203.004731,
+          191.233698,
+          168.299265,
+          179.903702,
+          154.06276,
+          169.021971
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 51944,
+        "after": 18796
+      },
+      "median_ms": {
+        "before": 298.743293,
+        "after": 173.904914
+      }
+    }
+  },
+  "broken_pipe": "Both JSON modes terminate with SIGPIPE and empty stderr on both binaries",
+  "fixture": {
+    "rows": 30000,
+    "bytes": 5730000
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    9.83544921875,
+    8.34326171875,
+    5.50927734375
+  ]
+}
