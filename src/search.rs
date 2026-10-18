@@ -1169,7 +1169,7 @@ pub(crate) fn scan_doc(
             }
         }
         OutMode::Count => {
-            let mut last = usize::MAX;
+            let mut last_line_end = None;
             let mut n = 0usize;
             for m in matches() {
                 if !bounded(&m) {
@@ -1178,10 +1178,11 @@ pub(crate) fn scan_doc(
                 if !accept(m.start()) {
                     continue;
                 }
-                let s = cache.starts.get_or_insert_with(|| line_starts_of(body));
-                let li = s.partition_point(|&x| x <= m.start()) - 1;
-                if li != last {
-                    last = li;
+                if last_line_end.is_none_or(|end| m.start() > end) {
+                    last_line_end = Some(
+                        memchr::memchr(b'\n', &body.as_bytes()[m.start()..])
+                            .map_or(body.len(), |offset| m.start() + offset),
+                    );
                     n += 1;
                 }
             }
