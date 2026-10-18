@@ -1,0 +1,315 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    2.44873046875,
+    2.68310546875,
+    1.9453125
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "5296e7b3467f151519f0c59399ebff490d5ad0c65e04a2c7ea0e0778f789ba9a",
+    "after": "26e5119a1fb7d0ed188b74749351180b0642da87ac0d74df811b9978b36be97d"
+  },
+  "limits": "Whole warm CLI requests, including refresh, graph construction and rendering. Peak RSS measured separately. Batches share file bodies, definitions, line indexes and syntax spans; aliases keep the existing lookup path.",
+  "revision": "1eb094c94e0ae1dd5ad2434f793e6a6cb8b8cdc1",
+  "source_sha256": {
+    "src/search.rs": "c7d63acbb71bb902dacbef8f615ab3deb21d8a196edc22206dc7041f9f306a38",
+    "src/commands/callgraph.rs": "d5b42cc45f964a753e426ad49b3589e00eef641361565e617dafae05a3fbcec5",
+    "src/commands/testing.rs": "a11454782bf99a827fc71faa5e2150b86de89ea7ea093462c6f50fdf6fb1a139"
+  },
+  "workloads": {
+    "wide": {
+      "command": [
+        "--json",
+        "callers",
+        "leaf",
+        "--depth",
+        "3",
+        "--limit",
+        "0"
+      ],
+      "rows": 202,
+      "answer_sha256": "3579baad64e760916be27f5f7fd49324cdee9c522870402e47f5a7337a444255",
+      "samples_ms": {
+        "before": [
+          130.187806,
+          131.097097,
+          134.161541,
+          143.332256,
+          205.193213,
+          140.242493,
+          132.097324
+        ],
+        "after": [
+          38.871982,
+          39.539091,
+          65.620983,
+          40.499753,
+          41.01316,
+          40.717957,
+          40.21767
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14640,
+        "after": 14632
+      },
+      "median_ms": {
+        "before": 134.161541,
+        "after": 40.499753
+      }
+    },
+    "direct": {
+      "command": [
+        "--json",
+        "callers",
+        "leaf",
+        "--limit",
+        "0"
+      ],
+      "rows": 120,
+      "answer_sha256": "fd4400327c0e70d59a020a5472c27b86cd258d9652379776eb0665d8088c9396",
+      "samples_ms": {
+        "before": [
+          3.172074,
+          3.276043,
+          3.177879,
+          3.315161,
+          3.172144,
+          3.209741,
+          3.18316
+        ],
+        "after": [
+          3.615184,
+          3.218899,
+          3.240346,
+          3.163751,
+          3.248929,
+          3.105311,
+          3.30064
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14664,
+        "after": 14652
+      },
+      "median_ms": {
+        "before": 3.18316,
+        "after": 3.240346
+      }
+    },
+    "scoped": {
+      "command": [
+        "--json",
+        "callers",
+        "leaf",
+        "--depth",
+        "3",
+        "--path",
+        "graph.py",
+        "--limit",
+        "0"
+      ],
+      "rows": 120,
+      "answer_sha256": "c4e29fbb522422eb30029873d59bc92ec628da0b0300c0a9ecc838b47483bf18",
+      "samples_ms": {
+        "before": [
+          26.26848,
+          26.969603,
+          25.99358,
+          25.925229,
+          25.712979,
+          26.530346,
+          26.109523
+        ],
+        "after": [
+          12.843449,
+          12.962929,
+          12.869575,
+          12.763791,
+          12.630499,
+          12.747406,
+          12.571065
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14692,
+        "after": 14632
+      },
+      "median_ms": {
+        "before": 26.109523,
+        "after": 12.763791
+      }
+    },
+    "limited": {
+      "command": [
+        "--json",
+        "callers",
+        "leaf",
+        "--depth",
+        "3",
+        "--limit",
+        "8"
+      ],
+      "rows": 8,
+      "answer_sha256": "4decd86137a316fd2eda50ed8b739981132fadad60e3dd243153d86d0185e1ee",
+      "samples_ms": {
+        "before": [
+          130.754569,
+          131.303016,
+          129.467903,
+          130.504311,
+          129.779327,
+          129.749577,
+          131.650488
+        ],
+        "after": [
+          40.435367,
+          39.061846,
+          39.053224,
+          39.027407,
+          38.87872,
+          39.135145,
+          39.781842
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14672,
+        "after": 14680
+      },
+      "median_ms": {
+        "before": 130.504311,
+        "after": 39.061846
+      }
+    },
+    "affected": {
+      "command": [
+        "--json",
+        "affected",
+        "--compare-to",
+        "HEAD",
+        "--depth",
+        "3"
+      ],
+      "rows": 201,
+      "answer_sha256": "2dc37cb23cadcf14813ad51b2c7e05abe7a1d259ce1fd80f6f78d603b784fd54",
+      "samples_ms": {
+        "before": [
+          160.090506,
+          160.001364,
+          162.103061,
+          160.635334,
+          161.300553,
+          162.549168,
+          161.345096
+        ],
+        "after": [
+          69.393816,
+          69.387512,
+          69.503212,
+          70.504055,
+          69.18665,
+          69.682293,
+          70.0777
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14696,
+        "after": 14676
+      },
+      "median_ms": {
+        "before": 161.300553,
+        "after": 69.503212
+      }
+    },
+    "cycle": {
+      "command": [
+        "--json",
+        "callers",
+        "leaf",
+        "--depth",
+        "6",
+        "--limit",
+        "0"
+      ],
+      "rows": 4,
+      "answer_sha256": "1817b396e0d806881d8766b925b20f44b268ec45744e529b783cbe3eef6d7abe",
+      "samples_ms": {
+        "before": [
+          2.945038,
+          3.05035,
+          2.972966,
+          3.067025,
+          2.974075,
+          3.022229,
+          2.959809
+        ],
+        "after": [
+          3.189161,
+          2.934566,
+          3.07466,
+          2.923227,
+          3.232552,
+          2.897459,
+          3.012736
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14656,
+        "after": 14684
+      },
+      "median_ms": {
+        "before": 2.974075,
+        "after": 3.012736
+      }
+    },
+    "hop_cap": {
+      "command": [
+        "--json",
+        "callers",
+        "leaf",
+        "--depth",
+        "3",
+        "--limit",
+        "0"
+      ],
+      "rows": 2000,
+      "answer_sha256": "9e6d363995461b45f23155f521fc617978ef8da31577bd9619fcf17ca1df6918",
+      "samples_ms": {
+        "before": [
+          10.522478,
+          10.299814,
+          10.287201,
+          10.041715,
+          9.944428,
+          10.287098,
+          10.225997
+        ],
+        "after": [
+          10.110145,
+          10.180315,
+          10.226376,
+          10.151508,
+          10.196909,
+          10.137488,
+          10.138556
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14684,
+        "after": 14676
+      },
+      "median_ms": {
+        "before": 10.287098,
+        "after": 10.151508
+      }
+    }
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    2.37939453125,
+    2.66015625,
+    1.9462890625
+  ]
+}
