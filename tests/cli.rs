@@ -3275,6 +3275,52 @@ fn callers_default_has_no_via_field() {
 }
 
 #[test]
+fn caller_frontiers_preserve_aliases_filters_and_affected_tests_across_batches() {
+    let f = Fixture::new();
+    let source = format!(
+        "def leaf():\n    return 1\n{}",
+        (0..70)
+            .map(|i| format!("def middle{i:02}():\n    leaf()\n"))
+            .collect::<String>()
+    );
+    f.write("pipeline.py", &source);
+    f.write("notes.txt", "middle00 middle01\n");
+    f.write(
+        "decoy.py",
+        "# middle00 middle01\ntext = 'middle02 middle03'\n",
+    );
+    f.write(
+        "test_flow.py",
+        &format!(
+            "from pipeline import middle00 as chosen\ndef test_flow():\n    chosen()\n{}",
+            (1..70)
+                .map(|i| format!("    middle{i:02}()\n"))
+                .collect::<String>()
+        ),
+    );
+    f.git_init_commit();
+    let callers = f.run(&["callers", "leaf", "--depth", "3"]);
+    let rows = callers["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 72, "{callers}");
+    assert_eq!(rows.iter().filter(|r| r["depth"] == 1).count(), 70);
+    let top = rows.iter().find(|r| r["name"] == "test_flow").unwrap();
+    assert_eq!(top["depth"], 2);
+    assert_eq!(top["test"], true);
+    assert!(rows
+        .iter()
+        .all(|r| r["path"] != "notes.txt" && r["path"] != "decoy.py"));
+    f.write("pipeline.py", &source.replacen("return 1", "return 2", 1));
+    let affected = f.run(&["affected", "--compare-to", "HEAD", "--depth", "3"]);
+    assert_eq!(
+        affected["data"]["impacted"].as_array().unwrap().len(),
+        71,
+        "{affected}"
+    );
+    assert_eq!(affected["data"]["tests"][0]["path"], "test_flow.py");
+    assert_eq!(affected["data"]["tests"][0]["tests"], 1);
+}
+
+#[test]
 fn callers_depth_walks_transitively() {
     // leaf <- mid <- top : a call chain three deep.
     let f = Fixture::new();

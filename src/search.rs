@@ -834,13 +834,14 @@ pub(crate) fn scan_names(
     root: &Path,
     names: &[&str],
     path: Option<&str>,
+    in_filter: InFilter,
     visit: &mut dyn FnMut(usize, Vec<Hit>) -> bool,
 ) -> Result<()> {
     let opts = ScanOpts {
         before: 0,
         after: 0,
         out: OutMode::Matches,
-        in_filter: InFilter::Any,
+        in_filter,
         limit: 0,
         call_only: false,
         qualifier: None,
@@ -911,10 +912,17 @@ pub(crate) fn scan_names(
         let body = body.as_str();
         let lang = lang.as_deref();
         // Spans decide whether a `$` continues a name, as in `run_search_acc`.
-        let spans = if dollar_binds(lang) && has_spans(lang.unwrap_or("")) {
-            span_stmt
-                .query_map([rel.as_str()], span_row)?
-                .collect::<std::result::Result<Vec<_>, _>>()?
+        let spans = if in_filter != InFilter::Any || dollar_binds(lang) {
+            if !has_spans(lang.unwrap_or("")) {
+                if in_filter.requires_spans() {
+                    continue;
+                }
+                Vec::new()
+            } else {
+                span_stmt
+                    .query_map([rel.as_str()], span_row)?
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+            }
         } else {
             Vec::new()
         };
