@@ -477,6 +477,7 @@ struct RowWriter<'tx> {
     upsert: rusqlite::Statement<'tx>,
     del_facts: rusqlite::Statement<'tx>,
     ins_fact: rusqlite::Statement<'tx>,
+    ins_fact_batch: rusqlite::Statement<'tx>,
     del_fts: rusqlite::Statement<'tx>,
     ins_fts: rusqlite::Statement<'tx>,
     del_spans: rusqlite::Statement<'tx>,
@@ -495,11 +496,19 @@ struct RowWriter<'tx> {
 /// How much body text the writer holds before its trigrams are inserted.
 const FTS_BATCH_FILES: usize = 32;
 const FTS_BATCH_BYTES: usize = 4 << 20;
+const FACT_BATCH_ROWS: usize = 32;
+const FACT_COLUMNS: usize = 23;
+const FACT_INSERT: &str = "INSERT OR REPLACE INTO facts(
+    id, kind, is_derived, name, path, language,
+    start_byte, end_byte, start_line, start_col, end_line, end_col,
+    signature, doc, source, confidence, visibility, owner, shape, shape_nodes,
+    is_test, decorator, contract) VALUES";
 const SPAN_BATCH_ROWS: usize = 64;
 const CALL_BATCH_ROWS: usize = 64;
 
 impl<'tx> RowWriter<'tx> {
     fn new(tx: &'tx rusqlite::Transaction, now: i64) -> Result<Self> {
+        let fact_row = format!("({})", ["?"; FACT_COLUMNS].join(","));
         Ok(RowWriter {
             now,
             upsert: tx.prepare(
@@ -518,14 +527,11 @@ impl<'tx> RowWriter<'tx> {
                  RETURNING id",
             )?,
             del_facts: tx.prepare("DELETE FROM facts WHERE path = ?1")?,
-            ins_fact: tx.prepare(
-                "INSERT OR REPLACE INTO facts(
-                    id, kind, is_derived, name, path, language,
-                    start_byte, end_byte, start_line, start_col, end_line, end_col,
-                    signature, doc, source, confidence, visibility, owner, shape, shape_nodes,
-                    is_test, decorator, contract)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
-            )?,
+            ins_fact: tx.prepare(&format!("{FACT_INSERT} {fact_row}"))?,
+            ins_fact_batch: tx.prepare(&format!(
+                "{FACT_INSERT} {}",
+                vec![fact_row; FACT_BATCH_ROWS].join(","),
+            ))?,
             del_fts: tx.prepare("DELETE FROM content_fts WHERE rowid = ?1")?,
             ins_fts: tx.prepare("INSERT INTO content_fts(rowid, body) VALUES(?1, ?2)")?,
             del_spans: tx.prepare("DELETE FROM spans WHERE file_id = ?1")?,
@@ -624,34 +630,12 @@ impl<'tx> RowWriter<'tx> {
             }
         }
         if let Some(lang) = p.language {
-            for f in &p.facts {
-                // `params!` rather than a tuple: rusqlite only implements
-                // `Params` for tuples up to 16, and this is 22 columns.
-                self.ins_fact.execute(rusqlite::params![
-                    f.id(&p.rel),
-                    &f.kind,
-                    f.is_derived,
-                    &f.name,
-                    &p.rel,
-                    lang,
-                    f.start_byte as i64,
-                    f.end_byte as i64,
-                    f.start_line as i64,
-                    f.start_col as i64,
-                    f.end_line as i64,
-                    f.end_col as i64,
-                    &f.signature,
-                    &f.doc,
-                    &f.source,
-                    f.confidence,
-                    &f.visibility,
-                    &f.owner,
-                    &f.shape,
-                    f.shape_nodes,
-                    f.is_test,
-                    &f.decorator,
-                    f.contract.as_deref(),
-                ])?;
+            let mut facts = p.facts.chunks_exact(FACT_BATCH_ROWS);
+            for batch in &mut facts {
+                insert_fact_rows(&mut self.ins_fact_batch, batch, &p.rel, lang)?;
+            }
+            for fact in facts.remainder() {
+                insert_fact_rows(&mut self.ins_fact, std::slice::from_ref(fact), &p.rel, lang)?;
             }
             let mut spans = p.spans.chunks_exact(SPAN_BATCH_ROWS);
             for batch in &mut spans {
@@ -700,6 +684,48 @@ impl<'tx> RowWriter<'tx> {
         }
         Ok(true)
     }
+}
+
+fn insert_fact_rows(
+    statement: &mut rusqlite::Statement<'_>,
+    facts: &[Fact],
+    path: &str,
+    lang: &str,
+) -> Result<()> {
+    for (row, f) in facts.iter().enumerate() {
+        for (column, value) in rusqlite::params![
+            f.id(path),
+            &f.kind,
+            f.is_derived,
+            &f.name,
+            path,
+            lang,
+            f.start_byte as i64,
+            f.end_byte as i64,
+            f.start_line as i64,
+            f.start_col as i64,
+            f.end_line as i64,
+            f.end_col as i64,
+            &f.signature,
+            &f.doc,
+            &f.source,
+            f.confidence,
+            &f.visibility,
+            &f.owner,
+            &f.shape,
+            f.shape_nodes,
+            f.is_test,
+            &f.decorator,
+            f.contract.as_deref(),
+        ]
+        .iter()
+        .enumerate()
+        {
+            statement.raw_bind_parameter(row * FACT_COLUMNS + column + 1, *value)?;
+        }
+    }
+    statement.raw_execute()?;
+    Ok(())
 }
 
 /// Drop files that vanished from the tree.
