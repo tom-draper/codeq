@@ -1,0 +1,278 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    1.66552734375,
+    1.0224609375,
+    0.41650390625
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "4853f8c28a9b928591d0921866ba833eafa220e4d2c3e7bd076006bd3e9778c5",
+    "after": "3c17f03b40bde04abe8058e522658c422f176e127be77525d4e314d9e1e95ce9"
+  },
+  "limits": "Whole CLI indexing into a fresh database or after editing every fixture file. Filesystem caches warm. Peak RSS measured separately through a small interpreter. Database IDs normalized by path; all facts, spans, calls, relations, file hashes and parse health compared. Integrity and foreign keys checked.",
+  "workloads": {
+    "dense_cold": {
+      "sampled_cpu": {
+        "before": {
+          "main_cpu_seconds_approx": 0.6,
+          "worker_cpu_seconds_approx": [
+            0.32,
+            0.32,
+            0.32,
+            0.32
+          ],
+          "sampling": "maximum observed thread CPU ticks at 5 ms intervals; may miss final ticks. Main thread includes writing and orchestration; workers include parsing. Not isolated function timings."
+        },
+        "after": {
+          "main_cpu_seconds_approx": 0.37,
+          "worker_cpu_seconds_approx": [
+            0.32,
+            0.32,
+            0.32,
+            0.33
+          ],
+          "sampling": "maximum observed thread CPU ticks at 5 ms intervals; may miss final ticks. Main thread includes writing and orchestration; workers include parsing. Not isolated function timings."
+        }
+      },
+      "source_bytes": 1989376,
+      "rows": {
+        "files": 8,
+        "facts": 32000,
+        "impls": 0,
+        "calls": 32000,
+        "spans": 48000
+      },
+      "index_sha256": "7385c8813f9697c75521c4d4844ee661ac01f20239b224ecc5c3e52c75e686fa",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          780.437739,
+          828.914485,
+          857.55962,
+          861.976701,
+          866.966669,
+          852.682242,
+          893.722806
+        ],
+        "after": [
+          654.581309,
+          641.994103,
+          640.554603,
+          640.916232,
+          813.310227,
+          626.968007,
+          673.890048
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 79404,
+        "after": 76752
+      },
+      "database_bytes": {
+        "before": 10653696,
+        "after": 10674176
+      },
+      "median_ms": {
+        "before": 857.55962,
+        "after": 641.994103
+      }
+    },
+    "dense_edited": {
+      "sampled_cpu": {
+        "before": {
+          "main_cpu_seconds_approx": 0.79,
+          "worker_cpu_seconds_approx": [
+            0.32,
+            0.32,
+            0.33,
+            0.33
+          ],
+          "sampling": "maximum observed thread CPU ticks at 5 ms intervals; may miss final ticks. Main thread includes writing and orchestration; workers include parsing. Not isolated function timings."
+        },
+        "after": {
+          "main_cpu_seconds_approx": 0.56,
+          "worker_cpu_seconds_approx": [
+            0.32,
+            0.33,
+            0.33,
+            0.33
+          ],
+          "sampling": "maximum observed thread CPU ticks at 5 ms intervals; may miss final ticks. Main thread includes writing and orchestration; workers include parsing. Not isolated function timings."
+        }
+      },
+      "source_bytes": 1989376,
+      "rows": {
+        "files": 8,
+        "facts": 32000,
+        "impls": 0,
+        "calls": 32000,
+        "spans": 48000
+      },
+      "index_sha256": "7385c8813f9697c75521c4d4844ee661ac01f20239b224ecc5c3e52c75e686fa",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          1018.008182,
+          1111.650365,
+          1102.754371,
+          1127.283314,
+          1053.460403,
+          957.939485,
+          962.202802
+        ],
+        "after": [
+          858.540619,
+          900.405864,
+          841.234707,
+          837.368724,
+          839.127212,
+          832.841408,
+          834.938737
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 78868,
+        "after": 79448
+      },
+      "database_bytes": {
+        "before": 10670080,
+        "after": 10723328
+      },
+      "median_ms": {
+        "before": 1053.460403,
+        "after": 839.127212
+      }
+    },
+    "mixed_cold": {
+      "sampled_cpu": {
+        "before": {
+          "main_cpu_seconds_approx": 0.0,
+          "worker_cpu_seconds_approx": [
+            0.45,
+            0.46
+          ],
+          "sampling": "maximum observed thread CPU ticks at 5 ms intervals; may miss final ticks. Main thread includes writing and orchestration; workers include parsing. Not isolated function timings."
+        },
+        "after": {
+          "main_cpu_seconds_approx": 0.0,
+          "worker_cpu_seconds_approx": [
+            0.46,
+            0.46
+          ],
+          "sampling": "maximum observed thread CPU ticks at 5 ms intervals; may miss final ticks. Main thread includes writing and orchestration; workers include parsing. Not isolated function timings."
+        }
+      },
+      "source_bytes": 12782,
+      "rows": {
+        "files": 33,
+        "facts": 334,
+        "impls": 31,
+        "calls": 81,
+        "spans": 116
+      },
+      "index_sha256": "ded8377a8c55d81b31fa00b6b18f747821e1f5f2a35b0faec69efa940c7a6e0c",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          485.996442,
+          489.824065,
+          485.547979,
+          483.127065,
+          482.65697,
+          483.889554,
+          484.283065
+        ],
+        "after": [
+          488.599575,
+          486.265891,
+          486.595773,
+          484.997301,
+          485.794811,
+          481.683996,
+          483.743819
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 75972,
+        "after": 75852
+      },
+      "database_bytes": {
+        "before": 208896,
+        "after": 208896
+      },
+      "median_ms": {
+        "before": 484.283065,
+        "after": 485.794811
+      }
+    },
+    "small_cold": {
+      "sampled_cpu": {
+        "before": {
+          "main_cpu_seconds_approx": 0.0,
+          "worker_cpu_seconds_approx": [
+            0.01
+          ],
+          "sampling": "maximum observed thread CPU ticks at 5 ms intervals; may miss final ticks. Main thread includes writing and orchestration; workers include parsing. Not isolated function timings."
+        },
+        "after": {
+          "main_cpu_seconds_approx": 0.0,
+          "worker_cpu_seconds_approx": [
+            0.01
+          ],
+          "sampling": "maximum observed thread CPU ticks at 5 ms intervals; may miss final ticks. Main thread includes writing and orchestration; workers include parsing. Not isolated function timings."
+        }
+      },
+      "source_bytes": 1728,
+      "rows": {
+        "files": 32,
+        "facts": 32,
+        "impls": 0,
+        "calls": 32,
+        "spans": 32
+      },
+      "index_sha256": "3bad3b901d9b868d7a00d4508569a9b7b722f14430e1cf00ffe512c49e60bee0",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          18.499889,
+          18.211905,
+          18.514956,
+          18.445192,
+          18.370001,
+          18.938293,
+          18.746806
+        ],
+        "after": [
+          18.614194,
+          18.709049,
+          18.753788,
+          18.485341,
+          19.455196,
+          22.280611,
+          18.740597
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14676,
+        "after": 14692
+      },
+      "database_bytes": {
+        "before": 114688,
+        "after": 114688
+      },
+      "median_ms": {
+        "before": 18.499889,
+        "after": 18.740597
+      }
+    }
+  },
+  "reader_snapshot": "old reader remains consistent while an edit commits; new reader sees replacement facts and calls",
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    2.3203125,
+    1.40869140625,
+    0.6005859375
+  ]
+}
