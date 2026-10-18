@@ -14584,3 +14584,92 @@ fn call_batches_preserve_offsets_and_receivers_across_edits() {
         assert_eq!(actual, expected, "call count {count}");
     }
 }
+
+#[test]
+fn fact_batches_preserve_metadata_across_boundaries_and_edits() {
+    let f = Fixture::new();
+    for count in [31, 32, 33, 64, 65, 1, 0] {
+        let mut source = String::new();
+        for i in 0..count {
+            if i % 2 == 0 {
+                source.push_str(&format!("/// doc {i}\n"));
+            }
+            if i % 3 == 0 {
+                source.push_str("#[test]\n");
+            }
+            let visibility = ["pub ", "pub(crate) ", ""][i % 3];
+            source.push_str(&format!("{visibility}fn item{i}() {{}}\n"));
+        }
+        f.write("source.rs", &source);
+        f.run(&["files"]);
+        let db = rusqlite::Connection::open(f.path().join(".codeq/index.db")).unwrap();
+        let mut statement = db
+            .prepare(
+                "SELECT name, signature, doc, visibility, source, is_test, start_byte, end_byte
+             FROM facts ORDER BY start_byte",
+            )
+            .unwrap();
+        let mut rows = statement.query([]).unwrap();
+        for i in 0..count {
+            let row = rows.next().unwrap().unwrap();
+            assert_eq!(row.get::<_, String>(0).unwrap(), format!("item{i}"));
+            assert!(row
+                .get::<_, String>(1)
+                .unwrap()
+                .contains(&format!("item{i}")));
+            let doc: Option<String> = row.get(2).unwrap();
+            if i % 2 == 0 {
+                assert!(doc.unwrap().contains(&format!("doc {i}")));
+            } else {
+                assert!(doc.is_none());
+            }
+            assert_eq!(
+                row.get::<_, String>(3).unwrap(),
+                ["public", "restricted", "private"][i % 3]
+            );
+            assert_eq!(row.get::<_, String>(4).unwrap(), "treesitter/rust");
+            assert_eq!(row.get::<_, bool>(5).unwrap(), i % 3 == 0);
+            let start = row.get::<_, i64>(6).unwrap() as usize;
+            let end = row.get::<_, i64>(7).unwrap() as usize;
+            assert!(source[start..end].contains(&format!("fn item{i}()")));
+        }
+        assert!(rows.next().unwrap().is_none(), "fact count {count}");
+    }
+}
+
+#[test]
+fn a_fact_batch_failure_rolls_back_preceding_batches_and_recovers() {
+    let f = Fixture::new();
+    f.write("source.rs", "pub fn original() {}\n");
+    f.run(&["files"]);
+    let db = rusqlite::Connection::open(f.path().join(".codeq/index.db")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER reject_fact BEFORE INSERT ON facts WHEN NEW.name = 'item34'
+         BEGIN SELECT RAISE(ABORT, 'intentional fact batch failure'); END;",
+    )
+    .unwrap();
+    let source: String = (0..65)
+        .map(|i| format!("pub fn item{i}() {{}}\n"))
+        .collect();
+    f.write("source.rs", &source);
+    let output = f.raw(&["files"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("intentional fact batch failure"));
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM facts", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.query_row("SELECT name FROM facts", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        "original"
+    );
+    db.execute_batch("DROP TRIGGER reject_fact").unwrap();
+    f.run(&["files"]);
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM facts", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        65
+    );
+}
