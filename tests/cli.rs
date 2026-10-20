@@ -1255,6 +1255,102 @@ fn callees_resolved_prunes_unreachable_same_named_defs() {
 }
 
 #[test]
+fn resolved_callees_follow_typescript_aliases_reexports_and_workspaces() {
+    let f = Fixture::new();
+    f.write(
+        "tsconfig.json",
+        r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+    );
+    f.write(
+        "package.json",
+        r#"{"private":true,"workspaces":["packages/*"]}"#,
+    );
+    f.write(
+        "app/main.ts",
+        "import { aliasFn } from '@/alias';\nimport { reexportFn } from './barrel';\nimport { workspaceFn } from '@scope/workspace';\nexport function main() { aliasFn(); reexportFn(); workspaceFn(); }\n",
+    );
+    f.write("src/alias.ts", "export function aliasFn() {}\n");
+    f.write(
+        "app/barrel.ts",
+        "export { reexportFn } from './reexport';\n",
+    );
+    f.write("app/reexport.ts", "export function reexportFn() {}\n");
+    f.write(
+        "packages/workspace/package.json",
+        r#"{"name":"@scope/workspace","source":"src/index.ts"}"#,
+    );
+    f.write(
+        "packages/workspace/src/index.ts",
+        "export function workspaceFn() {}\n",
+    );
+
+    let rows = f.run(&["callees", "main", "--resolved"])["data"]
+        .as_array()
+        .unwrap()
+        .clone();
+    for expected in ["aliasFn", "reexportFn", "workspaceFn"] {
+        let row = rows
+            .iter()
+            .find(|row| row["name"] == expected)
+            .unwrap_or_else(|| panic!("missing {expected}: {rows:?}"));
+        assert_ne!(
+            row["via"], "unresolved-project-import",
+            "resolved project import was marked uncertain: {row}"
+        );
+    }
+    let dependencies = field_set(&f.run(&["deps", "app/main.ts", "--depth", "2"]), "path");
+    for expected in [
+        "src/alias.ts",
+        "app/barrel.ts",
+        "app/reexport.ts",
+        "packages/workspace/src/index.ts",
+    ] {
+        assert!(
+            dependencies.contains(&expected.to_string()),
+            "dependency edge to {expected} is missing: {dependencies:?}"
+        );
+    }
+}
+
+#[test]
+fn unresolved_typescript_aliases_keep_candidates_with_a_reason() {
+    let f = Fixture::new();
+    f.write(
+        "tsconfig.json",
+        r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+    );
+    f.write(
+        "app/main.ts",
+        "import { helper } from '@/missing';\nexport function main() { helper(); }\n",
+    );
+    f.write("elsewhere/helper.ts", "export function helper() {}\n");
+
+    let callees = f.run(&["callees", "main", "--resolved"])["data"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(
+        callees
+            .iter()
+            .any(|row| { row["name"] == "helper" && row["via"] == "unresolved-project-import" }),
+        "an unresolved configured alias must not silently prune candidates: {callees:?}"
+    );
+    let external = f.run(&["deps", "--external"])["data"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(
+        external.iter().any(|row| {
+            row["module"] == "@/missing"
+                && row["resolution_reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("TypeScript path alias"))
+        }),
+        "expected an explanation for the unresolved alias: {external:?}"
+    );
+}
+
+#[test]
 fn callees_use_an_imported_module_receiver_to_narrow_same_named_defs() {
     let f = Fixture::new();
     f.write("context.rs", "pub fn build() {}\n");
