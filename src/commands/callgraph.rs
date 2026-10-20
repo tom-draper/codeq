@@ -2,6 +2,7 @@
 //! import-scoped `Resolver` they share.
 
 use super::*;
+use std::cell::OnceCell;
 
 #[derive(Serialize)]
 pub(super) struct Caller {
@@ -206,7 +207,7 @@ fn caller_rows(
             Some(v) => v,
             None => continue,
         };
-        let test = is_test_site(&h.path, h.symbol.as_deref(), h.line as i64, scopes);
+        let test = is_test_site(&h.path, h.symbol.as_deref(), h.line as i64, &scopes);
         // Under --examples, surface the call site's line/column and source text so
         // the row reads as a usage example (rendered grep-style by the envelope).
         let (col, text) = if examples {
@@ -610,14 +611,14 @@ fn scan_called_names(
                 } else {
                     None
                 };
-                let (lookup, pinned) = resolve_syntax_call(graph, path, &word, recv.as_deref());
+                let (lookup, pinned) = resolve_syntax_call(&graph, path, &word, recv.as_deref());
                 // An empty target set is no evidence: it may be an external
                 // module or a value receiver. `pinned` is `None` then, so
                 // candidate filtering remains conservative.
                 let owner = if lang == "rust"
                     && body.is_some_and(|b| b[..off.min(b.len())].trim_end().ends_with("::"))
                 {
-                    rust_call_owner(s, graph, path, recv.as_deref(), pinned.as_ref(), &lookup)?
+                    rust_call_owner(s, &graph, path, recv.as_deref(), pinned.as_ref(), &lookup)?
                 } else {
                     None
                 };
@@ -1304,14 +1305,14 @@ pub fn cmd_callpath(
 /// any definition). Heuristic — import resolution is itself best-effort — so it's
 /// opt-in (`--resolved`); the default output stays a safe superset. Caches per
 /// file. See [[differential-bench-harness]] for how precision is measured.
-struct Resolver<'a> {
-    graph: &'a deps::Graph,
+struct Resolver {
+    graph: Rc<deps::Graph>,
     defs: std::collections::HashSet<String>,
     cache: HashMap<String, &'static str>,
 }
 
-impl<'a> Resolver<'a> {
-    fn new(s: &'a Session, name: &str) -> Result<Resolver<'a>> {
+impl Resolver {
+    fn new(s: &Session, name: &str) -> Result<Resolver> {
         let mut defs = HashSet::new();
         {
             let mut stmt = s
@@ -1598,7 +1599,7 @@ mod resolver_tests {
     static LOOKUPS: AtomicUsize = AtomicUsize::new(0);
 
     fn count_lookup(sql: &str) {
-        if sql.contains("SELECT name, kind, path, start_line, owner, start_byte FROM facts") {
+        if sql.contains("SELECT name, kind, path, start_line, owner, start_byte") {
             LOOKUPS.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -1612,7 +1613,12 @@ mod resolver_tests {
         )
         .unwrap();
         let mut session = Session::open(dir.path(), false, Out::default()).unwrap();
-        session.db.conn.trace(Some(count_lookup));
+        QUERY_SESSION.with(|slot| slot.borrow_mut().take());
+        Rc::get_mut(&mut session.resources)
+            .unwrap()
+            .db
+            .conn
+            .trace(Some(count_lookup));
         LOOKUPS.store(0, Ordering::Relaxed);
         let mut resolver = CalleeResolver::default();
         let left = resolver.resolve(&session, "left", None).unwrap();
@@ -1676,7 +1682,12 @@ mod impact_line_tests {
             depth: 1,
         });
         let mut session = Session::open(dir.path(), false, Out::default()).unwrap();
-        session.db.conn.trace(Some(count_lookup));
+        QUERY_SESSION.with(|slot| slot.borrow_mut().take());
+        Rc::get_mut(&mut session.resources)
+            .unwrap()
+            .db
+            .conn
+            .trace(Some(count_lookup));
         LOOKUPS.store(0, Ordering::Relaxed);
         resolve_impact_lines(&session, &mut nodes).unwrap();
         assert_eq!(LOOKUPS.load(Ordering::Relaxed), 3);

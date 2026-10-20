@@ -1,25 +1,21 @@
 //! A minimal MCP (Model Context Protocol) server over stdio.
 //!
 //! Speaks line-delimited JSON-RPC 2.0 on stdin/stdout and exposes codeq's query
-//! commands as MCP tools, so an agent host (Claude Code, Cursor, …) can call
-//! codeq natively instead of shelling out. Each tool call is bridged to the
-//! codeq CLI as a subprocess in the server's working directory, so the tool
-//! output is exactly the CLI's JSON. Deliberately dependency-free: no async
-//! runtime, no SDK.
+//! commands as MCP tools, so an agent host can call codeq natively. Tool calls
+//! use the same in-process CLI dispatcher and result rendering, with output
+//! captured for the MCP response. The stdio loop is synchronous and does not
+//! need an async runtime or MCP SDK.
 
 use std::io::{self, BufRead, Write};
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::Result;
+use clap::Parser;
 use serde_json::{json, Value};
 
-pub fn serve() -> Result<()> {
-    let exe = std::env::current_exe()?;
-    let cwd = std::env::current_dir()?;
+pub fn serve(cwd: &Path) -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
-    let mut out = stdout.lock();
     let mut input = stdin.lock();
     let mut buf = Vec::new();
 
@@ -42,14 +38,12 @@ pub fn serve() -> Result<()> {
                 "invalid request: empty batch".into(),
             )),
             Ok(Value::Array(batch)) => {
-                let replies: Vec<Value> = batch
-                    .iter()
-                    .filter_map(|req| respond(req, &exe, &cwd))
-                    .collect();
+                let replies: Vec<Value> =
+                    batch.iter().filter_map(|req| respond(req, cwd)).collect();
                 // A batch of notifications gets no reply at all.
                 (!replies.is_empty()).then_some(Value::Array(replies))
             }
-            Ok(req) => respond(&req, &exe, &cwd),
+            Ok(req) => respond(&req, cwd),
             // A client waiting on a reply to a line that never parsed would
             // wait forever; JSON-RPC defines the answer, with a null id.
             Err(e) => Some(error_reply(
@@ -59,6 +53,7 @@ pub fn serve() -> Result<()> {
             )),
         };
         if let Some(msg) = reply {
+            let mut out = stdout.lock();
             writeln!(out, "{}", serde_json::to_string(&msg)?)?;
             out.flush()?;
         }
@@ -71,7 +66,7 @@ fn error_reply(id: Value, code: i64, message: String) -> Value {
 }
 
 /// The reply to one request object, or `None` for a notification (no id).
-fn respond(req: &Value, exe: &Path, cwd: &Path) -> Option<Value> {
+fn respond(req: &Value, cwd: &Path) -> Option<Value> {
     if !req.is_object() {
         return Some(error_reply(
             Value::Null,
@@ -89,7 +84,7 @@ fn respond(req: &Value, exe: &Path, cwd: &Path) -> Option<Value> {
     let result = match method {
         "initialize" => Ok(initialize_result(params)),
         "tools/list" => Ok(json!({ "tools": tools() })),
-        "tools/call" => Ok(call_tool(params, exe, cwd)),
+        "tools/call" => Ok(call_tool(params, cwd)),
         "ping" => Ok(json!({})),
         other => Err((-32601i64, format!("method not found: {other}"))),
     };
@@ -112,8 +107,8 @@ fn initialize_result(params: Option<&Value>) -> Value {
     })
 }
 
-/// Run the tool by bridging to the codeq CLI. Returns an MCP tool result.
-fn call_tool(params: Option<&Value>, exe: &Path, cwd: &Path) -> Value {
+/// Validate CLI arguments, then run the shared dispatcher with captured output.
+fn call_tool(params: Option<&Value>, cwd: &Path) -> Value {
     let params = params.cloned().unwrap_or_else(|| json!({}));
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = params
@@ -126,17 +121,28 @@ fn call_tool(params: Option<&Value>, exe: &Path, cwd: &Path) -> Value {
         Err(e) => return tool_error(e),
     };
 
+    let argv = std::iter::once("codeq".to_string()).chain(cli_args);
+    let cli = match crate::Cli::try_parse_from(argv) {
+        Ok(cli) => cli,
+        Err(error) => return tool_error(error.to_string()),
+    };
     // The caller is a model paying per token, so it gets the CLI's compact text
     // rather than the JSON envelope: the same rows at roughly half the bytes.
-    match Command::new(exe).args(&cli_args).current_dir(cwd).output() {
-        Ok(o) if o.status.success() => {
-            json!({ "content": [{ "type": "text", "text": tool_text(&o.stdout, &o.stderr) }] })
+    let out = cli.output_options();
+    let (result, captured) = crate::output::capture(|| crate::dispatch(cwd, cli.command, out));
+    match result {
+        Ok(()) => {
+            json!({ "content": [{ "type": "text", "text": tool_text(&captured.stdout, &captured.stderr) }] })
         }
-        Ok(o) => tool_error(format!(
-            "codeq error: {}",
-            String::from_utf8_lossy(&o.stderr).trim()
+        Err(error) => tool_error(format!(
+            "codeq error: {}{}",
+            format_args!("{error:#}"),
+            if captured.stderr.is_empty() {
+                String::new()
+            } else {
+                format!("\n{}", String::from_utf8_lossy(&captured.stderr).trim())
+            }
         )),
-        Err(e) => tool_error(format!("failed to run codeq: {e}")),
     }
 }
 

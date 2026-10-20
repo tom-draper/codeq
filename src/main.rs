@@ -18,6 +18,7 @@ mod facts;
 mod index;
 mod install;
 mod mcp;
+mod output;
 mod repo;
 mod search;
 
@@ -28,9 +29,9 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "codeq", version, about, long_about = None)]
-struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
-    command: Command,
+    pub(crate) command: Command,
 
     /// Run against this directory as the repository root, instead of discovering
     /// one from the current directory.
@@ -84,8 +85,21 @@ struct Cli {
     max_per_file: Option<usize>,
 }
 
+impl Cli {
+    pub(crate) fn output_options(&self) -> commands::Out {
+        commands::Out {
+            json: self.json,
+            meta: self.meta,
+            pretty: self.pretty,
+            fields: self.fields.clone(),
+            group: self.group,
+            max_per_file: self.max_per_file,
+        }
+    }
+}
+
 #[derive(Subcommand)]
-enum Command {
+pub(crate) enum Command {
     /// Force a full rebuild or pre-warm the index. Rarely needed: every other
     /// command auto-refreshes changed files before answering, so you never have
     /// to run this for a query to see the current tree.
@@ -954,14 +968,7 @@ fn main() -> ExitCode {
         None => cwd,
     };
 
-    let out = commands::Out {
-        json: cli.json,
-        meta: cli.meta,
-        pretty: cli.pretty,
-        fields: cli.fields,
-        group: cli.group,
-        max_per_file: cli.max_per_file,
-    };
+    let out = cli.output_options();
 
     match dispatch(&cwd, cli.command, out) {
         Ok(()) => ExitCode::SUCCESS,
@@ -985,7 +992,7 @@ fn main() -> ExitCode {
 
 /// Run one subcommand: unpack its clap arguments and hand them to the
 /// matching `commands::cmd_*`.
-fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<()> {
+pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<()> {
     match command {
         Command::Index { rebuild, compact } => commands::cmd_index(cwd, rebuild, compact, out),
         Command::Files {
@@ -1393,7 +1400,7 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             commands::cmd_capabilities(&names, out)
         }
         Command::Guide { check } => commands::cmd_guide(check.as_deref(), out),
-        Command::Mcp => mcp::serve(),
+        Command::Mcp => mcp::serve(cwd),
         Command::Install {
             dry_run,
             uninstall,

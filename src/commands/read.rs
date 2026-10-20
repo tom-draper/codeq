@@ -1,7 +1,5 @@
 //! Reading source: `outline` and `read`.
 
-use std::io::Write;
-
 use super::*;
 
 #[derive(Serialize)]
@@ -163,9 +161,9 @@ pub fn cmd_read(
         if many {
             // One blank line between files, and a header naming each.
             if i > 0 {
-                println!();
+                crate::output::stdout(format_args!("\n"));
             }
-            println!("# {rel}");
+            crate::output::stdout(format_args!("# {rel}\n"));
         }
         let ranges = if inline.is_empty() {
             &flag_ranges
@@ -216,9 +214,9 @@ pub fn cmd_read_at(cwd: &Path, locations: &[String], raw: bool, out: Out) -> Res
         }
         if many {
             if i > 0 {
-                println!();
+                crate::output::stdout(format_args!("\n"));
             }
-            println!("# {rel}");
+            crate::output::stdout(format_args!("# {rel}\n"));
         }
         read_one(&s, &rel, &merged, None, false, raw)?;
     }
@@ -267,11 +265,13 @@ fn read_one(
         for (i, (a, b)) in ranges.iter().enumerate() {
             // Silence reads as "an empty slice", not "past the end of the file".
             if *a > n {
-                eprintln!("# codeq: {rel} has {n} line(s); nothing at {a}-{b}");
+                crate::output::stderr(format_args!(
+                    "# codeq: {rel} has {n} line(s); nothing at {a}-{b}\n"
+                ));
             }
             // grep's separator between non-adjacent blocks.
             if i > 0 {
-                println!("--");
+                crate::output::stdout(format_args!("--\n"));
             }
             show(*a, *b)?;
         }
@@ -318,7 +318,7 @@ fn read_one(
         for (a, b) in &ranges {
             show(*a as usize, *b as usize)?;
             if !raw {
-                println!(); // blank between/after defs, as the folded view does
+                crate::output::stdout(format_args!("\n")); // blank between/after defs, as the folded view does
             }
         }
         return Ok(());
@@ -405,7 +405,7 @@ fn parse_range(spec: impl AsRef<str>) -> Result<(usize, usize)> {
 fn print_range(lines: &[&str], a: usize, b: usize) {
     for i in a.max(1)..=b {
         if let Some(l) = lines.get(i - 1) {
-            println!("{i}\t{l}");
+            crate::output::stdout(format_args!("{i}\t{l}\n"));
         }
     }
 }
@@ -413,14 +413,14 @@ fn print_range(lines: &[&str], a: usize, b: usize) {
 /// Verbatim lines with no line-number prefix — exact source, ready to drop into
 /// an editor's search text (the `--raw` view).
 fn print_range_raw(lines: &[&[u8]], a: usize, b: usize) -> Result<()> {
-    let stdout = std::io::stdout();
-    let mut stdout = stdout.lock();
-    for i in a.max(1)..=b {
-        if let Some(l) = lines.get(i - 1) {
-            stdout.write_all(l)?;
+    crate::output::with_stdout(|out| {
+        for i in a.max(1)..=b {
+            if let Some(l) = lines.get(i - 1) {
+                out.write_all(l)?;
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn print_folded(lines: &[&str], folded: &[bool]) {
@@ -435,9 +435,9 @@ fn print_folded(lines: &[&str], folded: &[bool]) {
             let count = i - start;
             // Range printed in the exact syntax `--lines` accepts, so the marker
             // is a copy-pasteable next command rather than something to retype.
-            println!("\t... {count} lines ({}-{})", start + 1, i);
+            crate::output::stdout(format_args!("\t... {count} lines ({}-{})\n", start + 1, i));
         } else {
-            println!("{}\t{}", i + 1, lines[i]);
+            crate::output::stdout(format_args!("{}\t{}\n", i + 1, lines[i]));
             i += 1;
         }
     }

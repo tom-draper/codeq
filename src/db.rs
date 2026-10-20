@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 // v5: index strips a leading UTF-8 BOM, changing stored bodies/offsets for
 // BOM-prefixed files — bump so pre-fix indexes rebuild on upgrade.
@@ -120,6 +120,20 @@ pub struct Db {
     /// about to be rebuilt, which the caller should say rather than leave an
     /// upgrade looking like an unexplained slow query.
     pub rebuilt_from: Option<String>,
+}
+
+impl Db {
+    pub fn index_generation(&self) -> Result<i64> {
+        let generation: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'index_generation'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(generation.and_then(|value| value.parse().ok()).unwrap_or(0))
+    }
 }
 
 /// How long a query waits for another process's index write before giving up.

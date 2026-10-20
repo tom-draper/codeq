@@ -3,8 +3,9 @@
 //! topic lives in its own submodule and is re-exported here so callers keep
 //! writing `commands::cmd_x`.
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::Deref;
 use std::path::Path;
 use std::rc::Rc;
 use std::time::Instant;
@@ -76,27 +77,54 @@ struct Batch<'a, T> {
 /// Shared setup: discover the repo, open the index, and bring it fresh.
 /// Returns the pieces every command needs plus how many files were reparsed.
 struct Session {
-    repo: Repo,
+    resources: Rc<SessionResources>,
     cwd: std::path::PathBuf,
-    db: Db,
     reindexed: u64,
     partial_failures: u64,
+    rebuilt_from_schema: Option<String>,
     started: Instant,
     out: Out,
-    // Whole-table loads, kept for the life of the query. A walk that visits
-    // many symbols (`callers --depth`, `untested`, `affected`) asks for each of
-    // these once per symbol, and each is a full scan of the import or
-    // definition rows: on a 1,500-file repo that was most of a 3.8s
-    // `callers --depth 3`.
-    dep_graph: OnceCell<deps::Graph>,
-    test_scopes: OnceCell<testing::TestScopes>,
-    import_lines: RefCell<HashMap<String, HashSet<i64>>>,
-    aliased_names: OnceCell<HashSet<String>>,
-    source_bodies: RefCell<HashMap<String, Option<Rc<String>>>>,
-    /// Matches a `--max-per-file` scan counted without building rows, per file.
-    /// The renderer adds them to the rows it caps, so the totals it reports
-    /// still describe every match.
+    /// Matches a `--max-per-file` scan counted without building rows, per query.
     overflow: RefCell<BTreeMap<String, usize>>,
+}
+
+struct SessionResources {
+    repo: Repo,
+    db: Db,
+    generation: Cell<i64>,
+    dep_graph: RefCell<Option<Rc<deps::Graph>>>,
+    test_scopes: RefCell<Option<Rc<testing::TestScopes>>>,
+    import_lines: RefCell<HashMap<String, HashSet<i64>>>,
+    aliased_names: RefCell<Option<HashSet<String>>>,
+    source_bodies: RefCell<HashMap<String, Option<Rc<String>>>>,
+}
+
+impl SessionResources {
+    fn new(repo: Repo, db: Db, generation: i64) -> Self {
+        Self {
+            repo,
+            db,
+            generation: Cell::new(generation),
+            dep_graph: RefCell::new(None),
+            test_scopes: RefCell::new(None),
+            import_lines: RefCell::new(HashMap::new()),
+            aliased_names: RefCell::new(None),
+            source_bodies: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn invalidate(&self, generation: i64) {
+        self.generation.set(generation);
+        self.dep_graph.borrow_mut().take();
+        self.test_scopes.borrow_mut().take();
+        self.import_lines.borrow_mut().clear();
+        self.aliased_names.borrow_mut().take();
+        self.source_bodies.borrow_mut().clear();
+    }
+}
+
+thread_local! {
+    static QUERY_SESSION: RefCell<Option<Rc<SessionResources>>> = const { RefCell::new(None) };
 }
 
 /// Set by `--root`: the tree was named explicitly, so discovery must take it
@@ -111,29 +139,52 @@ impl Session {
     fn open(cwd: &Path, rebuild: bool, out: Out) -> Result<Session> {
         let started = Instant::now();
         let repo = Repo::at(cwd, PINNED_ROOT.load(std::sync::atomic::Ordering::Relaxed))?;
-        let db = Db::open(&repo.root)?;
+        let (resources, rebuilt_from_schema) = QUERY_SESSION.with(|slot| -> Result<_> {
+            let mut slot = slot.borrow_mut();
+            if let Some(cached) = slot
+                .as_ref()
+                .filter(|cached| cached.repo.root == repo.root && cached.repo.pinned == repo.pinned)
+            {
+                let stored_schema = cached
+                    .db
+                    .conn
+                    .query_row(
+                        "SELECT value FROM meta WHERE key = 'schema_version'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .ok();
+                if stored_schema.as_deref() == Some(&SCHEMA_VERSION.to_string()) {
+                    return Ok((cached.clone(), None));
+                }
+            }
+            let db = Db::open(&repo.root)?;
+            let rebuilt_from_schema = db.rebuilt_from.clone();
+            let generation = db.index_generation()?;
+            let resources = Rc::new(SessionResources::new(repo, db, generation));
+            *slot = Some(resources.clone());
+            Ok((resources, rebuilt_from_schema))
+        })?;
         if rebuild {
-            db.conn.execute("DELETE FROM files", [])?; // cascades to facts
-            db.reset_fts()?;
+            resources.db.conn.execute("DELETE FROM files", [])?; // cascades to facts
+            resources.db.reset_fts()?;
             // Also clear the directory cache: otherwise the next refresh sees an
             // empty `files` table against an unchanged `dirs` cache, judges the
             // index "fresh", and skips the walk — leaving it empty.
-            db.conn.execute("DELETE FROM dirs", [])?;
+            resources.db.conn.execute("DELETE FROM dirs", [])?;
         }
-        let stats = refresh(&db, &repo)?;
+        let stats = refresh(&resources.db, &resources.repo)?;
+        if resources.generation.get() != stats.generation || rebuild {
+            resources.invalidate(stats.generation);
+        }
         Ok(Session {
-            repo,
+            resources,
             cwd: cwd.to_path_buf(),
-            db,
             reindexed: stats.reindexed,
             partial_failures: stats.partial_failures,
+            rebuilt_from_schema,
             started,
             out,
-            dep_graph: OnceCell::new(),
-            test_scopes: OnceCell::new(),
-            import_lines: RefCell::new(HashMap::new()),
-            aliased_names: OnceCell::new(),
-            source_bodies: RefCell::new(HashMap::new()),
             overflow: RefCell::new(BTreeMap::new()),
         })
     }
@@ -149,7 +200,8 @@ impl Session {
 
     /// Decoded source shared by callee scans throughout this query.
     fn source_body(&self, path: &str) -> Option<Rc<String>> {
-        self.source_bodies
+        self.resources
+            .source_bodies
             .borrow_mut()
             .entry(path.to_string())
             .or_insert_with(|| crate::index::load_body(&self.repo.root, path).map(Rc::new))
@@ -157,28 +209,31 @@ impl Session {
     }
 
     /// The internal import graph, built on first use.
-    fn dep_graph(&self) -> Result<&deps::Graph> {
-        if self.dep_graph.get().is_none() {
-            let _ = self.dep_graph.set(imports::load_dep_graph(&self.db)?);
+    fn dep_graph(&self) -> Result<Rc<deps::Graph>> {
+        let mut cached = self.resources.dep_graph.borrow_mut();
+        if cached.is_none() {
+            *cached = Some(Rc::new(imports::load_dep_graph(&self.db)?));
         }
-        Ok(self.dep_graph.get().expect("set above"))
+        Ok(cached.as_ref().unwrap().clone())
     }
 
     /// The repo's test-like containers, loaded on first use.
-    fn test_scopes(&self) -> Result<&testing::TestScopes> {
-        if self.test_scopes.get().is_none() {
-            let _ = self
-                .test_scopes
-                .set(testing::TestScopes::load(&self.db.conn, &self.repo.root)?);
+    fn test_scopes(&self) -> Result<Rc<testing::TestScopes>> {
+        let mut cached = self.resources.test_scopes.borrow_mut();
+        if cached.is_none() {
+            *cached = Some(Rc::new(testing::TestScopes::load(
+                &self.db.conn,
+                &self.repo.root,
+            )?));
         }
-        Ok(self.test_scopes.get().expect("set above"))
+        Ok(cached.as_ref().unwrap().clone())
     }
 
     /// Whether `line` of `path` is an import statement. Loaded a file at a
     /// time: a query asks about the handful of files its hits landed in, not
     /// about every import in the repo.
     fn is_import_line(&self, path: &str, line: i64) -> Result<bool> {
-        if let Some(lines) = self.import_lines.borrow().get(path) {
+        if let Some(lines) = self.resources.import_lines.borrow().get(path) {
             return Ok(lines.contains(&line));
         }
         let mut st = self
@@ -189,7 +244,8 @@ impl Session {
             .query_map([path], |r| r.get::<_, i64>(0))?
             .collect::<std::result::Result<HashSet<_>, _>>()?;
         let found = lines.contains(&line);
-        self.import_lines
+        self.resources
+            .import_lines
             .borrow_mut()
             .insert(path.to_string(), lines);
         Ok(found)
@@ -200,7 +256,8 @@ impl Session {
     /// rows alone lets a lookup of a never-aliased symbol skip building the
     /// import graph, which on a C repo was a third of a `callers` query.
     fn may_be_aliased(&self, name: &str) -> Result<bool> {
-        if self.aliased_names.get().is_none() {
+        let mut cached = self.resources.aliased_names.borrow_mut();
+        if cached.is_none() {
             let mut st = self.db.conn.prepare(
                 "SELECT DISTINCT name FROM facts
                  WHERE kind = 'import' AND NULLIF(signature, '') IS NOT NULL",
@@ -212,9 +269,9 @@ impl Session {
                     names.insert(bound.to_string());
                 }
             }
-            let _ = self.aliased_names.set(names);
+            *cached = Some(names);
         }
-        Ok(self.aliased_names.get().expect("set above").contains(name))
+        Ok(cached.as_ref().unwrap().contains(name))
     }
 
     /// Build the envelope and print it honoring the caller's render options.
@@ -239,7 +296,7 @@ impl Session {
             schema: SCHEMA_VERSION,
             fresh: true, // we just refreshed before answering
             reindexed_files: self.reindexed,
-            rebuilt_from_schema: self.db.rebuilt_from.clone(),
+            rebuilt_from_schema: self.rebuilt_from_schema.clone(),
             partial_failures: self.partial_failures,
             elapsed_ms: self.started.elapsed().as_millis() as u64,
         };
@@ -266,6 +323,14 @@ impl Session {
             .note(note)
             .overflow(self.overflow.take())
             .print(render)
+    }
+}
+
+impl Deref for Session {
+    type Target = SessionResources;
+
+    fn deref(&self) -> &Self::Target {
+        &self.resources
     }
 }
 
@@ -685,15 +750,60 @@ fn emit_sessionless<T: Serialize>(data: &T, out: Out) -> Result<()> {
     if out.json || out.meta || out.pretty {
         let value = serde_json::json!({ "schema": RESULT_SCHEMA, "data": data });
         if out.pretty {
-            println!("{}", serde_json::to_string_pretty(&value)?);
+            crate::output::stdout(format_args!("{}\n", serde_json::to_string_pretty(&value)?));
         } else {
-            println!("{}", serde_json::to_string(&value)?);
+            crate::output::stdout(format_args!("{}\n", serde_json::to_string(&value)?));
         }
     } else {
-        print!(
+        crate::output::stdout(format_args!(
             "{}",
             crate::envelope::render_data_text(&serde_json::to_value(data)?)
-        );
+        ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    #[test]
+    fn reuses_resources_and_invalidates_caches_after_a_refresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("app.py");
+        std::fs::write(&source, "def before():\n    return 1\n").unwrap();
+        let first = Session::open(dir.path(), false, Out::default()).unwrap();
+        let graph = first.dep_graph().unwrap();
+        let scopes = first.test_scopes().unwrap();
+        assert!(first.source_body("app.py").unwrap().contains("before"));
+        let second = Session::open(dir.path(), false, Out::default()).unwrap();
+        assert!(Rc::ptr_eq(&first.resources, &second.resources));
+        assert!(Rc::ptr_eq(&graph, &second.dep_graph().unwrap()));
+        assert!(Rc::ptr_eq(&scopes, &second.test_scopes().unwrap()));
+
+        std::fs::write(&source, "def after():\n    return 2\n").unwrap();
+        let third = Session::open(dir.path(), false, Out::default()).unwrap();
+        assert!(Rc::ptr_eq(&first.resources, &third.resources));
+        assert!(!Rc::ptr_eq(&graph, &third.dep_graph().unwrap()));
+        assert!(!Rc::ptr_eq(&scopes, &third.test_scopes().unwrap()));
+        assert_eq!(
+            third.source_body("app.py").unwrap().as_str(),
+            "def after():\n    return 2\n"
+        );
+    }
+
+    #[test]
+    fn a_different_repository_gets_independent_resources() {
+        let first_root = tempfile::tempdir().unwrap();
+        let second_root = tempfile::tempdir().unwrap();
+        std::fs::write(first_root.path().join("a.py"), "def first(): pass\n").unwrap();
+        std::fs::write(second_root.path().join("a.py"), "def second(): pass\n").unwrap();
+        let first = Session::open(first_root.path(), false, Out::default()).unwrap();
+        let second = Session::open(second_root.path(), false, Out::default()).unwrap();
+        assert!(!Rc::ptr_eq(&first.resources, &second.resources));
+        assert_eq!(
+            second.source_body("a.py").unwrap().as_str(),
+            "def second(): pass\n"
+        );
+    }
 }

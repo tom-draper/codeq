@@ -292,7 +292,7 @@ pub(super) fn test_sites_for(
                     _ => continue,
                 };
                 let is_fn = matches!(h.kind.as_deref(), Some("function") | Some("method"));
-                if is_fn && is_test_site(&h.path, Some(sym), h.line as i64, scopes) {
+                if is_fn && is_test_site(&h.path, Some(sym), h.line as i64, &scopes) {
                     sites[i].insert((h.path.clone(), sym.clone()));
                 }
             }
@@ -445,7 +445,7 @@ pub fn cmd_untested(
     // identical question one screen away, already knew better than to do.
     let candidates: Vec<UntestedRow> = candidates
         .into_iter()
-        .filter(|c| !is_test_site(&c.path, Some(&c.name), c.line, scopes))
+        .filter(|c| !is_test_site(&c.path, Some(&c.name), c.line, &scopes))
         .collect();
 
     // One lookup per distinct name, not per definition, and a batch of names

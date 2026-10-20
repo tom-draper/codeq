@@ -285,7 +285,7 @@ pub fn cmd_graph(
         if edges.is_empty() {
             lines.push("  %% no relation edges".to_string());
         }
-        println!("{}", lines.join("\n"));
+        crate::output::stdout(format_args!("{}\n", lines.join("\n")));
         return Ok(());
     }
 

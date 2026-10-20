@@ -25,6 +25,8 @@ pub struct RefreshStats {
     pub reindexed: u64,
     /// Files we could not read/stat and therefore skipped.
     pub partial_failures: u64,
+    /// Monotonic index generation, advanced by any full refresh pass.
+    pub generation: i64,
 }
 
 struct Stored {
@@ -219,6 +221,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
         return Ok(RefreshStats {
             reindexed: 0,
             partial_failures: 0,
+            generation: db.index_generation()?,
         });
     }
 
@@ -239,6 +242,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
         return Ok(RefreshStats {
             reindexed: 0,
             partial_failures: 0,
+            generation: db.index_generation()?,
         });
     }
     // Not fresh: load the full manifest (with hashes, to tell a real content
@@ -260,12 +264,18 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     drop_vanished(&tx, &existing, &seen)?;
     replace_dirs(&tx, &dirs_seen)?;
     db.set_meta("git_exclude_stamp", &exclude_stamp)?;
+    tx.execute(
+        "INSERT INTO meta(key, value) VALUES ('index_generation', '1')
+         ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
+        [],
+    )?;
 
     tx.commit()?;
     db.set_meta("last_indexed_at", &now_ns().to_string())?;
     Ok(RefreshStats {
         reindexed,
         partial_failures,
+        generation: db.index_generation()?,
     })
 }
 
@@ -432,30 +442,29 @@ fn parse_and_write(
     let next = AtomicUsize::new(0);
     let (res_tx, res_rx) = parsed_queue::channel(16 << 20);
     std::thread::scope(|scope| -> Result<u64> {
+        let mut handles = Vec::new();
         for _ in 0..workers {
             let sender = res_tx.clone();
             let jobs = &jobs;
             let next = &next;
-            scope.spawn(move || {
+            handles.push(scope.spawn(move || -> Result<()> {
                 let mut ex = Extractor::default();
                 while let Some(&i) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let (rel, abs, size, mtime, ctime) = &work[i];
                     match parse_one(existing, &mut ex, rel, abs, *size, *mtime, *ctime) {
                         Ok(Some(p)) => {
                             if !sender.send(p) {
-                                return; // writer went away (error) — stop
+                                return Ok(()); // writer went away (error) — stop
                             }
                         }
                         Ok(None) => {
                             parse_failures.fetch_add(1, Ordering::Relaxed);
                         }
-                        Err(e) => {
-                            eprintln!("codeq: fact extraction unavailable: {e:#}");
-                            std::process::exit(1);
-                        }
+                        Err(e) => return Err(e.context("fact extraction unavailable")),
                     }
                 }
-            });
+                Ok(())
+            }));
         }
         drop(res_tx); // close the channel once every worker's clone is gone
 
@@ -465,6 +474,11 @@ fn parse_and_write(
             if writer.write(p)? {
                 reindexed += 1;
             }
+        }
+        for handle in handles {
+            handle
+                .join()
+                .map_err(|_| anyhow::anyhow!("fact extraction worker panicked"))??;
         }
         writer.flush_fts()?;
         Ok(reindexed)
