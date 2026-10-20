@@ -15,6 +15,10 @@ See [real workflow results and methodology](REAL_WORKFLOWS.md) for 19 fixed task
 across Flask, Requests, Express, Gin, and ripgrep, including exact-range controls
 and counted follow-up reads when source budgets are too small.
 
+[Live agent evaluation](AGENT_EVAL.md) runs the same answer and edit tasks with
+generic MCP file tools and with Codeq tools. It records model usage, tool events,
+schemas, validation, stderr, and elapsed time.
+
 ## Refresh query latency (`refresh_perf.py`)
 
 Compare two release binaries with seven alternating runs per side and one discarded
