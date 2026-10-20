@@ -169,7 +169,7 @@ impl Session {
         if self.test_scopes.get().is_none() {
             let _ = self
                 .test_scopes
-                .set(testing::TestScopes::load(&self.db.conn)?);
+                .set(testing::TestScopes::load(&self.db.conn, &self.repo.root)?);
         }
         Ok(self.test_scopes.get().expect("set above"))
     }
