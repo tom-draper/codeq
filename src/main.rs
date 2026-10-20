@@ -888,7 +888,11 @@ pub(crate) enum Command {
         check: Option<PathBuf>,
     },
     /// Run as an MCP server over stdio (for agent hosts to call codeq natively).
-    Mcp,
+    Mcp {
+        /// Independent query workers, each with its own repository session.
+        #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=16))]
+        workers: u8,
+    },
     /// Set codeq up for detected coding agents: register its MCP server and install
     /// the codeq skill for agents that read one. Only touches detected agents
     /// unless `--agent` names one.
@@ -1400,7 +1404,7 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
             commands::cmd_capabilities(&names, out)
         }
         Command::Guide { check } => commands::cmd_guide(check.as_deref(), out),
-        Command::Mcp => mcp::serve(cwd),
+        Command::Mcp { workers } => mcp::serve(cwd, workers),
         Command::Install {
             dry_run,
             uninstall,

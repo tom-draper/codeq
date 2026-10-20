@@ -3,19 +3,23 @@
 //! Speaks line-delimited JSON-RPC 2.0 on stdin/stdout and exposes codeq's query
 //! commands as MCP tools, so an agent host can call codeq natively. Tool calls
 //! use the same in-process CLI dispatcher and result rendering, with output
-//! captured for the MCP response. The stdio loop is synchronous and does not
-//! need an async runtime or MCP SDK.
+//! captured for the MCP response. A bounded worker pool leaves the input loop
+//! available for discovery, ping and cancellation.
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 use std::path::Path;
 
 use anyhow::Result;
 use clap::Parser;
 use serde_json::{json, Value};
 
-pub fn serve(cwd: &Path) -> Result<()> {
+mod executor;
+
+pub(crate) use executor::{attach_connection, check_cancelled};
+
+pub fn serve(cwd: &Path, workers: u8) -> Result<()> {
     let stdin = io::stdin();
-    let stdout = io::stdout();
+    let executor = executor::Executor::new(cwd, workers);
     let mut input = stdin.lock();
     let mut buf = Vec::new();
 
@@ -31,31 +35,9 @@ pub fn serve(cwd: &Path) -> Result<()> {
         if text.is_empty() {
             continue;
         }
-        let reply = match serde_json::from_str::<Value>(text) {
-            Ok(Value::Array(batch)) if batch.is_empty() => Some(error_reply(
-                Value::Null,
-                -32600,
-                "invalid request: empty batch".into(),
-            )),
-            Ok(Value::Array(batch)) => {
-                let replies: Vec<Value> =
-                    batch.iter().filter_map(|req| respond(req, cwd)).collect();
-                // A batch of notifications gets no reply at all.
-                (!replies.is_empty()).then_some(Value::Array(replies))
-            }
-            Ok(req) => respond(&req, cwd),
-            // A client waiting on a reply to a line that never parsed would
-            // wait forever; JSON-RPC defines the answer, with a null id.
-            Err(e) => Some(error_reply(
-                Value::Null,
-                -32700,
-                format!("parse error: {e}"),
-            )),
-        };
-        if let Some(msg) = reply {
-            let mut out = stdout.lock();
-            writeln!(out, "{}", serde_json::to_string(&msg)?)?;
-            out.flush()?;
+        match serde_json::from_str::<Value>(text) {
+            Ok(value) => executor.submit(value),
+            Err(error) => executor.parse_error(format!("parse error: {error}")),
         }
     }
     Ok(())
