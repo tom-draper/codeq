@@ -29,7 +29,7 @@ pub fn cmd_about(
     let s = Session::open(cwd, false, out)?;
     let mut results = Vec::new();
     for name in names {
-        let (definitions, callers, callees) = symbol_graph(&s, name, path, resolved)?;
+        let (definitions, callers, callees) = symbol_graph(&s, name, path, resolved, None)?;
         let data = About {
             definitions,
             members: members_of(&s, name, path, None, 0)?,
@@ -59,6 +59,7 @@ fn symbol_graph(
     name: &str,
     path: Option<&str>,
     resolved: bool,
+    exact_range: Option<(usize, usize)>,
 ) -> Result<(Vec<DefinitionRow>, Vec<Caller>, Vec<Callee>)> {
     let callers = callers_of(s, name, None, false, None, false)?;
     let callers = resolve_rows(
@@ -71,11 +72,13 @@ fn symbol_graph(
             c.via = v;
         },
     )?;
-    Ok((
-        definitions_of(s, name, path, 0)?,
-        callers,
-        callees_of(s, name, path, resolved, false)?,
-    ))
+    let callees = match (path, exact_range) {
+        (Some(path), Some((start, end))) => {
+            callees_of_range(s, name, path, start, end, resolved, false)?
+        }
+        _ => callees_of(s, name, path, resolved, false)?,
+    };
+    Ok((definitions_of(s, name, path, 0)?, callers, callees))
 }
 
 /// A node in an `explore` graph: a definition (focus) or one of its immediate
@@ -89,6 +92,10 @@ struct ExploreNode {
     kind: Option<String>,
     path: String,
     line: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    byte: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_byte: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     signature: Option<String>,
     /// Only carried on the focus: what the symbol says it does, which is the
@@ -153,6 +160,7 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
     // `attr_accessor :params`) still contributes every occurrence to the focus.
     // Worth stating precisely — this comment used to claim the position
     // "identifies one definition exactly", which it does not.
+    let mut exact_range = None;
     let (target, scope): (String, Option<String>) = match at {
         Some(loc) => {
             let found = definition_at(&s, loc)?;
@@ -192,6 +200,11 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
                     Some(note),
                 );
             }
+            exact_range = found
+                .start_bytes
+                .first()
+                .zip(found.end_bytes.first())
+                .map(|(&start, &end)| (start, end));
             (found.names[0].clone(), Some(found.rel))
         }
         // clap guarantees one of the two is present.
@@ -204,7 +217,10 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
 
     // The same neighbourhood `about` reports; explore trims the nodes and spends
     // the token budget on verbatim source instead.
-    let (defs, callers, callees) = symbol_graph(&s, name, path, resolved)?;
+    let (mut defs, callers, callees) = symbol_graph(&s, name, path, resolved, exact_range)?;
+    if let Some((start_byte, _)) = exact_range {
+        defs.retain(|definition| definition.start_byte == start_byte as i64);
+    }
 
     let focus: Vec<ExploreNode> = defs
         .iter()
@@ -214,6 +230,8 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
             kind: Some(d.kind.clone()),
             path: d.path.clone(),
             line: d.start_line,
+            byte: Some(d.start_byte as usize),
+            end_byte: Some(d.end_byte as usize),
             signature: d.signature.clone(),
             doc: d.doc.clone(),
         })
@@ -227,6 +245,8 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
                 kind: c.kind.clone(),
                 path: c.path.clone(),
                 line: c.line as i64,
+                byte: None,
+                end_byte: None,
                 signature: None,
                 doc: None,
             })
@@ -240,6 +260,8 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
             kind: Some(c.kind.clone()),
             path: c.path.clone(),
             line: c.line,
+            byte: Some(c.start_byte),
+            end_byte: None,
             signature: None,
             doc: None,
         })
@@ -256,7 +278,7 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
             path: d.path.clone(),
             role: "focus",
             forced: true,
-            start_byte: None,
+            start_byte: exact_range.map(|_| d.start_byte as usize),
         });
     }
     for c in &callers {
@@ -389,11 +411,15 @@ pub(super) fn definition_at(s: &Session, location: &str) -> Result<AtPosition> {
         .iter()
         .map(|d| (d.start_line as usize, d.end_line as usize))
         .collect();
+    let start_bytes = leaves.iter().map(|d| d.start as usize).collect();
+    let end_bytes = leaves.iter().map(|d| d.end as usize).collect();
     Ok(AtPosition {
         rel,
         line,
         names,
         ranges,
+        start_bytes,
+        end_bytes,
     })
 }
 
@@ -450,6 +476,8 @@ pub(super) struct AtPosition {
     line: i64,
     names: Vec<String>,
     pub(super) ranges: Vec<(usize, usize)>,
+    start_bytes: Vec<usize>,
+    end_bytes: Vec<usize>,
 }
 
 /// The imports declared by the files the focus definitions live in.
