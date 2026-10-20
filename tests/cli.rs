@@ -5741,6 +5741,39 @@ fn mcp_context_forwards_resolved_expansion() {
     );
 }
 
+#[test]
+fn mcp_refreshes_cached_session_between_tool_calls() {
+    use std::io::Write;
+    use std::process::{Command as PCommand, Stdio};
+
+    let f = Fixture::new();
+    f.write("src.rs", "pub fn before() {}\n");
+    let mut child = PCommand::cargo_bin("codeq")
+        .unwrap()
+        .arg("mcp")
+        .current_dir(f.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = std::io::BufReader::new(child.stdout.take().unwrap());
+    writeln!(input, r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"codeq_search","arguments":{{"pattern":"before"}}}}}}"#).unwrap();
+    let mut line = String::new();
+    std::io::BufRead::read_line(&mut output, &mut line).unwrap();
+    assert!(line.contains("before"), "first response: {line}");
+
+    f.write("src.rs", "pub fn after() {}\n");
+    writeln!(input, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"codeq_search","arguments":{{"pattern":"after"}}}}}}"#).unwrap();
+    line.clear();
+    std::io::BufRead::read_line(&mut output, &mut line).unwrap();
+    assert!(line.contains("after"), "updated response: {line}");
+    assert!(!line.contains("before"), "stale response: {line}");
+    drop(input);
+    child.wait().unwrap();
+}
+
 /// One MCP tool call against a fixture: `(is_error, text)`.
 fn mcp_call(f: &Fixture, tool: &str, arguments: Value) -> (bool, String) {
     use std::io::Write;

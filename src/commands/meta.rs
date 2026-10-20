@@ -18,23 +18,23 @@ pub fn cmd_guide(check: Option<&Path>, out: Out) -> Result<()> {
             None => serde_json::json!({"guide": guide}),
         };
         let result = serde_json::json!({"schema": crate::envelope::RESULT_SCHEMA, "data": data});
-        println!(
-            "{}",
+        crate::output::stdout(format_args!(
+            "{}\n",
             if out.pretty {
                 serde_json::to_string_pretty(&result)?
             } else {
                 serde_json::to_string(&result)?
             }
-        );
+        ));
     } else if let Some(path) = check {
         if matches == Some(true) {
-            println!(
-                "{}: matches this executable's bundled guide",
+            crate::output::stdout(format_args!(
+                "{}: matches this executable's bundled guide\n",
                 path.display()
-            );
+            ));
         }
     } else {
-        print!("{guide}");
+        crate::output::stdout(format_args!("{guide}"));
     }
     if matches == Some(false) {
         anyhow::bail!("guide differs from this executable's bundled guide; run `codeq guide` for current instructions or `codeq install` to update managed skills");
@@ -78,9 +78,9 @@ pub fn cmd_install(
     }
     if !out.json && !dry_run && !uninstall {
         if actions.iter().all(|a| a.action == "skipped") {
-            println!("\nNo agents detected. Use `codeq install --agent <name>` to set one up explicitly.");
+            crate::output::stdout(format_args!("\nNo agents detected. Use `codeq install --agent <name>` to set one up explicitly.\n"));
         } else {
-            println!("\nRestart configured agents to load the MCP server and skill. Run `codeq doctor` to verify setup.");
+            crate::output::stdout(format_args!("\nRestart configured agents to load the MCP server and skill. Run `codeq doctor` to verify setup.\n"));
         }
     }
     Ok(())
@@ -108,7 +108,7 @@ fn print_install_actions(actions: &[crate::install::Action], out: &Out) -> Resul
         } else {
             serde_json::to_string(&data)?
         };
-        println!("{s}");
+        crate::output::stdout(format_args!("{s}\n"));
     } else {
         for a in actions {
             let note = a
@@ -116,10 +116,10 @@ fn print_install_actions(actions: &[crate::install::Action], out: &Out) -> Resul
                 .as_deref()
                 .map(|n| format!("  ({n})"))
                 .unwrap_or_default();
-            println!(
-                "{:<12}  {:<6}  {:<15}  {}{}",
+            crate::output::stdout(format_args!(
+                "{:<12}  {:<6}  {:<15}  {}{}\n",
                 a.agent, a.what, a.action, a.config, note
-            );
+            ));
         }
     }
     Ok(())

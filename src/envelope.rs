@@ -36,7 +36,7 @@
 //! `render_row` carried an `or_else(start_line)` fallback to hide it in text.
 
 use std::collections::BTreeMap;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -220,14 +220,14 @@ impl<T: Serialize> Envelope<T> {
         // Text mode: keep stdout pure data; surface noteworthy meta on stderr so
         // it doesn't pollute a parseable/piped result.
         if let Some(prev) = &self.index.rebuilt_from_schema {
-            eprintln!(
-                "# codeq: index schema changed (v{prev} -> v{}), rebuilt the index",
-                self.index.schema
-            );
+            crate::output::stderr(format_args!(
+                "# codeq: index schema changed (v{prev} -> v{}), rebuilt the index\n",
+                self.index.schema,
+            ));
         }
         if self.noteworthy() {
-            eprintln!(
-                "# codeq: reindexed {} file(s){}{}",
+            crate::output::stderr(format_args!(
+                "# codeq: reindexed {} file(s){}{}\n",
                 self.index.reindexed_files,
                 if self.index.partial_failures > 0 {
                     format!(", {} partial failure(s)", self.index.partial_failures)
@@ -239,14 +239,14 @@ impl<T: Serialize> Envelope<T> {
                 } else {
                     ", index stale"
                 },
-            );
+            ));
         }
         if note_fields {
-            eprintln!(
-                "# codeq: --fields {} matched no row; available: {}",
+            crate::output::stderr(format_args!(
+                "# codeq: --fields {} matched no row; available: {}\n",
                 unmatched.join(","),
                 available.join(",")
-            );
+            ));
         }
         // The column is in the data and under `--json`; text leaves it out
         // unless `--fields` asks. Nothing takes a column as input — `at`,
@@ -255,58 +255,57 @@ impl<T: Serialize> Envelope<T> {
         if !r.fields.is_some_and(|f| f.iter().any(|k| k == "col")) {
             drop_col(&mut data);
         }
-        let stdout = std::io::stdout();
-        let mut out = BufWriter::new(stdout.lock());
-        render_value(&data, r.group, &truncated, &mut out)?;
-        out.flush()?;
+        crate::output::with_stdout(|mut out| {
+            render_value(&data, r.group, &truncated, &mut out)?;
+            Ok(())
+        })?;
         if let Some(results) = data.get("results").and_then(Value::as_array) {
             for result in results {
                 if let Some(counts) = result.get("truncated_per_file") {
-                    eprintln!(
-                        "# codeq: {}: --max-per-file capped rows; totals before capping: {}",
+                    crate::output::stderr(format_args!(
+                        "# codeq: {}: --max-per-file capped rows; totals before capping: {}\n",
                         result["name"].as_str().unwrap(),
                         inline(counts),
-                    );
+                    ));
                 }
             }
         }
         if !truncated.is_empty() {
             let dropped: usize = truncated.values().sum();
-            eprintln!(
-                "# codeq: --max-per-file kept {} of {dropped} rows across {} file(s); rerun without it for the rest",
+            crate::output::stderr(format_args!(
+                "# codeq: --max-per-file kept {} of {dropped} rows across {} file(s); rerun without it for the rest\n",
                 r.max_per_file.unwrap_or(0) * truncated.len(),
                 truncated.len(),
-            );
+            ));
         }
         // `data.truncated` says the result stopped at `--limit`. JSON has carried
         // it all along; text rendered only the rows, so a capped-at-100 answer
         // read exactly like a complete one — the one thing every other truncation
         // in codeq is careful to never do.
         if hit_limit(&data) {
-            eprintln!(
-                "# codeq: result stopped at --limit; rerun with a higher --limit (or 0) for the rest"
-            );
+            crate::output::stderr(format_args!(
+                "# codeq: result stopped at --limit; rerun with a higher --limit (or 0) for the rest\n"
+            ));
         }
         // Text mode keeps stdout pure data, so the note goes to stderr where it
         // is visible to a person and invisible to a pipe.
         if let Some(n) = &self.note {
-            eprintln!("# codeq: {n}");
+            crate::output::stderr(format_args!("# codeq: {n}\n"));
         }
         Ok(())
     }
 }
 
 fn print_json(value: &impl Serialize, pretty: bool) -> anyhow::Result<()> {
-    let stdout = std::io::stdout();
-    let mut out = BufWriter::new(stdout.lock());
-    if pretty {
-        serde_json::to_writer_pretty(&mut out, value)?;
-    } else {
-        serde_json::to_writer(&mut out, value)?;
-    }
-    out.write_all(b"\n")?;
-    out.flush()?;
-    Ok(())
+    crate::output::with_stdout(|out| {
+        if pretty {
+            serde_json::to_writer_pretty(&mut *out, value)?;
+        } else {
+            serde_json::to_writer(&mut *out, value)?;
+        }
+        out.write_all(b"\n")?;
+        Ok(())
+    })
 }
 
 /// Render a bare `data` value as codeq's compact text output, for commands that
