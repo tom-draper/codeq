@@ -892,6 +892,9 @@ pub(crate) enum Command {
         /// Independent query workers, each with its own repository session.
         #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=16))]
         workers: u8,
+        /// Advertise core navigation tools or every query command.
+        #[arg(long, value_enum, default_value = "all")]
+        tools: mcp::ToolProfile,
     },
     /// Set codeq up for detected coding agents: register its MCP server and install
     /// the codeq skill for agents that read one. Only touches detected agents
@@ -1404,7 +1407,7 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
             commands::cmd_capabilities(&names, out)
         }
         Command::Guide { check } => commands::cmd_guide(check.as_deref(), out),
-        Command::Mcp { workers } => mcp::serve(cwd, workers),
+        Command::Mcp { workers, tools } => mcp::serve(cwd, workers, tools),
         Command::Install {
             dry_run,
             uninstall,

@@ -467,6 +467,31 @@ pub fn doctor(home: &Path, only: Option<&str>, codex_home: Option<&Path>) -> Res
             if status.is_ok() { "healthy" } else { "failed" },
             status.err().map(|e| format!("{e:#}")),
         ));
+        if matches!(agent.name, "codex" | "cursor") {
+            let additional = agent.marker.join("skills/codeq/SKILL.md");
+            if additional != agent.skill && additional.symlink_metadata().is_ok() {
+                let status = (|| -> Result<()> {
+                    let bytes = std::fs::read(&additional)?;
+                    if bytes != SKILL.as_bytes() {
+                        bail!(
+                            "additional guide differs from this binary's bundled guide; \
+                             check with codeq guide --check {}. Update or remove this copy \
+                             manually; codeq install manages {}",
+                            additional.display(),
+                            agent.skill.display()
+                        );
+                    }
+                    Ok(())
+                })();
+                out.push(Action::new(
+                    &agent,
+                    "additional-skill",
+                    &additional,
+                    if status.is_ok() { "healthy" } else { "failed" },
+                    status.err().map(|e| format!("{e:#}")),
+                ));
+            }
+        }
     }
     Ok(out)
 }

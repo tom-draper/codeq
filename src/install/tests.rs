@@ -1,6 +1,42 @@
 use super::*;
 use serde_json::Value;
 
+#[test]
+fn doctor_reports_additional_guides_without_changing_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let custom_codex = dir.path().join("custom-codex");
+    let path = custom_codex.join("skills/codeq/SKILL.md");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "outdated agent instructions").unwrap();
+    let actions = doctor(dir.path(), Some("codex"), Some(&custom_codex)).unwrap();
+    let additional = actions
+        .iter()
+        .find(|a| a.what == "additional-skill")
+        .unwrap();
+    assert!(additional.failed());
+    assert_eq!(additional.config, path.to_string_lossy());
+    assert!(additional
+        .note
+        .as_ref()
+        .unwrap()
+        .contains("Update or remove this copy manually"));
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "outdated agent instructions"
+    );
+
+    std::fs::write(&path, SKILL).unwrap();
+    let actions = doctor(dir.path(), Some("codex"), Some(&custom_codex)).unwrap();
+    assert_eq!(
+        actions
+            .iter()
+            .find(|a| a.what == "additional-skill")
+            .unwrap()
+            .action,
+        "healthy"
+    );
+}
+
 fn opts(bin: &str) -> Options {
     Options {
         dry_run: false,

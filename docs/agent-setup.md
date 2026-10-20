@@ -112,3 +112,51 @@ The host's configuration format determines how you set the working directory.
 Query tools have names such as `codeq_map`, `codeq_explore`, and `codeq_read`.
 They return the CLI's compact text with diagnostic notes appended. Use the CLI
 with `--json` when you need structured results for a script.
+
+## Choose the MCP tool set
+
+`codeq mcp` exposes all query tools by default. To offer only routine navigation
+tools, set the server's arguments to `["mcp", "--tools", "core"]` and restart it.
+The core profile includes `map`, `tree`, `search`, `symbols`, `definitions`,
+`explore`, `read`, `callers`, `callees`, `api`, `deps`, and `tests`.
+
+Use `--tools all` for advanced tools such as `astgrep`, `affected`, and `context`.
+The core profile rejects calls to tools it does not advertise. All commands
+remain available through the CLI. MCP initialization includes brief query
+guidance; `codeq guide` prints the full guide bundled with the running executable.
+
+Compare profiles with the live agent evaluation:
+
+```sh
+python3 bench/agent_eval.py --codeq-tools core --dry-run
+python3 bench/agent_eval.py --codeq-tools all --dry-run
+```
+
+The dry run checks setup without model calls. Remove `--dry-run` to evaluate
+task completion with a configured Claude Code installation.
+
+## MCP queries and cancellation
+
+The MCP server runs queries in process, reusing repository connections and
+caches. Every query checks freshness. Edits and index refreshes from other
+processes invalidate cached results.
+
+The default is four query workers, each with its own connection. Set
+`--workers 1` for sequential query execution, or choose up to 16 workers.
+Ping and tool discovery remain responsive while queries run. Responses can
+arrive out of order; match them by request ID. JSON-RPC batches return one array
+after their requests finish.
+
+The queue holds at most 32 waiting queries. If it is full, the server returns an
+error asking the client to retry after an active query completes.
+`notifications/cancelled` skips queued work and interrupts active SQLite
+statements. Source scans already in progress can finish internally; their
+cancelled results are discarded. Closing stdin drains accepted requests.
+
+## Check additional guide copies
+
+`codeq doctor` also checks additional guides under `~/.codex/skills/codeq` and
+`~/.cursor/skills/codeq`. A custom `CODEX_HOME` replaces `~/.codex` in this check.
+An outdated copy can give an agent different instructions from the managed guide.
+Doctor reports its path without changing it. Compare it with
+`codeq guide --check <path>`, then update or remove that copy manually.
