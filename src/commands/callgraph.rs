@@ -541,6 +541,18 @@ fn resolve_syntax_call(
             .collect::<HashSet<_>>();
         (!targets.is_empty()).then_some(targets)
     });
+    let pinned = pinned.map(|targets| {
+        let mut reached = targets.clone();
+        for target in targets {
+            reached.extend(
+                graph
+                    .reachable_from(&target)
+                    .into_iter()
+                    .map(str::to_string),
+            );
+        }
+        reached
+    });
     (lookup, pinned)
 }
 
@@ -808,6 +820,15 @@ fn keep_reachable(
 ) -> Result<()> {
     let target_files: HashSet<String> = targets.iter().map(|(p, _, _)| p.clone()).collect();
     let graph = s.dep_graph()?;
+    if target_files
+        .iter()
+        .any(|file| graph.has_unresolved_project_imports(file))
+    {
+        for candidate in out {
+            candidate.via = Some("unresolved-project-import".into());
+        }
+        return Ok(());
+    }
     let mut reach: HashSet<String> = target_files.clone();
     for tf in &target_files {
         for r in graph.reachable_from(tf) {
@@ -1321,6 +1342,8 @@ impl<'a> Resolver<'a> {
         }
         let v = if self.defs.contains(file) {
             "same-file"
+        } else if self.graph.has_unresolved_project_imports(file) {
+            "unresolved-project-import"
         } else {
             let reach = self.graph.reachable_from(file);
             via_of(

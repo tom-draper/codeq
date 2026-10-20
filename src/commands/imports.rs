@@ -220,10 +220,11 @@ pub(crate) fn load_dep_graph(db: &Db) -> Result<deps::Graph> {
         })?;
         rows.collect::<std::result::Result<_, _>>()?
     };
-    Ok(deps::Graph::build(
+    Ok(deps::Graph::build_project(
         files,
         imports,
         go_module_path(db).as_deref(),
+        db.dir.parent().unwrap_or(&db.dir),
     ))
 }
 
@@ -262,6 +263,8 @@ struct ExternalRow {
     /// broken references, not third-party dependencies.
     #[serde(skip_serializing_if = "is_false")]
     broken: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolution_reason: Option<String>,
 }
 
 pub fn cmd_deps(
@@ -293,6 +296,9 @@ pub fn cmd_deps(
             if graph.resolves(&path, &module) {
                 continue;
             }
+            let resolution_reason = graph
+                .unresolved_project_reason(&path, &module)
+                .map(str::to_string);
             let looks_like_a_path = module.starts_with("./")
                 || module.starts_with("../")
                 || lang.as_deref() == Some("markdown");
@@ -302,6 +308,7 @@ pub fn cmd_deps(
                 path,
                 line,
                 broken: looks_like_a_path,
+                resolution_reason,
             });
             entry.importers += 1;
         }

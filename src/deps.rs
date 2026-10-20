@@ -15,6 +15,7 @@
 //! edge. Ambiguity that scoring can't break is reported as multiple edges — a
 //! fact, not a guess.
 
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -81,6 +82,246 @@ pub struct Graph {
     /// Local binding -> source symbol name, when an import binds a named export
     /// (`import { make as m }`). Module aliases have no source symbol here.
     binding_names: HashMap<String, HashMap<String, String>>,
+    unresolved_project_imports: HashMap<String, Vec<(String, String)>>,
+}
+
+#[derive(Default)]
+struct ProjectResolution {
+    aliases: Vec<(String, Vec<String>)>,
+    packages: HashMap<String, (String, Vec<String>)>,
+}
+
+impl ProjectResolution {
+    fn load(root: &Path, paths: &[String]) -> Self {
+        let mut result = Self::default();
+        let config = root.join("tsconfig.json");
+        if let Ok(bytes) = std::fs::read(config) {
+            if let Ok(json) = serde_json::from_slice::<Value>(&bytes) {
+                let base = json
+                    .pointer("/compilerOptions/baseUrl")
+                    .and_then(Value::as_str)
+                    .unwrap_or(".");
+                if let Some(aliases) = json
+                    .pointer("/compilerOptions/paths")
+                    .and_then(Value::as_object)
+                {
+                    for (pattern, targets) in aliases {
+                        let targets: Vec<String> = targets
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                            .map(|target| normalize_path(&Path::new(base).join(target)))
+                            .collect();
+                        if !targets.is_empty() {
+                            result.aliases.push((pattern.clone(), targets));
+                        }
+                    }
+                }
+            }
+        }
+
+        let root_manifest = root.join("package.json");
+        let workspaces = std::fs::read(root_manifest)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .and_then(|json| {
+                json.pointer("/workspaces/packages")
+                    .or_else(|| json.get("workspaces"))
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+            })
+            .unwrap_or_default();
+        for manifest in paths
+            .iter()
+            .filter(|path| path.ends_with("package.json") && path.as_str() != "package.json")
+        {
+            let Some(parent) = Path::new(manifest).parent() else {
+                continue;
+            };
+            let package_root = normalize_path(parent);
+            if !workspaces
+                .iter()
+                .any(|pattern| workspace_match(pattern, &package_root))
+            {
+                continue;
+            }
+            let Some(package) = std::fs::read(root.join(manifest))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            else {
+                continue;
+            };
+            let Some(name) = package
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let entries = ["source", "module", "types", "main"]
+                .iter()
+                .filter_map(|key| package.get(key).and_then(Value::as_str))
+                .map(|entry| normalize_path(&Path::new(&package_root).join(entry)))
+                .collect::<Vec<_>>();
+            result.packages.insert(name, (package_root, entries));
+        }
+        result.aliases.sort_by(|a, b| a.0.cmp(&b.0));
+        result
+    }
+
+    fn targets(
+        &self,
+        module: &str,
+        allow_imported_name: bool,
+        paths: &[String],
+    ) -> Option<Result<Vec<String>, String>> {
+        let mut unresolved_reason = None;
+        for spelling in module_spellings(module, allow_imported_name) {
+            for (pattern, targets) in &self.aliases {
+                let Some(remainder) = wildcard_match(pattern, &spelling) else {
+                    continue;
+                };
+                let resolved: Vec<String> = targets
+                    .iter()
+                    .map(|target| target.replace('*', remainder))
+                    .collect();
+                for target in &resolved {
+                    let candidates = files_at_path(target, paths);
+                    if !candidates.is_empty() {
+                        return Some(Ok(candidates));
+                    }
+                }
+                unresolved_reason = Some(format!(
+                    "TypeScript path alias '{pattern}' matched, but none of [{}] have indexed files",
+                    resolved.join(", ")
+                ));
+                continue;
+            }
+            let package_name = spelling
+                .split('/')
+                .take(if spelling.starts_with('@') { 2 } else { 1 })
+                .collect::<Vec<_>>()
+                .join("/");
+            if let Some((package_root, entries)) = self.packages.get(&package_name) {
+                let subpath = spelling
+                    .strip_prefix(&package_name)
+                    .unwrap_or("")
+                    .trim_start_matches('/');
+                let expected: Vec<String> = if !subpath.is_empty() {
+                    vec![normalize_path(&Path::new(package_root).join(subpath))]
+                } else if !entries.is_empty() {
+                    entries.clone()
+                } else {
+                    vec![
+                        normalize_path(&Path::new(package_root).join("src/index")),
+                        normalize_path(&Path::new(package_root).join("index")),
+                    ]
+                };
+                let candidates = expected
+                    .iter()
+                    .find_map(|target| {
+                        let candidates = files_at_path(target, paths);
+                        (!candidates.is_empty()).then_some(candidates)
+                    })
+                    .unwrap_or_default();
+                if candidates.is_empty() {
+                    unresolved_reason = Some(format!(
+                        "workspace package '{package_name}' matched, but no indexed entry file was found"
+                    ));
+                } else {
+                    return Some(Ok(candidates));
+                }
+            }
+        }
+        if let Some(reason) = unresolved_reason {
+            return Some(Err(reason));
+        }
+        if module.starts_with("@/") || module.starts_with("~/") || module.starts_with("#/") {
+            return Some(Err(format!(
+                "project-style import '{module}' did not match a configured TypeScript path alias"
+            )));
+        }
+        None
+    }
+}
+
+fn normalize_path(path: &Path) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            std::path::Component::ParentDir if parts.last().is_some_and(|part| part != "..") => {
+                parts.pop();
+            }
+            std::path::Component::ParentDir => parts.push("..".into()),
+            std::path::Component::CurDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {}
+        }
+    }
+    parts.join("/")
+}
+
+fn wildcard_match<'a>(pattern: &str, value: &'a str) -> Option<&'a str> {
+    if let Some((prefix, suffix)) = pattern.split_once('*') {
+        value.strip_prefix(prefix)?.strip_suffix(suffix)
+    } else if pattern == value {
+        Some("")
+    } else {
+        None
+    }
+}
+
+fn workspace_match(pattern: &str, path: &str) -> bool {
+    wildcard_match(pattern.trim_end_matches('/'), path).is_some()
+        || pattern.trim_end_matches('/') == path
+}
+
+fn module_spellings(module: &str, allow_imported_name: bool) -> Vec<String> {
+    let mut spellings = vec![module.to_string()];
+    if allow_imported_name || module.starts_with('@') {
+        if let Some((base, _)) = module.rsplit_once('.') {
+            spellings.push(base.to_string());
+        }
+    }
+    spellings
+}
+
+fn files_at_path(expected: &str, paths: &[String]) -> Vec<String> {
+    const EXTENSIONS: &[&str] = &[
+        "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "vue", "svelte", "json",
+    ];
+    let mut candidates: Vec<String> = paths
+        .iter()
+        .filter(|path| {
+            let normalized = expected.trim_start_matches("./");
+            path.as_str() == normalized
+                || EXTENSIONS
+                    .iter()
+                    .any(|ext| path.as_str() == format!("{normalized}.{ext}"))
+                || [
+                    "index.ts",
+                    "index.tsx",
+                    "index.js",
+                    "index.jsx",
+                    "index.mjs",
+                    "index.cjs",
+                ]
+                .iter()
+                .any(|entry| path.as_str() == format!("{normalized}/{entry}"))
+        })
+        .cloned()
+        .collect();
+    candidates.sort();
+    candidates.dedup();
+    candidates
 }
 
 /// Split a module string into candidate path segments. Anything that is not an
@@ -438,6 +679,29 @@ impl Graph {
         F: IntoIterator<Item = String>,
         I: IntoIterator<Item = (String, String, Option<String>, bool)>,
     {
+        Self::build_inner(files, imports, go_module, None)
+    }
+
+    pub fn build_project(
+        files: Vec<String>,
+        imports: Vec<(String, String, Option<String>, bool)>,
+        go_module: Option<&str>,
+        root: &Path,
+    ) -> Graph {
+        let project = ProjectResolution::load(root, &files);
+        Self::build_inner(files, imports, go_module, Some(project))
+    }
+
+    fn build_inner<F, I>(
+        files: F,
+        imports: I,
+        go_module: Option<&str>,
+        project: Option<ProjectResolution>,
+    ) -> Graph
+    where
+        F: IntoIterator<Item = String>,
+        I: IntoIterator<Item = (String, String, Option<String>, bool)>,
+    {
         // stem -> files with that stem (usually one; more when names collide).
         let paths: Vec<String> = files.into_iter().collect();
         let mut by_stem: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -481,6 +745,7 @@ impl Graph {
         let mut edges: HashMap<String, Vec<Edge>> = HashMap::new();
         let mut bindings: HashMap<String, HashMap<String, HashSet<String>>> = HashMap::new();
         let mut binding_names: HashMap<String, HashMap<String, String>> = HashMap::new();
+        let mut unresolved_project_imports: HashMap<String, Vec<(String, String)>> = HashMap::new();
         // Every importing file gets an entry (even if all imports are external),
         // so a file with only external deps is still a known node.
         for p in &paths {
@@ -491,6 +756,40 @@ impl Graph {
             // `express.js`: unlike Python, Node's bare specifiers are packages
             // or built-ins. Relative paths retain the ordinary file resolver.
             if uses_node_resolution(&from) && !module.starts_with('.') {
+                if let Some(project) = &project {
+                    match project.targets(&module, allow_imported_name, &paths) {
+                        Some(Ok(targets)) => {
+                            for target in targets {
+                                edges.entry(from.clone()).or_default().push(Edge {
+                                    to: target.clone(),
+                                    module: module.clone(),
+                                    exact: true,
+                                });
+                                if let Some(binding) = &binding {
+                                    bindings
+                                        .entry(from.clone())
+                                        .or_default()
+                                        .entry(binding.clone())
+                                        .or_default()
+                                        .insert(target.clone());
+                                    if let Some(name) = segments(&module).last() {
+                                        binding_names
+                                            .entry(from.clone())
+                                            .or_default()
+                                            .insert(binding.clone(), (*name).to_string());
+                                    }
+                                }
+                            }
+                        }
+                        Some(Err(reason)) => {
+                            unresolved_project_imports
+                                .entry(from.clone())
+                                .or_default()
+                                .push((module.clone(), reason));
+                        }
+                        None => {}
+                    }
+                }
                 continue;
             }
             // Go's module path is enough to resolve an internal package exactly.
@@ -648,7 +947,22 @@ impl Graph {
             edges,
             bindings,
             binding_names,
+            unresolved_project_imports,
         }
+    }
+
+    pub fn unresolved_project_reason(&self, from: &str, module: &str) -> Option<&str> {
+        self.unresolved_project_imports
+            .get(from)?
+            .iter()
+            .find(|(candidate, _)| candidate == module)
+            .map(|(_, reason)| reason.as_str())
+    }
+
+    pub fn has_unresolved_project_imports(&self, from: &str) -> bool {
+        self.unresolved_project_imports
+            .get(from)
+            .is_some_and(|imports| !imports.is_empty())
     }
 
     /// Whether `file` is a known node in the graph.
@@ -1041,7 +1355,12 @@ mod tests {
             "main.go",
             "a\\b\\c.py",
         ];
-        let froms = ["src/main.rs", "pkg/sub/mod.py", "templates/blog/post.html", "x.py"];
+        let froms = [
+            "src/main.rs",
+            "pkg/sub/mod.py",
+            "templates/blog/post.html",
+            "x.py",
+        ];
         let modules = [
             "crate::db",
             "crate::util",

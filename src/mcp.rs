@@ -608,7 +608,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_deps",
-        "Internal files a file depends on, resolved from their imports. Go imports under the module declared in go.mod resolve to their package directory exactly; other languages use deterministic path-stem heuristics. Pass file, cycles=true, or external=true — calling with none of them is an error. depth (default 1) walks transitive dependencies. cycles=true reports every import cycle in the repo instead (omit file). external=true instead lists imports that resolve to no file in the repo: the third-party dependency list, plus broken local references (a markdown link or ./path pointing at nothing) flagged broken=true.",
+        "Internal files a file depends on, resolved from imports. TypeScript paths aliases, npm workspace packages, and Go module packages use project configuration; relative imports use their written paths. Other languages use deterministic path matching. Pass file, cycles=true, or external=true. depth (default 1) walks transitive dependencies. external=true lists third-party imports and broken local paths. Project-style imports that could not be resolved include a resolution_reason.",
     ),
     (
         "codeq_astgrep",
