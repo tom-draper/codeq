@@ -5591,11 +5591,12 @@ fn mcp_treats_flag_like_arguments_as_literals() {
         }
     }
     let out = child.wait_with_output().unwrap();
-    let msgs: Vec<Value> = String::from_utf8(out.stdout)
+    let mut msgs: Vec<Value> = String::from_utf8(out.stdout)
         .unwrap()
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
+    msgs.sort_by_key(|message| message["id"].as_u64());
     assert_eq!(msgs.len(), 4, "{msgs:?}");
 
     // `--json` is searched for literally, and finds the comment.

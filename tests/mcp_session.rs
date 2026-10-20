@@ -15,8 +15,18 @@ struct Server {
 
 impl Server {
     fn new(root: &Path) -> Self {
+        Self::with_workers(root, 1)
+    }
+
+    fn with_workers(root: &Path, workers: u8) -> Self {
         let mut child = Command::new(assert_cmd::cargo::cargo_bin!("codeq"))
-            .args(["--root", root.to_str().unwrap(), "mcp"])
+            .args([
+                "--root",
+                root.to_str().unwrap(),
+                "mcp",
+                "--workers",
+                &workers.to_string(),
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -39,6 +49,16 @@ impl Server {
             replies,
             next_id: 0,
         }
+    }
+
+    fn send(&mut self, value: Value) {
+        writeln!(self.input.as_mut().unwrap(), "{value}").unwrap();
+    }
+
+    fn receive(&self) -> Value {
+        self.replies
+            .recv_timeout(Duration::from_secs(30))
+            .expect("MCP response")
     }
 
     fn call(&mut self, name: &str, arguments: Value) -> String {
@@ -173,4 +193,125 @@ fn schema_rebuild_is_reported_once_and_does_not_end_the_session() {
         text.contains("target") && !text.contains("schema changed"),
         "{text}"
     );
+}
+
+#[test]
+fn cheap_requests_progress_during_a_blocked_query_and_cancellation_is_silent() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("sample.rs");
+    std::fs::write(&file, "fn before() {}\n").unwrap();
+    let mut server = Server::with_workers(dir.path(), 2);
+    server.call("codeq_definitions", json!({"symbol": "before"}));
+    let db = rusqlite::Connection::open(dir.path().join(".codeq/index.db")).unwrap();
+    db.execute_batch("BEGIN IMMEDIATE").unwrap();
+    std::fs::write(&file, "fn after() {}\n").unwrap();
+    server.send(json!({"jsonrpc":"2.0","id":41,"method":"tools/call",
+        "params":{"name":"codeq_search","arguments":{"pattern":"after"}}}));
+    server.send(json!({"jsonrpc":"2.0","id":42,"method":"tools/call",
+        "params":{"name":"codeq_capabilities","arguments":{}}}));
+    server.send(json!({"jsonrpc":"2.0","id":43,"method":"ping"}));
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let reply = server.receive();
+        assert!(reply.get("error").is_none(), "{reply}");
+        assert_ne!(reply["result"]["isError"], true, "{reply}");
+        ids.push(reply["id"].as_u64().unwrap());
+    }
+    ids.sort();
+    assert_eq!(ids, [42, 43]);
+    server.send(
+        json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":41}}),
+    );
+    server.send(json!({"jsonrpc":"2.0","id":44,"method":"ping"}));
+    assert_eq!(server.receive()["id"], 44);
+    db.execute_batch("ROLLBACK").unwrap();
+    server.next_id = 44;
+    assert!(server
+        .call("codeq_definitions", json!({"symbol":"after"}))
+        .contains("fn after()"));
+}
+
+#[test]
+fn batches_preserve_ids_and_errors_without_replying_to_notifications() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("sample.rs"), "fn target() {}\n").unwrap();
+    let mut server = Server::with_workers(dir.path(), 2);
+    server.send(json!([
+        {"jsonrpc":"2.0","id":"definition","method":"tools/call","params":{"name":"codeq_definitions","arguments":{"symbol":"target"}}},
+        {"jsonrpc":"2.0","method":"notifications/initialized"},
+        {"jsonrpc":"2.0","id":"invalid","method":"tools/call","params":{"name":"codeq_read","arguments":{"file":"missing.rs"}}},
+        {"jsonrpc":"2.0","id":"ping","method":"ping"}
+    ]));
+    let reply = server.receive();
+    let batch = reply.as_array().unwrap();
+    assert_eq!(batch.len(), 3, "{reply}");
+    let find = |id| batch.iter().find(|v| v["id"] == id).unwrap();
+    assert!(find("definition")["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("fn target()"));
+    assert_eq!(find("invalid")["result"]["isError"], true);
+    assert_eq!(find("ping")["result"], json!({}));
+    assert!(server
+        .call("codeq_definitions", json!({"symbol":"target"}))
+        .contains("fn target()"));
+}
+
+#[test]
+fn bounded_queue_rejects_overload_and_cancelled_jobs_do_not_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("sample.rs");
+    std::fs::write(&file, "fn before() {}\n").unwrap();
+    let mut server = Server::new(dir.path());
+    server.call("codeq_map", json!({"totals":true}));
+    let db = rusqlite::Connection::open(dir.path().join(".codeq/index.db")).unwrap();
+    db.execute_batch("BEGIN IMMEDIATE").unwrap();
+    std::fs::write(&file, "fn after() {}\n").unwrap();
+    for id in 10..80 {
+        server.send(
+            json!({"jsonrpc":"2.0","id":id,"method":"tools/call", "params":{
+            "name":"codeq_definitions","arguments":{"symbol":"after"}}}),
+        );
+    }
+    server.send(json!({"jsonrpc":"2.0","id":100,"method":"ping"}));
+    let mut rejected = 0;
+    loop {
+        let reply = server.receive();
+        if reply["id"] == 100 {
+            break;
+        }
+        assert_eq!(reply["error"]["code"], -32000, "{reply}");
+        assert!(reply["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("queue is full"));
+        rejected += 1;
+    }
+    assert!(rejected > 0);
+    for id in 10..80 {
+        server.send(
+            json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":id}}),
+        );
+    }
+    server.send(json!({"jsonrpc":"2.0","id":101,"method":"ping"}));
+    assert_eq!(server.receive()["id"], 101);
+    db.execute_batch("ROLLBACK").unwrap();
+    for id in 102..202 {
+        server.send(
+            json!({"jsonrpc":"2.0","id":id,"method":"tools/call", "params":{
+            "name":"codeq_definitions","arguments":{"symbol":"after"}}}),
+        );
+        let reply = server.receive();
+        assert_eq!(reply["id"], id, "cancelled job replied: {reply}");
+        if reply["error"]["code"] == -32000 {
+            std::thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+        assert!(reply["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("fn after()"));
+        return;
+    }
+    panic!("queue did not recover after cancellation");
 }

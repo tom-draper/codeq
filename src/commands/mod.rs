@@ -137,6 +137,7 @@ pub fn pin_root() {
 
 impl Session {
     fn open(cwd: &Path, rebuild: bool, out: Out) -> Result<Session> {
+        crate::mcp::check_cancelled()?;
         let started = Instant::now();
         let repo = Repo::at(cwd, PINNED_ROOT.load(std::sync::atomic::Ordering::Relaxed))?;
         let (resources, rebuilt_from_schema) = QUERY_SESSION.with(|slot| -> Result<_> {
@@ -165,6 +166,8 @@ impl Session {
             *slot = Some(resources.clone());
             Ok((resources, rebuilt_from_schema))
         })?;
+        crate::mcp::attach_connection(&resources.db.conn);
+        crate::mcp::check_cancelled()?;
         if rebuild {
             resources.db.conn.execute("DELETE FROM files", [])?; // cascades to facts
             resources.db.reset_fts()?;
@@ -174,6 +177,7 @@ impl Session {
             resources.db.conn.execute("DELETE FROM dirs", [])?;
         }
         let stats = refresh(&resources.db, &resources.repo)?;
+        crate::mcp::check_cancelled()?;
         if resources.generation.get() != stats.generation || rebuild {
             resources.invalidate(stats.generation);
         }
