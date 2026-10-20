@@ -124,32 +124,38 @@ impl<T: Serialize> Envelope<T> {
             && r.fields.is_none()
             && !r.max_per_file.is_some_and(|n| n > 0)
             && self.overflow.is_empty()
-            && sequence::is_sequence(&self.data)
         {
-            #[derive(Serialize)]
-            struct Direct<'a, T> {
-                schema: &'static str,
-                #[serde(skip_serializing_if = "Option::is_none")]
-                note: Option<&'a str>,
-                #[serde(skip_serializing_if = "Option::is_none")]
-                repo: Option<&'a RepoMeta>,
-                #[serde(skip_serializing_if = "Option::is_none")]
-                index: Option<&'a IndexMeta>,
-                rows: &'static str,
-                data: &'a T,
+            if let Some(shape) = sequence::shape(&self.data) {
+                #[derive(Serialize)]
+                struct Direct<'a, T> {
+                    schema: &'static str,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    note: Option<&'a str>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    repo: Option<&'a RepoMeta>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    index: Option<&'a IndexMeta>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    rows: Option<String>,
+                    data: &'a T,
+                }
+                let meta = r.includes_meta(&self.index);
+                return print_json(
+                    &Direct {
+                        schema: RESULT_SCHEMA,
+                        note: self.note.as_deref(),
+                        repo: meta.then_some(&self.repo),
+                        index: meta.then_some(&self.index),
+                        rows: match shape {
+                            sequence::Shape::Array => Some("data".into()),
+                            sequence::Shape::Object(rows) => rows,
+                            sequence::Shape::Scalar => None,
+                        },
+                        data: &self.data,
+                    },
+                    r.pretty,
+                );
             }
-            let meta = r.includes_meta(&self.index);
-            return print_json(
-                &Direct {
-                    schema: RESULT_SCHEMA,
-                    note: self.note.as_deref(),
-                    repo: meta.then_some(&self.repo),
-                    index: meta.then_some(&self.index),
-                    rows: "data",
-                    data: &self.data,
-                },
-                r.pretty,
-            );
         }
         let mut data = serde_json::to_value(&self.data)?;
 

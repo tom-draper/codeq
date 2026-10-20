@@ -1,0 +1,435 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    1.18603515625,
+    1.70361328125,
+    1.7353515625
+  ],
+  "runs": 7,
+  "binary_sha256": {
+    "before": "821e454ba3f7c5f7029cb57496d19fb9a4c2d42716d0cdfc9917f8467cc7e39c",
+    "after": "8c7bd04c2517e90d93fe0df806d69fe34bf6b6f4761178eefedf0a53ac932a5f"
+  },
+  "limits": "Warm whole CLI process. Linux wait4 peak RSS is measured separately through a fresh small interpreter, avoiding the benchmark driver RSS floor at fork. Output is redirected to temporary files. Only index.elapsed_ms is normalized for meta/pretty output parity.",
+  "source_sha256": {
+    "src/envelope.rs": "3d859106103d4ae2f8519eec11c5340043c919af2a9195c45f976fde7f2a28bf",
+    "src/envelope/sequence.rs": "f4e584e00c62968f6e2aa8a7e765b9c01ecf2aa7cacd16f8413e9354dbecf977",
+    "bench/structured_json.py": "e3761ef28cdd21868a50fcfcf8cfc3c1719301fb850a323a96666d4b03cfc18c"
+  },
+  "revision": "aba6e816845e6858e79d9fded94b125a6a2f5776",
+  "workloads": {
+    "compact": {
+      "command": [
+        "--json",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 7914539,
+      "answer_sha256": "d2fa07891b3fd03c9d32c7332c95eb252468f09089551168b4099385b5ac490d",
+      "samples_ms": {
+        "before": [
+          83.177417,
+          82.809986,
+          82.452963,
+          84.179715,
+          81.835839,
+          82.740151,
+          82.673723
+        ],
+        "after": [
+          51.569471,
+          51.99683,
+          52.701278,
+          53.294478,
+          50.39385,
+          50.597499,
+          50.546275
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 63640,
+        "after": 35844
+      },
+      "median_ms": {
+        "before": 82.740151,
+        "after": 51.569471
+      }
+    },
+    "pretty": {
+      "command": [
+        "--pretty",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 10134722,
+      "answer_sha256": "b881b177426a64e5166ea85aa2aaf725c9142cab448b04cd2c1d461447ac615d",
+      "samples_ms": {
+        "before": [
+          89.915241,
+          90.185687,
+          89.58186,
+          89.151119,
+          89.941402,
+          89.031483,
+          89.44356
+        ],
+        "after": [
+          56.004118,
+          56.695315,
+          56.796408,
+          56.364194,
+          56.585125,
+          56.240243,
+          57.128147
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 63092,
+        "after": 36524
+      },
+      "median_ms": {
+        "before": 89.58186,
+        "after": 56.585125
+      }
+    },
+    "fields": {
+      "command": [
+        "--json",
+        "--fields",
+        "path,line,missing",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 1014644,
+      "answer_sha256": "29341a23cd1f53c5a5c254caf01f2ec507b1f897f50067fe8bd9f8cf28544030",
+      "samples_ms": {
+        "before": [
+          84.780443,
+          84.658144,
+          84.873897,
+          85.041925,
+          84.569208,
+          83.046075,
+          83.605889
+        ],
+        "after": [
+          85.647149,
+          84.49082,
+          84.399659,
+          84.140001,
+          84.415936,
+          85.428059,
+          85.065707
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 63240,
+        "after": 63156
+      },
+      "median_ms": {
+        "before": 84.658144,
+        "after": 84.49082
+      }
+    },
+    "capped": {
+      "command": [
+        "--json",
+        "--max-per-file",
+        "2",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 2,
+      "stdout_bytes": 661,
+      "answer_sha256": "62e8069711cc3f4f12f4e12e75916b82c9f3b7b5c916dd00605feb5e28c89c58",
+      "samples_ms": {
+        "before": [
+          22.571513,
+          22.279654,
+          22.910296,
+          22.827595,
+          22.422314,
+          22.54436,
+          22.601961
+        ],
+        "after": [
+          22.901588,
+          22.307534,
+          23.06487,
+          22.635064,
+          22.626899,
+          22.626728,
+          22.608864
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 21624,
+        "after": 21500
+      },
+      "median_ms": {
+        "before": 22.571513,
+        "after": 22.626899
+      }
+    },
+    "group": {
+      "command": [
+        "--json",
+        "--group",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 7914539,
+      "answer_sha256": "d2fa07891b3fd03c9d32c7332c95eb252468f09089551168b4099385b5ac490d",
+      "samples_ms": {
+        "before": [
+          83.362212,
+          83.722807,
+          83.597227,
+          83.188956,
+          82.474216,
+          83.499469,
+          83.752696
+        ],
+        "after": [
+          50.445005,
+          51.44886,
+          54.126732,
+          50.735116,
+          50.790499,
+          51.425639,
+          50.740915
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 63224,
+        "after": 36116
+      },
+      "median_ms": {
+        "before": 83.499469,
+        "after": 50.790499
+      }
+    },
+    "text": {
+      "command": [
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": null,
+      "stdout_bytes": 5994449,
+      "answer_sha256": "1bc751176206046b4715c1e3fb587f4da14267b9315eae41cb73f2320b69c421",
+      "samples_ms": {
+        "before": [
+          111.124965,
+          113.528112,
+          113.738775,
+          112.326494,
+          112.263755,
+          112.755721,
+          111.099337
+        ],
+        "after": [
+          112.76272,
+          111.289694,
+          110.971522,
+          111.158547,
+          111.196382,
+          111.96262,
+          111.242287
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 63220,
+        "after": 63152
+      },
+      "median_ms": {
+        "before": 112.326494,
+        "after": 111.242287
+      }
+    },
+    "array": {
+      "command": [
+        "--json",
+        "symbols",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 3228946,
+      "answer_sha256": "9c5d80d830fc744ef764bc4d22232051fcbaa8485f3e1fabc9391e2136a37e2a",
+      "samples_ms": {
+        "before": [
+          39.960069,
+          39.847159,
+          40.484251,
+          40.895454,
+          40.463439,
+          41.004235,
+          40.671103
+        ],
+        "after": [
+          40.998245,
+          41.435868,
+          41.70872,
+          41.721335,
+          41.47398,
+          41.93127,
+          40.869271
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 18908,
+        "after": 18840
+      },
+      "median_ms": {
+        "before": 40.484251,
+        "after": 41.47398
+      }
+    },
+    "batch": {
+      "command": [
+        "--json",
+        "about",
+        "item00000",
+        "item00001"
+      ],
+      "rows": null,
+      "stdout_bytes": 572,
+      "answer_sha256": "4f44bd6079cde2461c71e27e041261118d85ffd80282db5da716d24f5829b7f9",
+      "samples_ms": {
+        "before": [
+          103.507533,
+          104.410557,
+          103.536164,
+          104.67277,
+          104.199857,
+          104.252897,
+          103.624036
+        ],
+        "after": [
+          104.714624,
+          104.591595,
+          104.542346,
+          105.225007,
+          104.336259,
+          104.890772,
+          105.424753
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 22664,
+        "after": 22808
+      },
+      "median_ms": {
+        "before": 104.199857,
+        "after": 104.714624
+      }
+    },
+    "nested": {
+      "command": [
+        "--json",
+        "map",
+        "--totals"
+      ],
+      "rows": null,
+      "stdout_bytes": 205,
+      "answer_sha256": "2e301afd24c56509100d2b3bda9e8b7ebcf56a73fc168856aabb5d1ce9c693c9",
+      "samples_ms": {
+        "before": [
+          20.805279,
+          20.685521,
+          20.850608,
+          20.976856,
+          20.794885,
+          20.989002,
+          20.768903
+        ],
+        "after": [
+          20.832017,
+          20.889946,
+          20.678369,
+          20.882687,
+          20.739589,
+          20.680042,
+          20.965273
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 14804,
+        "after": 14772
+      },
+      "median_ms": {
+        "before": 20.805279,
+        "after": 20.832017
+      }
+    },
+    "meta": {
+      "command": [
+        "--json",
+        "--meta",
+        "search",
+        "return",
+        "--limit",
+        "0"
+      ],
+      "rows": 30000,
+      "stdout_bytes": 7914645,
+      "answer_sha256": "834d97d448ef096e152864e9e5c5cc0ca621354fd89e90aaf53e547cbac1e2ae",
+      "samples_ms": {
+        "before": [
+          84.837684,
+          84.31859,
+          84.571109,
+          83.676961,
+          83.685038,
+          83.735422,
+          83.538239
+        ],
+        "after": [
+          51.424978,
+          51.138576,
+          50.924488,
+          52.22905,
+          52.070618,
+          51.417556,
+          51.138332
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 63204,
+        "after": 36484
+      },
+      "median_ms": {
+        "before": 83.735422,
+        "after": 51.417556
+      }
+    }
+  },
+  "broken_pipe": "Both JSON modes terminate with SIGPIPE and empty stderr on both binaries",
+  "fixture": {
+    "rows": 30000,
+    "bytes": 5730000
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    1.14404296875,
+    1.66845703125,
+    1.72265625
+  ]
+}
