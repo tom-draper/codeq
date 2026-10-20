@@ -1395,6 +1395,48 @@ struct AffectedResult {
     truncated: bool,
 }
 
+fn resolve_impact_lines(s: &Session, impacted: &mut [ImpactNode]) -> Result<()> {
+    let mut by_file: BTreeMap<&str, HashMap<&str, Vec<usize>>> = BTreeMap::new();
+    for (i, node) in impacted.iter().enumerate() {
+        by_file
+            .entry(&node.path)
+            .or_default()
+            .entry(&node.name)
+            .or_default()
+            .push(i);
+    }
+    let paths: Vec<_> = by_file.keys().copied().collect();
+    let mut lines = vec![None; impacted.len()];
+    for chunk in paths.chunks(64) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            "SELECT path, name, MIN(start_line) FROM facts
+             WHERE path IN ({placeholders}) AND kind <> 'import' GROUP BY path, name"
+        );
+        let mut stmt = s.db.conn.prepare(&sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(chunk))?;
+        while let Some(row) = rows.next()? {
+            let path = row.get_ref(0)?.as_str()?;
+            let Some(name) = row.get_ref(1)?.as_str_or_null()? else {
+                continue;
+            };
+            if let Some(indices) = by_file[path].get(name) {
+                let line: i64 = row.get(2)?;
+                for &i in indices {
+                    lines[i] = Some(line);
+                }
+            }
+        }
+    }
+    for (node, line) in impacted.iter_mut().zip(lines) {
+        node.line = line.or(node.call_line).unwrap_or(0);
+        if node.call_line == Some(node.line) {
+            node.call_line = None;
+        }
+    }
+    Ok(())
+}
+
 /// `affected --compare-to <ref>` — for a diff: the definitions it touched, their
 /// transitive callers (the impacted set), and the tests exercising any of them —
 /// "what should I re-check and re-run for this change". Composes `changed
@@ -1454,26 +1496,7 @@ pub fn cmd_affected(
             break;
         }
     }
-    // Resolve each impacted row to the *definition's* line. One statement reused
-    // across the rows rather than a query per hop; a row whose definition cannot
-    // be found in its own file falls back to the call site, which is still a real
-    // position in the right file.
-    {
-        let mut stmt = s.db.conn.prepare(
-            "SELECT MIN(start_line) FROM facts
-             WHERE name = ?1 AND path = ?2 AND kind <> 'import'",
-        )?;
-        for node in &mut impacted {
-            let def: Option<i64> = stmt
-                .query_row((&node.name, &node.path), |r| r.get(0))
-                .unwrap_or(None);
-            node.line = def.or(node.call_line).unwrap_or(0);
-            // Nothing to add when the impact enters at the declaration itself.
-            if node.call_line == Some(node.line) {
-                node.call_line = None;
-            }
-        }
-    }
+    resolve_impact_lines(&s, &mut impacted)?;
     impacted.sort_by(|a, b| {
         a.depth
             .cmp(&b.depth)
@@ -1545,5 +1568,70 @@ mod resolver_tests {
         assert_eq!(right.len(), 1);
         assert_eq!(right[0].name, "leaf");
         assert_eq!(LOOKUPS.load(Ordering::Relaxed), 1);
+    }
+}
+
+#[cfg(test)]
+mod impact_line_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static LOOKUPS: AtomicUsize = AtomicUsize::new(0);
+
+    fn count_lookup(sql: &str) {
+        if sql.contains("SELECT path, name, MIN(start_line)") {
+            LOOKUPS.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn resolves_each_file_once_and_preserves_missing_and_duplicate_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut nodes = Vec::new();
+        for i in 0..130 {
+            let path = format!("source{i:03}.py");
+            std::fs::write(
+                dir.path().join(&path),
+                "from external import run\ndef run(): pass\ndef run(): pass\n",
+            )
+            .unwrap();
+            nodes.push(ImpactNode {
+                name: "run".into(),
+                kind: None,
+                path,
+                line: 0,
+                call_line: Some(if i % 2 == 0 { 2 } else { 3 }),
+                depth: 1,
+            });
+        }
+        nodes.push(ImpactNode {
+            name: "missing".into(),
+            kind: None,
+            path: "source000.py".into(),
+            line: 0,
+            call_line: Some(9),
+            depth: 1,
+        });
+        nodes.push(ImpactNode {
+            name: "missing".into(),
+            kind: None,
+            path: "source000.py".into(),
+            line: 0,
+            call_line: None,
+            depth: 1,
+        });
+        let mut session = Session::open(dir.path(), false, Out::default()).unwrap();
+        session.db.conn.trace(Some(count_lookup));
+        LOOKUPS.store(0, Ordering::Relaxed);
+        resolve_impact_lines(&session, &mut nodes).unwrap();
+        assert_eq!(LOOKUPS.load(Ordering::Relaxed), 3);
+        for (i, node) in nodes[..130].iter().enumerate() {
+            assert_eq!(node.line, 2);
+            assert_eq!(node.call_line, (i % 2 == 1).then_some(3));
+        }
+        assert_eq!((nodes[130].line, nodes[130].call_line), (9, None));
+        assert_eq!((nodes[131].line, nodes[131].call_line), (0, None));
+        resolve_impact_lines(&session, &mut []).unwrap();
+        assert_eq!(LOOKUPS.load(Ordering::Relaxed), 3);
     }
 }

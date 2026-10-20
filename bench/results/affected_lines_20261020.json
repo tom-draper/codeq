@@ -1,0 +1,154 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "runs": 7,
+  "load_before": [
+    1.52734375,
+    2.02587890625,
+    1.822265625
+  ],
+  "revision": "aba6e816845e6858e79d9fded94b125a6a2f5776",
+  "binary_sha256": {
+    "before": "821e454ba3f7c5f7029cb57496d19fb9a4c2d42716d0cdfc9917f8467cc7e39c",
+    "after": "7ec264bf017db020f492cab6c860d7d3494022af7f5e50c95a9a9102e38853d0"
+  },
+  "source_sha256": {
+    "src/commands/callgraph.rs": "a6716c99b7217de830932697468a064cf80f8fc8b578f5971a6b52ce2323a667",
+    "bench/affected_lines.py": "6e8d5dbaff19a2d645e011a95d4beaae07d89f93c804d0b5982b87c047e5a98b"
+  },
+  "limits": "Warm whole CLI queries, including freshness checks and rendering. Filesystem caches warm. Repeated alternating runs; peak RSS measured separately. Exact stdout and stderr compared.",
+  "workloads": {
+    "repeated_names": {
+      "command": [
+        "--json",
+        "affected",
+        "--compare-to",
+        "HEAD",
+        "--depth",
+        "1",
+        "--limit",
+        "0"
+      ],
+      "impacted_rows": 1200,
+      "samples_ms": {
+        "before": [
+          48.068024,
+          71.111993,
+          48.936558,
+          49.653903,
+          47.605471,
+          51.234713,
+          49.676106
+        ],
+        "after": [
+          46.733801,
+          46.401536,
+          67.540385,
+          47.31165,
+          46.420024,
+          45.98837,
+          46.968822
+        ]
+      },
+      "median_ms": {
+        "before": 49.653903,
+        "after": 46.733801
+      },
+      "peak_rss_kib": {
+        "before": 14944,
+        "after": 14968
+      },
+      "answer_sha256": "80d171e6515b1716ec444a06357894487f7098044d052a12db416de58c587fd9"
+    },
+    "shared_file": {
+      "command": [
+        "--json",
+        "affected",
+        "--compare-to",
+        "HEAD",
+        "--depth",
+        "1",
+        "--limit",
+        "0"
+      ],
+      "impacted_rows": 1200,
+      "samples_ms": {
+        "before": [
+          190.595253,
+          244.128365,
+          195.890104,
+          184.819496,
+          182.578659,
+          181.82255,
+          180.941176
+        ],
+        "after": [
+          79.706882,
+          74.908354,
+          64.0186,
+          62.636363,
+          62.793436,
+          62.62717,
+          62.930237
+        ]
+      },
+      "median_ms": {
+        "before": 184.819496,
+        "after": 62.930237
+      },
+      "peak_rss_kib": {
+        "before": 14776,
+        "after": 14776
+      },
+      "answer_sha256": "f6350a6b7333b2878e54c1a4553f878c65bfdc5a3e4be3b17ecf400b56469374"
+    },
+    "small": {
+      "command": [
+        "--json",
+        "affected",
+        "--compare-to",
+        "HEAD",
+        "--depth",
+        "1",
+        "--limit",
+        "0"
+      ],
+      "impacted_rows": 3,
+      "samples_ms": {
+        "before": [
+          6.85726,
+          7.036669,
+          6.905573,
+          7.542514,
+          7.49124,
+          7.513441,
+          7.574207
+        ],
+        "after": [
+          6.94341,
+          6.922988,
+          7.180379,
+          7.466867,
+          7.404559,
+          7.553501,
+          7.736748
+        ]
+      },
+      "median_ms": {
+        "before": 7.49124,
+        "after": 7.404559
+      },
+      "peak_rss_kib": {
+        "before": 14808,
+        "after": 14772
+      },
+      "answer_sha256": "a9e0883ad23a94b579552e912cbba93f86f1ad598e99501fb0956e8703230c29"
+    }
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    1.52734375,
+    2.02587890625,
+    1.822265625
+  ]
+}
