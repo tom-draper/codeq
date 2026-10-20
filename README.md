@@ -51,6 +51,11 @@ codeq explore language_for --path src/index.rs
 The result includes its definition, callers, callees, and source, plus imports
 from the definition's file. Source has an approximate token budget, with a
 list of anything omitted. Use `--max-tokens 8000` when you need more context.
+The full response has its own `--max-response-tokens` budget. If
+`response.next_cursor` is present, pass it with `--cursor` to fetch the next
+page. A changed result invalidates the cursor. If `response.minimum_next_tokens`
+is present, raise the response budget before continuing. Source omissions list
+their path and name for a direct `read --symbol` follow-up.
 
 To read just that function:
 

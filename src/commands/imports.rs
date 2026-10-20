@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(super) struct ImportRow {
     /// The file that contains the import.
     pub(super) path: String,

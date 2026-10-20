@@ -82,6 +82,15 @@ impl ContextResult {
     pub(crate) fn into_source(self) -> (Budget, Vec<Chunk>, Vec<Omitted>) {
         (self.budget, self.chunks, self.omitted)
     }
+
+    pub(crate) fn into_source_with_truncation(self) -> (Budget, Vec<Chunk>, Vec<Omitted>, bool) {
+        (
+            self.budget,
+            self.chunks,
+            self.omitted,
+            self.omitted_truncated,
+        )
+    }
 }
 
 #[derive(Serialize)]
@@ -94,7 +103,7 @@ struct Plan {
     order: &'static str,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct Budget {
     max_tokens: u64,
     used_tokens: u64,
@@ -103,7 +112,7 @@ pub(crate) struct Budget {
     tokenizer: &'static str,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct Chunk {
     path: String,
     // The chunk *is* one definition's source, so its identity is `name`
@@ -132,7 +141,7 @@ pub(crate) struct Chunk {
     reduced: Option<&'static str>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct Omitted {
     path: String,
     // A dropped definition is still a definition (ROW_KEY_RULE) -- and it sits
