@@ -51,10 +51,19 @@ fn is_test_name(name: &str) -> bool {
 /// `class FooTest` in an ordinary path classifies its methods the same way.
 pub(super) struct TestScopes {
     by_path: HashMap<String, Vec<(i64, i64)>>,
+    callbacks: HashMap<String, Vec<CallbackTest>>,
+}
+
+#[derive(Clone)]
+struct CallbackTest {
+    name: String,
+    line: i64,
+    start_line: i64,
+    end_line: i64,
 }
 
 impl TestScopes {
-    pub(super) fn load(conn: &rusqlite::Connection) -> Result<TestScopes> {
+    pub(super) fn load(conn: &rusqlite::Connection, root: &Path) -> Result<TestScopes> {
         // Two sources, unioned. The name-based one covers test *containers* whose
         // only marking is what they are called (`mod tests`, `class FooTest`); the
         // attribute-based one covers everything a framework marks structurally,
@@ -86,7 +95,29 @@ impl TestScopes {
                 by_path.entry(path).or_default().push((start, end));
             }
         }
-        Ok(TestScopes { by_path })
+        let mut callbacks = HashMap::new();
+        let mut stmt = conn.prepare(
+            "SELECT path, language FROM files WHERE language IN ('javascript', 'typescript', 'tsx')",
+        )?;
+        let files = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        for (path, language) in files {
+            if !is_test_path(&path) {
+                continue;
+            }
+            if let Some(source) = crate::index::load_body(root, &path) {
+                let found = callback_tests(&language, &source);
+                if !found.is_empty() {
+                    by_path
+                        .entry(path.clone())
+                        .or_default()
+                        .extend(found.iter().map(|t| (t.start_line, t.end_line)));
+                    callbacks.insert(path, found);
+                }
+            }
+        }
+        Ok(TestScopes { by_path, callbacks })
     }
 
     /// Whether `line` of `path` falls inside a test-like container.
@@ -97,6 +128,99 @@ impl TestScopes {
                 .any(|&(start, end)| line >= start && line <= end)
         })
     }
+
+    fn callback_at(&self, path: &str, line: i64) -> Option<&CallbackTest> {
+        self.callbacks
+            .get(path)?
+            .iter()
+            .find(|test| line >= test.start_line && line <= test.end_line)
+    }
+}
+
+fn callback_tests(language: &str, source: &str) -> Vec<CallbackTest> {
+    let Some(language) = crate::astgrep::ts_language(language) else {
+        return Vec::new();
+    };
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&language).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+    let src = source.as_bytes();
+    let mut suites = Vec::new();
+    let mut tests = Vec::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "call_expression" {
+            if let Some((kind, title, callback)) = test_callback(node, src) {
+                let entry = CallbackTest {
+                    name: title,
+                    line: node.start_position().row as i64 + 1,
+                    start_line: callback.start_position().row as i64 + 1,
+                    end_line: callback.end_position().row as i64 + 1,
+                };
+                if kind == "suite" {
+                    suites.push((callback.start_byte(), callback.end_byte(), entry.name));
+                } else {
+                    tests.push((callback.start_byte(), callback.end_byte(), entry));
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    tests
+        .into_iter()
+        .map(|(start, end, mut test)| {
+            let mut parents: Vec<_> = suites
+                .iter()
+                .filter(|(suite_start, suite_end, _)| *suite_start <= start && end <= *suite_end)
+                .collect();
+            parents.sort_by_key(|(suite_start, _, _)| *suite_start);
+            if !parents.is_empty() {
+                test.name = parents
+                    .iter()
+                    .map(|(_, _, name)| name.as_str())
+                    .chain(std::iter::once(test.name.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" > ");
+            }
+            test
+        })
+        .collect()
+}
+
+fn test_callback<'tree>(
+    call: tree_sitter::Node<'tree>,
+    src: &[u8],
+) -> Option<(&'static str, String, tree_sitter::Node<'tree>)> {
+    let function = call.child_by_field_name("function")?;
+    let expression = function.utf8_text(src).ok()?;
+    let base = expression.split(['.', '(']).next()?;
+    let kind = match base {
+        "describe" | "suite" => "suite",
+        "it" | "test" | "specify" => "test",
+        _ => return None,
+    };
+    let args = call.child_by_field_name("arguments")?;
+    let mut cursor = args.walk();
+    let children: Vec<_> = args.named_children(&mut cursor).collect();
+    let title = children.iter().find_map(|node| {
+        matches!(node.kind(), "string" | "template_string")
+            .then(|| node.utf8_text(src).ok())
+            .flatten()
+            .map(|text| {
+                text.get(1..text.len().saturating_sub(1))
+                    .unwrap_or(text)
+                    .to_string()
+            })
+    })?;
+    let callback = children
+        .into_iter()
+        .find(|node| matches!(node.kind(), "arrow_function" | "function_expression"))?;
+    Some((kind, title, callback))
 }
 
 /// Whether a definition site is a test — its file, its own name, or the container
@@ -158,6 +282,11 @@ pub(super) fn test_sites_for(
         InFilter::Any,
         &mut |i, hits| {
             for h in &hits {
+                if let Some(callback) = scopes.callback_at(&h.path, h.line as i64) {
+                    if callback.name != names[i] {
+                        sites[i].insert((h.path.clone(), callback.name.clone()));
+                    }
+                }
                 let sym = match &h.symbol {
                     Some(sy) if sy != names[i] => sy,
                     _ => continue,
@@ -217,6 +346,21 @@ fn resolve_test_rows(
                     kind: k,
                 });
             }
+        }
+    }
+    for (path, name) in tests {
+        if let Some(callback) = s
+            .test_scopes()?
+            .callbacks
+            .get(path)
+            .and_then(|callbacks| callbacks.iter().find(|test| test.name == *name))
+        {
+            rows.push(TestRow {
+                path: path.clone(),
+                line: callback.line,
+                name: callback.name.clone(),
+                kind: "test".into(),
+            });
         }
     }
     rows.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));

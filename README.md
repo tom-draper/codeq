@@ -444,9 +444,10 @@ with the lower value in bold:
 `implementors` ran on the 24 repositories with extends or implements edges.
 `importers` matches a file's stem as a whole name in each import, and drops an
 import the dependency graph resolves to a different file.
-On 2 JavaScript and TypeScript repositories `tests` found nothing where tests do
-use the name, because tests written as bare `it(...)` calls have no named test
-to report. Times are warm queries and exclude the agent's own turn.
+An earlier benchmark run found no JavaScript or TypeScript tests that used the
+queried name when those tests were written as bare `it(...)` callbacks. `tests`
+now recognizes `it`, `test`, `specify`, and nested `describe` callbacks, including
+their `.each(...)` forms. Times are warm queries and exclude the agent's own turn.
 Building the index took under 1 s per repository. Token counts are approximate
 and targets are picked automatically, so treat these as indicative rather than a
 model-agent evaluation. Rerun with `python3 bench/completion.py` after

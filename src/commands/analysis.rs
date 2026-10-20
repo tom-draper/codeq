@@ -718,7 +718,7 @@ pub fn cmd_unused(
     // Scan all candidate names in one pass; keep the defs whose name is never
     // used. This preserves the old per-name semantics without repeatedly
     // rescanning the same indexed bodies.
-    let scopes = TestScopes::load(&s.db.conn)?;
+    let scopes = s.test_scopes()?;
     let names: HashSet<String> = candidates.iter().map(|c| c.name.clone()).collect();
     let used = used_definition_names(&s, &names, &defsites)?;
     let mut data: Vec<UnusedRow> = Vec::new();
@@ -849,7 +849,7 @@ pub fn cmd_clones(
     // duplicated implementations the refactor was actually about. Excluded by
     // default, the same rule and the same predicate `unused` and `untested` use.
     if !include_tests {
-        let scopes = TestScopes::load(&s.db.conn)?;
+        let scopes = s.test_scopes()?;
         data.retain(|r| !is_test_site(&r.path, Some(&r.name), r.line, &scopes));
         // Dropping one half of a pair leaves a "clone" with nothing to be a clone
         // of, so re-group and keep only shapes that still have more than one.

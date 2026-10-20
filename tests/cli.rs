@@ -6944,6 +6944,37 @@ fn tests_linkage_uses_test_name_heuristic() {
 }
 
 #[test]
+fn tests_linkage_finds_javascript_test_callbacks_and_keeps_locations() {
+    let f = Fixture::new();
+    f.write("src/helper.js", "export function helper() {}\n");
+    f.write(
+        "tests/helper.test.js",
+        "describe('Widget', () => {\n  it('renders', () => { helper(); });\n  test.each([1, 2])('handles %s', (value) => { helper(value); });\n  register(() => { helper(); });\n});\n",
+    );
+
+    let rows = f.run(&["tests", "helper"])["data"]["tests"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let found: Vec<(String, i64)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row["name"].as_str().unwrap().to_string(),
+                row["line"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("Widget > renders".into(), 2),
+            ("Widget > handles %s".into(), 3)
+        ]
+    );
+}
+
+#[test]
 fn astgrep_matches_method_calls_structurally() {
     // `$X.unwrap()` matches actual `.unwrap()` call nodes (any receiver), not the
     // field access that merely shares the name, and not text in strings/comments.
