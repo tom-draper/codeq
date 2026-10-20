@@ -174,9 +174,9 @@ fn tool_error(msg: String) -> Value {
 
 #[derive(Clone, Copy)]
 struct ToolOverrides {
-    /// CLI arguments that MCP does not offer. `stdin` has no pipe to read over
-    /// MCP and `explain` is a separate mode with no pattern. The remaining
-    /// entries are unexposed CLI features.
+    /// CLI arguments MCP cannot meaningfully send. `stdin` needs a pipe, while
+    /// `regexp` and `multiline` are compatibility aliases for search behavior
+    /// that is already the default or is a no-op.
     hidden: &'static [&'static str],
     /// Global output flags this tool offers. Opt-in per tool, because a global
     /// on every tool is schema every session pays for: these go on the tools
@@ -206,39 +206,15 @@ const ROW_GLOBALS: &[&str] = &["fields", "group", "max_per_file"];
 /// exceptions together makes the remaining adapter metadata reviewable.
 const TOOL_OVERRIDES: &[(&str, ToolOverrides)] = &[
     (
-        "about",
-        ToolOverrides {
-            hidden: &["resolved"],
-            ..EMPTY_TOOL_OVERRIDES
-        },
-    ),
-    (
         "astgrep",
         ToolOverrides {
-            hidden: &["explain"],
             globals: ROW_GLOBALS,
-            required: &["pattern", "language"],
-            ..EMPTY_TOOL_OVERRIDES
-        },
-    ),
-    (
-        "callees",
-        ToolOverrides {
-            hidden: &["limit"],
-            ..EMPTY_TOOL_OVERRIDES
-        },
-    ),
-    (
-        "callers",
-        ToolOverrides {
-            hidden: &["limit"],
             ..EMPTY_TOOL_OVERRIDES
         },
     ),
     (
         "explore",
         ToolOverrides {
-            hidden: &["resolved"],
             one_of: &["at", "name"],
             ..EMPTY_TOOL_OVERRIDES
         },
@@ -536,7 +512,7 @@ fn build_args(tool: &str, a: &Value) -> Result<Vec<String>, String> {
 const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "codeq_explore",
-        "Understand a symbol in ONE call: its definition, who calls it, what it calls, and the verbatim source of that whole neighbourhood, budgeted and grouped by file. Prefer this over a definitions -> callers -> read -> read sequence when you need to understand or change a function/type. name is the exact symbol; path disambiguates a common name; max_tokens caps the source (the definition is always included, callers and callees fill the rest, and anything dropped is listed under omitted). Returns focus, callers, callees, imports (what is in scope in the focus file, so an edit knows what it can call), and source (each chunk tagged focus/caller/callee). Callee resolution is qualified, name-only, or ambiguous, describing syntax evidence rather than type checking. Ambiguous candidates stay listed but their source is deferred by default; include_ambiguous=true expands it. Give EITHER name OR at — at is a '<path>:<line>' position and explores whatever definition encloses it, which turns a stack frame, diff hunk or search hit into its neighbourhood without resolving the name first. Same neighbourhood as codeq_about, which omits the source but reports fuller metadata per node — source is the axis the two differ on.",
+        "Understand a symbol in one call: its definition, callers, callees, and source. name is the exact symbol; path disambiguates a common name; resolved prunes unrelated callers and callees; max_tokens caps source. Ambiguous callees are listed but their source is deferred unless include_ambiguous=true. Give either name or at. at is a '<path>:<line>' position and explores the exact enclosing definition.",
     ),
     (
         "codeq_map",
@@ -636,7 +612,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_astgrep",
-        "Structural (AST) search: match a code pattern with $NAME / $_ metavariables (and $$$ for any run of siblings, e.g. foo($$$)), parsed with the language's own grammar so it matches syntax rather than text, e.g. '$X.unwrap()' finds every .unwrap() call whatever the receiver. Deterministic; a repeated $NAME must bind identically. Cannot see inside macro invocations. language is required. source=true returns each matching enclosing definition once under max_tokens, ranked by structural match count; limit counts definitions in source mode. Use it to inspect implementations directly instead of following matches with read calls.",
+        "Structural AST search using the language grammar. Supply pattern and language to find code by shape, or explain='<file>:<line>' to inspect node kinds and fields at a location before writing a pattern. A repeated metavariable must bind identically. source=true returns each matching definition once under max_tokens; limit counts definitions in source mode.",
     ),
     (
         "codeq_clones",
@@ -749,6 +725,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn only_documented_search_options_are_omitted_from_mcp() {
+        let hidden: Vec<(&str, &str)> = TOOL_OVERRIDES
+            .iter()
+            .flat_map(|(command, overrides)| {
+                overrides
+                    .hidden
+                    .iter()
+                    .map(move |argument| (*command, *argument))
+            })
+            .collect();
+        assert_eq!(
+            hidden,
+            [
+                ("search", "stdin"),
+                ("search", "regexp"),
+                ("search", "multiline")
+            ]
+        );
+    }
+
     /// An explore target is a name or a position, `at` winning; neither is invalid.
     #[test]
     fn explore_takes_at_or_name() {
@@ -763,6 +760,41 @@ mod tests {
         .unwrap();
         assert_eq!(expanded, ["explore", "--include-ambiguous", "--", "f"]);
         assert!(build_args("codeq_explore", &json!({})).is_err());
+    }
+
+    #[test]
+    fn mcp_exposes_precision_controls_and_ast_explanations() {
+        let listed = tools();
+        let tool = |name: &str| {
+            listed
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap()
+        };
+        for (name, params) in [
+            ("codeq_about", &["resolved"][..]),
+            ("codeq_explore", &["resolved"][..]),
+            ("codeq_callers", &["limit"][..]),
+            ("codeq_callees", &["limit"][..]),
+            ("codeq_astgrep", &["explain"][..]),
+        ] {
+            for param in params {
+                assert!(
+                    tool(name)["inputSchema"]["properties"].get(param).is_some(),
+                    "{name} does not expose {param}"
+                );
+            }
+        }
+        assert_eq!(
+            build_args("codeq_astgrep", &json!({ "explain": "src/lib.rs:12" })).unwrap(),
+            ["astgrep", "--explain", "src/lib.rs:12"]
+        );
+        assert_eq!(
+            build_args("codeq_callees", &json!({ "name": "run", "limit": 7 })).unwrap(),
+            ["callees", "--limit", "7", "--", "run"]
+        );
     }
 
     #[test]
