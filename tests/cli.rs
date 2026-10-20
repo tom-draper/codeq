@@ -10053,6 +10053,41 @@ fn explore_at_picks_the_innermost_definition() {
 }
 
 #[test]
+fn explore_at_keeps_same_named_methods_as_exact_focuses() {
+    let f = Fixture::new();
+    f.write(
+        "sample.py",
+        "class A:\n    def run(self):\n        return helper_a()\n\nclass B:\n    def run(self):\n        return helper_b()\n\ndef helper_a():\n    return 'A'\n\ndef helper_b():\n    return 'B'\n",
+    );
+
+    for (line, expected) in [(2, "'A'"), (6, "'B'")] {
+        let result = f.run(&["explore", "--at", &format!("sample.py:{line}")]);
+        let data = &result["data"];
+        assert_eq!(data["focus"].as_array().unwrap().len(), 1, "{data}");
+        assert_eq!(data["focus"][0]["name"], "run", "{data}");
+        assert_eq!(data["focus"][0]["path"], "sample.py", "{data}");
+        assert_eq!(data["focus"][0]["byte"].as_u64().is_some(), true, "{data}");
+        let expected_helper = if expected == "'A'" {
+            "helper_a"
+        } else {
+            "helper_b"
+        };
+        assert_eq!(data["callees"].as_array().unwrap().len(), 1, "{data}");
+        assert_eq!(data["callees"][0]["name"], expected_helper, "{data}");
+        assert!(
+            data["source"].as_array().unwrap().iter().any(|chunk| {
+                chunk["reason"] == "focus"
+                    && chunk["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains(expected_helper)
+            }),
+            "expected exact method source containing {expected_helper}: {data}"
+        );
+    }
+}
+
+#[test]
 fn explore_at_a_header_line_resolves_to_the_type_not_its_constructor_parameter() {
     // A Kotlin primary-constructor parameter is a `field` owned by the class and
     // sits on the class's own line. It is a leaf by containment, so the line

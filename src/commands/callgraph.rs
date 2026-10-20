@@ -317,6 +317,34 @@ pub(super) fn callees_of(
     examples: bool,
 ) -> Result<Vec<Callee>> {
     let targets = definition_ranges(s, name, path)?;
+    callees_for_targets(s, name, targets, resolved, examples)
+}
+
+pub(super) fn callees_of_range(
+    s: &Session,
+    name: &str,
+    path: &str,
+    start_byte: usize,
+    end_byte: usize,
+    resolved: bool,
+    examples: bool,
+) -> Result<Vec<Callee>> {
+    callees_for_targets(
+        s,
+        name,
+        vec![(path.to_string(), start_byte, end_byte)],
+        resolved,
+        examples,
+    )
+}
+
+fn callees_for_targets(
+    s: &Session,
+    name: &str,
+    targets: Vec<(String, usize, usize)>,
+    resolved: bool,
+    examples: bool,
+) -> Result<Vec<Callee>> {
     if targets.is_empty() {
         return Ok(Vec::new());
     }
