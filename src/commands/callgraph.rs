@@ -285,6 +285,8 @@ pub(super) struct Callee {
     #[serde(skip)]
     pub(super) start_byte: usize,
     #[serde(skip)]
+    pub(super) end_byte: usize,
+    #[serde(skip)]
     owner: Option<String>,
     pub(super) resolution: &'static str,
     /// How this callee's definition file connects to `name`'s file via the import
@@ -665,7 +667,7 @@ fn callee_candidates(s: &Session, idents: &HashSet<String>) -> Result<Vec<Callee
     for chunk in ident_list.chunks(500) {
         let placeholders = vec!["?"; chunk.len()].join(",");
         let sql = format!(
-            "SELECT name, kind, path, start_line, owner, start_byte FROM facts
+            "SELECT name, kind, path, start_line, owner, start_byte, end_byte FROM facts
              WHERE kind NOT IN ('import', 'field', 'variant') AND name IN ({placeholders})"
         );
         let mut stmt = s.db.conn.prepare(&sql)?;
@@ -679,16 +681,18 @@ fn callee_candidates(s: &Session, idents: &HashSet<String>) -> Result<Vec<Callee
                 r.get::<_, i64>(3)?,
                 r.get::<_, Option<String>>(4)?,
                 r.get::<_, i64>(5)? as usize,
+                r.get::<_, i64>(6)? as usize,
             ))
         })?;
         for row in rows {
-            let (n, k, p, l, owner, start_byte) = row?;
+            let (n, k, p, l, owner, start_byte, end_byte) = row?;
             out.push(Callee {
                 name: n,
                 kind: k,
                 path: p,
                 line: l,
                 start_byte,
+                end_byte,
                 owner,
                 resolution: "name-only",
                 via: None,

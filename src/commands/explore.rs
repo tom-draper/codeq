@@ -261,7 +261,7 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
             path: c.path.clone(),
             line: c.line,
             byte: Some(c.start_byte),
-            end_byte: None,
+            end_byte: Some(c.end_byte),
             signature: None,
             doc: None,
         })
