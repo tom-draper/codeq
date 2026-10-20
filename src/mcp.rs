@@ -17,9 +17,37 @@ mod executor;
 
 pub(crate) use executor::{attach_connection, check_cancelled};
 
-pub fn serve(cwd: &Path, workers: u8) -> Result<()> {
+#[derive(Clone, Copy, Default, clap::ValueEnum)]
+pub(crate) enum ToolProfile {
+    Core,
+    #[default]
+    All,
+}
+
+impl ToolProfile {
+    fn includes(self, name: &str) -> bool {
+        matches!(self, Self::All) || CORE_TOOLS.contains(&name)
+    }
+}
+
+const CORE_TOOLS: &[&str] = &[
+    "codeq_map",
+    "codeq_tree",
+    "codeq_search",
+    "codeq_symbols",
+    "codeq_definitions",
+    "codeq_explore",
+    "codeq_read",
+    "codeq_callers",
+    "codeq_callees",
+    "codeq_api",
+    "codeq_deps",
+    "codeq_tests",
+];
+
+pub fn serve(cwd: &Path, workers: u8, profile: ToolProfile) -> Result<()> {
     let stdin = io::stdin();
-    let executor = executor::Executor::new(cwd, workers);
+    let executor = executor::Executor::new(cwd, workers, profile);
     let mut input = stdin.lock();
     let mut buf = Vec::new();
 
@@ -48,7 +76,7 @@ fn error_reply(id: Value, code: i64, message: String) -> Value {
 }
 
 /// The reply to one request object, or `None` for a notification (no id).
-fn respond(req: &Value, cwd: &Path) -> Option<Value> {
+fn respond(req: &Value, cwd: &Path, profile: ToolProfile) -> Option<Value> {
     if !req.is_object() {
         return Some(error_reply(
             Value::Null,
@@ -65,8 +93,17 @@ fn respond(req: &Value, cwd: &Path) -> Option<Value> {
 
     let result = match method {
         "initialize" => Ok(initialize_result(params)),
-        "tools/list" => Ok(json!({ "tools": tools() })),
-        "tools/call" => Ok(call_tool(params, cwd)),
+        "tools/list" => Ok(json!({ "tools": tools(profile) })),
+        "tools/call" => {
+            let name = params.and_then(|p| p["name"].as_str()).unwrap_or("");
+            if profile.includes(name) {
+                Ok(call_tool(params, cwd))
+            } else {
+                Ok(tool_error(format!(
+                    "tool '{name}' is not in the core profile; restart with codeq mcp --tools all"
+                )))
+            }
+        }
         "ping" => Ok(json!({})),
         other => Err((-32601i64, format!("method not found: {other}"))),
     };
@@ -85,7 +122,8 @@ fn initialize_result(params: Option<&Value>) -> Value {
     json!({
         "protocolVersion": pv,
         "capabilities": { "tools": {} },
-        "serverInfo": { "name": "codeq", "version": env!("CARGO_PKG_VERSION") }
+        "serverInfo": { "name": "codeq", "version": env!("CARGO_PKG_VERSION") },
+        "instructions": "Use map/tree to orient, search with source to find implementations, explore for a symbol and its usage, and read with at or symbol for complete bodies. Scope common names with path. Call relationships are name-based; resolved uses import reachability, not type checking. Inspect notes and omitted results. The CLI command codeq guide prints this version's full agent instructions."
     })
 }
 
@@ -360,9 +398,10 @@ fn param_schema(p: &Param) -> Value {
 }
 
 /// Tool definitions with JSON Schemas, returned by `tools/list`.
-fn tools() -> Value {
+fn tools(profile: ToolProfile) -> Value {
     let list: Vec<Value> = tool_defs()
         .iter()
+        .filter(|t| profile.includes(t.name))
         .map(|t| {
             let props: serde_json::Map<String, Value> = t
                 .params
@@ -500,7 +539,7 @@ fn build_args(tool: &str, a: &Value) -> Result<Vec<String>, String> {
 const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "codeq_explore",
-        "Understand a symbol in one call: its definition, callers, callees, imports, and source. name is the exact symbol; path disambiguates a common name; resolved prunes unrelated callers and callees; max_tokens caps source; max_response_tokens caps the full response. If response.next_cursor is present, pass it to continue. If minimum_next_tokens is set, raise max_response_tokens to that value first. Source omitted by max_tokens lists path and name so read can fetch it directly. Ambiguous callees are listed but their source is deferred unless include_ambiguous=true. Give either name or at. at is a '<path>:<line>' position and explores the exact enclosing definition.",
+        "Symbol, callers, callees, imports and source in one call. Give name or at=path:line; path scopes names. max_tokens budgets source; max_response_tokens budgets the reply with cursor continuation. Calls are name-based; resolved filters imports. Ambiguous callee bodies need include_ambiguous.",
     ),
     (
         "codeq_map",
@@ -508,7 +547,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_search",
-        "Search file contents. Regex by default (same engine as ripgrep); set fixed for a literal. Each match is annotated with its enclosing definition. Set symbols to rank definitions by matching-line count (descending; ties by path and position), or source to read their bodies once under max_tokens in that rank order, avoiding a search-then-read loop. Superset of grep: -A/-B/-C context, files_with_matches, count, and 'in' (code|comments|strings) which grep can't do. paths scopes it like grep's positional paths, and a path the index does not hold (gitignored output, a log, a file outside the repo) is searched from disk. On a broad pattern, max_per_file with group returns the shape of the result for a fraction of the tokens. In markdown, fenced code blocks count as strings and prose as comments, so 'in' separates documented examples from the text around them.",
+        "Search regex or fixed text with enclosing definitions. symbols returns ranked definitions; source includes their bodies under max_tokens. Scope with paths/path/language/glob. in selects code/comments/strings; Markdown fences are strings. limit bounds hits; group and max_per_file summarize files. Explicit unindexed paths are searched from disk.",
     ),
     (
         "codeq_symbols",
@@ -516,35 +555,35 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_definitions",
-        "Locate definitions of exact symbol names, with signature, doc, and precise byte/line ranges. symbol accepts one name or an array. Batches return named results in argument order, with a note for each missing name. path scopes to matching files; limit applies per name.",
+        "Exact symbol definitions with signatures and ranges. symbol accepts one name or an array; path disambiguates. limit applies per name. Use symbols for unknown spellings, read/explore for bodies.",
     ),
     (
         "codeq_references",
-        "Word-boundary uses of a symbol name across the repo, each annotated with its enclosing definition; definition sites are flagged. Textual (not type-resolved) by default. resolved=true prunes references whose file can't reach a definition through imports. calls=true keeps only real call sites and on='RECV' keeps only calls on that receiver; both are read from the parse tree, so a declaration, a mention in a string or comment, and formatting (a wrapped method chain) are all handled correctly. The receiver is the expression as written, so 'db' does not match mydb.query() or a.inner.query() — use on='a.inner', or even on='conn()'; PHP receivers keep their sigil (on='$db'). Precision filters compose.",
+        "Textual identifier uses, with declarations flagged. calls selects syntax call sites; on matches a literal receiver. resolved filters import reachability without type checking. For distinct enclosing definitions use callers.",
     ),
     (
         "codeq_callers",
-        "The distinct definitions that reference a symbol (its callers), with test sites flagged — what could break if you change it. Textual, not type-resolved. path restricts to callers in matching files. depth (default 1) walks transitively up the call tree, each result tagged with its hop distance. Precision filters (direct callers only): resolved=true prunes callers whose file can't reach a definition through imports; calls=true keeps only real call sites; on='RECV' keeps only calls on that receiver. Both come from the parse tree, so declarations, prose mentions and line breaks are handled; the receiver is the expression as written (on='a.inner', on='conn()', PHP on='$db'). examples=true surfaces the actual call expression at each site (one representative per caller) — how the symbol is really invoked; for every call site use codeq_references with calls=true.",
+        "Definitions referencing a name, with tests flagged. calls selects syntax calls; examples includes representative calls; on matches literal receivers. path filters callers. depth follows names transitively; resolved filters direct callers by imports. Not type-resolved.",
     ),
     (
         "codeq_callees",
-        "The definitions referenced by name inside a symbol's body (its callees) — what it depends on. Already call-position only: a bare mention isn't a callee, and neither is helper() written inside a string or a comment. path scopes to the symbol's definition(s). depth (default 1) walks transitively down the call tree. resolved=true (direct callees only) keeps only callees whose definition file the symbol's own file can reach through imports, pruning unrelated same-named definitions in unreachable files. examples=true adds `call` — the call as written, with its receiver (`subprocess.run`, not `run`) — and `call_line`; use it to see at a glance whether a row is a real callee or a name collision, since a module-qualified call is attributed to every definition sharing the bare name.",
+        "Call targets inside a named definition; path scopes the definition. examples includes call syntax. Resolution is qualified, name-only or ambiguous, without type checking. depth follows names transitively; resolved filters direct callees by imports and may omit unresolved imports.",
     ),
     (
         "codeq_about",
-        "One-call dossier before editing symbols, WITHOUT source. name accepts one name or an array; batches return named results in argument order with a note for each missing name. Each dossier contains: its definition(s) with signature and doc comment, its callers (who breaks, with test call sites flagged), and its callees (what it depends on). Replaces several separate lookups. path scopes the definition and callees to matching files to disambiguate a common name. Same neighbourhood as codeq_explore, which adds the verbatim source but trims the per-node metadata. Reach for codeq_explore when you intend to change the code, and this when you want the metadata or a cheap 'where does this live'.",
+        "Definitions, members, callers and callees without bodies. name accepts one name or an array; path scopes definitions and callees. Calls are name-based; resolved filters imports. Use explore for source.",
     ),
     (
         "codeq_callpath",
-        "The shortest CALL chain from one symbol to another (from calls … calls to), if one exists — reachability with the route shown, e.g. how an entry point reaches a low-level function. Nothing to do with file paths. Name-based; empty when unreachable within max_depth (default 8). path scopes the start symbol to matching files, to disambiguate a common/cross-language `from` like `main`.",
+        "Shortest name-based call chain from one symbol to another within max_depth. path scopes the start. Empty results do not prove runtime unreachability.",
     ),
     (
         "codeq_untested",
-        "Exported definitions that no test refers to — api composed with tests, which otherwise costs one call per public symbol. Public only (a private helper is usually covered through the exported thing that calls it). Heuristic in the same way tests is, so it over-reports coverage rather than under-report it: a test that reaches the code without naming it is invisible.",
+        "Public definitions without textual test references. Heuristic candidate list; indirect tests can be missed. path and kind scope the reported API.",
     ),
     (
         "codeq_members",
-        "What a type contains: its fields, enum variants, and methods, in source order. Use it to learn a struct/class/enum's shape before constructing or destructuring it, instead of reading the file. Unlike the call-graph commands this is structural, not name-based: a member is a definition nested directly inside the type's byte range, so there are no same-name false positives. kind filters to one of field/variant/method/function; path disambiguates a common type name. Languages that don't declare members (Ruby attr_accessor, Python self.x in __init__) return nothing rather than a guess, and in Rust a struct's methods live in a separate impl block so only its fields are returned.",
+        "Fields, variants and methods structurally nested in a type. path disambiguates; kind filters members. Separate implementation blocks, including Rust impl methods, are outside the type body.",
     ),
     (
         "codeq_outline",
@@ -556,7 +595,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_read",
-        "Read repository source. Choose at for complete definitions enclosing search hits or stack frames (one or several path:line positions; overlapping source once), or file with symbol for a named definition. These use exact boundaries instead of guessed sed windows. With file alone, long bodies fold to signatures and expandable line ranges; imports stay visible. For known slices, file accepts [\"a.rs:40-80\", \"b.rs:12\"] or use lines with one file. raw emits source bytes without line numbers, for edit anchors; it requires one block. full unfolds a file. Markdown headings work as symbols. Provide either at or file.",
+        "Complete definitions at one or several at=path:line positions, or file plus symbol. file accepts arrays and inline ranges; lines selects known ranges. File-only reads fold long bodies; full expands them. raw returns exact bytes for one block. Markdown headings are symbols.",
     ),
     (
         "codeq_imports",
@@ -568,19 +607,19 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_implementors",
-        "Types that implement or extend a trait / interface / base class — the inheritance edges the call graph doesn't cover (impl T for X in Rust, extends/implements in Java/TS/PHP, class X(Base) in Python, class X < Y in Ruby, base lists in C++/C#). Use it to answer 'who implements this interface' before changing it. Go (structural typing), C, and Zig have no extracted relation edges. Name-based. relation filters to 'implements' or 'extends'.",
+        "Types with explicit implements/extends/schema references edges pointing to a name. relation filters edge kinds. Syntax-based and name-matched; implicit structural implementations are not inferred.",
     ),
     (
         "codeq_supertypes",
-        "The traits / interfaces / base classes a type extends or implements — the reverse of implementors (what does X derive from). The names as written at the declaration, not transitively resolved. Name-based. relation filters to 'implements' or 'extends'.",
+        "Explicit base types, interfaces or referenced tables for a name. relation filters implements/extends/references. Names are as written, without transitive type resolution.",
     ),
     (
         "codeq_unused",
-        "Definitions with no reference anywhere outside their own definition site — candidate dead code. A mention in a comment is not a use, so a stale TODO cannot mask dead code; a mention in a string still is, because reflection, serde renames, config keys and SQL identifiers are real uses. Name-based, so a same-named symbol elsewhere masks it; it under-reports rather than misleads. visibility is shown so a public symbol (maybe external API, not dead) is distinguishable from a private one. Test-file definitions are excluded by default (framework entry points look unused); set include_tests to include them. path/kind scope what is reported; the usage check is always repo-wide.",
+        "Candidate definitions with no uses outside their declarations. Comments do not count; strings do. Same-named definitions can mask unused code. Framework registrations and trait contracts are excluded. include_tests adds tests. path/kind scope reports, not usage checks.",
     ),
     (
         "codeq_entrypoints",
-        "Definitions explicitly registered as framework entry points (routes, commands, plugin hooks) by decorator syntax. registration is the exact decorator observed, not an inferred framework. Tests are excluded by default; set include_tests to list definitions structurally marked as tests too.",
+        "Framework definitions registered by decorator syntax, with the observed registration text. include_tests adds structurally identified tests. Does not infer every runtime entry point.",
     ),
     (
         "codeq_tree",
@@ -588,23 +627,23 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_hotspots",
-        "Definitions ranked by how often their name is referenced in code — the inverse of codeq_unused, and the fastest way to find what is load-bearing in a file or repo you have just met. One row per name (the count is a property of the name), with defs telling you how many definitions share it, and path/line pointing at the first. Set calls=true to count only call sites, which is what you usually want for functions: without it a name that is also a common variable scores high. Name-based, so a short common name (new, get, path) ranks high because many unrelated symbols spell it the same way — treat a row as 'this identifier carries weight' and use codeq_callers with calls=true for the precise question. path/kind/language scope what is reported; the count is always repo-wide.",
+        "Definitions ranked by name-reference count. calls counts syntax calls only. Same-named definitions share counts; use callers to investigate. path/kind/language scope reports, not counts.",
     ),
     (
         "codeq_api",
-        "The public API surface of a file or directory. compare_to=<git ref> instead reports how that surface differs from the ref — what was added, removed, or changed shape — which is the review question a raw diff cannot answer, since most edited lines are internal. Otherwise: the definitions it exports for outside use, with signatures. \"Public\" is each language's own notion (Rust pub, JS/TS export, Go capitalization, Python non-underscore, a public modifier in Java/C#/PHP, non-static in C/C++); pub(crate)/protected are excluded. Use it to learn how to call an unfamiliar module without reading whole files. path scopes to a file/dir substring; kind filters to one kind (function, struct, class, …).",
+        "Public definitions and signatures in a file/directory. compare_to instead reports API changes against a Git ref. Visibility follows each language; kind filters declarations.",
     ),
     (
         "codeq_deps",
-        "Internal files a file depends on, resolved from imports. TypeScript paths aliases, npm workspace packages, and Go module packages use project configuration; relative imports use their written paths. Other languages use deterministic path matching. Pass file, cycles=true, or external=true. depth (default 1) walks transitive dependencies. external=true lists third-party imports and broken local paths. Project-style imports that could not be resolved include a resolution_reason.",
+        "Internal import dependencies of a file, transitive to depth. cycles lists repo-wide cycles; external lists unresolved/external imports. Project-aware where supported, heuristic otherwise. Give file, cycles or external. Unresolved does not mean unused.",
     ),
     (
         "codeq_astgrep",
-        "Structural AST search using the language grammar. Supply pattern and language to find code by shape, or explain='<file>:<line>' to inspect node kinds and fields at a location before writing a pattern. A repeated metavariable must bind identically. source=true returns each matching definition once under max_tokens; limit counts definitions in source mode.",
+        "Match syntax with a pattern and language. $NAME captures a node; repeated names must agree. source includes enclosing bodies under max_tokens. Use explain=path:line instead of pattern to inspect syntax before constructing a pattern.",
     ),
     (
         "codeq_clones",
-        "Definitions whose syntax shape is identical up to renaming — the same code written twice. Exact, not fuzzy: shapes either match or they don't, so there is no similarity score to interpret and no threshold to tune. Rows are grouped by a shared shape hash, biggest duplication first. Use it before writing a helper (is this already implemented?) and to find the copy-paste that needs the same fix in several places. min_nodes (default 24) sets how much code a shared shape must cover; kind narrows to e.g. function.",
+        "Definitions with identical syntax shape up to renaming. Exact matches, not fuzzy similarity. min_nodes filters small definitions; include_tests adds tests. Inspect before deduplicating.",
     ),
     (
         "codeq_tests",
@@ -616,11 +655,11 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_affected",
-        "For a diff (vs compare_to, default main): the definitions it touched, their transitive callers up to depth hops (the impacted set), and the tests that exercise any of them — 'what should I re-check and re-run for this change'. Returns changed, impacted, and tests. Name-based like the rest of the graph.",
+        "Changed definitions, transitive name-based callers and candidate tests against compare_to. depth bounds traversal; limit bounds output. An incomplete impact estimate, not proof of every runtime effect.",
     ),
     (
         "codeq_context",
-        "Assemble token-budgeted code context from explicit seeds: named symbols and/or changed files. path scopes the seeds to matching files. Set expand for one deterministic hop to referenced definitions; no_text returns provenance only (locations without source, for a cheap map).",
+        "Source for symbols or changed definitions under max_tokens. path disambiguates; expand adds one reference hop; resolved filters expansion by imports. no_text returns metadata; plan explains selection. Inspect omitted/reduced chunks.",
     ),
     (
         "codeq_files",
@@ -636,7 +675,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_graph",
-        "Every explicit type or schema relation in the repository as an edge list. relation filters to implements, extends, or references; mermaid emits a graph LR document. This is not a call graph: use callers or callees for a call relationship rooted at a symbol. Go's structural interfaces have no explicit relation edge.",
+        "All explicit type/schema relation edges. Filter relation/path/language; mermaid emits a graph document. Calls are excluded; use callers/callees.",
     ),
 ];
 
@@ -769,7 +808,7 @@ mod tests {
 
     #[test]
     fn mcp_exposes_precision_controls_and_ast_explanations() {
-        let listed = tools();
+        let listed = tools(ToolProfile::All);
         let tool = |name: &str| {
             listed
                 .as_array()

@@ -157,6 +157,8 @@ def validate(task, workspace):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--codeq", type=Path, default=HERE.parent / "target/release/codeq")
+    parser.add_argument("--codeq-tools", choices=("all", "core"), default="all",
+                        help="Codeq MCP tool profile to evaluate")
     parser.add_argument("--agent", default="claude", help="Claude Code executable")
     parser.add_argument("--model", help="pin a Claude model alias or full model name")
     parser.add_argument("--max-turns", type=int, default=20)
@@ -168,7 +170,7 @@ def main():
     if not codeq.is_file():
         parser.error(f"Codeq executable not found: {codeq}")
     generic = ["python3", str(HERE / "generic_tools_mcp.py")]
-    codeq_server = [str(codeq), "mcp"]
+    codeq_server = [str(codeq), "mcp", "--tools", args.codeq_tools]
     env = os.environ.copy()
     env["CODEQ_EVAL_WORKSPACE"] = str(FIXTURE)
     generic_schema, generic_stderr = rpc_schemas(generic, FIXTURE, env)
@@ -184,7 +186,7 @@ def main():
     ]
     if args.dry_run:
         print(json.dumps({"agent": args.agent, "version": version.stdout.strip(),
-                          "model": args.model, "tasks": [t["id"] for t in tasks],
+                          "model": args.model, "codeq_command": codeq_server, "tasks": [t["id"] for t in tasks],
                           "tool_schemas": {"generic": generic_schema, "codeq": codeq_schema},
                           "schema_bytes": {"generic": len(json.dumps(generic_schema).encode()),
                                            "codeq": len(json.dumps(codeq_schema).encode())},
@@ -245,6 +247,7 @@ def main():
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "agent": args.agent, "agent_version": version.stdout.strip(), "model": args.model,
         "fixture_sha256": fixture_hash.hexdigest(),
+        "codeq_command": codeq_server,
         "tool_schemas": {"generic": generic_schema, "codeq": codeq_schema},
         "tool_schema_bytes": {"generic": len(json.dumps(generic_schema).encode()),
                               "codeq": len(json.dumps(codeq_schema).encode())},

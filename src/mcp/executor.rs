@@ -98,10 +98,11 @@ pub(super) struct Executor {
     requests: Requests,
     writer: Writer,
     cwd: PathBuf,
+    profile: super::ToolProfile,
 }
 
 impl Executor {
-    pub(super) fn new(cwd: &Path, workers: u8) -> Self {
+    pub(super) fn new(cwd: &Path, workers: u8, profile: super::ToolProfile) -> Self {
         let (send, receive) = mpsc::sync_channel::<Job>(32);
         let receive = Arc::new(Mutex::new(receive));
         let requests: Requests = Arc::default();
@@ -119,7 +120,7 @@ impl Executor {
                 let reply = if job.control.is_cancelled() {
                     None
                 } else {
-                    super::respond(&job.request, &cwd)
+                    super::respond(&job.request, &cwd, profile)
                 };
                 CURRENT.with(|slot| slot.replace(None));
                 // Serialize cancellation with completion, including removal of the
@@ -136,6 +137,7 @@ impl Executor {
             requests,
             writer: Arc::new(Mutex::new(io::stdout())),
             cwd: cwd.to_path_buf(),
+            profile,
         }
     }
 
@@ -186,7 +188,7 @@ impl Executor {
             return;
         }
         if request["method"] != "tools/call" || request.get("id").is_none_or(Value::is_null) {
-            reply.complete(super::respond(&request, &self.cwd));
+            reply.complete(super::respond(&request, &self.cwd, self.profile));
             return;
         }
         let id = request["id"].clone();

@@ -19,6 +19,10 @@ impl Server {
     }
 
     fn with_workers(root: &Path, workers: u8) -> Self {
+        Self::with_tools(root, workers, "all")
+    }
+
+    fn with_tools(root: &Path, workers: u8, profile: &str) -> Self {
         let mut child = Command::new(assert_cmd::cargo::cargo_bin!("codeq"))
             .args([
                 "--root",
@@ -26,6 +30,8 @@ impl Server {
                 "mcp",
                 "--workers",
                 &workers.to_string(),
+                "--tools",
+                profile,
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -84,6 +90,55 @@ impl Server {
             .unwrap()
             .to_string()
     }
+}
+
+#[test]
+fn core_profile_lists_navigation_tools_and_rejects_advanced_calls() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("sample.rs"), "fn target() {}\n").unwrap();
+    let mut server = Server::with_tools(dir.path(), 1, "core");
+    server.send(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}));
+    let reply = server.receive();
+    let mut names: Vec<&str> = reply["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "codeq_api",
+            "codeq_callees",
+            "codeq_callers",
+            "codeq_definitions",
+            "codeq_deps",
+            "codeq_explore",
+            "codeq_map",
+            "codeq_read",
+            "codeq_search",
+            "codeq_symbols",
+            "codeq_tests",
+            "codeq_tree"
+        ]
+    );
+    server.next_id = 1;
+    assert_eq!(
+        server.call(
+            "codeq_read",
+            json!({"file":"sample.rs", "symbol":"target", "raw":true})
+        ),
+        "fn target() {}\n"
+    );
+    server.send(json!({"jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"codeq_unused","arguments":{}}}));
+    let reply = server.receive();
+    assert_eq!(reply["result"]["isError"], true);
+    assert!(reply["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("--tools all"));
 }
 
 impl Drop for Server {
