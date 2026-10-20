@@ -1,6 +1,7 @@
 //! Single-symbol neighbourhoods: `about`, `explore`, `at`, `context`.
 
 use super::*;
+use anyhow::{bail, Result};
 
 #[derive(Serialize)]
 struct About {
@@ -83,7 +84,7 @@ fn symbol_graph(
 
 /// A node in an `explore` graph: a definition (focus) or one of its immediate
 /// neighbours (a caller or callee), with just enough to locate and identify it.
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 struct ExploreNode {
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -108,7 +109,7 @@ struct ExploreNode {
 /// The one-call answer: the symbol's definition, who calls it, what it calls, and
 /// the verbatim source of that whole neighbourhood, budgeted and grouped by file.
 #[derive(serde::Serialize)]
-struct ExploreResult {
+struct ExploreData {
     focus: Vec<ExploreNode>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     callers: Vec<ExploreNode>,
@@ -121,6 +122,205 @@ struct ExploreResult {
     budget: crate::context::Budget,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     omitted: Vec<crate::context::Omitted>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    omitted_truncated: bool,
+}
+
+#[derive(serde::Serialize)]
+struct ExploreResult {
+    #[serde(flatten)]
+    data: ExploreData,
+    response: ResponseBudget,
+}
+
+#[derive(serde::Serialize)]
+struct ResponseBudget {
+    max_tokens: u64,
+    used_tokens: u64,
+    tokenizer: &'static str,
+    complete: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum_next_tokens: Option<u64>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct CursorOffsets {
+    callers: usize,
+    callees: usize,
+    imports: usize,
+    source: usize,
+    omitted: usize,
+}
+
+impl CursorOffsets {
+    fn encode(self, fingerprint: &str) -> String {
+        format!(
+            "v1:{fingerprint}:{}:{}:{}:{}:{}",
+            self.callers, self.callees, self.imports, self.source, self.omitted
+        )
+    }
+
+    fn decode(cursor: &str, fingerprint: &str) -> Result<Self> {
+        let parts: Vec<_> = cursor.split(':').collect();
+        if parts.len() != 7 || parts[0] != "v1" || parts[1] != fingerprint {
+            bail!("stale or invalid explore cursor; restart explore without --cursor");
+        }
+        let values: Vec<usize> = parts[2..]
+            .iter()
+            .map(|part| {
+                part.parse()
+                    .map_err(|_| anyhow::anyhow!("invalid explore cursor"))
+            })
+            .collect::<Result<_>>()?;
+        Ok(Self {
+            callers: values[0],
+            callees: values[1],
+            imports: values[2],
+            source: values[3],
+            omitted: values[4],
+        })
+    }
+}
+
+fn cursor_fingerprint(data: &ExploreData) -> Result<String> {
+    let bytes = serde_json::to_vec(data)?;
+    Ok(blake3::hash(&bytes).to_hex()[..16].to_string())
+}
+
+fn cursor_for(data: &ExploreData, offsets: CursorOffsets, fingerprint: &str) -> Option<String> {
+    (offsets.callers < data.callers.len()
+        || offsets.callees < data.callees.len()
+        || offsets.imports < data.imports.len()
+        || offsets.source < data.source.len()
+        || offsets.omitted < data.omitted.len())
+    .then(|| offsets.encode(fingerprint))
+}
+
+fn response_tokens(
+    data: &ExploreData,
+    full: &ExploreData,
+    note: Option<&str>,
+    max_tokens: u64,
+    offsets: CursorOffsets,
+    fingerprint: &str,
+    minimum_next_tokens: Option<u64>,
+) -> Result<u64> {
+    let next_cursor = cursor_for(full, offsets, fingerprint);
+    let complete = next_cursor.is_none() && full.omitted.is_empty() && !full.omitted_truncated;
+    let mut value = serde_json::to_value(data)?;
+    value["response"] = serde_json::to_value(ResponseBudget {
+        max_tokens,
+        used_tokens: 0,
+        tokenizer: "approx:4-bytes-per-token-including-envelope-reserve",
+        complete,
+        next_cursor,
+        minimum_next_tokens,
+    })?;
+    if let Some(note) = note {
+        value["note"] = serde_json::Value::String(note.to_string());
+    }
+    let mut used = 0;
+    loop {
+        value["response"]["used_tokens"] = serde_json::Value::from(used);
+        // Reserve for the result schema, repo/index metadata, and envelope keys.
+        let estimate = ((serde_json::to_vec(&value)?.len() + 512 + 3) / 4) as u64;
+        if estimate == used {
+            return Ok(used);
+        }
+        used = estimate;
+    }
+}
+
+fn page_explore(
+    full: ExploreData,
+    cursor: Option<&str>,
+    max_tokens: u64,
+    note: Option<&str>,
+) -> Result<ExploreResult> {
+    let fingerprint = cursor_fingerprint(&full)?;
+    let mut offsets = cursor.map_or(Ok(CursorOffsets::default()), |cursor| {
+        CursorOffsets::decode(cursor, &fingerprint)
+    })?;
+    if offsets.callers > full.callers.len()
+        || offsets.callees > full.callees.len()
+        || offsets.imports > full.imports.len()
+        || offsets.source > full.source.len()
+        || offsets.omitted > full.omitted.len()
+    {
+        bail!("stale or invalid explore cursor; restart explore without --cursor");
+    }
+
+    let mut page = ExploreData {
+        focus: full.focus.clone(),
+        callers: Vec::new(),
+        callees: Vec::new(),
+        imports: Vec::new(),
+        source: Vec::new(),
+        budget: full.budget.clone(),
+        omitted: Vec::new(),
+        omitted_truncated: full.omitted_truncated,
+    };
+    let initial_tokens =
+        response_tokens(&page, &full, note, max_tokens, offsets, &fingerprint, None)?;
+    if initial_tokens > max_tokens {
+        bail!("max-response-tokens is too small for the focus; increase it to at least {initial_tokens}");
+    }
+
+    let mut minimum_next_tokens = None;
+    macro_rules! append_page {
+        ($field:ident, $offset:ident) => {{
+            let mut blocked = false;
+            while offsets.$offset < full.$field.len() {
+                let index = offsets.$offset;
+                page.$field.push(full.$field[index].clone());
+                offsets.$offset += 1;
+                let estimate =
+                    response_tokens(&page, &full, note, max_tokens, offsets, &fingerprint, None)?;
+                if estimate > max_tokens {
+                    page.$field.pop();
+                    offsets.$offset -= 1;
+                    minimum_next_tokens = Some(estimate + 8);
+                    blocked = true;
+                    break;
+                }
+            }
+            blocked
+        }};
+    }
+    let _ = append_page!(callers, callers)
+        || append_page!(callees, callees)
+        || append_page!(imports, imports)
+        || append_page!(source, source)
+        || append_page!(omitted, omitted);
+
+    let next_cursor = cursor_for(&full, offsets, &fingerprint);
+    let complete = next_cursor.is_none() && full.omitted.is_empty() && !full.omitted_truncated;
+    let mut used_tokens = response_tokens(
+        &page,
+        &full,
+        note,
+        max_tokens,
+        offsets,
+        &fingerprint,
+        minimum_next_tokens,
+    )?;
+    if used_tokens > max_tokens && minimum_next_tokens.is_some() {
+        minimum_next_tokens = None;
+        used_tokens = response_tokens(&page, &full, note, max_tokens, offsets, &fingerprint, None)?;
+    }
+    Ok(ExploreResult {
+        data: page,
+        response: ResponseBudget {
+            max_tokens,
+            used_tokens,
+            tokenizer: "approx:4-bytes-per-token-including-envelope-reserve",
+            complete,
+            next_cursor,
+            minimum_next_tokens,
+        },
+    })
 }
 
 /// Arguments of `explore`.
@@ -131,6 +331,8 @@ pub struct ExploreArgs<'a> {
     pub resolved: bool,
     pub include_ambiguous: bool,
     pub max_tokens: u64,
+    pub max_response_tokens: u64,
+    pub cursor: Option<&'a str>,
 }
 
 /// `explore <name>` — a single call that answers "show me this symbol and how it
@@ -146,6 +348,8 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
         resolved,
         include_ambiguous,
         max_tokens,
+        max_response_tokens,
+        cursor,
     } = args;
     let s = Session::open(cwd, false, out)?;
 
@@ -185,10 +389,11 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
                 )),
             };
             if let Some(note) = refusal {
-                let (budget, source, omitted) =
-                    crate::context::source_for(&s.db, &s.repo, &[], max_tokens)?.into_source();
-                return s.emit_noted(
-                    ExploreResult {
+                let (budget, source, omitted, omitted_truncated) =
+                    crate::context::source_for(&s.db, &s.repo, &[], max_tokens)?
+                        .into_source_with_truncation();
+                let result = page_explore(
+                    ExploreData {
                         focus: Vec::new(),
                         callers: Vec::new(),
                         callees: Vec::new(),
@@ -196,9 +401,13 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
                         source,
                         budget,
                         omitted,
+                        omitted_truncated,
                     },
-                    Some(note),
-                );
+                    cursor,
+                    max_response_tokens,
+                    Some(&note),
+                )?;
+                return s.emit_noted(result, Some(note));
             }
             exact_range = found
                 .start_bytes
@@ -305,8 +514,9 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
         });
     }
 
-    let (budget, source, omitted) =
-        crate::context::source_for(&s.db, &s.repo, &seeds, max_tokens)?.into_source();
+    let (budget, source, omitted, omitted_truncated) =
+        crate::context::source_for(&s.db, &s.repo, &seeds, max_tokens)?
+            .into_source_with_truncation();
 
     // The focus file's imports: what is already in scope at the edit site. An
     // agent about to change a definition needs to know whether the helper it
@@ -324,8 +534,25 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
             "{deferred} ambiguous callee candidates listed without source; use --include-ambiguous or read a candidate by position"
         ))
     });
-    s.emit_noted(
-        ExploreResult {
+    let source_note = (!omitted.is_empty() || omitted_truncated).then(|| {
+        let truncation = if omitted_truncated {
+            "; omitted locations are capped, raise --max-tokens to include more source"
+        } else {
+            ""
+        };
+        format!(
+            "{} source definitions omitted by the source budget{truncation}; fetch a listed item with `read --symbol <name> -- <path>`",
+            omitted.len()
+        )
+    });
+    let note = match (note, source_note) {
+        (Some(existing), Some(source)) => Some(format!("{existing}; {source}")),
+        (Some(existing), None) => Some(existing),
+        (None, Some(source)) => Some(source),
+        (None, None) => None,
+    };
+    let result = page_explore(
+        ExploreData {
             focus,
             callers: caller_nodes,
             callees: callee_nodes,
@@ -333,9 +560,13 @@ pub fn cmd_explore(cwd: &Path, args: ExploreArgs, out: Out) -> Result<()> {
             source,
             budget,
             omitted,
+            omitted_truncated,
         },
-        note,
-    )
+        cursor,
+        max_response_tokens,
+        note.as_deref(),
+    )?;
+    s.emit_noted(result, note)
 }
 
 /// The innermost definition enclosing a `<path>:<line>` position.

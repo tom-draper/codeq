@@ -1621,6 +1621,134 @@ fn explore_bundles_definition_callers_callees_and_source() {
 }
 
 #[test]
+fn explore_response_budget_pages_lists_and_rejects_stale_cursors() {
+    let f = Fixture::new();
+    let mut source = String::new();
+    for index in 0..24 {
+        source.push_str(&format!("use std::fmt::Debug as Debug{index};\n"));
+    }
+    source.push_str("fn target() {}\n");
+    for index in 0..24 {
+        source.push_str(&format!("fn caller_{index}() {{ target(); }}\n"));
+    }
+    f.write("a.rs", &source);
+
+    let mut cursor: Option<String> = None;
+    let mut callers = std::collections::HashSet::new();
+    let mut imports = std::collections::HashSet::new();
+    let mut first_cursor = None;
+    let mut pages = 0;
+    let mut response_limit = 256u64;
+    let mut raised_limit = false;
+    loop {
+        let mut args = vec![
+            "--json".to_string(),
+            "explore".to_string(),
+            "target".to_string(),
+            "--max-response-tokens".to_string(),
+            response_limit.to_string(),
+        ];
+        if let Some(value) = &cursor {
+            args.extend(["--cursor".to_string(), value.clone()]);
+        }
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let output = f.raw(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stdout.len() <= response_limit as usize * 4,
+            "{} bytes",
+            output.stdout.len()
+        );
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let data = &value["data"];
+        assert!(data["response"]["used_tokens"].as_u64().unwrap() <= response_limit);
+        if let Some(rows) = data["callers"].as_array() {
+            for caller in rows {
+                let name = caller["name"].as_str().unwrap().to_string();
+                assert!(
+                    callers.insert(name.clone()),
+                    "caller repeated across pages: {name}"
+                );
+            }
+        }
+        if let Some(rows) = data["imports"].as_array() {
+            for import in rows {
+                let key = format!("{}:{}", import["line"], import["module"]);
+                assert!(
+                    imports.insert(key.clone()),
+                    "import repeated across pages: {key}"
+                );
+            }
+        }
+        let next = data["response"]["next_cursor"].as_str().map(str::to_string);
+        if first_cursor.is_none() {
+            first_cursor = next.clone();
+        }
+        pages += 1;
+        if next.is_none() {
+            assert!(data["response"]["complete"].as_bool().unwrap());
+            break;
+        }
+        assert!(!data["response"]["complete"].as_bool().unwrap());
+        if let Some(minimum) = data["response"]["minimum_next_tokens"].as_u64() {
+            raised_limit = true;
+            response_limit = response_limit.max(minimum);
+        }
+        cursor = next;
+        assert!(
+            pages < 100,
+            "pagination did not finish at cursor {cursor:?}"
+        );
+    }
+    assert_eq!(callers.len(), 24);
+    assert_eq!(imports.len(), 24);
+    assert!(pages > 1);
+    assert!(
+        raised_limit,
+        "the next detail should report a larger minimum budget"
+    );
+
+    f.write("a.rs", &format!("{source}fn added() {{ target(); }}\n"));
+    let stale = f.raw(&[
+        "--json",
+        "explore",
+        "target",
+        "--max-response-tokens",
+        "256",
+        "--cursor",
+        first_cursor.as_deref().unwrap(),
+    ]);
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("stale or invalid explore cursor"));
+}
+
+#[test]
+fn explore_marks_source_budget_omissions_incomplete_and_directs_a_followup_read() {
+    let f = Fixture::new();
+    f.write(
+        "a.rs",
+        "fn target() { helper(); }\nfn helper() { let value = 41; }\nfn caller() { target(); }\n",
+    );
+
+    let result = f.run(&["explore", "target", "--max-tokens", "1"]);
+    let data = &result["data"];
+    assert!(!data["response"]["complete"].as_bool().unwrap());
+    assert!(data["omitted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| { item["name"] == "caller" && item["path"] == "a.rs" }));
+    assert!(result["note"]
+        .as_str()
+        .unwrap()
+        .contains("read --symbol <name> -- <path>"));
+}
+
+#[test]
 fn explore_resolved_prunes_same_named_code_from_another_program() {
     // `callers`, `callees` and `context` all had `--resolved`; `explore` did
     // not, and it is the command that pays most for the name-based over-match,

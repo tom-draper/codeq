@@ -108,6 +108,12 @@ transformations. For repository source reads, choose the `read` mode above.
   substrings, case-insensitively, when the spelling is unknown.
 - `about NAME` is the neighbourhood metadata without source. Use it when you
   need locations and relationships; `explore` when you need the bodies too.
+  `explore` caps the full response with `--max-response-tokens`, separate from
+  the source-only `--max-tokens` budget. If JSON reports `response.next_cursor`,
+  pass it as `--cursor` on the next query. If `response.minimum_next_tokens` is
+  present, raise the response budget first. A stale cursor means the repository
+  changed, so restart the query. Source omissions list a path and name for a
+  direct `read --symbol NAME -- PATH` follow-up.
   `about NAME OTHER` and `definitions NAME OTHER` batch exact-name lookups in
   argument order. Single-name output is unchanged; batch JSON uses `data.results`
   entries with `name`, `data` and an optional missing-name `note`. Check every

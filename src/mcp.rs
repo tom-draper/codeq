@@ -512,7 +512,7 @@ fn build_args(tool: &str, a: &Value) -> Result<Vec<String>, String> {
 const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "codeq_explore",
-        "Understand a symbol in one call: its definition, callers, callees, and source. name is the exact symbol; path disambiguates a common name; resolved prunes unrelated callers and callees; max_tokens caps source. Ambiguous callees are listed but their source is deferred unless include_ambiguous=true. Give either name or at. at is a '<path>:<line>' position and explores the exact enclosing definition.",
+        "Understand a symbol in one call: its definition, callers, callees, imports, and source. name is the exact symbol; path disambiguates a common name; resolved prunes unrelated callers and callees; max_tokens caps source; max_response_tokens caps the full response. If response.next_cursor is present, pass it to continue. If minimum_next_tokens is set, raise max_response_tokens to that value first. Source omitted by max_tokens lists path and name so read can fetch it directly. Ambiguous callees are listed but their source is deferred unless include_ambiguous=true. Give either name or at. at is a '<path>:<line>' position and explores the exact enclosing definition.",
     ),
     (
         "codeq_map",
@@ -759,6 +759,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(expanded, ["explore", "--include-ambiguous", "--", "f"]);
+        let paged = build_args(
+            "codeq_explore",
+            &json!({ "name": "f", "max_response_tokens": 512, "cursor": "v1:hash:1:2:3:4:5" }),
+        )
+        .unwrap();
+        assert_eq!(
+            paged,
+            [
+                "explore",
+                "--max-response-tokens",
+                "512",
+                "--cursor",
+                "v1:hash:1:2:3:4:5",
+                "--",
+                "f"
+            ]
+        );
         assert!(build_args("codeq_explore", &json!({})).is_err());
     }
 
@@ -775,7 +792,10 @@ mod tests {
         };
         for (name, params) in [
             ("codeq_about", &["resolved"][..]),
-            ("codeq_explore", &["resolved"][..]),
+            (
+                "codeq_explore",
+                &["resolved", "max_response_tokens", "cursor"][..],
+            ),
             ("codeq_callers", &["limit"][..]),
             ("codeq_callees", &["limit"][..]),
             ("codeq_astgrep", &["explain"][..]),

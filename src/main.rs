@@ -392,6 +392,12 @@ enum Command {
         /// when that list holds something you need.
         #[arg(long, default_value_t = 4000)]
         max_tokens: u64,
+        /// Approximate budget for the full explore response, including metadata.
+        #[arg(long, default_value_t = 8000, value_parser = clap::value_parser!(u64).range(256..))]
+        max_response_tokens: u64,
+        /// Resume an incomplete explore response. Reuse only with an unchanged result.
+        #[arg(long, value_name = "CURSOR")]
+        cursor: Option<String>,
     },
     /// Word-boundary references to an exact symbol name, with enclosing symbol.
     References {
@@ -1112,6 +1118,8 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
             resolved,
             include_ambiguous,
             max_tokens,
+            max_response_tokens,
+            cursor,
         } => commands::cmd_explore(
             cwd,
             commands::ExploreArgs {
@@ -1121,6 +1129,8 @@ fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyhow::Result<
                 resolved,
                 include_ambiguous,
                 max_tokens,
+                max_response_tokens,
+                cursor: cursor.as_deref(),
             },
             out,
         ),
