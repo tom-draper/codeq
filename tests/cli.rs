@@ -10066,7 +10066,8 @@ fn explore_at_keeps_same_named_methods_as_exact_focuses() {
         assert_eq!(data["focus"].as_array().unwrap().len(), 1, "{data}");
         assert_eq!(data["focus"][0]["name"], "run", "{data}");
         assert_eq!(data["focus"][0]["path"], "sample.py", "{data}");
-        assert_eq!(data["focus"][0]["byte"].as_u64().is_some(), true, "{data}");
+        assert!(data["focus"][0]["byte"].as_u64().is_some(), "{data}");
+        assert!(data["focus"][0]["end_byte"].as_u64().is_some(), "{data}");
         let expected_helper = if expected == "'A'" {
             "helper_a"
         } else {
@@ -10074,6 +10075,8 @@ fn explore_at_keeps_same_named_methods_as_exact_focuses() {
         };
         assert_eq!(data["callees"].as_array().unwrap().len(), 1, "{data}");
         assert_eq!(data["callees"][0]["name"], expected_helper, "{data}");
+        assert!(data["callees"][0]["byte"].as_u64().is_some(), "{data}");
+        assert!(data["callees"][0]["end_byte"].as_u64().is_some(), "{data}");
         assert!(
             data["source"].as_array().unwrap().iter().any(|chunk| {
                 chunk["reason"] == "focus"
