@@ -87,7 +87,7 @@ impl Projects {
         indexed: &[String],
         imports: &[(String, String, Option<String>, bool)],
     ) -> Result<Self> {
-        let files: HashSet<&str> = indexed.iter().map(String::as_str).collect();
+        let files: HashSet<String> = indexed.iter().cloned().collect();
         let mut pending: Vec<String> = indexed
             .iter()
             .filter(|p| {
@@ -244,7 +244,7 @@ impl Projects {
                             Vec::new()
                         };
                         if let Some(candidates) = targets.iter().find_map(|target| {
-                            let candidates = files_at_path(target, indexed);
+                            let candidates = files_at_path(target, &files);
                             (!candidates.is_empty()).then_some(candidates)
                         }) {
                             pending.extend(candidates);
@@ -359,7 +359,7 @@ fn config_target(
     root: &Path,
     directory: &str,
     value: &str,
-    indexed: &HashSet<&str>,
+    indexed: &HashSet<String>,
 ) -> Result<String> {
     let path = repo_path(directory, value)?;
     for candidate in [
@@ -402,7 +402,7 @@ fn merge(target: &mut Effective, incoming: Effective) {
 fn load_effective(
     root: &Path,
     path: &str,
-    indexed: &HashSet<&str>,
+    indexed: &HashSet<String>,
     cache: &mut HashMap<String, Effective>,
     active: &mut HashSet<String>,
 ) -> Result<Effective> {
@@ -504,6 +504,7 @@ fn load_effective(
 pub(super) struct ProjectResolution {
     configs: Projects,
     packages: HashMap<String, (String, Vec<String>)>,
+    paths: HashSet<String>,
 }
 
 impl ProjectResolution {
@@ -518,6 +519,7 @@ impl ProjectResolution {
         let mut result = Self {
             configs: Projects::load(root, paths, imports)?,
             packages: HashMap::new(),
+            paths: paths.iter().cloned().collect(),
         };
 
         let root_manifest = root.join("package.json");
@@ -579,7 +581,6 @@ impl ProjectResolution {
         importer: &str,
         module: &str,
         allow_imported_name: bool,
-        paths: &[String],
     ) -> Option<Result<Vec<String>, String>> {
         let aliases = match self.configs.aliases(importer) {
             Ok(aliases) => aliases,
@@ -597,7 +598,7 @@ impl ProjectResolution {
                     .map(|target| target.replace('*', remainder))
                     .collect();
                 for target in &resolved {
-                    let candidates = files_at_path(target, paths);
+                    let candidates = files_at_path(target, &self.paths);
                     if !candidates.is_empty() {
                         return Some(Ok(candidates));
                     }
@@ -631,7 +632,7 @@ impl ProjectResolution {
                 let candidates = expected
                     .iter()
                     .find_map(|target| {
-                        let candidates = files_at_path(target, paths);
+                        let candidates = files_at_path(target, &self.paths);
                         (!candidates.is_empty()).then_some(candidates)
                     })
                     .unwrap_or_default();
@@ -698,32 +699,49 @@ fn module_spellings(module: &str, allow_imported_name: bool) -> Vec<String> {
     spellings
 }
 
-fn files_at_path(expected: &str, paths: &[String]) -> Vec<String> {
+fn files_at_path(expected: &str, paths: &HashSet<String>) -> Vec<String> {
     const EXTENSIONS: &[&str] = &[
         "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "vue", "svelte", "json",
     ];
-    let mut candidates: Vec<String> = paths
-        .iter()
-        .filter(|path| {
-            let normalized = expected.trim_start_matches("./");
-            path.as_str() == normalized
-                || EXTENSIONS
-                    .iter()
-                    .any(|ext| path.as_str() == format!("{normalized}.{ext}"))
-                || [
-                    "index.ts",
-                    "index.tsx",
-                    "index.js",
-                    "index.jsx",
-                    "index.mjs",
-                    "index.cjs",
-                ]
-                .iter()
-                .any(|entry| path.as_str() == format!("{normalized}/{entry}"))
-        })
-        .cloned()
-        .collect();
+    const ENTRIES: &[&str] = &[
+        "index.ts",
+        "index.tsx",
+        "index.js",
+        "index.jsx",
+        "index.mjs",
+        "index.cjs",
+    ];
+    let normalized = expected.trim_start_matches("./");
+    let mut candidates = vec![normalized.to_string()];
+    candidates.extend(EXTENSIONS.iter().map(|ext| format!("{normalized}.{ext}")));
+    candidates.extend(ENTRIES.iter().map(|entry| format!("{normalized}/{entry}")));
+    candidates.retain(|candidate| paths.contains(candidate));
     candidates.sort();
     candidates.dedup();
     candidates
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_targets_preserve_exact_extension_and_directory_candidates() {
+        let paths = [
+            "src/lib.ts",
+            "src/lib.js",
+            "src/lib/index.ts",
+            "src/lib",
+            "other/lib.ts",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        assert_eq!(
+            files_at_path("./src/lib", &paths),
+            ["src/lib", "src/lib.js", "src/lib.ts", "src/lib/index.ts"]
+        );
+        assert_eq!(files_at_path("src/lib.ts", &paths), ["src/lib.ts"]);
+        assert_eq!(files_at_path("other/lib", &paths), ["other/lib.ts"]);
+    }
 }
