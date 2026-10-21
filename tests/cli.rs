@@ -16801,3 +16801,109 @@ fn julia_language_quotes_strings_and_dynamic_loading_do_not_create_facts() {
     assert!(field_set(&f.run(&["outline", "main.jl"]), "name").is_empty());
     assert!(field_set(&f.run(&["imports", "main.jl"]), "module").is_empty());
 }
+
+#[test]
+fn haskell_language_equations_signatures_types_and_imports() {
+    let f = Fixture::new();
+    f.write("Main.hs", "module Main where\nimport qualified Data.Tools as Tools\nimport \"containers\" Data.Map (Map)\n-- marker_comment\nscore :: Int -> Int\nscore 0 = 0\nscore n\n  | n > 0 = n\n  | otherwise = -n\ndata Point = Point Int Int\nnewtype Count = Count Int\ntype Name = String\nclass Render a where\n  render :: a -> String\n  render x = \"marker_string\"\na %% b = a + b\nconstant = 1\n");
+    f.write("Data/Tools.hs", "module Data.Tools where\ntool x = x\n");
+    let outline = f.run(&["outline", "Main.hs"]);
+    assert_eq!(
+        field_set(&outline, "name"),
+        ["Main", "score", "Point", "Count", "Name", "Render", "render", "%%", "constant"],
+        "{outline}"
+    );
+    let score = outline["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["name"] == "score")
+        .unwrap();
+    assert_eq!(score["signature"], "score :: Int -> Int");
+    let read = f.raw(&["read", "Main.hs", "--symbol", "score", "--raw"]);
+    assert!(read.status.success());
+    assert_eq!(
+        String::from_utf8(read.stdout).unwrap().trim(),
+        "score 0 = 0\nscore n\n  | n > 0 = n\n  | otherwise = -n"
+    );
+    assert_eq!(
+        field_set(&f.run(&["imports", "Main.hs"]), "module"),
+        ["Data.Tools", "Data.Map"]
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "Main.hs"]), "path"),
+        ["Data/Tools.hs"]
+    );
+    for (marker, kind, excluded) in [
+        ("marker_comment", "comments", "strings"),
+        ("marker_string", "strings", "comments"),
+    ] {
+        let hits = f.run(&["search", marker, "--in", kind]);
+        assert_eq!(
+            hits["data"]["matches"].as_array().unwrap().len(),
+            1,
+            "{hits}"
+        );
+        let hits = f.run(&["search", marker, "--in", excluded]);
+        assert!(
+            hits["data"]["matches"].as_array().unwrap().is_empty(),
+            "{hits}"
+        );
+    }
+}
+
+#[test]
+fn haskell_language_shared_signatures_and_quantified_constants() {
+    let f = Fixture::new();
+    f.write("Main.hs", "{-# LANGUAGE ExplicitForAll #-}\nclass C a where\n  f, g :: a -> a\nfirst, second :: Int -> Int\nfirst x = x\nsecond x = x\nzero :: Num a => a\nzero = 0\nproxy :: forall a. Maybe a\nproxy = Nothing\nidentity :: forall a. Eq a => a -> a\nidentity x = x\n");
+    let outline = f.run(&["outline", "Main.hs"]);
+    assert_eq!(
+        field_set(&outline, "name"),
+        ["C", "f", "g", "first", "second", "zero", "proxy", "identity"],
+        "{outline}"
+    );
+    for (name, kind, signature) in [
+        ("f", "function", "f, g :: a -> a"),
+        ("g", "function", "f, g :: a -> a"),
+        ("first", "function", "first, second :: Int -> Int"),
+        ("second", "function", "first, second :: Int -> Int"),
+        ("zero", "constant", "zero :: Num a => a"),
+        ("proxy", "constant", "proxy :: forall a. Maybe a"),
+        (
+            "identity",
+            "function",
+            "identity :: forall a. Eq a => a -> a",
+        ),
+    ] {
+        let def = outline["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["name"] == name)
+            .unwrap();
+        assert_eq!(def["kind"], kind, "{def}");
+        assert_eq!(def["signature"], signature, "{def}");
+    }
+}
+
+#[test]
+fn haskell_language_quotes_and_separate_scopes() {
+    let f = Fixture::new();
+    f.write("Main.hs", "{-# LANGUAGE TemplateHaskell #-}\nquoted = [d| fake x = x |]\ntext = \"pretend x = x\"\nouter x = helper x where\n  helper 0 = 0\n  helper n = n\nother x = helper x where\n  helper n = n + 1\nforeign import ccall \"sin\" c_sin :: Double -> Double\n");
+    let outline = f.run(&["outline", "Main.hs"]);
+    let names = field_set(&outline, "name");
+    assert!(
+        !names.iter().any(|n| n == "fake" || n == "pretend"),
+        "{outline}"
+    );
+    assert_eq!(
+        names.iter().filter(|n| *n == "helper").count(),
+        2,
+        "{outline}"
+    );
+    assert_eq!(
+        names.iter().filter(|n| *n == "c_sin").count(),
+        1,
+        "{outline}"
+    );
+}

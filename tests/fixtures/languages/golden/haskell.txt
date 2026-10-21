@@ -1,0 +1,12 @@
+file sample.hs 25729f76f0ec41c4
+fact module Analysis 1:0-12:16 bytes=0-258 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/haskell confidence=1 sig=module Analysis where doc=-
+fact import Data.List 2:0-2:34 bytes=22-56 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/haskell confidence=1 sig=Data.List doc=-
+fact function score 5:0-6:15 bytes=97-124 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/haskell confidence=1 sig=score :: Int -> Int doc=-
+fact type Point 7:0-7:26 bytes=125-151 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/haskell confidence=1 sig=data Point = Point Int Int doc=-
+fact type Count 8:0-8:25 bytes=152-177 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/haskell confidence=1 sig=newtype Count = Count Int doc=-
+fact typealias Name 9:0-9:18 bytes=178-196 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/haskell confidence=1 sig=type Name = String doc=-
+fact class Render 10:0-11:23 bytes=197-241 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/haskell confidence=1 sig=class Render a where doc=-
+fact function render 11:2-11:23 bytes=220-241 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/haskell confidence=1 sig=render :: a -> String doc=-
+fact constant label 12:0-12:15 bytes=242-257 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/haskell confidence=1 sig=label doc=-
+span 57-76 kind=0
+span 250-257 kind=1
