@@ -237,6 +237,11 @@ Use `deps src/util.ts --reverse --depth 3 --limit 50` for incoming file dependen
 internal edges separately from external or unresolved imports. In directory mode,
 `depth` is the number of directory components, rather than graph hops.
 
+Add `--mermaid` to either view, or to forward file dependencies, to print a diagram.
+Arrows always point from importer to dependency, including in reverse queries.
+Directory edges show counts and retain external or unresolved labels. `--limit`
+caps file results or directory edges and adds a truncation comment to the diagram.
+
 TypeScript path aliases use the importing file's project, including nested configs,
 local inheritance, and project references. JSONC comments and trailing commas work.
 Invalid configs produce an error naming the file; ambiguous or ignored project

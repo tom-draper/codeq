@@ -164,6 +164,7 @@ for flags rather than loading a complete command catalogue.
 - Imports: `imports PATH`, `deps FILE`, `importers MODULE`; cycles: `deps --cycles`.
   `deps FILE --reverse --depth 3` finds transitive importers.
   `deps --by dir --depth 2` groups direct edges by directory and retains unresolved imports.
+  Add `--mermaid` to file or directory views for a diagram with importer-to-dependency arrows.
   `packages LIBRARY` joins declared npm/Cargo/Python/Go dependencies to import sites.
   Matching methods and uncertainty are explicit; `--limit` bounds rows and importers.
 - Types: `members NAME`, `implementors TYPE`, `supertypes TYPE`, `graph`.

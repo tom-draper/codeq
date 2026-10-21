@@ -687,6 +687,9 @@ pub(crate) enum Command {
         /// Aggregate direct internal imports by directory, at --depth path components.
         #[arg(long, value_parser = ["dir"], conflicts_with_all = ["file", "external", "cycles"])]
         by: Option<String>,
+        /// Render dependency edges as a Mermaid diagram, with importer-to-dependency arrows.
+        #[arg(long, conflicts_with_all = ["external", "cycles"])]
+        mermaid: bool,
         #[arg(long, default_value_t = 200)]
         limit: usize,
     },
@@ -1324,6 +1327,7 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
             external,
             reverse,
             by,
+            mermaid,
             limit,
         } => commands::cmd_deps(
             cwd,
@@ -1334,6 +1338,7 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
                 external,
                 reverse,
                 by: by.as_deref(),
+                mermaid,
                 limit,
             },
             out,

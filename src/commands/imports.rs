@@ -274,6 +274,7 @@ pub struct DepsArgs<'a> {
     pub external: bool,
     pub reverse: bool,
     pub by: Option<&'a str>,
+    pub mermaid: bool,
     pub limit: usize,
 }
 
@@ -285,6 +286,7 @@ pub fn cmd_deps(cwd: &Path, args: DepsArgs, out: Out) -> Result<()> {
         external,
         reverse,
         by,
+        mermaid,
         limit,
     } = args;
     let s = Session::open(cwd, false, out)?;
@@ -338,6 +340,25 @@ pub fn cmd_deps(cwd: &Path, args: DepsArgs, out: Out) -> Result<()> {
             serde_json::json!({"from": from, "to": to, "edges": files.len(), "resolution": resolution, "resolution_reason": reason})
         }));
         let note = take_limit(&mut data, limit);
+        if mermaid {
+            let edges = data
+                .iter()
+                .map(|row| {
+                    let resolution = row["resolution"].as_str().unwrap();
+                    let label = if resolution == "internal" {
+                        row["edges"].to_string()
+                    } else {
+                        format!("{} {resolution}", row["edges"])
+                    };
+                    (
+                        row["from"].as_str().unwrap().to_string(),
+                        row["to"].as_str().unwrap().to_string(),
+                        label,
+                    )
+                })
+                .collect();
+            return emit_dep_mermaid(Vec::new(), edges, note.as_deref());
+        }
         return s.emit_noted(data, note);
     }
 
@@ -420,7 +441,65 @@ pub fn cmd_deps(cwd: &Path, args: DepsArgs, out: Out) -> Result<()> {
         })
         .collect();
     let note = take_limit(&mut data, limit);
+    if mermaid {
+        let nodes: Vec<String> = std::iter::once(target)
+            .chain(data.iter().map(|row| row.path.clone()))
+            .collect();
+        let selected: HashSet<&str> = nodes.iter().map(String::as_str).collect();
+        let mut edges: Vec<_> = graph
+            .edges()
+            .filter(|(from, edge)| selected.contains(from) && selected.contains(edge.to.as_str()))
+            .map(|(from, edge)| (from.to_string(), edge.to.clone(), edge.module.clone()))
+            .collect();
+        edges.sort();
+        edges.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        return emit_dep_mermaid(nodes, edges, note.as_deref());
+    }
     s.emit_noted(data, note)
+}
+
+fn emit_dep_mermaid(
+    nodes: Vec<String>,
+    edges: Vec<(String, String, String)>,
+    note: Option<&str>,
+) -> Result<()> {
+    let mut ids: BTreeMap<String, usize> = nodes.into_iter().map(|node| (node, 0)).collect();
+    for (from, to, _) in &edges {
+        ids.insert(from.clone(), 0);
+        ids.insert(to.clone(), 0);
+    }
+    let escape = |text: &str| -> String {
+        text.chars()
+            .map(|c| {
+                if c.is_control() || "&\"#[]<>{}|\\".contains(c) {
+                    format!("#{};", c as u32)
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect()
+    };
+    let mut lines = vec!["graph LR".to_string()];
+    for (id, (name, value)) in ids.iter_mut().enumerate() {
+        *value = id;
+        lines.push(format!("  n{id}[\"{}\"]", escape(name)));
+    }
+    for (from, to, label) in &edges {
+        lines.push(format!(
+            "  n{} -->|\"{}\"| n{}",
+            ids[from],
+            escape(label),
+            ids[to]
+        ));
+    }
+    if edges.is_empty() {
+        lines.push("  %% no dependency edges".to_string());
+    }
+    if let Some(note) = note {
+        lines.push(format!("  %% {}", note.replace(['\n', '\r'], " ")));
+    }
+    crate::output::stdout(format_args!("{}\n", lines.join("\n")));
+    Ok(())
 }
 
 /// Map a user-supplied file query to an indexed path: use it verbatim if it is
