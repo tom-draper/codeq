@@ -537,6 +537,7 @@ fn build_args(tool: &str, a: &Value) -> Result<Vec<String>, String> {
 /// that decides when an agent reaches for the tool, so it is tuned, not derived.
 /// The order here is the order of `tools/list`.
 const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("codeq_discover", "Find definitions when the name is unknown. query splits identifiers and ranks word matches across names, signatures, docs and paths. Each candidate includes its score, match reasons and exact range. source adds candidate bodies under max_tokens. limit bounds the ranked candidates."),
     (
         "codeq_explore",
         "Symbol, callers, callees, imports and source in one call. Give name or at=path:line; path scopes names. max_tokens budgets source; max_response_tokens budgets the reply with cursor continuation. Calls are name-based; resolved filters imports. Ambiguous callee bodies need include_ambiguous.",

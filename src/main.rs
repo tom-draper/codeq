@@ -200,6 +200,19 @@ pub(crate) enum Command {
         #[arg(long, default_value_t = 200)]
         limit: usize,
     },
+    /// Find definitions from ordinary words, ranked with inspectable match reasons.
+    Discover {
+        query: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Include candidate bodies under a source budget.
+        #[arg(long)]
+        source: bool,
+        #[arg(long, default_value_t = 4000)]
+        max_tokens: u64,
+    },
     /// What a type contains: its fields, enum variants, and methods.
     ///
     /// Containment comes from the parse tree, not from name matching: a member is
@@ -1032,6 +1045,13 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
             depth,
             limit,
         } => commands::cmd_affected(cwd, &compare_to, depth, limit, out),
+        Command::Discover {
+            query,
+            path,
+            limit,
+            source,
+            max_tokens,
+        } => commands::cmd_discover(cwd, &query, path.as_deref(), limit, source, max_tokens, out),
         Command::Symbols {
             pattern,
             kind,

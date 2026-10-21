@@ -15133,3 +15133,37 @@ fn a_fact_batch_failure_rolls_back_preceding_batches_and_recovers() {
         65
     );
 }
+
+#[test]
+fn discover_ranks_split_identifiers_docs_paths_and_exact_sources() {
+    let f = Fixture::new();
+    f.write("src/session.py", "def refreshAuthToken(value):\n    \"\"\"Renew a session credential.\"\"\"\n    return value\n\ndef token():\n    pass\n");
+    f.write(
+        "src/cache.py",
+        "def unrelated():\n    \"\"\"Refresh a cached response.\"\"\"\n    pass\n",
+    );
+    let result = f.run(&["discover", "refresh auth token", "--source", "--limit", "1"]);
+    let data = &result["data"];
+    assert_eq!(data["candidates"][0]["name"], "refreshAuthToken");
+    assert!(data["candidates"][0]["reasons"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("name:auth")));
+    assert_eq!(data["truncated"], true);
+    assert!(data["source"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c["text"].as_str().unwrap().contains("return value")));
+    let docs = f.run(&["discover", "session credential", "--limit", "1"]);
+    assert_eq!(docs["data"]["candidates"][0]["name"], "refreshAuthToken");
+    assert_eq!(
+        f.run(&["discover", "refresh auth token", "--path", "src/cache.py"])["data"]["candidates"]
+            [0]["name"],
+        "unrelated"
+    );
+    assert_eq!(
+        f.run(&["discover", "zzzzzz"])["data"]["candidates"],
+        serde_json::json!([])
+    );
+}
