@@ -1,0 +1,12 @@
+file sample.jl f66555b99149895a
+fact module Analysis 2:0-17:3 bytes=24-279 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/julia confidence=1 sig=module Analysis doc=-
+fact import Statistics 3:0-3:22 bytes=40-62 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/julia confidence=1 sig=Statistics doc=-
+fact import ./helpers.jl 4:0-4:21 bytes=63-84 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/julia confidence=1 sig=./helpers.jl doc=-
+fact struct Point 5:0-7:3 bytes=85-113 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/julia confidence=1 sig=struct Point{T} doc=-
+fact type AbstractPoint 8:0-8:31 bytes=114-145 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/julia confidence=1 sig=abstract type AbstractPoint doc=-
+fact type Bits 9:0-9:25 bytes=146-171 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/julia confidence=1 sig=primitive type Bits doc=-
+fact function average 10:0-12:3 bytes=172-209 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/julia confidence=1 sig=function average(xs) doc=-
+fact function scale 13:0-13:27 bytes=210-237 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/julia confidence=1 sig=scale(x::T) where T doc=-
+fact macro greet 14:0-16:3 bytes=238-275 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/julia confidence=1 sig=macro greet(x) doc=-
+span 0-23 kind=0
+span 71-83 kind=1
