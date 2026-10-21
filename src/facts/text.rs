@@ -13,6 +13,10 @@ impl<'a> Source<'a> {
         }
     }
 
+    pub fn line(&self, offset: usize) -> usize {
+        self.lines.partition_point(|&start| start <= offset)
+    }
+
     pub fn fact(&self, kind: &str, name: &str, start: usize, end: usize, source: &str) -> Fact {
         let position = |offset| {
             let row = self

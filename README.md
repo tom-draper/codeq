@@ -310,7 +310,32 @@ codeq outline messages.properties
 These extractors skip files over 1 MiB and stop at 10,000 facts. Markup nesting
 is limited to 64 levels. Existing ignore rules still apply. Dotfiles such as
 `.env.local` need an explicit inclusion such as `!.env.local` in `.ignore`.
-Ignored files stay excluded. Index schema 53 rebuilds existing indexes automatically.
+Ignored files stay excluded. Existing indexes rebuild automatically when the index schema changes.
+
+AsciiDoc and Org headings define sections through the next heading of the same
+or higher level. Named delimited blocks are definitions too. Literal examples
+and comment blocks do not produce headings. Local AsciiDoc `include::` directives
+and Org file links, `#+INCLUDE` and `#+SETUPFILE` directives become dependencies.
+Attribute substitution and document preprocessing are not evaluated.
+
+Dockerfiles and Containerfiles expose named build stages, numeric names for
+unnamed stages, and ARG/ENV keys qualified by stage. `graph --language dockerfile`
+shows `depends-on` edges for earlier stages named in FROM, COPY `--from` and
+RUN `--mount=from=...`. Image names and build contexts are not resolved to files.
+Heredoc bodies are skipped. Makefiles expose literal targets, variables and
+`define` blocks. Literal includes become file dependencies, and
+`graph --language make` connects targets to their declared target prerequisites,
+including order-only prerequisites. Recipes remain part of their target's source.
+Variables, pattern rules and target-specific assignments are not expanded.
+Neither extractor runs commands. These formats share the 1 MiB and 10,000-fact
+limits and do not generate call or dead-code candidates.
+
+```sh
+codeq outline notes.org
+codeq read guide.adoc --symbol Setup
+codeq read Dockerfile --symbol build
+codeq graph --language make --relation depends-on
+```
 
 Support varies by language and query. Run `codeq capabilities` for the support
 matrix bundled with your executable.

@@ -1,0 +1,6 @@
+file sample.mk d2df4e2c21ee5339
+fact import ./common.mk 1:0-1:18 bytes=0-18 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=make confidence=1 sig=./common.mk doc=-
+fact key VERSION 2:0-2:13 bytes=18-31 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=make confidence=1 sig=VERSION doc=-
+fact target all 3:0-4:10 bytes=31-52 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=make confidence=1 sig=all: build doc=-
+fact target build 5:0-6:13 bytes=52-72 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=make confidence=1 sig=build: doc=-
+relation 3 all depends-on build

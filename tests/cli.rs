@@ -16359,3 +16359,156 @@ fn flat_configuration_limits_include_section_only_files() {
             .is_empty()
     );
 }
+
+#[test]
+fn document_formats_index_sections_named_blocks_and_local_includes() {
+    let f = Fixture::new();
+    f.write("docs/guide.adoc", "= Guide\n\ninclude::setup.adoc[]\n\n== Setup\nSome text.\n\n[[example]]\n[source,rust]\n----\n== Fake\nfn sample() {}\n----\n\n== Usage\nUse it.\n");
+    f.write("docs/setup.adoc", "= Setup\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "docs/guide.adoc"]), "name"),
+        ["Guide", "Setup", "example", "Usage"]
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "docs/guide.adoc"]), "path"),
+        ["docs/setup.adoc"]
+    );
+    let read = f.raw(&["read", "docs/guide.adoc", "--symbol", "Setup", "--raw"]);
+    assert!(read.status.success());
+    let read = String::from_utf8(read.stdout).unwrap();
+    assert!(
+        read.starts_with("== Setup") && !read.contains("== Usage"),
+        "{read}"
+    );
+    f.write("notes.org", "* Plan\n[[file:docs/setup.adoc::Setup][setup]]\n#+INCLUDE: \"docs/setup.adoc\"\n** Work\n#+name: demo\n#+begin_src bash\n* Fake\n#+end_src\n** Done\nFinished.\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "notes.org"]), "name"),
+        ["Plan", "Work", "demo", "Done"]
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "notes.org"]), "path"),
+        ["docs/setup.adoc"]
+    );
+    assert!(field_set(&f.run(&["at", "notes.org:8"]), "name").contains(&"demo".into()));
+    assert!(field_set(&f.run(&["unused", "."]), "name").is_empty());
+}
+
+#[test]
+fn build_formats_expose_literal_stages_targets_and_dependencies_without_execution() {
+    let f = Fixture::new();
+    f.write("Dockerfile", "ARG VERSION=1\nFROM alpine AS base\nENV APP=codeq MESSAGE=\"hello fake=value\"\nFROM base AS build\nRUN <<'EOF'\nFROM fake AS fake\nEOF\nRUN echo --from=base\nFROM scratch AS final\nCOPY --from=build /app /app\nRUN --mount=type=bind,from=base,target=/src echo ok\n");
+    let names = field_set(&f.run(&["outline", "Dockerfile"]), "name");
+    assert_eq!(
+        names,
+        [
+            "VERSION",
+            "base",
+            "base.APP",
+            "base.MESSAGE",
+            "build",
+            "final"
+        ]
+    );
+    let graph = f.run(&["graph", "--language", "dockerfile"]);
+    let edges = graph["data"].as_array().unwrap();
+    assert_eq!(edges.len(), 3, "{graph}");
+    assert_eq!(edges[0]["from"], "build");
+    assert_eq!(edges[0]["to"], "base");
+    assert_eq!(edges[1]["from"], "final");
+    assert_eq!(edges[1]["to"], "build");
+    let read = f.raw(&["read", "Dockerfile", "--symbol", "build", "--raw"]);
+    assert!(read.status.success());
+    let read = String::from_utf8(read.stdout).unwrap();
+    assert!(
+        read.starts_with("FROM base") && !read.contains("AS final"),
+        "{read}"
+    );
+    f.write("common.mk", "SHARED := 1\n");
+    f.write("Makefile", "include common.mk\nVERSION := 1\ndefine SCRIPT\nfake: nope\nendef\n.PHONY: all build\nall: build | prepare\n\t@echo 'fake: ignored'\nbuild: \\\n  source.c\n\t@echo never-run\nprepare:\n\t@echo ready\n$(DYNAMIC): other\n");
+    let names = field_set(&f.run(&["outline", "Makefile"]), "name");
+    assert_eq!(names, ["VERSION", "SCRIPT", "all", "build", "prepare"]);
+    let graph = f.run(&["graph", "--language", "make"]);
+    let edges = graph["data"].as_array().unwrap();
+    assert_eq!(edges.len(), 2, "{graph}");
+    assert_eq!(edges[0]["from"], "all");
+    assert_eq!(edges[0]["to"], "build");
+    assert_eq!(edges[1]["to"], "prepare");
+    assert_eq!(
+        field_set(&f.run(&["deps", "Makefile"]), "path"),
+        ["common.mk"]
+    );
+    assert!(field_set(&f.run(&["unused", "."]), "name").is_empty());
+    f.write("Dockerfile.dev", "FROM scratch AS dev\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "Dockerfile.dev"]), "name"),
+        ["dev"]
+    );
+    f.write("Containerfile", "FROM scratch AS container\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "Containerfile"]), "name"),
+        ["container"]
+    );
+}
+
+#[test]
+fn build_format_ranges_cover_macros_and_skip_recipe_continuations() {
+    let f = Fixture::new();
+    f.write(
+        "Dockerfile",
+        "# escape=\\\nFROM scratch AS base\nENV TEXT=\"a=b c=d\"\nFROM base AS final\n",
+    );
+    assert_eq!(
+        field_set(&f.run(&["outline", "Dockerfile"]), "name"),
+        ["base", "base.TEXT", "final"]
+    );
+    f.write("Makefile", "define SCRIPT\nnot_a_rule: ignored\nendef\nall:\n\tprintf x \\\nnot_a_rule: still_recipe\nnext:\n\t@echo ok\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "Makefile"]), "name"),
+        ["SCRIPT", "all", "next"]
+    );
+    let read = f.raw(&["read", "Makefile", "--symbol", "SCRIPT", "--raw"]);
+    assert!(read.status.success());
+    assert_eq!(read.stdout, b"define SCRIPT\nnot_a_rule: ignored\nendef\n");
+}
+
+#[test]
+fn build_and_document_boundaries_do_not_fabricate_symbols_or_dependencies() {
+    let f = Fixture::new();
+    f.write("Dockerfile", "FROM scratch AS first\nRUN echo \"<<EOF\"\nFROM first AS second\nRUN <<ONE <<'TWO'\nFROM fake AS fake\nONE\nFROM fake AS fake2\nTWO\nFROM second AS final\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "Dockerfile"]), "name"),
+        ["first", "second", "final"]
+    );
+    f.write("Makefile", "override define TEXT\nfake: ignored\ninclude fake.mk\nendef\nexport define OTHER\nalso_fake: ignored\nendef\nall: .cache/stamp\n\t@echo ok\n.cache/stamp:\n\t@echo ready\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "Makefile"]), "name"),
+        ["TEXT", "OTHER", "all", ".cache/stamp"]
+    );
+    assert!(field_set(&f.run(&["imports", "Makefile"]), "module").is_empty());
+    assert_eq!(
+        f.run(&["graph", "--language", "make", "--relation", "depends-on"])["data"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    f.write(
+        "notes.org",
+        "* Guide\n# [[file:secret.org]]\n[[file:secret.org]]\n",
+    );
+    f.write("secret.org", "* Secret\n");
+    f.write("secret.mk", "secret:\n");
+    assert_eq!(
+        field_set(&f.run(&["imports", "notes.org"]), "module"),
+        ["./secret.org"]
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "notes.org"]), "path"),
+        ["secret.org"]
+    );
+    f.write("page.html", "<a href='secret.org'>Link</a>");
+    assert_eq!(
+        field_set(&f.run(&["deps", "page.html"]), "path"),
+        ["secret.org"]
+    );
+}
