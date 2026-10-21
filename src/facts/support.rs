@@ -63,6 +63,7 @@ pub fn support(language: &str) -> Option<Support> {
         })
     };
     match language {
+        "json" | "yaml" | "toml" => return hand(true, false, false, false, false),
         // Headings are definitions; local links and images are imports; spans
         // separate fenced code from prose. RST has the same useful surface,
         // expressed with adornments and directives rather than Markdown syntax.
@@ -111,6 +112,9 @@ fn relation_kinds_of(rel: &str) -> Vec<String> {
 /// has a parser). `search --in` excludes files in other languages rather than
 /// guess.
 pub fn has_spans(language: &str) -> bool {
+    if matches!(language, "json" | "yaml" | "toml") {
+        return true;
+    }
     matches!(
         language,
         "rust"

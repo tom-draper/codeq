@@ -202,10 +202,13 @@ Codeq extracts definitions from Rust, Python, JavaScript, TypeScript, Go, Java,
 Ruby, C, C++, C#, PHP, Bash, Lua, Scala, Kotlin, Swift, Dart, Zig, Elixir,
 Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, HCL, SQL, Markdown,
 reStructuredText, and Jinja templates. Other text files remain searchable.
-JSON, YAML, and TOML have no extracted definitions. `outline` and `at` report
-that limitation in stderr or the JSON `note`; `read --symbol`, `read --at`, and
-`explore --at` explain it too. Use `search` or `read` with a line range to inspect
-these files.
+JSON, YAML, and TOML keys are definitions named by their full path.
+Use `outline package.json`, `read pyproject.toml --symbol tool.ruff`, or
+`at .github/workflows/ci.yml:12`. Arrays use `[0]` indices, and literal dots or
+brackets in keys use JSON-quoted brackets, such as `["a.b"].value`.
+Configuration keys never create call edges. YAML aliases are not expanded.
+Extraction stops at syntax depth 64 and skips files over 1 MiB and common
+lockfiles. These files remain searchable; `capabilities` lists the limits.
 
 Support varies by language and query. Run `codeq capabilities` for the support
 matrix bundled with your executable.

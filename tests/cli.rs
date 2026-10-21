@@ -10202,14 +10202,8 @@ fn capabilities_lists_every_extractable_language() {
             "'{l}' extracts but is undocumented: {langs:?}"
         );
     }
-    // Data-only formats must stay out: they are indexed for search, not parsed.
-    // SQL used to be here — it is a language with declarations and uses, not a
-    // data format, and parking it here left `.sql` with no definitions at all.
     for l in ["json", "yaml", "toml"] {
-        assert!(
-            !langs.iter().any(|x| x == l),
-            "'{l}' has no extraction but is advertised"
-        );
+        assert!(langs.iter().any(|x| x == l));
     }
     // The three language lists are three views of one fact and used to be three
     // hand-kept copies. Every extraction language must be classifiable, and
@@ -14490,60 +14484,80 @@ fn batch_symbol_lookups_keep_order_duplicates_and_missing_names() {
 }
 
 #[test]
-fn data_only_files_explain_missing_structure() {
+fn configuration_files_expose_key_definitions() {
     let f = Fixture::new();
-    for (path, language, body) in [
-        ("config/app.json", "json", "{\"needle\": true}\n"),
-        ("config/app.yaml", "yaml", "needle: true\n"),
-        ("config/app.yml", "yaml", "needle: true\n"),
-        ("config/app.toml", "toml", "needle = true\n"),
+    for (path, body) in [
+        ("app.json", "{\"needle\": true}\n"),
+        ("app.yaml", "needle: true\n"),
+        ("app.toml", "needle = true\n"),
     ] {
         f.write(path, body);
-        let note = format!(
-            "{path} is {language}, which is indexed for search but has no extracted definitions"
-        );
-        let basename = Path::new(path).file_name().unwrap().to_str().unwrap();
-        let location = format!("{basename}:1");
-        for args in [
-            vec!["outline", basename],
-            vec!["at", location.as_str()],
-            vec!["explore", "--at", location.as_str()],
-        ] {
-            let json = f.run(&args);
-            assert_eq!(json["note"], note, "{args:?}: {json}");
-            let text = f.raw(&args);
-            assert!(text.status.success(), "{args:?}");
-            assert!(String::from_utf8_lossy(&text.stderr).contains(&note));
-            if args[0] != "explore" {
-                assert_eq!(json["data"], serde_json::json!([]));
-                assert!(text.stdout.is_empty());
-            } else {
-                assert_eq!(json["data"]["focus"], serde_json::json!([]));
-            }
-        }
-        for args in [
-            vec!["read", basename, "--symbol", "needle"],
-            vec!["read", basename, "--symbol", "needle", "--raw"],
-            vec!["read", "--at", location.as_str()],
-        ] {
-            let out = f.raw(&args);
-            assert!(!out.status.success(), "{args:?}");
-            assert!(out.stdout.is_empty());
-            assert!(String::from_utf8_lossy(&out.stderr).contains(&note));
-        }
-        assert_eq!(f.raw(&["read", basename, "--raw"]).stdout, body.as_bytes());
+        assert_eq!(f.run(&["outline", path])["data"][0]["name"], "needle");
         assert_eq!(
-            f.raw(&["read", basename, "--lines", "1", "--raw"]).stdout,
-            body.as_bytes()
+            f.run(&["at", &format!("{path}:1")])["data"][0]["name"],
+            "needle"
         );
-        assert_eq!(
-            f.run(&["search", "needle", "--path", path])["data"]["matches"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
+        let out = f.raw(&["read", path, "--symbol", "needle", "--raw"]);
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("needle"));
     }
+}
+
+#[test]
+fn configuration_key_paths_keep_nested_ranges_arrays_and_literal_dots() {
+    let f = Fixture::new();
+    f.write("package.json", "{\n  \"scripts\": {\n    \"test\": \"cargo test\"\n  },\n  \"other\": {\"test\": false},\n  \"a.b\": {\"value\": 1},\n  \"servers\": [{\"host\": \"local\"}]\n}\n");
+    let names = field_set(&f.run(&["outline", "package.json"]), "name");
+    for name in [
+        "scripts.test",
+        "other.test",
+        "[\"a.b\"].value",
+        "servers[0].host",
+    ] {
+        assert!(names.contains(&name.to_string()), "{names:?}");
+    }
+    assert_eq!(
+        f.run(&["at", "package.json:3"])["data"][0]["name"],
+        "scripts.test"
+    );
+    let out = f.raw(&["read", "package.json", "--symbol", "scripts", "--raw"]);
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap().trim(),
+        "\"scripts\": {\n    \"test\": \"cargo test\"\n  },"
+    );
+    f.write(
+        "ci.yml",
+        "jobs:\n  build:\n    steps:\n      - run: cargo test\n      - run: cargo fmt\n",
+    );
+    let names = field_set(&f.run(&["outline", "ci.yml"]), "name");
+    assert!(
+        names.contains(&"jobs.build.steps[0].run".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&"jobs.build.steps[1].run".to_string()),
+        "{names:?}"
+    );
+    f.write(
+        "project.toml",
+        "[tool.ruff]\nline-length = 100\n[[servers]]\nhost = 'one'\n[[servers]]\nhost = 'two'\n",
+    );
+    let names = field_set(&f.run(&["outline", "project.toml"]), "name");
+    for name in [
+        "tool.ruff",
+        "tool.ruff.line-length",
+        "servers[0].host",
+        "servers[1].host",
+    ] {
+        assert!(names.contains(&name.to_string()), "{names:?}");
+    }
+    f.write("main.py", "def main():\n    test()\n");
+    assert_eq!(f.run(&["callees", "main"])["data"], serde_json::json!([]));
+    f.write("package-lock.json", "{\"lockfileVersion\": 3}");
+    assert_eq!(
+        f.run(&["outline", "package-lock.json"])["data"],
+        serde_json::json!([])
+    );
 }
 
 #[test]

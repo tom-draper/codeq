@@ -142,6 +142,7 @@ pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
         "version": env!("CARGO_PKG_VERSION"),
         "result_schema": RESULT_SCHEMA,
         "index_schema": SCHEMA_VERSION,
+        "configuration_keys": {"paths": "dotted; literal dots/brackets use JSON-quoted brackets; arrays use [index]", "max_depth": 64, "max_bytes": 1048576, "skip": ["package-lock.json", "composer.lock", "Cargo.lock", "poetry.lock", "pnpm-lock.yaml", "yarn.lock"], "aliases": "YAML aliases are not expanded"},
         "commands": commands,
         // Per-language support, so "no results" can be told from "not supported".
         "language_support": crate::facts::LANGUAGES

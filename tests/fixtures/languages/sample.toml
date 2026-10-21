@@ -1,0 +1,3 @@
+# configuration fixture
+[tool.ruff]
+line-length = 100

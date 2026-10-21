@@ -1,0 +1,6 @@
+file sample.yaml 2935cb78379a076b
+fact key jobs 2:0-6:0 bytes=24-74 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/yaml confidence=1 sig=jobs: doc=-
+fact key jobs.build 3:2-6:0 bytes=32-74 vis=- owner=jobs derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/yaml confidence=1 sig=build: doc=-
+fact key jobs.build.steps 4:4-6:0 bytes=43-74 vis=- owner=jobs.build derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/yaml confidence=1 sig=steps: doc=-
+fact key jobs.build.steps[0].run 5:8-5:23 bytes=58-73 vis=- owner=jobs.build.steps[0] derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/yaml confidence=1 sig=run: cargo test doc=-
+span 0-23 kind=0
