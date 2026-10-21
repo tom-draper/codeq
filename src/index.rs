@@ -261,14 +261,17 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     let reindexed = parse_and_write(&tx, &work, &existing, now, &parse_failures)?;
     partial_failures += parse_failures.load(Ordering::Relaxed);
 
+    let removed = existing.keys().any(|path| !seen.contains(path));
     drop_vanished(&tx, &existing, &seen)?;
     replace_dirs(&tx, &dirs_seen)?;
     db.set_meta("git_exclude_stamp", &exclude_stamp)?;
-    tx.execute(
-        "INSERT INTO meta(key, value) VALUES ('index_generation', '1')
-         ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
-        [],
-    )?;
+    if reindexed > 0 || removed {
+        tx.execute(
+            "INSERT INTO meta(key, value) VALUES ('index_generation', '1')
+             ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
+            [],
+        )?;
+    }
 
     tx.commit()?;
     db.set_meta("last_indexed_at", &now_ns().to_string())?;

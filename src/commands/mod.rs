@@ -784,6 +784,13 @@ mod session_tests {
         let graph = first.dep_graph().unwrap();
         let scopes = first.test_scopes().unwrap();
         assert!(first.source_body("app.py").unwrap().contains("before"));
+        // Force a refresh without changing content, including on Unix.
+        std::fs::File::options()
+            .write(true)
+            .open(&source)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
+            .unwrap();
         let second = Session::open(dir.path(), false, Out::default()).unwrap();
         assert!(Rc::ptr_eq(&first.resources, &second.resources));
         assert!(Rc::ptr_eq(&graph, &second.dep_graph().unwrap()));
@@ -798,6 +805,10 @@ mod session_tests {
             third.source_body("app.py").unwrap().as_str(),
             "def after():\n    return 2\n"
         );
+        let graph = third.dep_graph().unwrap();
+        std::fs::remove_file(&source).unwrap();
+        let fourth = Session::open(dir.path(), false, Out::default()).unwrap();
+        assert!(!Rc::ptr_eq(&graph, &fourth.dep_graph().unwrap()));
     }
 
     #[test]
