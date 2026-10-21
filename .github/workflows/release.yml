@@ -1,0 +1,92 @@
+name: Release binaries
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    env:
+      CODEQ_BUILD_REVISION: ${{ github.sha }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Check version and tag
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          echo "RELEASE_VERSION=v$version" >> "$GITHUB_ENV"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi
+      - run: cargo test --locked --bin codeq
+      - run: cargo test --locked --test languages --test install
+      - name: Install Linux static C toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build release
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then export CC=musl-gcc; fi
+          cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package and smoke test the archive
+        run: |
+          binary=codeq
+          if [[ "$RUNNER_OS" == Windows ]]; then binary=codeq.exe; fi
+          python scripts/package_release.py "target/${{ matrix.target }}/release/$binary" "$RELEASE_VERSION" "${{ matrix.target }}"
+          mkdir unpacked
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            python -m zipfile -e "dist/codeq-$RELEASE_VERSION-${{ matrix.target }}.zip" unpacked
+          else
+            tar -xzf "dist/codeq-$RELEASE_VERSION-${{ matrix.target }}.tar.gz" -C unpacked
+          fi
+          python scripts/release_smoke.py "unpacked/$binary" --version "$RELEASE_VERSION"
+          "unpacked/$binary" guide --check unpacked/GUIDE.md
+      - name: Verify pinned installer and checksum rejection
+        if: runner.os != 'Windows'
+        run: python scripts/test_release.py "unpacked/codeq"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codeq-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish checked archives and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cat dist/*.sha256 > dist/SHA256SUMS
+          (cd dist && sha256sum --check SHA256SUMS)
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --title "codeq $RELEASE_TAG"

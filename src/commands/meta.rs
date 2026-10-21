@@ -140,6 +140,8 @@ pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
     classified.dedup();
     let data = serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
+        "build_revision": env!("CODEQ_BUILD_REVISION"),
+        "guide_blake3": blake3::hash(crate::install::SKILL.as_bytes()).to_hex().to_string(),
         "result_schema": RESULT_SCHEMA,
         "index_schema": SCHEMA_VERSION,
         "configuration_keys": {"paths": "dotted; literal dots/brackets use JSON-quoted brackets; arrays use [index]", "max_depth": 64, "max_bytes": 1048576, "skip": ["package-lock.json", "composer.lock", "Cargo.lock", "poetry.lock", "pnpm-lock.yaml", "yarn.lock"], "aliases": "YAML aliases are not expanded"},
