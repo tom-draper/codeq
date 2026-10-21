@@ -19,6 +19,50 @@ and counted follow-up reads when source budgets are too small.
 generic MCP file tools and with Codeq tools. It records model usage, tool events,
 schemas, validation, stderr, and elapsed time.
 
+## Performance suite (`perf_suite.py`)
+
+Run the synthetic differential benchmarks together, retaining their exact-answer
+checks, allocation probes, peak memory, row counts and raw latency samples:
+
+```sh
+python3 bench/perf_suite.py /tmp/codeq-before target/release/codeq \
+  --runs 7 --output-dir /tmp/codeq-perf
+```
+
+The default catalog covers broad search, structural matching, wide and cyclic
+graphs, source context, dense output, queued indexing, relation writes, persistent
+MCP sessions, unused and untested definitions, hotspots and historical API diffs.
+Use repeatable `--suite NAME` to select workloads. Run on Linux with Python 3,
+Git and a C compiler for the allocation probe. Source revision, source hashes
+and executable hashes identify the measured inputs. Child reports retain their
+own fixture sizes, state controls and measurement limits.
+
+`summary.json` reports median, nearest-rank p95, p99 and maximum latency with
+sample counts. These describe observed samples. With fewer than 100 samples,
+p99 is the maximum, not a population tail estimate. Timing gates are disabled
+by default. Use `--max-regression-percent N` only on a stable runner. Child
+failures, missing or invalid reports, mismatched answers and selected timing
+regressions produce a nonzero exit. Existing child reports are removed before
+running, so a failed run cannot reuse stale results.
+
+`scale_queries.py` checks exact unused/untested names, true hotspot reference
+counts and changed API row counts at 100 and 1,000 files. `mcp_sequences.py`
+checks complete responses against CLI text at both scales. It measures sequential
+requests, 12-request bursts below the queue admission limit, and edits within a
+persistent session, including bursts whose workers contend to refresh the same
+edit. Linux RSS and high-water samples show memory across repeated
+rounds, without asserting that a finite sequence proves the absence of leaks.
+MCP latency includes queue wait and transport, and excludes server startup.
+
+```sh
+python3 bench/check_perf_regression.py target/release/codeq
+```
+
+This last check must print that the delayed executable was rejected and that
+answers still match. It also rejects a no-op executable after removing a stale
+report. It exits nonzero if either failure is missed.
+The suite adds measurement coverage and makes no speedup claim.
+
 ## Refresh query latency (`refresh_perf.py`)
 
 Compare two release binaries with seven alternating runs per side and one discarded
