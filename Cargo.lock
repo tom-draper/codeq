@@ -194,6 +194,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
+name = "codebook-tree-sitter-just"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ff9151900e03e431f2d8339fbb80eae85df292974a772336847114436b410c1"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "codeq"
 version = "0.1.0"
 dependencies = [
@@ -201,6 +211,7 @@ dependencies = [
  "assert_cmd",
  "blake3",
  "clap",
+ "codebook-tree-sitter-just",
  "fs2",
  "globset",
  "html-escape",
