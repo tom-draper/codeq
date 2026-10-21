@@ -140,7 +140,11 @@ pub(super) struct Grammar {
 /// from it and `support` reads capabilities off the same text, so the two
 /// cannot describe different queries.
 pub(super) fn grammar(language: &str) -> Option<Grammar> {
-    let name = *super::LANGUAGES.iter().find(|l| **l == language)?;
+    let name = if language == "ocaml-interface" {
+        "ocaml"
+    } else {
+        *super::LANGUAGES.iter().find(|l| **l == language)?
+    };
     let (language, defs, spans, rel) = match language {
         "rust" => g(tree_sitter_rust::LANGUAGE, RUST_QUERY, RUST_SPANS, RUST_REL),
         "python" => g(
@@ -180,6 +184,16 @@ pub(super) fn grammar(language: &str) -> Option<Grammar> {
         ),
         "php" => g(tree_sitter_php::LANGUAGE_PHP, PHP_QUERY, PHP_SPANS, PHP_REL),
         "bash" => g(tree_sitter_bash::LANGUAGE, BASH_QUERY, BASH_SPANS, ""),
+        "ocaml" | "ocaml-interface" => g(
+            if language == "ocaml-interface" {
+                tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE
+            } else {
+                tree_sitter_ocaml::LANGUAGE_OCAML
+            },
+            "",
+            include_str!("../../queries/ocaml.spans.scm"),
+            "",
+        ),
         "haskell" => g(
             tree_sitter_haskell::LANGUAGE,
             "",

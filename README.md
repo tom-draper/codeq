@@ -278,7 +278,7 @@ and truncation fields report withheld importers. `--limit 0` removes the caps.
 ## Language support and limits
 
 Codeq extracts definitions from Rust, Python, JavaScript, TypeScript, Go, Java,
-Ruby, C, C++, C#, PHP, Bash, Lua, R, Julia, Haskell, Scala, Kotlin, Swift, Dart, Zig, Elixir,
+Ruby, C, C++, C#, PHP, Bash, Lua, R, Julia, Haskell, OCaml, Scala, Kotlin, Swift, Dart, Zig, Elixir,
 Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, HCL, SQL, Markdown,
 reStructuredText, and Jinja templates. Other text files remain searchable.
 JSON, YAML, and TOML keys are definitions named by their full path.
@@ -405,6 +405,15 @@ module names, including qualified and package-qualified imports. Literate Haskel
 Template Haskell quotations and splices, preprocessing, export visibility,
 constructors, fields, instance relationships, and call relationships are not resolved.
 Comment and string filters use the Haskell syntax tree.
+
+OCaml files (`.ml` and `.mli`) expose named value bindings, functions, `val`
+specifications, external declarations, types, exceptions, modules, module types,
+classes, and methods. Implementations and interfaces use separate syntax parsers.
+`open`, `include`, and simple module aliases record raw module paths. Compilation
+unit filename capitalization and Dune or ocamlfind module resolution are not modeled.
+Destructured bindings, PPX extension payloads, export visibility, fields, variants,
+type relationships, and call relationships are not resolved. Comment and string
+filters use the OCaml syntax tree.
 
 ## Benchmarks and development
 
