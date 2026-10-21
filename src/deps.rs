@@ -15,9 +15,12 @@
 //! edge. Ambiguity that scoring can't break is reported as multiple edges — a
 //! fact, not a guess.
 
+use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+
+mod config;
 
 /// Segments of a module string that never name a file — language roots and
 /// relative markers. Dropped before matching so `crate::db` matches `db`.
@@ -92,11 +95,13 @@ struct ProjectResolution {
 }
 
 impl ProjectResolution {
-    fn load(root: &Path, paths: &[String]) -> Self {
+    fn load(root: &Path, paths: &[String]) -> Result<Self> {
         let mut result = Self::default();
-        let config = root.join("tsconfig.json");
-        if let Ok(bytes) = std::fs::read(config) {
-            if let Ok(json) = serde_json::from_slice::<Value>(&bytes) {
+        let path = root.join("tsconfig.json");
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let json = config::parse_jsonc(&bytes)
+                    .with_context(|| format!("cannot parse {}", path.display()))?;
                 let base = json
                     .pointer("/compilerOptions/baseUrl")
                     .and_then(Value::as_str)
@@ -118,6 +123,10 @@ impl ProjectResolution {
                         }
                     }
                 }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("cannot read {}", path.display()))
             }
         }
 
@@ -173,7 +182,7 @@ impl ProjectResolution {
             result.packages.insert(name, (package_root, entries));
         }
         result.aliases.sort_by(|a, b| a.0.cmp(&b.0));
-        result
+        Ok(result)
     }
 
     fn targets(
@@ -730,9 +739,9 @@ impl Graph {
         imports: Vec<(String, String, Option<String>, bool)>,
         go_module: Option<&str>,
         root: &Path,
-    ) -> Graph {
-        let project = ProjectResolution::load(root, &files);
-        Self::build_inner(files, imports, go_module, Some(project))
+    ) -> Result<Graph> {
+        let project = ProjectResolution::load(root, &files)?;
+        Ok(Self::build_inner(files, imports, go_module, Some(project)))
     }
 
     fn build_inner<F, I>(
