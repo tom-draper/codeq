@@ -22,6 +22,7 @@ mod cmake;
 mod config;
 mod docs;
 mod flat_config;
+mod julia;
 mod just;
 mod markup;
 mod r;
@@ -930,14 +931,22 @@ impl Extractor {
             return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()));
         };
         Ok(match language {
-            "r" => {
+            "r" | "julia" => {
                 let Some(tree) = spec.parser.parse(src, None) else {
                     return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()));
                 };
                 let root = tree.root_node();
                 let (_, spans, rels) = spec.harvest(root, src);
                 (
-                    (r::extract(root, src), spans, rels),
+                    (
+                        if language == "r" {
+                            r::extract(root, src)
+                        } else {
+                            julia::extract(root, src)
+                        },
+                        spans,
+                        rels,
+                    ),
                     Some(parse_health(root)),
                     Vec::new(),
                 )
@@ -1101,6 +1110,7 @@ pub const LANGUAGES: &[&str] = &[
     "bash",
     "lua",
     "r",
+    "julia",
     "scala",
     "kotlin",
     "swift",

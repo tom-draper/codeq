@@ -278,7 +278,7 @@ and truncation fields report withheld importers. `--limit 0` removes the caps.
 ## Language support and limits
 
 Codeq extracts definitions from Rust, Python, JavaScript, TypeScript, Go, Java,
-Ruby, C, C++, C#, PHP, Bash, Lua, R, Scala, Kotlin, Swift, Dart, Zig, Elixir,
+Ruby, C, C++, C#, PHP, Bash, Lua, R, Julia, Scala, Kotlin, Swift, Dart, Zig, Elixir,
 Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, HCL, SQL, Markdown,
 reStructuredText, and Jinja templates. Other text files remain searchable.
 JSON, YAML, and TOML keys are definitions named by their full path.
@@ -390,6 +390,13 @@ R files (`.r` and `.R`) expose named functions assigned with `<-`, `=`, `<<-`,
 imports. Literal `source` and `sys.source` paths become file dependencies.
 Computed paths, escaped strings, quoted code, export visibility, and call
 relationships are not resolved. Comment and string filters use the R syntax tree.
+
+Julia files (`.jl`) expose long and short function definitions, modules, macros,
+structs, abstract types, and primitive types. `using` and `import` record module
+paths, including selective and aliased imports. A literal `include("helpers.jl")`
+becomes a file dependency. Quoted code, macro expansion, computed or escaped
+include paths, triple-quoted include paths, export visibility, members, and call
+relationships are not resolved. Comment and string filters use the Julia syntax tree.
 
 ## Benchmarks and development
 

@@ -1093,6 +1093,7 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
     ("rb", "ruby"),
     ("lua", "lua"),
     ("r", "r"),
+    ("jl", "julia"),
     ("scala", "scala"),
     ("sc", "scala"),
     ("kt", "kotlin"),

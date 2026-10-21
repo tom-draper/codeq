@@ -16721,3 +16721,83 @@ fn r_language_dynamic_and_quoted_code_is_not_indexed() {
     assert!(field_set(&f.run(&["outline", "main.r"]), "name").is_empty());
     assert!(field_set(&f.run(&["imports", "main.r"]), "module").is_empty());
 }
+
+#[test]
+fn julia_language_definitions_ranges_and_dependencies() {
+    let f = Fixture::new();
+    f.write("main.jl", "# marker_comment\nmodule Analysis\nusing Statistics: mean\nusing LinearAlgebra, Random\nimport Foo.Bar as B\nimport .Helpers: work\ninclude(\"helpers.jl\")\nmutable struct Point{T} <: AbstractPoint\n    x::T\nend\nabstract type AbstractPoint end\nprimitive type Bits 8 end\nfunction M.work(x::T)::T where T\n    x\nend\nscale(x::T) where {T} = x * 2\nδ(x) = x\nBase.:+(x::Point, y::Point) = x\nmacro greet(x)\n    :(println($x))\nend\ntext = \"marker_string\"\nend\n");
+    f.write("helpers.jl", "work() = 1\n");
+    f.write("helpers.py", "def work(): pass\n");
+    let outline = f.run(&["outline", "main.jl"]);
+    assert_eq!(
+        field_set(&outline, "name"),
+        [
+            "Analysis",
+            "Point",
+            "AbstractPoint",
+            "Bits",
+            "M.work",
+            "scale",
+            "δ",
+            "Base.:+",
+            "greet"
+        ],
+        "{outline}"
+    );
+    let read = f.raw(&["read", "main.jl", "--symbol", "M.work", "--raw"]);
+    assert!(read.status.success());
+    assert_eq!(
+        String::from_utf8(read.stdout).unwrap().trim(),
+        "function M.work(x::T)::T where T\n    x\nend"
+    );
+    let imports = f.run(&["imports", "main.jl"]);
+    assert_eq!(
+        field_set(&imports, "module"),
+        [
+            "Statistics",
+            "LinearAlgebra",
+            "Random",
+            "Foo.Bar",
+            ".Helpers",
+            "./helpers.jl"
+        ],
+        "{imports}"
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "main.jl"]), "path"),
+        ["helpers.jl"]
+    );
+    for (marker, kind, excluded) in [
+        ("marker_comment", "comments", "strings"),
+        ("marker_string", "strings", "comments"),
+    ] {
+        let hits = f.run(&["search", marker, "--in", kind]);
+        assert_eq!(
+            hits["data"]["matches"].as_array().unwrap().len(),
+            1,
+            "{hits}"
+        );
+        let hits = f.run(&["search", marker, "--in", excluded]);
+        assert!(
+            hits["data"]["matches"].as_array().unwrap().is_empty(),
+            "{hits}"
+        );
+    }
+    let caps = f.run(&["capabilities"]);
+    let support = caps["data"]["language_support"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["language"] == "julia")
+        .unwrap();
+    assert_eq!(support["calls"], false);
+    assert_eq!(support["members"], false);
+}
+
+#[test]
+fn julia_language_quotes_strings_and_dynamic_loading_do_not_create_facts() {
+    let f = Fixture::new();
+    f.write("main.jl", "quote\n    fake() = 1\n    include(\"fake.jl\")\nend\n:(other() = 2)\ntext = raw\"pretend() = 3\"\ninclude(joinpath(@__DIR__, \"computed.jl\"))\ninclude(\"$name.jl\")\ninclude(\"escaped\\n.jl\")\ninclude(\"\"\"triple.jl\"\"\")\nx = 1\ncallback = x -> x\n");
+    assert!(field_set(&f.run(&["outline", "main.jl"]), "name").is_empty());
+    assert!(field_set(&f.run(&["imports", "main.jl"]), "module").is_empty());
+}
