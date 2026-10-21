@@ -77,6 +77,7 @@ and paths from your repository.
 | Understand a file's structure | `codeq outline FILE` |
 | Inspect public definitions | `codeq api PATH` |
 | Find an exact definition | `codeq definitions NAME` |
+| Find definitions from ordinary words | `codeq discover "refresh auth token" --source` |
 | Browse names you only partly know | `codeq symbols QUERY` |
 | Read a symbol and its usage | `codeq explore NAME` |
 | Find callers at call sites | `codeq callers NAME --calls` |

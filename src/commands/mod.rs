@@ -26,6 +26,7 @@ use crate::search::{
 
 mod analysis;
 mod callgraph;
+mod discover;
 mod explore;
 mod find;
 mod imports;
@@ -39,6 +40,7 @@ mod types;
 
 pub use analysis::*;
 pub use callgraph::*;
+pub use discover::*;
 pub use explore::*;
 pub use find::*;
 pub use imports::*;

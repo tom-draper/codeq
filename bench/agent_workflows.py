@@ -73,6 +73,18 @@ def main():
         def record(task, cq, baseline):
             results.append({"task": task, "codeq": cq.cost(), "rg_sed": baseline.cost()})
 
+        # Unknown-name tasks use one ranked query, with no spelling retries.
+        (root / "auth.py").write_text(
+            'def refreshAuthToken(value):\n    """Renew a session credential."""\n    return value\n')
+        discovery = []
+        for query in ("refresh auth token", "renew session credential"):
+            cq = Workflow(root)
+            answer = json.loads(cq.run(binary, "--json", "discover", query, "--limit", "1"))
+            assert answer["data"]["candidates"][0]["name"] == "refreshAuthToken", query
+            discovery.append({"query": query, "top1": True, **cq.cost()})
+        results.append({"task": "unknown-name-discovery", "queries": discovery,
+                        "embeddings": "not evaluated; deterministic fixture is insufficient evidence"})
+
         # Identical requested bytes: neither tool gets a contrived token win.
         cq, baseline = Workflow(root), Workflow(root)
         start = positions[0]
