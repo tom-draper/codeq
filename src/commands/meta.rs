@@ -159,12 +159,12 @@ pub fn cmd_capabilities(commands: &[&str], out: Out) -> Result<()> {
         "classified_languages": classified,
         // Classified but deliberately not parsed: indexed as files and fully
         // searchable, but they contribute no definitions. Stated so that an
-        // empty `symbols` on a .json file reads as "by design", not "broken".
+        // empty result on an unsupported format is distinguishable from a broken query.
         "data_only_languages": crate::index::NO_EXTRACTION,
         "fact_kinds": [
             "function", "method", "struct", "enum", "union", "trait", "module",
             "constant", "typealias", "macro", "class", "interface", "type", "import",
-            "component", "field", "variant", "heading",
+            "component", "field", "variant", "heading", "key",
         ],
         "notes": {
             "imports": "raw syntactic module strings; not resolved",

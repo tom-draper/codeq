@@ -237,6 +237,12 @@ fn fields_projects_rows_inside_object_results() {
 fn capabilities_describes_the_tool() {
     let f = Fixture::new();
     let v = f.run(&["capabilities"]);
+    assert!(v["data"]["fact_kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|kind| kind == "key"));
+    assert_eq!(v["data"]["configuration_keys"]["max_keys_per_file"], 10000);
     let d = &v["data"];
     let cmds = field_names(&d["commands"]);
     assert!(cmds.contains(&"context".to_string()), "{cmds:?}");
