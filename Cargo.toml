@@ -1,6 +1,6 @@
 [package]
 name = "codeq"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 description = "A deterministic single source of truth for repository intelligence, built for AI agents."
 license = "MIT"

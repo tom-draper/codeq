@@ -28,7 +28,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "codeq", version, about, long_about = None)]
+#[command(name = "codeq", version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("CODEQ_BUILD_REVISION"), ")"), about, long_about = None)]
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Command,

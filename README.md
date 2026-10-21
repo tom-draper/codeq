@@ -10,6 +10,21 @@ locally, completely daemonless, with no model or remote service.
 
 ## Install
 
+Release archives contain the executable, matching `GUIDE.md`, and license. Each
+archive has a SHA-256 checksum. After the `v0.1.0` release is published, install a
+pinned Linux or macOS binary without Rust:
+
+```sh
+curl -fsSLo install-codeq.sh https://raw.githubusercontent.com/tom-draper/codeq/v0.1.0/scripts/install.sh
+sh install-codeq.sh v0.1.0
+```
+
+Windows users can extract the matching ZIP from [releases](https://github.com/tom-draper/codeq/releases).
+Run `codeq --version` for the build revision, `codeq capabilities --json` for the
+bundled guide digest, and `codeq doctor` after agent setup. Release checks install
+the packaged executable in a fresh agent environment and run a navigation smoke
+test on Linux, macOS, and Windows. Linux archives use musl.
+
 Build from source with a Rust toolchain and `git` on your PATH:
 
 ```sh
