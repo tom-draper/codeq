@@ -26,6 +26,7 @@ mod haskell;
 mod julia;
 mod just;
 mod markup;
+mod ocaml;
 mod r;
 mod sections;
 mod text;
@@ -916,7 +917,17 @@ impl Extractor {
             "jinja" => return Ok((jinja_facts(src), None, Vec::new())),
             _ => {}
         }
-        self.load(language)?;
+        let parser_language = if language == "ocaml"
+            && path
+                .rsplit('.')
+                .next()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("mli"))
+        {
+            "ocaml-interface"
+        } else {
+            language
+        };
+        self.load(parser_language)?;
         if matches!(language, "svelte" | "vue") {
             self.load("javascript")?;
             self.load("typescript")?;
@@ -928,11 +939,11 @@ impl Extractor {
             };
             return Ok(extract_component(markup, javascript, typescript, path, src));
         }
-        let Some(spec) = self.languages.get_mut(language) else {
+        let Some(spec) = self.languages.get_mut(parser_language) else {
             return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()));
         };
         Ok(match language {
-            "r" | "julia" | "haskell" => {
+            "r" | "julia" | "haskell" | "ocaml" => {
                 let Some(tree) = spec.parser.parse(src, None) else {
                     return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()));
                 };
@@ -943,7 +954,8 @@ impl Extractor {
                         match language {
                             "r" => r::extract(root, src),
                             "julia" => julia::extract(root, src),
-                            _ => haskell::extract(root, src),
+                            "haskell" => haskell::extract(root, src),
+                            _ => ocaml::extract(root, src),
                         },
                         spans,
                         rels,
@@ -1113,6 +1125,7 @@ pub const LANGUAGES: &[&str] = &[
     "r",
     "julia",
     "haskell",
+    "ocaml",
     "scala",
     "kotlin",
     "swift",
