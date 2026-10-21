@@ -47,6 +47,27 @@ variants. The new extractor compiles languages as it encounters them and reuses
 their parsers. The improvement depends on the languages needed and the amount of
 source to parse. This is not a general estimate for large repository rebuilds.
 
+## Localized refresh (`localized_refresh.py`)
+
+Compare complete definition-query latency at 1,000 and 10,000 files after a
+single-file edit, file additions or deletions within a subtree, and ignore-policy
+edits. Cold
+and unchanged queries provide controls. The harness checks all indexed facts,
+spans, calls, relations, file hashes and integrity outside the timed region,
+and records separate peak RSS samples. Dynamic repository and timing metadata
+are excluded from answer equality.
+
+```sh
+python3 bench/localized_refresh.py /tmp/codeq-before target/release/codeq \
+  --runs 7 --output /tmp/localized-refresh.json
+```
+
+Each pair alternates executable order and discards one warmup. A cold query has
+no index but uses warm filesystem caches. Every query still checks cached path
+stats. The `localized_refresh` Rust tests check manifest rows and walk bounds.
+An assertion or subprocess failure exits nonzero; a completed report records
+zero errors and answer mismatches.
+
 ## Warm query latency (`query_latency.py`)
 
 Compare two release binaries on complete repository queries with seven alternating
