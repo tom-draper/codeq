@@ -1,0 +1,13 @@
+# Project configuration
+include(helpers.cmake)
+set(VERSION "1.0")
+option(BUILD_TESTS "Build tests" ON)
+function(configure_app target)
+  message("Configuring ${target}")
+endfunction()
+macro(configure_flags)
+  message([=[literal text]=])
+endmacro()
+add_library(core STATIC core.c)
+add_executable(app main.c)
+target_link_libraries(app PRIVATE core)

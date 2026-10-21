@@ -22,6 +22,7 @@ pub const UNREFERENCED_BY_DESIGN: &[(&str, Option<&str>)] = &[
     ("properties", None),
     ("dockerfile", None),
     ("make", None),
+    ("cmake", None),
     ("asciidoc", None),
     ("org", None),
     // A Terraform `output` exists precisely so something outside can read it.

@@ -53,6 +53,16 @@ impl<'a> Source<'a> {
 
     pub fn import(&self, target: &str, start: usize, end: usize, source: &str) -> Option<Fact> {
         let target = target.split(['#', '?']).next()?.trim();
+        self.file_import(target, start, end, source)
+    }
+
+    pub fn file_import(
+        &self,
+        target: &str,
+        start: usize,
+        end: usize,
+        source: &str,
+    ) -> Option<Fact> {
         if target.is_empty() || target.starts_with('/') || target.contains([':', '{', '}', '$']) {
             return None;
         }

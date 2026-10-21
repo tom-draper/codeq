@@ -16512,3 +16512,71 @@ fn build_and_document_boundaries_do_not_fabricate_symbols_or_dependencies() {
         ["secret.org"]
     );
 }
+
+#[test]
+fn cmake_definitions_ranges_dependencies_and_target_graph() {
+    let f = Fixture::new();
+    f.write("CMakeLists.txt", "include(\"helpers.cmake\")\nadd_subdirectory(sub)\nset(VERSION 1)\noption(BUILD_TESTS \"tests\" ON)\nFUNCTION(configure_app target)\n  message(\"ready\")\nENDFUNCTION()\nmacro(flags)\n  message(ok)\nendmacro()\nadd_library(core STATIC core.c)\nadd_executable(app main.c)\nadd_library(alias ALIAS core)\ntarget_link_libraries(app PRIVATE core external)\nadd_dependencies(app core)\n");
+    f.write("helpers.cmake", "set(HELPER yes)\n");
+    f.write("sub/CMakeLists.txt", "add_library(sub INTERFACE)\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "CMakeLists.txt"]), "name"),
+        [
+            "VERSION",
+            "BUILD_TESTS",
+            "configure_app",
+            "flags",
+            "core",
+            "app",
+            "alias"
+        ]
+    );
+    let read = f.raw(&[
+        "read",
+        "CMakeLists.txt",
+        "--symbol",
+        "configure_app",
+        "--raw",
+    ]);
+    assert!(read.status.success());
+    assert_eq!(
+        read.stdout,
+        b"FUNCTION(configure_app target)\n  message(\"ready\")\nENDFUNCTION()\n"
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "CMakeLists.txt"]), "path"),
+        ["helpers.cmake", "sub/CMakeLists.txt"]
+    );
+    let graph = f.run(&["graph", "--language", "cmake", "--relation", "depends-on"]);
+    let edges = graph["data"].as_array().unwrap();
+    assert!(
+        edges
+            .iter()
+            .any(|e| e["from"] == "app" && e["to"] == "core"),
+        "{graph}"
+    );
+    assert!(
+        edges
+            .iter()
+            .any(|e| e["from"] == "alias" && e["to"] == "core"),
+        "{graph}"
+    );
+    assert!(!edges.iter().any(|e| e["to"] == "external"), "{graph}");
+    assert!(field_set(&f.run(&["unused", "."]), "name").is_empty());
+}
+
+#[test]
+fn cmake_opaque_arguments_comments_and_dynamic_names_do_not_create_definitions() {
+    let f = Fixture::new();
+    f.write("sample.cmake", "#[=[\nadd_library(fake STATIC fake.c)\n]=]\nmessage([==[\nfunction(fake)\nendfunction()\n]==])\nmessage(\"add_library(fake STATIC fake.c)\")\nadd_library(${NAME} STATIC src.c)\ninclude(${HELPERS})\ninclude(CheckSymbolExists)\nadd_executable(real main.c)\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "sample.cmake"]), "name"),
+        ["real"]
+    );
+    assert!(field_set(&f.run(&["imports", "sample.cmake"]), "module").is_empty());
+    f.write(
+        "large.cmake",
+        &format!("{}\nadd_library(hidden INTERFACE)", "#".repeat(1_048_576)),
+    );
+    assert!(field_set(&f.run(&["outline", "large.cmake"]), "name").is_empty());
+}

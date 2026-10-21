@@ -18,6 +18,7 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, Point, Query, QueryCursor, Range};
 
 mod build;
+mod cmake;
 mod config;
 mod docs;
 mod flat_config;
@@ -897,6 +898,7 @@ impl Extractor {
     /// Query errors propagate to the caller instead of publishing an empty index.
     pub fn extract(&mut self, language: &str, path: &str, src: &[u8]) -> Result<Extracted> {
         match language {
+            "cmake" => return cmake::extract(src),
             "json" | "yaml" | "toml" => return config::config_facts(language, path, src),
             "asciidoc" | "org" => return Ok((sections::extract(language, src), None, Vec::new())),
             "dockerfile" | "make" => return Ok((build::extract(language, src), None, Vec::new())),
@@ -1113,6 +1115,7 @@ pub const LANGUAGES: &[&str] = &[
     "org",
     "dockerfile",
     "make",
+    "cmake",
 ];
 
 /// The text of the first direct child of `node` whose kind is `kind`.

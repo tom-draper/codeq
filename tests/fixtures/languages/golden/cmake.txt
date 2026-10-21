@@ -1,0 +1,14 @@
+file CMakeLists.txt bf7b61dd100f9380
+fact import ./helpers.cmake 2:0-2:22 bytes=24-46 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/cmake confidence=1 sig=./helpers.cmake doc=-
+fact key VERSION 3:0-3:18 bytes=47-65 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/cmake confidence=1 sig=VERSION doc=-
+fact key BUILD_TESTS 4:0-4:36 bytes=66-102 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/cmake confidence=1 sig=BUILD_TESTS doc=-
+fact function configure_app 5:0-7:13 bytes=103-182 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/cmake confidence=1 sig=function(configure_app target) doc=-
+fact macro configure_flags 8:0-10:10 bytes=183-246 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/cmake confidence=1 sig=macro(configure_flags) doc=-
+fact target core 11:0-11:31 bytes=247-278 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/cmake confidence=1 sig=add_library(core) doc=-
+fact target app 12:0-12:26 bytes=279-305 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/cmake confidence=1 sig=add_executable(app) doc=-
+relation 13 app depends-on core
+span 0-23 kind=0
+span 59-64 kind=1
+span 85-98 kind=1
+span 144-167 kind=1
+span 216-234 kind=1

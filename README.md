@@ -337,6 +337,22 @@ codeq read Dockerfile --symbol build
 codeq graph --language make --relation depends-on
 ```
 
+CMakeLists.txt and `.cmake` files expose functions, macros, literal targets and
+`set`/`option` keys. Functions and macros include their bodies in `read --symbol`.
+Literal `.cmake` paths in `include` and `add_subdirectory` paths become file
+dependencies. CMake module lookup, variables, escaped arguments and generator
+expressions are not evaluated. `graph --language cmake` connects targets declared
+in the same file through `add_dependencies`, `target_link_libraries` and aliases.
+Comments and quoted or bracket arguments support `search --in`. Extraction skips
+files over 1 MiB, facts and relations over 10,000, and nesting below 64 levels.
+Commands are never executed, and definitions do not become dead-code candidates.
+
+```sh
+codeq outline CMakeLists.txt
+codeq read helpers.cmake --symbol configure_app
+codeq graph --language cmake --relation depends-on
+```
+
 Support varies by language and query. Run `codeq capabilities` for the support
 matrix bundled with your executable.
 
