@@ -278,7 +278,7 @@ and truncation fields report withheld importers. `--limit 0` removes the caps.
 ## Language support and limits
 
 Codeq extracts definitions from Rust, Python, JavaScript, TypeScript, Go, Java,
-Ruby, C, C++, C#, PHP, Bash, Lua, R, Julia, Scala, Kotlin, Swift, Dart, Zig, Elixir,
+Ruby, C, C++, C#, PHP, Bash, Lua, R, Julia, Haskell, Scala, Kotlin, Swift, Dart, Zig, Elixir,
 Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, HCL, SQL, Markdown,
 reStructuredText, and Jinja templates. Other text files remain searchable.
 JSON, YAML, and TOML keys are definitions named by their full path.
@@ -397,6 +397,14 @@ paths, including selective and aliased imports. A literal `include("helpers.jl")
 becomes a file dependency. Quoted code, macro expansion, computed or escaped
 include paths, triple-quoted include paths, export visibility, members, and call
 relationships are not resolved. Comment and string filters use the Julia syntax tree.
+
+Haskell files (`.hs`) expose named functions and value bindings, type signatures,
+modules, data types, newtypes, type aliases, type families, and classes. Equations
+for the same binding in a declaration group share one source range. Imports record
+module names, including qualified and package-qualified imports. Literate Haskell,
+Template Haskell quotations and splices, preprocessing, export visibility,
+constructors, fields, instance relationships, and call relationships are not resolved.
+Comment and string filters use the Haskell syntax tree.
 
 ## Benchmarks and development
 
