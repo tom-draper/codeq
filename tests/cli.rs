@@ -1700,6 +1700,151 @@ fn project_multiple_extends_and_ambiguous_ownership_remain_explicit() {
 }
 
 #[test]
+fn workspace_exports_control_root_subpaths_and_private_paths() {
+    let f = Fixture::new();
+    f.write("package.json", r#"{"workspaces":["packages/*"]}"#);
+    f.write("packages/lib/package.json", r#"{"name":"@scope/lib","main":"src/legacy.ts","exports":{".":"./src/public.ts","./feature/*":"./src/feature/*.ts","./feature/private/*":null}}"#);
+    for path in [
+        "public",
+        "legacy",
+        "feature/one",
+        "feature/private/secret",
+        "internal",
+    ] {
+        f.write(
+            &format!("packages/lib/src/{path}.ts"),
+            "export const value = 1;\n",
+        );
+    }
+    f.write("app.ts", "import '@scope/lib';\nimport '@scope/lib/feature/one';\nimport '@scope/lib/feature/private/secret';\nimport '@scope/lib/src/internal';\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "app.ts"]), "path"),
+        [
+            "packages/lib/src/feature/one.ts",
+            "packages/lib/src/public.ts"
+        ]
+    );
+    let external = f.run(&["deps", "--external"]);
+    for module in [
+        "@scope/lib/feature/private/secret",
+        "@scope/lib/src/internal",
+    ] {
+        assert!(
+            external["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["module"] == module
+                    && r["resolution_reason"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("exports"))),
+            "{external}"
+        );
+    }
+}
+
+#[test]
+fn workspace_conditional_exports_keep_uncertainty_instead_of_legacy_fallback() {
+    let f = Fixture::new();
+    f.write("package.json", r#"{"workspaces":["packages/*"]}"#);
+    f.write(
+        "packages/lib/package.json",
+        r#"{"name":"lib","exports":{"import":"./src/esm.ts","require":"./src/cjs.ts"}}"#,
+    );
+    for file in ["index", "esm", "cjs"] {
+        f.write(
+            &format!("packages/lib/src/{file}.ts"),
+            "export function helper() {}\n",
+        );
+    }
+    f.write(
+        "app.ts",
+        "import { helper } from 'lib';\nexport function run() { helper(); }\n",
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "app.ts"]), "path"),
+        Vec::<String>::new()
+    );
+    let external = f.run(&["deps", "--external"]);
+    assert!(
+        external["data"][0]["resolution_reason"]
+            .as_str()
+            .is_some_and(|s| s.contains("conditional exports")),
+        "{external}"
+    );
+    f.write(
+        "packages/lib/package.json",
+        r#"{"name":"lib","exports":{"import":"./src/esm.ts","default":"./src/esm.ts"}}"#,
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "app.ts"]), "path"),
+        ["packages/lib/src/esm.ts"]
+    );
+}
+
+#[test]
+fn workspace_pnpm_patterns_include_nested_packages_and_apply_exclusions() {
+    let f = Fixture::new();
+    f.write("package.json", r#"{"name":"root","private":true}"#);
+    f.write(
+        "pnpm-workspace.yaml",
+        "# workspace packages\npackages:\n  - 'packages/**'\n  - '!packages/**/excluded'\n",
+    );
+    f.write(
+        "packages/nested/lib/package.json",
+        r#"{"name":"included","exports":"./src.ts"}"#,
+    );
+    f.write("packages/nested/lib/src.ts", "export const value = 1;\n");
+    f.write(
+        "packages/nested/excluded/package.json",
+        r#"{"name":"excluded","exports":"./src.ts"}"#,
+    );
+    f.write(
+        "packages/nested/excluded/src.ts",
+        "export const value = 2;\n",
+    );
+    f.write("app.ts", "import 'included';\nimport 'excluded';\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "app.ts"]), "path"),
+        ["packages/nested/lib/src.ts"]
+    );
+}
+
+#[test]
+fn workspace_invalid_separators_and_numeric_conditions_never_create_edges() {
+    let f = Fixture::new();
+    f.write("package.json", r#"{"workspaces":["packages/*"]}"#);
+    f.write("packages/lib/src.ts", "export const value = 1;\n");
+    f.write("packages/lib/other.ts", "export const value = 2;\n");
+    f.write(
+        "packages/lib/package.json",
+        r#"{"name":"lib","exports":{"./x":"./src.ts"}}"#,
+    );
+    f.write("app.ts", "import 'lib//x';\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "app.ts"]), "path"),
+        Vec::<String>::new()
+    );
+    f.write("app.ts", "import 'lib';\n");
+    f.write(
+        "packages/lib/package.json",
+        r#"{"name":"lib","exports":{"0":"./src.ts","default":"./src.ts"}}"#,
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "app.ts"]), "path"),
+        Vec::<String>::new()
+    );
+    f.write(
+        "packages/lib/package.json",
+        r#"{"name":"lib","exports":{"default":"./src.ts","import":"./other.ts"}}"#,
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "app.ts"]), "path"),
+        ["packages/lib/src.ts"]
+    );
+}
+
+#[test]
 fn callees_use_an_imported_module_receiver_to_narrow_same_named_defs() {
     let f = Fixture::new();
     f.write("context.rs", "pub fn build() {}\n");

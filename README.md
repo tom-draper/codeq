@@ -241,6 +241,8 @@ TypeScript path aliases use the importing file's project, including nested confi
 local inheritance, and project references. JSONC comments and trailing commas work.
 Invalid configs produce an error naming the file; ambiguous or ignored project
 configs retain an unresolved reason. See [project resolution](docs/project-resolution.md).
+Workspace packages honor npm or pnpm membership and explicit package exports,
+including private subpath exclusions. Unsupported export conditions stay unresolved.
 
 `packages express` joins declarations to importing files. npm, Cargo, Python
 `project.dependencies` and optional groups, and Go `require` declarations are read

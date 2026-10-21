@@ -6,6 +6,8 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+mod workspace;
+
 struct Alias {
     pub pattern: String,
     pub targets: Vec<String>,
@@ -503,77 +505,27 @@ fn load_effective(
 
 pub(super) struct ProjectResolution {
     configs: Projects,
-    packages: HashMap<String, (String, Vec<String>)>,
+    workspace: workspace::Workspace,
     paths: HashSet<String>,
 }
 
 impl ProjectResolution {
     pub(super) fn config_guards(self) -> Vec<(PathBuf, bool)> {
-        self.configs.guards
+        let mut guards = self.configs.guards;
+        guards.extend(self.workspace.guards);
+        guards
     }
     pub(super) fn load(
         root: &Path,
         paths: &[String],
         imports: &[(String, String, Option<String>, bool)],
     ) -> Result<Self> {
-        let mut result = Self {
+        let indexed = paths.iter().cloned().collect();
+        Ok(Self {
             configs: Projects::load(root, paths, imports)?,
-            packages: HashMap::new(),
-            paths: paths.iter().cloned().collect(),
-        };
-
-        let root_manifest = root.join("package.json");
-        let workspaces = std::fs::read(root_manifest)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .and_then(|json| {
-                json.pointer("/workspaces/packages")
-                    .or_else(|| json.get("workspaces"))
-                    .and_then(Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_string)
-                            .collect::<Vec<_>>()
-                    })
-            })
-            .unwrap_or_default();
-        for manifest in paths
-            .iter()
-            .filter(|path| path.ends_with("package.json") && path.as_str() != "package.json")
-        {
-            let Some(parent) = Path::new(manifest).parent() else {
-                continue;
-            };
-            let package_root = normalize_path(parent);
-            if !workspaces
-                .iter()
-                .any(|pattern| workspace_match(pattern, &package_root))
-            {
-                continue;
-            }
-            let Some(package) = std::fs::read(root.join(manifest))
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            else {
-                continue;
-            };
-            let Some(name) = package
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-            else {
-                continue;
-            };
-            let entries = ["source", "module", "types", "main"]
-                .iter()
-                .filter_map(|key| package.get(key).and_then(Value::as_str))
-                .map(|entry| normalize_path(&Path::new(&package_root).join(entry)))
-                .collect::<Vec<_>>();
-            result.packages.insert(name, (package_root, entries));
-        }
-        Ok(result)
+            workspace: workspace::Workspace::load(root, &indexed)?,
+            paths: indexed,
+        })
     }
 
     pub(super) fn targets(
@@ -609,39 +561,10 @@ impl ProjectResolution {
                 ));
                 continue;
             }
-            let package_name = spelling
-                .split('/')
-                .take(if spelling.starts_with('@') { 2 } else { 1 })
-                .collect::<Vec<_>>()
-                .join("/");
-            if let Some((package_root, entries)) = self.packages.get(&package_name) {
-                let subpath = spelling
-                    .strip_prefix(&package_name)
-                    .unwrap_or("")
-                    .trim_start_matches('/');
-                let expected: Vec<String> = if !subpath.is_empty() {
-                    vec![normalize_path(&Path::new(package_root).join(subpath))]
-                } else if !entries.is_empty() {
-                    entries.clone()
-                } else {
-                    vec![
-                        normalize_path(&Path::new(package_root).join("src/index")),
-                        normalize_path(&Path::new(package_root).join("index")),
-                    ]
-                };
-                let candidates = expected
-                    .iter()
-                    .find_map(|target| {
-                        let candidates = files_at_path(target, &self.paths);
-                        (!candidates.is_empty()).then_some(candidates)
-                    })
-                    .unwrap_or_default();
-                if candidates.is_empty() {
-                    unresolved_reason = Some(format!(
-                        "workspace package '{package_name}' matched, but no indexed entry file was found"
-                    ));
-                } else {
-                    return Some(Ok(candidates));
+            if let Some(result) = self.workspace.resolve(&spelling, &self.paths) {
+                match result {
+                    Ok(targets) => return Some(Ok(targets)),
+                    Err(reason) => unresolved_reason = Some(reason),
                 }
             }
         }
@@ -657,23 +580,6 @@ impl ProjectResolution {
     }
 }
 
-fn normalize_path(path: &Path) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
-            std::path::Component::ParentDir if parts.last().is_some_and(|part| part != "..") => {
-                parts.pop();
-            }
-            std::path::Component::ParentDir => parts.push("..".into()),
-            std::path::Component::CurDir
-            | std::path::Component::RootDir
-            | std::path::Component::Prefix(_) => {}
-        }
-    }
-    parts.join("/")
-}
-
 fn wildcard_match<'a>(pattern: &str, value: &'a str) -> Option<&'a str> {
     if let Some((prefix, suffix)) = pattern.split_once('*') {
         value.strip_prefix(prefix)?.strip_suffix(suffix)
@@ -684,14 +590,9 @@ fn wildcard_match<'a>(pattern: &str, value: &'a str) -> Option<&'a str> {
     }
 }
 
-fn workspace_match(pattern: &str, path: &str) -> bool {
-    wildcard_match(pattern.trim_end_matches('/'), path).is_some()
-        || pattern.trim_end_matches('/') == path
-}
-
 fn module_spellings(module: &str, allow_imported_name: bool) -> Vec<String> {
     let mut spellings = vec![module.to_string()];
-    if allow_imported_name || module.starts_with('@') {
+    if allow_imported_name {
         if let Some((base, _)) = module.rsplit_once('.') {
             spellings.push(base.to_string());
         }
