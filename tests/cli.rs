@@ -15931,3 +15931,59 @@ fn discovery_reasons_and_package_importers_are_visible_in_text() {
     let text = String::from_utf8(packages.stdout).unwrap();
     assert!(text.contains("importers=src/auth.ts"), "{text}");
 }
+
+#[test]
+fn scoped_refresh_matches_a_rebuild_after_structural_and_ignore_changes() {
+    let f = Fixture::new();
+    f.git(&["init", "-q"]);
+    f.write("src/a.py", "def original(): pass\n");
+    f.write("src_other/a.py", "def untouched(): pass\n");
+    f.write("other/b.py", "def sibling(): pass\n");
+    f.run(&["symbols", "--limit", "0"]);
+    for step in 0..8 {
+        match step {
+            0 => {
+                f.write("src/a.py", "def edited(): pass\n");
+            }
+            1 => {
+                f.write("src/nested/new.py", "def added(): pass\n");
+            }
+            2 => {
+                f.remove("src/a.py");
+                f.write("other/b.py", "def changed_sibling(): pass\n");
+            }
+            3 => {
+                std::fs::rename(f.path().join("src/nested"), f.path().join("src/renamed")).unwrap();
+            }
+            4 => {
+                f.write("src/.gitignore", "renamed/\n");
+            }
+            5 => {
+                f.write("src/.gitignore", "# include everything\n");
+            }
+            6 => {
+                std::fs::remove_dir_all(f.path().join("src/renamed")).unwrap();
+            }
+            7 => {
+                f.write(".codeqignore", "other/\n");
+            }
+            _ => unreachable!(),
+        }
+        let symbols = f.run(&["symbols", "--limit", "0"])["data"].clone();
+        let search = f.run(&["search", "def", "--limit", "0"])["data"].clone();
+        f.run(&["index", "--rebuild"]);
+        let rebuilt = f.run(&["symbols", "--limit", "0"])["data"].clone();
+        assert_eq!(symbols, rebuilt, "symbols after step {step}");
+        assert_eq!(
+            search,
+            f.run(&["search", "def", "--limit", "0"])["data"],
+            "search after step {step}"
+        );
+        assert_eq!(
+            f.run(&["--meta", "symbols"])["index"]["reindexed_files"]
+                .as_u64()
+                .unwrap_or(0),
+            0
+        );
+    }
+}

@@ -208,16 +208,7 @@ struct Walked {
 pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     let repo_root = repo.root.as_path();
 
-    // Native, git-free fast path (our own index cache): stream the directory and
-    // file manifests, stat each entry, and bail on the first mismatch — no
-    // HashMap, and without loading the heavy content_hash column. Fresh iff:
-    //   * every cached directory's mtime is unchanged — a file added, removed or
-    //     renamed bumps its parent dir's mtime, so this catches all *structural*
-    //     changes (the untracked-cache trick git uses), and
-    //   * every cached file's (size, mtime, ctime) is unchanged — catches content
-    //     edits, including ones that restore mtime after writing.
-    // Platforms without change timestamps also hash files before trusting the cache.
-    if is_fresh(db, repo_root, !cfg!(unix))? {
+    if matches!(freshness(db, repo_root, !cfg!(unix))?, Freshness::Fresh) {
         return Ok(RefreshStats {
             reindexed: 0,
             partial_failures: 0,
@@ -238,16 +229,19 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     // invocations noticing the same edit at once all decide to refresh, then
     // queue here. Re-check before the manifest load and walk as well as parsing
     // and writes. Dropping `tx` unwritten rolls back cleanly.
-    if is_fresh(db, repo_root, !cfg!(unix))? {
+    let state = freshness(db, repo_root, !cfg!(unix))?;
+    if matches!(state, Freshness::Fresh) {
         return Ok(RefreshStats {
             reindexed: 0,
             partial_failures: 0,
             generation: db.index_generation()?,
         });
     }
-    // Not fresh: load the full manifest (with hashes, to tell a real content
-    // change from a mere mtime bump) and walk the tree to reconcile.
-    let existing = load_manifest(db)?;
+    let scope = match &state {
+        Freshness::Dirty(scope) => Some(scope),
+        _ => None,
+    };
+    let existing = load_manifest(db, scope)?;
     let now = now_ns();
     let exclude_stamp = git_exclude_stamp(repo_root);
     let Walked {
@@ -255,7 +249,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
         dirs_seen,
         work,
         mut partial_failures,
-    } = walk_tree(repo, &existing);
+    } = walk_tree(repo, &existing, scope);
 
     let parse_failures = AtomicU64::new(0);
     let reindexed = parse_and_write(&tx, &work, &existing, now, &parse_failures)?;
@@ -263,7 +257,20 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 
     let removed = existing.keys().any(|path| !seen.contains(path));
     drop_vanished(&tx, &existing, &seen)?;
-    replace_dirs(&tx, &dirs_seen)?;
+    if let Some(scope) = scope {
+        let mut delete =
+            tx.prepare("DELETE FROM dirs WHERE path = ?1 OR (path >= ?2 AND path < ?3)")?;
+        for dir in &scope.dirs {
+            delete.execute((dir, format!("{dir}/"), format!("{dir}0")))?;
+        }
+        let mut insert =
+            tx.prepare("INSERT OR REPLACE INTO dirs(path, mtime_ns) VALUES(?1, ?2)")?;
+        for (path, mtime) in &dirs_seen {
+            insert.execute((path, mtime))?;
+        }
+    } else {
+        replace_dirs(&tx, &dirs_seen)?;
+    }
     db.set_meta("git_exclude_stamp", &exclude_stamp)?;
     if reindexed > 0 || removed {
         tx.execute(
@@ -283,12 +290,25 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
 }
 
 /// Every file row the index already holds, keyed by path.
-fn load_manifest(db: &Db) -> Result<HashMap<String, Stored>> {
+fn load_manifest(db: &Db, scope: Option<&RefreshScope>) -> Result<HashMap<String, Stored>> {
     let mut existing: HashMap<String, Stored> = HashMap::new();
-    let mut stmt = db
-        .conn
-        .prepare("SELECT path, size_bytes, mtime_ns, ctime_ns, content_hash, parse_errors, parse_recovered FROM files")?;
-    let rows = stmt.query_map([], |r| {
+    let mut sql = "SELECT path, size_bytes, mtime_ns, ctime_ns, content_hash, parse_errors, parse_recovered FROM files".to_string();
+    let mut params = Vec::new();
+    if let Some(scope) = scope {
+        let mut predicates = Vec::new();
+        for path in &scope.files {
+            predicates.push("path = ?");
+            params.push(path.clone());
+        }
+        for dir in &scope.dirs {
+            predicates.push("(path >= ? AND path < ?)");
+            params.extend([format!("{dir}/"), format!("{dir}0")]);
+        }
+        sql.push_str(" WHERE ");
+        sql.push_str(&predicates.join(" OR "));
+    }
+    let mut stmt = db.conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |r| {
         Ok((
             r.get::<_, String>(0)?,
             Stored {
@@ -311,12 +331,34 @@ fn load_manifest(db: &Db) -> Result<HashMap<String, Stored>> {
 /// Serial walk (stat-bound): record directory mtimes for the freshness cache,
 /// build the `seen` set, and collect the files that actually need
 /// (re)processing — unchanged files short-circuit on the stat fast path.
-fn walk_tree(repo: &Repo, existing: &HashMap<String, Stored>) -> Walked {
+fn walk_tree(
+    repo: &Repo,
+    existing: &HashMap<String, Stored>,
+    scope: Option<&RefreshScope>,
+) -> Walked {
     let repo_root = repo.root.as_path();
     let mut seen: HashSet<String> = HashSet::new();
     let mut dirs_seen: HashMap<String, i64> = HashMap::new();
     let mut partial_failures: u64 = 0;
     let mut work: Vec<WorkItem> = Vec::new();
+    if let Some(scope) = scope {
+        for rel in &scope.files {
+            seen.insert(rel.clone());
+            if let Some((size, mtime, ctime)) = file_stat_key(&repo_root.join(rel)) {
+                work.push((rel.clone(), repo_root.join(rel), size, mtime, ctime));
+            } else {
+                partial_failures += 1;
+            }
+        }
+        if scope.dirs.is_empty() {
+            return Walked {
+                seen,
+                dirs_seen,
+                work,
+                partial_failures,
+            };
+        }
+    }
     let mut wb = WalkBuilder::new(repo_root);
     wb.standard_filters(true); // .gitignore, .ignore, hidden, parents
                                // `parents(false)` when the root was pinned with --root: a dependency
@@ -332,6 +374,19 @@ fn walk_tree(repo: &Repo, existing: &HashMap<String, Stored>) -> Walked {
     // cannot resurrect a file under an excluded `data/`, because the walk never
     // descends — exclude `data/*.json` instead if you need to re-include one.
     wb.add_custom_ignore_filename(".codeqignore");
+    if let Some(scope) = scope {
+        let root = repo_root.to_path_buf();
+        let dirs = scope.dirs.clone();
+        wb.filter_entry(move |entry| {
+            let Ok(rel) = entry.path().strip_prefix(&root) else {
+                return false;
+            };
+            dirs.iter().any(|dir| {
+                let dir = Path::new(dir);
+                rel.starts_with(dir) || dir.starts_with(rel)
+            })
+        });
+    }
     let walker = wb.build();
     for dent in walker {
         let dent = match dent {
@@ -778,19 +833,23 @@ fn replace_dirs(tx: &rusqlite::Transaction, dirs_seen: &HashMap<String, i64>) ->
     Ok(())
 }
 
-/// Whether the index is fresh, checked against codeq's own cache without a walk:
-/// stream the cached directory and file stats, stat each on disk, and stop at the
-/// first mismatch. Streams (no HashMap) and skips the content_hash column, so the
-/// common "nothing changed" path is just syscalls. An empty dir cache (no index
-/// yet, or a pre-v6 one) is never fresh — the caller must do a full walk.
-///
-/// This runs on *every* query, so it's allocation-conscious: it borrows each
-/// cached path from the SQLite row (no per-row `String`) and reuses one path
-/// buffer (`root/…`) instead of allocating a fresh `PathBuf` per file — which at
-/// 100k files is ~200k allocations saved off the per-query cost.
-fn is_fresh(db: &Db, root: &std::path::Path, hash_contents: bool) -> Result<bool> {
+#[derive(Default)]
+struct RefreshScope {
+    files: Vec<String>,
+    dirs: Vec<String>,
+}
+
+enum Freshness {
+    Fresh,
+    Dirty(RefreshScope),
+    Full,
+}
+
+/// Retain only dirty paths while streaming cached stats. Ignore-policy changes,
+/// missing metadata and large change sets use the full reconciliation path.
+fn freshness(db: &Db, root: &std::path::Path, hash_contents: bool) -> Result<Freshness> {
     if db.get_meta("git_exclude_stamp")?.as_deref() != Some(git_exclude_stamp(root).as_str()) {
-        return Ok(false);
+        return Ok(Freshness::Full);
     }
     // Reused `root/<rel>` buffer: truncate back to `root/` and append each rel.
     let mut buf = root.to_string_lossy().into_owned();
@@ -799,6 +858,7 @@ fn is_fresh(db: &Db, root: &std::path::Path, hash_contents: bool) -> Result<bool
     }
     let base = buf.len();
 
+    let mut scope = RefreshScope::default();
     let mut any_dir = false;
     {
         let mut stmt = db.conn.prepare("SELECT path, mtime_ns FROM dirs")?;
@@ -810,13 +870,28 @@ fn is_fresh(db: &Db, root: &std::path::Path, hash_contents: bool) -> Result<bool
             buf.truncate(base);
             buf.push_str(rel);
             if path_mtime(std::path::Path::new(&buf)) != Some(mtime) {
-                return Ok(false);
+                let path = Path::new(&buf);
+                if rel.is_empty() || !path.is_dir() || scope.dirs.len() >= 128 {
+                    return Ok(Freshness::Full);
+                }
+                scope.dirs.push(rel.to_string());
             }
         }
     }
     if !any_dir {
-        return Ok(false);
+        return Ok(Freshness::Full);
     }
+    scope.dirs.sort();
+    let mut dirs: Vec<String> = Vec::new();
+    for dir in scope.dirs {
+        if !dirs
+            .iter()
+            .any(|parent| Path::new(&dir).starts_with(parent))
+        {
+            dirs.push(dir);
+        }
+    }
+    scope.dirs = dirs;
     let sql = if !hash_contents {
         "SELECT path, size_bytes, mtime_ns, ctime_ns FROM files"
     } else {
@@ -832,21 +907,35 @@ fn is_fresh(db: &Db, root: &std::path::Path, hash_contents: bool) -> Result<bool
         buf.truncate(base);
         buf.push_str(rel);
         let path = std::path::Path::new(&buf);
-        if file_stat_key(path) != Some((size, mtime, ctime)) {
-            return Ok(false);
+        if scope.dirs.iter().any(|dir| Path::new(rel).starts_with(dir)) {
+            continue;
         }
-        if hash_contents {
+        let Some(stat) = file_stat_key(path) else {
+            return Ok(Freshness::Full);
+        };
+        let mut changed = stat != (size, mtime, ctime);
+        if hash_contents && !changed {
             let Ok(bytes) = std::fs::read(path) else {
-                return Ok(false);
+                return Ok(Freshness::Full);
             };
             let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
             let hash = blake3::hash(bytes).to_hex();
             if r.get::<_, Option<String>>(4)?.as_deref() != Some(hash.as_str()) {
-                return Ok(false);
+                changed = true;
             }
         }
+        if changed {
+            if scope.files.len() + scope.dirs.len() >= 128 {
+                return Ok(Freshness::Full);
+            }
+            scope.files.push(rel.to_string());
+        }
     }
-    Ok(true)
+    Ok(if scope.files.is_empty() && scope.dirs.is_empty() {
+        Freshness::Fresh
+    } else {
+        Freshness::Dirty(scope)
+    })
 }
 
 /// Nanosecond mtime of a stat result, if representable.
@@ -1047,6 +1136,81 @@ impl Db {
 mod tests {
     use super::*;
 
+    static FULL_MANIFEST_LOADS: AtomicUsize = AtomicUsize::new(0);
+
+    fn count_full_manifest(sql: &str) {
+        if sql.starts_with("SELECT path, size_bytes, mtime_ns, ctime_ns, content_hash, parse_errors, parse_recovered FROM files")
+            && !sql.contains("WHERE")
+        {
+            FULL_MANIFEST_LOADS.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn localized_refresh_limits_manifest_and_walk_to_dirty_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repo::at(dir.path(), true).unwrap();
+        for subdir in ["left", "leftovers", "right"] {
+            std::fs::create_dir(dir.path().join(subdir)).unwrap();
+            std::fs::write(
+                dir.path().join(subdir).join("app.py"),
+                "def before(): pass\n",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&repo.root).unwrap();
+        refresh(&db, &repo).unwrap();
+        std::fs::write(dir.path().join("left/app.py"), "def edited(): pass\n").unwrap();
+        let Freshness::Dirty(scope) = freshness(&db, &repo.root, false).unwrap() else {
+            panic!("expected localized file refresh");
+        };
+        assert_eq!(scope.files, ["left/app.py"]);
+        assert!(scope.dirs.is_empty());
+        let existing = load_manifest(&db, Some(&scope)).unwrap();
+        assert_eq!(existing.len(), 1);
+        let walked = walk_tree(&repo, &existing, Some(&scope));
+        assert_eq!(walked.work.len(), 1);
+        assert!(walked.dirs_seen.is_empty());
+        refresh(&db, &repo).unwrap();
+
+        std::fs::write(dir.path().join("left/added.py"), "def added(): pass\n").unwrap();
+        let Freshness::Dirty(scope) = freshness(&db, &repo.root, false).unwrap() else {
+            panic!("expected localized subtree refresh");
+        };
+        assert_eq!(scope.dirs, ["left"]);
+        let existing = load_manifest(&db, Some(&scope)).unwrap();
+        assert_eq!(existing.len(), 1);
+        let walked = walk_tree(&repo, &existing, Some(&scope));
+        assert_eq!(walked.seen.len(), 2);
+        assert!(walked.seen.contains("left/added.py"));
+        assert!(!walked.dirs_seen.contains_key("leftovers"));
+        assert!(!walked.dirs_seen.contains_key("right"));
+    }
+
+    #[test]
+    fn localized_refresh_does_not_load_the_full_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repo::at(dir.path(), true).unwrap();
+        for subdir in ["left", "right"] {
+            std::fs::create_dir(dir.path().join(subdir)).unwrap();
+            std::fs::write(
+                dir.path().join(subdir).join("app.py"),
+                "def before(): pass\n",
+            )
+            .unwrap();
+        }
+        let mut db = Db::open(&repo.root).unwrap();
+        refresh(&db, &repo).unwrap();
+        db.conn.trace(Some(count_full_manifest));
+        FULL_MANIFEST_LOADS.store(0, Ordering::Relaxed);
+        std::fs::write(dir.path().join("left/app.py"), "def edited(): pass\n").unwrap();
+        assert_eq!(refresh(&db, &repo).unwrap().reindexed, 1);
+        std::fs::write(dir.path().join("left/new.py"), "def added(): pass\n").unwrap();
+        assert_eq!(refresh(&db, &repo).unwrap().reindexed, 1);
+        assert_eq!(FULL_MANIFEST_LOADS.load(Ordering::Relaxed), 0);
+        assert_eq!(db.file_count().unwrap(), 3);
+    }
+
     #[test]
     fn content_freshness_reads_bom_files_while_another_connection_holds_a_write_lock() {
         let dir = tempfile::tempdir().unwrap();
@@ -1058,9 +1222,15 @@ mod tests {
         db.conn.busy_timeout(std::time::Duration::ZERO).unwrap();
         let writer = rusqlite::Connection::open(repo.root.join(".codeq/index.db")).unwrap();
         writer.execute_batch("BEGIN IMMEDIATE").unwrap();
-        assert!(is_fresh(&db, &repo.root, true).unwrap());
+        assert!(matches!(
+            freshness(&db, &repo.root, true).unwrap(),
+            Freshness::Fresh
+        ));
         std::fs::write(&path, b"\xEF\xBB\xBFdef changed():\n    pass\n").unwrap();
-        assert!(!is_fresh(&db, &repo.root, true).unwrap());
+        assert!(!matches!(
+            freshness(&db, &repo.root, true).unwrap(),
+            Freshness::Fresh
+        ));
         writer.execute_batch("ROLLBACK").unwrap();
     }
 
