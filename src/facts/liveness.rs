@@ -20,6 +20,10 @@ pub const UNREFERENCED_BY_DESIGN: &[(&str, Option<&str>)] = &[
     ("ini", None),
     ("dotenv", None),
     ("properties", None),
+    ("dockerfile", None),
+    ("make", None),
+    ("asciidoc", None),
+    ("org", None),
     // A Terraform `output` exists precisely so something outside can read it.
     ("hcl", Some("output")),
     // A SQL index or trigger is named exactly once in the world, at its own

@@ -1,0 +1,7 @@
+= Guide
+
+include::guide.adoc[]
+
+== Setup
+
+Text.

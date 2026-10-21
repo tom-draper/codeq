@@ -63,13 +63,20 @@ pub fn support(language: &str) -> Option<Support> {
         })
     };
     match language {
+        "dockerfile" | "make" => {
+            let mut value = hand(true, language == "make", false, true, false)?;
+            value.relation_kinds = vec!["depends-on".into()];
+            return Some(value);
+        }
         "json" | "yaml" | "toml" | "ini" | "dotenv" | "properties" => {
             return hand(true, false, false, false, false)
         }
         // Headings are definitions; local links and images are imports; spans
         // separate fenced code from prose. RST has the same useful surface,
         // expressed with adornments and directives rather than Markdown syntax.
-        "html" | "xml" | "markdown" | "rst" => return hand(true, true, false, false, false),
+        "asciidoc" | "org" | "html" | "xml" | "markdown" | "rst" => {
+            return hand(true, true, false, false, false)
+        }
         // Blocks and macros are template definitions; extends/include/import
         // directives are local file dependencies.
         "jinja" => return hand(true, true, false, false, false),

@@ -1,0 +1,8 @@
+file Dockerfile 9376dd6aafaf088c
+fact key VERSION 1:0-1:14 bytes=0-14 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=dockerfile confidence=1 sig=VERSION doc=-
+fact stage base 2:0-3:14 bytes=14-48 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=dockerfile confidence=1 sig=FROM alpine AS base doc=-
+fact key base.APP 3:0-3:14 bytes=34-48 vis=- owner=base derived=0 test=0 decorator=- contract=- shape=-/0 source=dockerfile confidence=1 sig=base.APP doc=-
+fact stage build 4:0-5:12 bytes=48-79 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=dockerfile confidence=1 sig=FROM base AS build doc=-
+fact stage final 6:0-7:28 bytes=79-129 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=dockerfile confidence=1 sig=FROM scratch AS final doc=-
+relation 4 build depends-on base
+relation 7 final depends-on build

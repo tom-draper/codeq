@@ -1068,6 +1068,11 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
     ("cfg", "ini"),
     ("env", "dotenv"),
     ("properties", "properties"),
+    ("adoc", "asciidoc"),
+    ("asciidoc", "asciidoc"),
+    ("org", "org"),
+    ("dockerfile", "dockerfile"),
+    ("mk", "make"),
     ("jinja", "jinja"),
     ("jinja2", "jinja"),
     ("j2", "jinja"),
@@ -1120,6 +1125,16 @@ pub const NO_EXTRACTION: &[&str] = &[];
 /// this is not content sniffing.
 pub fn language_for(path: &str) -> Option<&'static str> {
     let filename = path.rsplit(['/', '\\']).next()?;
+    let lower = filename.to_ascii_lowercase();
+    if matches!(lower.as_str(), "dockerfile" | "containerfile")
+        || lower.starts_with("dockerfile.")
+        || lower.starts_with("containerfile.")
+    {
+        return Some("dockerfile");
+    }
+    if matches!(filename, "Makefile" | "makefile" | "GNUmakefile") {
+        return Some("make");
+    }
     if filename == ".env" || filename.starts_with(".env.") {
         return Some("dotenv");
     }

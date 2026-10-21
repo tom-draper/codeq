@@ -17,10 +17,12 @@ use anyhow::{Context, Result};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, Point, Query, QueryCursor, Range};
 
+mod build;
 mod config;
 mod docs;
 mod flat_config;
 mod markup;
+mod sections;
 mod text;
 use docs::{jinja_facts, markdown_facts, rst_facts};
 
@@ -896,6 +898,8 @@ impl Extractor {
     pub fn extract(&mut self, language: &str, path: &str, src: &[u8]) -> Result<Extracted> {
         match language {
             "json" | "yaml" | "toml" => return config::config_facts(language, path, src),
+            "asciidoc" | "org" => return Ok((sections::extract(language, src), None, Vec::new())),
+            "dockerfile" | "make" => return Ok((build::extract(language, src), None, Vec::new())),
             "html" | "xml" => return markup::extract(language, src),
             "ini" | "dotenv" | "properties" => {
                 return Ok((flat_config::extract(language, src), None, Vec::new()))
@@ -1105,6 +1109,10 @@ pub const LANGUAGES: &[&str] = &[
     "ini",
     "dotenv",
     "properties",
+    "asciidoc",
+    "org",
+    "dockerfile",
+    "make",
 ];
 
 /// The text of the first direct child of `node` whose kind is `kind`.
