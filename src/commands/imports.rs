@@ -220,12 +220,12 @@ pub(crate) fn load_dep_graph(db: &Db) -> Result<deps::Graph> {
         })?;
         rows.collect::<std::result::Result<_, _>>()?
     };
-    deps::Graph::build_project(
+    Ok(deps::Graph::build_project(
         files,
         imports,
         go_module_path(db).as_deref(),
         db.dir.parent().unwrap_or(&db.dir),
-    )
+    ))
 }
 
 /// The module path declared in the repository's `go.mod`, if it has one.
