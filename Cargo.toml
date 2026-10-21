@@ -62,6 +62,7 @@ tree-sitter-html = "0.23"
 quick-xml = "0.38"
 html-escape = "0.2"
 shell-words = "1"
+tree-sitter-cmake = "0.7.5"
 
 [profile.release]
 # lto = "thin"
