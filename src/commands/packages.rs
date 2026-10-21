@@ -66,10 +66,11 @@ fn manifest_packages(path: &str, body: &str) -> Result<Vec<Package>> {
                             .map(str::to_string)
                             .unwrap_or_else(|| item.to_string().trim().to_string());
                         let mut package = declaration(name, "cargo", path, version);
-                        if item.get("path").is_some()
-                            || item.get("workspace").and_then(|i| i.as_bool()) == Some(true)
-                        {
-                            package.resolution = "internal-or-workspace".into();
+                        if item.get("path").is_some() {
+                            package.resolution = "internal".into();
+                        } else if item.get("workspace").and_then(|i| i.as_bool()) == Some(true) {
+                            package.resolution = "unresolved".into();
+                            package.resolution_reason = Some("dependency specification inherited from workspace; external versus path dependency not established".into());
                         }
                         if let Some(actual) = item.get("package").and_then(|i| i.as_str()) {
                             package.match_method = format!("manifest-alias:{actual}");
