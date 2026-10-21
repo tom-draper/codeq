@@ -637,7 +637,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_deps",
-        "Internal import dependencies of a file, transitive to depth. cycles lists repo-wide cycles; external lists unresolved/external imports. Project-aware where supported, heuristic otherwise. Give file, cycles or external. Unresolved does not mean unused.",
+        "Import dependencies of a file, transitive to depth; reverse walks incoming importers. by=dir needs no file and groups direct edges by directory, with depth counting path components. cycles lists repo-wide cycles; external lists unresolved/external imports. limit bounds rows. Directory results retain external/unresolved groups and reasons. Project-aware where supported, heuristic otherwise. Unresolved does not mean unused.",
     ),
     (
         "codeq_astgrep",
