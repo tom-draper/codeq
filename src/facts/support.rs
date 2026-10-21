@@ -77,6 +77,7 @@ pub fn support(language: &str) -> Option<Support> {
         "asciidoc" | "org" | "html" | "xml" | "markdown" | "rst" => {
             return hand(true, true, false, false, false)
         }
+        "r" => return hand(true, true, false, false, false),
         // Blocks and macros are template definitions; extends/include/import
         // directives are local file dependencies.
         "jinja" => return hand(true, true, false, false, false),
@@ -152,6 +153,7 @@ pub fn has_spans(language: &str) -> bool {
             | "php"
             | "bash"
             | "lua"
+            | "r"
             | "scala"
             | "kotlin"
             | "swift"
