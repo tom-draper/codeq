@@ -571,7 +571,7 @@ impl Graph {
             // or built-ins. Relative paths retain the ordinary file resolver.
             if uses_node_resolution(&from) && !module.starts_with('.') {
                 if let Some(project) = &project {
-                    match project.targets(&from, &module, allow_imported_name, &paths) {
+                    match project.targets(&from, &module, allow_imported_name) {
                         Some(Ok(targets)) => {
                             for target in targets {
                                 edges.entry(from.clone()).or_default().push(Edge {
