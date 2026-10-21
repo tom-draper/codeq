@@ -1,0 +1,179 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    2.93798828125,
+    1.60107421875,
+    1.11669921875
+  ],
+  "runs": 5,
+  "binary_sha256": {
+    "before": "2251c3be6083c0b68749ae3627381a3abb8a265c82f8b107fa8472c2794cb919",
+    "after": "2251c3be6083c0b68749ae3627381a3abb8a265c82f8b107fa8472c2794cb919"
+  },
+  "limits": "Warm whole CLI process, including parsing and rendering. Allocation probe includes all intercepted malloc/calloc/realloc calls, not matcher-only allocations.",
+  "workloads": {
+    "repeated_near_misses": {
+      "command": [
+        "--json",
+        "astgrep",
+        "foo($X, $Y, $X)",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 5000,
+      "stdout_bytes": 682314,
+      "answer_sha256": "2ad2c0df42ee790db2b6f5cd31dc0e613c1ea6661b3bfc82d86f0ccc43bf5945",
+      "samples_ms": {
+        "before": [
+          191.984221,
+          188.930251,
+          189.674333,
+          191.032713,
+          189.342576
+        ],
+        "after": [
+          189.186401,
+          189.747376,
+          198.60131,
+          189.397556,
+          187.785431
+        ]
+      },
+      "allocations": {
+        "before": 617971,
+        "after": 617969
+      },
+      "median_ms": {
+        "before": 189.674333,
+        "after": 189.397556
+      }
+    },
+    "named_variadic": {
+      "command": [
+        "--json",
+        "astgrep",
+        "foo($X, $$$REST, $X)",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 5000,
+      "stdout_bytes": 697314,
+      "answer_sha256": "81c18743ad6cb70f341d342233f2380e8135bc57f8fea2f54e97886b3226903c",
+      "samples_ms": {
+        "before": [
+          194.025276,
+          193.920516,
+          194.022821,
+          194.573844,
+          193.907277
+        ],
+        "after": [
+          196.850258,
+          194.51011,
+          195.329014,
+          194.831131,
+          194.126847
+        ]
+      },
+      "allocations": {
+        "before": 657970,
+        "after": 657970
+      },
+      "median_ms": {
+        "before": 194.022821,
+        "after": 194.831131
+      }
+    },
+    "repeated_variadic": {
+      "command": [
+        "--json",
+        "astgrep",
+        "pair(foo($$$ARGS), bar($$$ARGS))",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 5000,
+      "stdout_bytes": 786204,
+      "answer_sha256": "b5f316afbe589cb3b7b93cb0a2ac184078ee7d4827271b3d7381845e1de2ccc3",
+      "samples_ms": {
+        "before": [
+          186.708584,
+          182.007586,
+          182.530643,
+          182.63688,
+          182.130119
+        ],
+        "after": [
+          182.581533,
+          182.159076,
+          182.458613,
+          184.476908,
+          181.917722
+        ]
+      },
+      "allocations": {
+        "before": 573054,
+        "after": 573054
+      },
+      "median_ms": {
+        "before": 182.530643,
+        "after": 182.458613
+      }
+    },
+    "anonymous_variadic": {
+      "command": [
+        "--json",
+        "astgrep",
+        "foo($$$)",
+        "--language",
+        "rust",
+        "--limit",
+        "0"
+      ],
+      "rows": 15000,
+      "stdout_bytes": 1519568,
+      "answer_sha256": "b6b8ef219f3921f6d1c718349cc9344f0f70ebf7ac2651424381086b0a7c7a26",
+      "samples_ms": {
+        "before": [
+          187.291598,
+          188.353338,
+          187.373785,
+          187.756984,
+          186.402322
+        ],
+        "after": [
+          190.795108,
+          187.021689,
+          187.271973,
+          188.644178,
+          186.41368
+        ]
+      },
+      "allocations": {
+        "before": 552953,
+        "after": 552953
+      },
+      "median_ms": {
+        "before": 187.373785,
+        "after": 187.271973
+      }
+    }
+  },
+  "fixture": {
+    "groups": 5000,
+    "bytes": 468911
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    2.6396484375,
+    1.58056640625,
+    1.11474609375
+  ]
+}

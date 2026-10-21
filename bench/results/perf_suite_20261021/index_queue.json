@@ -1,0 +1,223 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    1.94091796875,
+    1.53759765625,
+    1.11865234375
+  ],
+  "runs": 5,
+  "binary_sha256": {
+    "before": "2251c3be6083c0b68749ae3627381a3abb8a265c82f8b107fa8472c2794cb919",
+    "after": "2251c3be6083c0b68749ae3627381a3abb8a265c82f8b107fa8472c2794cb919"
+  },
+  "limits": "Whole CLI indexing into a fresh database or after editing every fixture file. Filesystem caches warm. Peak RSS measured separately through a small interpreter. Database IDs normalized by path; all facts, spans, calls, relations, file hashes and parse health compared. Integrity and foreign keys checked.",
+  "workloads": {
+    "text_cold": {
+      "source_bytes": 83887772,
+      "rows": {
+        "files": 162,
+        "facts": 1,
+        "impls": 0,
+        "calls": 1,
+        "spans": 1
+      },
+      "index_sha256": "12c9fd139c48881c9cc9b08857d85d898411e38a093d24c8a6be47754e129a12",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          2105.847897,
+          2084.399315,
+          2009.710688,
+          2131.893541,
+          1967.422802
+        ],
+        "after": [
+          1927.88888,
+          1960.84124,
+          2168.388675,
+          2069.491407,
+          2144.030639
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 39940,
+        "after": 37444
+      },
+      "database_bytes": {
+        "before": 151552,
+        "after": 151552
+      },
+      "median_ms": {
+        "before": 2084.399315,
+        "after": 2069.491407
+      }
+    },
+    "text_edited": {
+      "source_bytes": 83887772,
+      "rows": {
+        "files": 162,
+        "facts": 1,
+        "impls": 0,
+        "calls": 1,
+        "spans": 1
+      },
+      "index_sha256": "12c9fd139c48881c9cc9b08857d85d898411e38a093d24c8a6be47754e129a12",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          1948.746679,
+          2054.488347,
+          2293.37669,
+          1911.281889,
+          1867.198888
+        ],
+        "after": [
+          1861.122857,
+          1932.201166,
+          1919.277822,
+          1871.9174,
+          1897.745012
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 37592,
+        "after": 36392
+      },
+      "database_bytes": {
+        "before": 163840,
+        "after": 163840
+      },
+      "median_ms": {
+        "before": 1948.746679,
+        "after": 1897.745012
+      }
+    },
+    "facts_cold": {
+      "source_bytes": 14450730,
+      "rows": {
+        "files": 50,
+        "facts": 6145,
+        "impls": 0,
+        "calls": 6145,
+        "spans": 6145
+      },
+      "index_sha256": "c76444c48727272bf796c08a81fd81b47677834382fb374ce6c802303f187e31",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          502.388006,
+          520.627045,
+          491.398466,
+          487.124933,
+          463.085644
+        ],
+        "after": [
+          483.969313,
+          496.138435,
+          495.816275,
+          462.630244,
+          466.857209
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 35052,
+        "after": 33508
+      },
+      "database_bytes": {
+        "before": 3686400,
+        "after": 3694592
+      },
+      "median_ms": {
+        "before": 491.398466,
+        "after": 483.969313
+      }
+    },
+    "oversized_cold": {
+      "source_bytes": 18874417,
+      "rows": {
+        "files": 3,
+        "facts": 1,
+        "impls": 0,
+        "calls": 1,
+        "spans": 1
+      },
+      "index_sha256": "2c6ae5080844eb9306de47936fb0d566c4415f053549dd0432cc1c462129bced",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          446.453141,
+          430.878283,
+          492.203334,
+          464.530789,
+          429.474433
+        ],
+        "after": [
+          427.885466,
+          446.358056,
+          489.84048,
+          431.155156,
+          475.553114
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 66800,
+        "after": 66612
+      },
+      "database_bytes": {
+        "before": 106496,
+        "after": 106496
+      },
+      "median_ms": {
+        "before": 446.453141,
+        "after": 446.358056
+      }
+    },
+    "small_cold": {
+      "source_bytes": 2154,
+      "rows": {
+        "files": 66,
+        "facts": 65,
+        "impls": 0,
+        "calls": 65,
+        "spans": 1
+      },
+      "index_sha256": "b25563f306a6e39071fbe4faa094b0e9b3640407cebf1a8ea563b05bbbbb73f1",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "samples_ms": {
+        "before": [
+          32.399266,
+          31.669908,
+          32.389336,
+          32.577818,
+          32.594914
+        ],
+        "after": [
+          32.227624,
+          32.350697,
+          32.651226,
+          32.736974,
+          32.652625
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 18188,
+        "after": 17960
+      },
+      "database_bytes": {
+        "before": 131072,
+        "after": 131072
+      },
+      "median_ms": {
+        "before": 32.399266,
+        "after": 32.651226
+      }
+    }
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    1.74462890625,
+    1.53564453125,
+    1.15087890625
+  ]
+}

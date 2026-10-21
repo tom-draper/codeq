@@ -1,0 +1,353 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    2.50830078125,
+    1.57080078125,
+    1.11376953125
+  ],
+  "runs": 5,
+  "binary_sha256": {
+    "before": "2251c3be6083c0b68749ae3627381a3abb8a265c82f8b107fa8472c2794cb919",
+    "after": "2251c3be6083c0b68749ae3627381a3abb8a265c82f8b107fa8472c2794cb919"
+  },
+  "limits": "Whole warm CLI requests, including refresh, graph construction and rendering. Peak RSS measured separately. SQL query reuse is checked by the separate resolver trace unit test.",
+  "workloads": {
+    "wide": {
+      "command": [
+        "--json",
+        "callees",
+        "entry",
+        "--depth",
+        "3",
+        "--limit",
+        "0"
+      ],
+      "rows": 481,
+      "answer_sha256": "0a55fcd01db4b871579190f9993767cb52aa35ec19a0129a9c4f52c554250e87",
+      "samples_ms": {
+        "before": [
+          42.87081,
+          42.626317,
+          42.296922,
+          42.392342,
+          43.096183
+        ],
+        "after": [
+          42.450886,
+          42.391077,
+          42.710321,
+          42.814665,
+          42.986735
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 12752,
+        "after": 12728
+      },
+      "median_ms": {
+        "before": 42.626317,
+        "after": 42.710321
+      }
+    },
+    "early_path": {
+      "command": [
+        "--json",
+        "callpath",
+        "entry",
+        "leaf159",
+        "--max-depth",
+        "2"
+      ],
+      "rows": 3,
+      "answer_sha256": "a7a3e8ed0b3810b40132b24a90e093914b05fec12ed045dd251f25cc8566a56d",
+      "samples_ms": {
+        "before": [
+          4.696631,
+          4.604872,
+          4.487868,
+          4.460683,
+          4.579376
+        ],
+        "after": [
+          4.678795,
+          4.537225,
+          4.697343,
+          4.580112,
+          4.48471
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 12684,
+        "after": 12740
+      },
+      "median_ms": {
+        "before": 4.579376,
+        "after": 4.580112
+      }
+    },
+    "late_path": {
+      "command": [
+        "--json",
+        "callpath",
+        "entry",
+        "target",
+        "--max-depth",
+        "2"
+      ],
+      "rows": 3,
+      "answer_sha256": "0c767ddba5d0676dd1172a1c8c9b79342514af9ce676a44055e4ff77bfd9aa96",
+      "samples_ms": {
+        "before": [
+          37.097115,
+          37.146903,
+          37.301199,
+          37.265687,
+          36.959218
+        ],
+        "after": [
+          37.272456,
+          36.807065,
+          37.24554,
+          36.776682,
+          37.276613
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 12732,
+        "after": 12668
+      },
+      "median_ms": {
+        "before": 37.146903,
+        "after": 37.24554
+      }
+    },
+    "no_path": {
+      "command": [
+        "--json",
+        "callpath",
+        "entry",
+        "unreachable",
+        "--max-depth",
+        "4"
+      ],
+      "rows": 0,
+      "answer_sha256": "3f76eec8d1e5c95449c0a8ec607cd668b7d0fe7d3b3ac2d65822466d99418403",
+      "samples_ms": {
+        "before": [
+          41.456065,
+          43.092932,
+          42.335331,
+          42.191953,
+          42.323553
+        ],
+        "after": [
+          42.293737,
+          43.238674,
+          42.654616,
+          42.487253,
+          42.616463
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 12700,
+        "after": 12644
+      },
+      "median_ms": {
+        "before": 42.323553,
+        "after": 42.616463
+      }
+    },
+    "scoped": {
+      "command": [
+        "--json",
+        "callpath",
+        "entry",
+        "target",
+        "--path",
+        "graph.py",
+        "--max-depth",
+        "2"
+      ],
+      "rows": 3,
+      "answer_sha256": "0c767ddba5d0676dd1172a1c8c9b79342514af9ce676a44055e4ff77bfd9aa96",
+      "samples_ms": {
+        "before": [
+          37.261012,
+          37.623974,
+          40.033368,
+          37.423179,
+          37.077924
+        ],
+        "after": [
+          38.412674,
+          37.103737,
+          40.631852,
+          37.404541,
+          36.520945
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 12748,
+        "after": 12744
+      },
+      "median_ms": {
+        "before": 37.423179,
+        "after": 37.404541
+      }
+    },
+    "limited": {
+      "command": [
+        "--json",
+        "callees",
+        "entry",
+        "--depth",
+        "3",
+        "--limit",
+        "8"
+      ],
+      "rows": 8,
+      "answer_sha256": "4d62a0934896887ff2a48811e950533439c0229c6266a11b81d619e943091798",
+      "samples_ms": {
+        "before": [
+          42.408257,
+          42.316404,
+          42.46556,
+          42.539457,
+          42.659778
+        ],
+        "after": [
+          42.555911,
+          42.767114,
+          42.809506,
+          42.322735,
+          42.722455
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 12684,
+        "after": 12752
+      },
+      "median_ms": {
+        "before": 42.46556,
+        "after": 42.722455
+      }
+    },
+    "cycle": {
+      "command": [
+        "--json",
+        "callees",
+        "top",
+        "--depth",
+        "6",
+        "--limit",
+        "0"
+      ],
+      "rows": 6,
+      "answer_sha256": "9f45623def52803e579a708650761b64a59a4f244df5bd25cd4a2939c93d5c55",
+      "samples_ms": {
+        "before": [
+          2.876512,
+          2.78606,
+          2.865812,
+          2.85906,
+          2.903067
+        ],
+        "after": [
+          2.803173,
+          2.885898,
+          2.846845,
+          2.794873,
+          2.841212
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 12740,
+        "after": 12712
+      },
+      "median_ms": {
+        "before": 2.865812,
+        "after": 2.841212
+      }
+    },
+    "cycle_path": {
+      "command": [
+        "--json",
+        "callpath",
+        "top",
+        "finish",
+        "--max-depth",
+        "6"
+      ],
+      "rows": 5,
+      "answer_sha256": "bc74160d80290111a39c0aafee6ef6e0d5b984059ce9f2423c78028a5fa83281",
+      "samples_ms": {
+        "before": [
+          2.950052,
+          3.014505,
+          2.981194,
+          2.982991,
+          3.058629
+        ],
+        "after": [
+          2.937875,
+          2.979955,
+          2.952938,
+          2.969609,
+          2.940146
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 12740,
+        "after": 12736
+      },
+      "median_ms": {
+        "before": 2.982991,
+        "after": 2.952938
+      }
+    },
+    "hop_cap": {
+      "command": [
+        "--json",
+        "callees",
+        "entry",
+        "--depth",
+        "2",
+        "--limit",
+        "0"
+      ],
+      "rows": 2000,
+      "answer_sha256": "217010b2685fdbdb1a726afa3481495577041fea8f4626f7aa6b376df0f6110d",
+      "samples_ms": {
+        "before": [
+          20.258458,
+          20.068507,
+          19.938258,
+          19.720026,
+          20.188205
+        ],
+        "after": [
+          20.096735,
+          20.449607,
+          20.069712,
+          19.874427,
+          20.092215
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 16404,
+        "after": 16252
+      },
+      "median_ms": {
+        "before": 20.068507,
+        "after": 20.092215
+      }
+    }
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    2.46728515625,
+    1.578125,
+    1.11865234375
+  ]
+}
