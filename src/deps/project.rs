@@ -520,10 +520,11 @@ impl ProjectResolution {
         paths: &[String],
         imports: &[(String, String, Option<String>, bool)],
     ) -> Result<Self> {
+        let root = root.canonicalize().context("cannot resolve project root")?;
         let indexed = paths.iter().cloned().collect();
         Ok(Self {
-            configs: Projects::load(root, paths, imports)?,
-            workspace: workspace::Workspace::load(root, &indexed)?,
+            configs: Projects::load(&root, paths, imports)?,
+            workspace: workspace::Workspace::load(&root, &indexed)?,
             paths: indexed,
         })
     }
@@ -625,6 +626,30 @@ fn files_at_path(expected: &str, paths: &HashSet<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn project_root_normalization_accepts_an_equivalent_symlink_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let actual = temp.path().join("actual");
+        let alias = temp.path().join("alias");
+        std::fs::create_dir(&actual).unwrap();
+        std::os::unix::fs::symlink(&actual, &alias).unwrap();
+        std::fs::write(
+            actual.join("tsconfig.json"),
+            r#"{"compilerOptions":{"paths":{"@/*":["*"]}}}"#,
+        )
+        .unwrap();
+        let paths = ["tsconfig.json", "main.ts", "lib.ts"]
+            .map(str::to_string)
+            .to_vec();
+        let imports = vec![("main.ts".to_string(), "@/lib".to_string(), None, false)];
+        let project = ProjectResolution::load(&alias, &paths, &imports).unwrap();
+        assert_eq!(
+            project.targets("main.ts", "@/lib", false).unwrap().unwrap(),
+            ["lib.ts"]
+        );
+    }
 
     #[test]
     fn project_targets_preserve_exact_extension_and_directory_candidates() {

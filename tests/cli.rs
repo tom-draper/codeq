@@ -1428,6 +1428,7 @@ fn project_aliases_belong_to_each_importers_nearest_config() {
         r#"{"compilerOptions":{"paths":{"@/*":["decoy/*"]}}}"#,
     );
     f.write("decoy/lib.ts", "export function helper() {}\n");
+    f.git_init_commit();
     for project in ["one", "two"] {
         f.write(
             &format!("{project}/tsconfig.json"),
