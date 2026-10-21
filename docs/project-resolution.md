@@ -52,3 +52,25 @@ The graph owns edges. The private project resolver owns configuration, source
 membership, and alias interpretation. Keeping those decisions together lets
 imported helpers retain their project context without adding policy to commands.
 Uncertain ownership stays explicit rather than selecting an arbitrary project.
+
+## Resolve workspace packages
+
+Workspace membership comes from `package.json` workspaces or, when present,
+`pnpm-workspace.yaml`. Patterns include nested directories and exclusions starting
+with `!`. The root package is always included. YAML is parsed with the existing
+tree-sitter grammar; aliases, multiline patterns, and unsupported quoted escapes
+produce errors rather than partial membership.
+
+Package `exports` controls root and subpath imports, including wildcard maps and
+`null` exclusions. When exports exists, Codeq never falls back to `main` or a
+private file path. An export must name an exact indexed file. Conditional exports
+resolve only when every potentially selected branch before the default names the
+same target. Other conditional exports and export arrays remain unresolved with
+a reason. Codeq does not guess runtime conditions or emitted build outputs.
+
+Packages without exports retain the `source`, `module`, `types`, and `main` entry
+lookup, followed by conventional source/index files. Duplicate package names
+remain unresolved. Workspace manifest edits invalidate persistent MCP graphs.
+
+The supported export rules follow the Node.js documentation for
+[package entry points](https://nodejs.org/api/packages.html#package-entry-points).

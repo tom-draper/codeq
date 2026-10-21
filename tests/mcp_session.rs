@@ -297,6 +297,38 @@ fn project_alias_cache_detects_creation_and_removal_of_ignored_configs() {
 }
 
 #[test]
+fn workspace_cache_refreshes_after_exports_and_membership_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("packages/lib")).unwrap();
+    std::fs::write(root.join("package.json"), "{}").unwrap();
+    let membership = root.join("pnpm-workspace.yaml");
+    std::fs::write(&membership, "packages: ['packages/*']\n").unwrap();
+    let manifest = root.join("packages/lib/package.json");
+    std::fs::write(&manifest, r#"{"name":"lib","exports":"./one.ts"}"#).unwrap();
+    for file in ["one.ts", "two.ts"] {
+        std::fs::write(
+            root.join(format!("packages/lib/{file}")),
+            "export const value = 1;\n",
+        )
+        .unwrap();
+    }
+    std::fs::write(root.join("app.ts"), "import 'lib';\n").unwrap();
+    let mut server = Server::new(root);
+    let first = server.call("codeq_deps", json!({"file":"app.ts"}));
+    assert!(first.contains("packages/lib/one.ts"), "{first}");
+    std::fs::write(&manifest, r#"{"name":"lib","exports":"./two.ts"}"#).unwrap();
+    let second = server.call("codeq_deps", json!({"file":"app.ts"}));
+    assert!(
+        second.contains("packages/lib/two.ts") && !second.contains("one.ts"),
+        "{second}"
+    );
+    std::fs::write(&membership, "packages: []\n").unwrap();
+    let removed = server.call("codeq_deps", json!({"file":"app.ts"}));
+    assert!(!removed.contains("packages/lib/"), "{removed}");
+}
+
+#[test]
 fn schema_rebuild_is_reported_once_and_does_not_end_the_session() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("sample.rs"), "fn target() {}\n").unwrap();

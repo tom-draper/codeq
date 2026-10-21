@@ -5,7 +5,8 @@
 //! into file→file edges so you can ask "what does this file depend on,
 //! transitively" and "are there import cycles".
 //!
-//! Resolution is deterministic but heuristic — it does not run the language's
+//! Node-style imports first use project configuration and workspace exports.
+//! Other resolution is deterministic but heuristic. It does not run the language's
 //! real module resolver. An import resolves to an internal file by matching the
 //! import's path *segments* against repository file stems, preferring the file
 //! whose path shares the most segments (so `foo.bar.util` picks `foo/bar/util`
@@ -46,8 +47,8 @@ fn is_jinja_template(path: &str) -> bool {
 }
 
 /// Node treats every non-relative module specifier as a package (or a built-in).
-/// Project aliases need bundler configuration that codeq deliberately does not
-/// read, so they remain external rather than borrowing a same-named local file.
+/// Supported project configs and workspace packages are checked before a bare
+/// specifier stays external. It must never borrow an unrelated same-stem file.
 fn uses_node_resolution(path: &str) -> bool {
     matches!(
         path.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()),
