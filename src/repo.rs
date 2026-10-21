@@ -492,7 +492,10 @@ mod tests {
             );
         };
         git(&["init", "-q"]);
+        #[cfg(not(windows))]
         let name = " leading\nline\t:ü.rs";
+        #[cfg(windows)]
+        let name = " leading ü.rs";
         let bytes = [
             b"pub fn old() {}\n\0\xff".as_slice(),
             &vec![b'x'; 256 * 1024],
