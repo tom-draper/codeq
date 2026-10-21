@@ -9745,11 +9745,18 @@ fn api_diff_reports_public_exports_moved_by_file_rename() {
 #[test]
 fn api_diff_batches_unusual_paths_additions_and_deletions() {
     let f = Fixture::new();
+    #[cfg(not(windows))]
     let changed = "b line\n\t:ü.rs";
+    #[cfg(windows)]
+    let changed = "b line ü.rs";
     f.write(changed, "pub fn shape(a: u32) {}\n");
     f.write("c deleted.rs", "pub fn gone() {}\n");
     f.git_init_commit();
-    f.write("a new\nfile.rs", "pub fn fresh() {}\n");
+    #[cfg(not(windows))]
+    let added = "a new\nfile.rs";
+    #[cfg(windows)]
+    let added = "a new file.rs";
+    f.write(added, "pub fn fresh() {}\n");
     f.write(changed, "pub fn shape(a: u64) {}\n");
     f.remove("c deleted.rs");
 
