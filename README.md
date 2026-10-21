@@ -289,6 +289,29 @@ Configuration keys never create call edges. YAML aliases are not expanded.
 Extraction stops at syntax depth 64 and skips files over 1 MiB or 10,000 keys and common
 lockfiles. These files remain searchable; `capabilities` lists the limits.
 
+HTML and XML, including SVG, expose elements as definitions. HTML uses IDs or
+`name` attributes when present and tag names otherwise. XML uses IDs or indexed
+paths such as `/root[1]/item[2]`. Literal local `href` and `src` values become file
+dependencies. HTML also retains Jinja blocks, macros and template imports.
+Embedded scripts remain opaque to the HTML extractor.
+
+INI sections and keys, dotenv assignments and Java properties are definitions.
+INI keys are qualified by section. Literal dots use the same bracket notation
+as JSON keys. Outlines show key names without values. `read --symbol` returns
+the original assignment, including multiline values. Properties escapes in keys
+are decoded. Values are not evaluated and do not create call edges.
+
+```sh
+codeq outline page.html
+codeq read settings.ini --symbol server.port
+codeq outline messages.properties
+```
+
+These extractors skip files over 1 MiB and stop at 10,000 facts. Markup nesting
+is limited to 64 levels. Existing ignore rules still apply. Dotfiles such as
+`.env.local` need an explicit inclusion such as `!.env.local` in `.ignore`.
+Ignored files stay excluded. Index schema 53 rebuilds existing indexes automatically.
+
 Support varies by language and query. Run `codeq capabilities` for the support
 matrix bundled with your executable.
 

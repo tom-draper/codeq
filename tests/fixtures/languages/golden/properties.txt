@@ -1,0 +1,4 @@
+file sample.properties 97559618b5a1c02c
+fact key ["app.name"] 2:0-2:17 bytes=11-28 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/properties confidence=1 sig=[\"app.name\"] doc=-
+span 0-11 kind=0
+span 22-28 kind=1

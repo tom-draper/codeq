@@ -15,6 +15,11 @@ pub const UNREFERENCED_BY_DESIGN: &[(&str, Option<&str>)] = &[
     // A GraphQL type or a protobuf message is a contract for another codebase.
     ("graphql", None),
     ("proto", None),
+    ("html", None),
+    ("xml", None),
+    ("ini", None),
+    ("dotenv", None),
+    ("properties", None),
     // A Terraform `output` exists precisely so something outside can read it.
     ("hcl", Some("output")),
     // A SQL index or trigger is named exactly once in the world, at its own

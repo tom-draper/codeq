@@ -1,0 +1,4 @@
+file sample.env 96a51f52c60ba44c
+fact key APP_NAME 2:0-2:24 bytes=11-35 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/dotenv confidence=1 sig=APP_NAME doc=-
+span 0-11 kind=0
+span 27-35 kind=1

@@ -19,6 +19,9 @@ use tree_sitter::{Node, Parser, Point, Query, QueryCursor, Range};
 
 mod config;
 mod docs;
+mod flat_config;
+mod markup;
+mod text;
 use docs::{jinja_facts, markdown_facts, rst_facts};
 
 mod queries;
@@ -893,6 +896,10 @@ impl Extractor {
     pub fn extract(&mut self, language: &str, path: &str, src: &[u8]) -> Result<Extracted> {
         match language {
             "json" | "yaml" | "toml" => return config::config_facts(language, path, src),
+            "html" | "xml" => return markup::extract(language, src),
+            "ini" | "dotenv" | "properties" => {
+                return Ok((flat_config::extract(language, src), None, Vec::new()))
+            }
             "markdown" => return Ok((markdown_facts(src), None, Vec::new())),
             "rst" => return Ok((rst_facts(src), None, Vec::new())),
             "jinja" => return Ok((jinja_facts(src), None, Vec::new())),
@@ -1093,6 +1100,11 @@ pub const LANGUAGES: &[&str] = &[
     "json",
     "yaml",
     "toml",
+    "html",
+    "xml",
+    "ini",
+    "dotenv",
+    "properties",
 ];
 
 /// The text of the first direct child of `node` whose kind is `kind`.

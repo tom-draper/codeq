@@ -16221,3 +16221,141 @@ fn scoped_refresh_matches_a_rebuild_after_structural_and_ignore_changes() {
         );
     }
 }
+
+#[test]
+fn markup_formats_expose_elements_ranges_links_and_existing_templates() {
+    let f = Fixture::new();
+    f.write("pages/index.html", "<!doctype html>\n<main id='content'>\n<!-- <aside id='fake'> -->\n<p>Hello</p>\n<a href='next.html#here'>Next</a>\n<img src='https://example.org/x.png'>\n<script>const s = '<div id=\"fake\">';</script>\n{% block body %}Body{% endblock %}\n</main>\n");
+    f.write("pages/next.html", "<h1 id='here'>Next</h1>\n");
+    f.write("elsewhere/next.html", "<p>Wrong</p>\n");
+    let outline = f.run(&["outline", "pages/index.html"]);
+    let names = field_set(&outline, "name");
+    assert!(names.contains(&"content".into()), "{outline}");
+    assert!(
+        names.contains(&"body".into()),
+        "Jinja block preserved: {outline}"
+    );
+    assert!(!names.contains(&"fake".into()), "{outline}");
+    assert_eq!(
+        field_set(&f.run(&["deps", "pages/index.html"]), "path"),
+        ["pages/next.html"]
+    );
+    let read = f.raw(&["read", "pages/index.html", "--symbol", "content", "--raw"]);
+    assert!(read.status.success());
+    let body = String::from_utf8(read.stdout).unwrap();
+    assert!(
+        body.starts_with("<main") && body.trim_end().ends_with("</main>"),
+        "{body}"
+    );
+    assert!(field_set(&f.run(&["at", "pages/index.html:4"]), "name").contains(&"content".into()));
+    f.write("diagram.svg", "<svg xmlns='http://www.w3.org/2000/svg'>\n<!-- <g id='fake'/> -->\n<g id='layer'><path id='shape'/><text><![CDATA[<fake/>]]></text></g>\n</svg>\n");
+    let names = field_set(&f.run(&["outline", "diagram.svg"]), "name");
+    assert!(
+        names.contains(&"layer".into()) && names.contains(&"shape".into()),
+        "{names:?}"
+    );
+    assert!(!names.iter().any(|s| s.contains("fake")), "{names:?}");
+    f.write(
+        "data.xml",
+        "<root><item>one</item><item>two</item></root>\n",
+    );
+    assert_eq!(
+        field_set(&f.run(&["outline", "data.xml"]), "name"),
+        ["/root[1]", "/root[1]/item[1]", "/root[1]/item[2]"]
+    );
+    f.write("bad.xml", "<root><item></root>");
+    f.run(&["outline", "bad.xml"]);
+    f.write("pages/index.html", "<main id='updated'>New</main>\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "pages/index.html"]), "name"),
+        ["updated"]
+    );
+}
+
+#[test]
+fn flat_configuration_formats_index_keys_without_exposing_values() {
+    let f = Fixture::new();
+    f.write(".ignore", "!.env*\n");
+    f.write("settings.ini", "# note\r\n[server]\r\nhost = secret-host\r\nmultiline = first\r\n  second\r\n[other]\r\na.b: value\r\n");
+    let outline = f.run(&["outline", "settings.ini"]);
+    assert_eq!(
+        field_set(&outline, "name"),
+        [
+            "server",
+            "server.host",
+            "server.multiline",
+            "other",
+            "other[\"a.b\"]"
+        ]
+    );
+    assert!(!outline.to_string().contains("secret-host"), "{outline}");
+    let read = f.raw(&[
+        "read",
+        "settings.ini",
+        "--symbol",
+        "server.multiline",
+        "--raw",
+    ]);
+    assert!(read.status.success());
+    assert_eq!(read.stdout, b"multiline = first\r\n  second\r\n");
+    f.write(".env.local", "# comment\nexport API_TOKEN=secret-token\nMULTI=\"hello\nNOT_A_KEY=still value\nworld\"\nNEXT=ok\n9INVALID=no\n");
+    let outline = f.run(&["outline", ".env.local"]);
+    assert_eq!(field_set(&outline, "name"), ["API_TOKEN", "MULTI", "NEXT"]);
+    assert!(!outline.to_string().contains("secret-token"), "{outline}");
+    assert!(field_set(&f.run(&["at", ".env.local:4"]), "name").contains(&"MULTI".into()));
+    f.write("indented.ini", "[server]\n  host = x\n  port = 80\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "indented.ini"]), "name"),
+        ["server", "server.host", "server.port"]
+    );
+    f.write("messages.properties", "! comment\nhello\\ world = hi\nuni\\u0063ode: text\nlong = first\\\n  CONTINUATION=no\nempty\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "messages.properties"]), "name"),
+        ["hello world", "unicode", "long", "empty"]
+    );
+    assert!(f.run(&["callees", "API_TOKEN"])["data"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(field_set(&f.run(&["unused", "."]), "name").is_empty());
+}
+
+#[test]
+fn markup_entities_and_properties_logical_keys_keep_source_offsets() {
+    let f = Fixture::new();
+    f.write(
+        "index.html",
+        "<input id='input' name='other'><a href='a&amp;b.html'>Link</a>",
+    );
+    f.write("a&b.html", "<p>ok</p>");
+    assert_eq!(
+        field_set(&f.run(&["outline", "index.html"]), "name"),
+        ["input", "a"]
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "index.html"]), "path"),
+        ["a&b.html"]
+    );
+    f.write("keys.properties", "long\\\n  key=value\nfoo\\ =space\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "keys.properties"]), "name"),
+        ["longkey", "foo "]
+    );
+    let read = f.raw(&["read", "keys.properties", "--symbol", "longkey", "--raw"]);
+    assert!(read.status.success());
+    assert_eq!(read.stdout, b"long\\\n  key=value\n");
+}
+
+#[test]
+fn flat_configuration_limits_include_section_only_files() {
+    let f = Fixture::new();
+    let content: String = (0..10_001).map(|n| format!("[section{n}]\n")).collect();
+    f.write("large.ini", &content);
+    assert!(field_set(&f.run(&["outline", "large.ini"]), "name").is_empty());
+    assert!(
+        !f.run(&["search", "section10000", "large.ini"])["data"]["matches"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}

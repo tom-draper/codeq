@@ -161,14 +161,18 @@ fn component(raw: &str) -> String {
             .map(|s| s.replace("''", "'"))
             .unwrap_or_else(|| raw.to_string())
     });
+    literal_component(&value)
+}
+
+pub(super) fn literal_component(value: &str) -> String {
     if value.is_empty() || value.contains(['.', '[', ']', '"', '\\']) {
         format!("[{}]", serde_json::to_string(&value).unwrap())
     } else {
-        value
+        value.to_string()
     }
 }
 
-fn join(parent: &str, key: &str) -> String {
+pub(super) fn join(parent: &str, key: &str) -> String {
     if parent.is_empty() {
         key.to_string()
     } else if key.starts_with('[') {
