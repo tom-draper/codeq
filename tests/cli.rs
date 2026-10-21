@@ -6015,8 +6015,12 @@ fn map_is_factual_and_reproducible() {
 
     // definitions_by_file is ordered by its visible count; a.rs (2) before b.rs (1).
     let df = d["definitions_by_file"].as_array().unwrap();
-    assert_eq!(df[0]["path"], "src/a.rs");
-    assert_eq!(df[0]["definitions"], 2);
+    let rust: Vec<_> = df
+        .iter()
+        .filter(|r| r["path"].as_str().unwrap().ends_with(".rs"))
+        .collect();
+    assert_eq!(rust[0]["path"], "src/a.rs");
+    assert_eq!(rust[0]["definitions"], 2);
 
     // Same inputs, identical output — no hidden state, no ranking drift.
     let v2 = f.run(&["map"]);

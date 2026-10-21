@@ -237,7 +237,7 @@ Use `outline package.json`, `read pyproject.toml --symbol tool.ruff`, or
 `at .github/workflows/ci.yml:12`. Arrays use `[0]` indices, and literal dots or
 brackets in keys use JSON-quoted brackets, such as `["a.b"].value`.
 Configuration keys never create call edges. YAML aliases are not expanded.
-Extraction stops at syntax depth 64 and skips files over 1 MiB and common
+Extraction stops at syntax depth 64 and skips files over 1 MiB or 10,000 keys and common
 lockfiles. These files remain searchable; `capabilities` lists the limits.
 
 Support varies by language and query. Run `codeq capabilities` for the support
