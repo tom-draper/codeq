@@ -627,10 +627,12 @@ fn definitions_returns_precise_ranges() {
 
 #[test]
 fn changed_handles_paths_git_would_quote() {
-    // Non-ASCII, a space, a double quote and a leading space: git quotes or
-    // decorates every one of them unless asked not to, and the quoted text names
-    // no file.
+    // Git quotes non-ASCII names by default. Also exercise spaces and, on Unix,
+    // a double quote that Windows filenames cannot contain.
+    #[cfg(not(windows))]
     let names = ["ünï.rs", "sp ace.rs", "q\"uote.rs", " lead.rs"];
+    #[cfg(windows)]
+    let names = ["ünï.rs", "sp ace.rs", "quo té.rs", " lead.rs"];
     let f = Fixture::new();
     for n in names {
         f.write(n, "fn a() {}\n");
@@ -4977,7 +4979,7 @@ fn search_globs_filter_unindexed_paths() {
         assert_eq!(matches.len(), 1, "{glob}");
         assert_eq!(
             matches[0]["path"],
-            external.path().join("a.py").to_str().unwrap()
+            format!("{}/a.py", external.path().display())
         );
     }
 }

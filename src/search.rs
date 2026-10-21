@@ -1135,8 +1135,14 @@ pub(crate) fn scan_unindexed(
                 continue;
             }
             let rest = entry.path().strip_prefix(path).unwrap_or(entry.path());
-            let shown = Path::new(label).join(rest);
-            if scan_file(&shown.to_string_lossy(), entry.path(), acc) {
+            let rest = rest.to_string_lossy().replace('\\', "/");
+            let separator = if label.ends_with(['/', '\\']) {
+                ""
+            } else {
+                "/"
+            };
+            let shown = format!("{label}{separator}{rest}");
+            if scan_file(&shown, entry.path(), acc) {
                 return;
             }
         }
