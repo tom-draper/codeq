@@ -527,5 +527,7 @@ python3 bench/agent_workflows.py --codeq target/debug/codeq
 The workflow check verifies complete source answers before comparing output
 bytes and call counts. See [benchmark commands](bench/README.md) for the wider
 correctness and performance checks.
+The workflow correctness CI job runs this check and the MCP session tests on
+every pull request and push to `main`, using local fixtures and no model calls.
 
 Licensed under [MIT](LICENSE).

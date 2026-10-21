@@ -1,0 +1,24 @@
+name: Workflow correctness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  workflows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install workflow dependencies
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Check MCP sessions
+        run: cargo test --locked --test mcp_session
+      - name: Check complete source retrieval and discovery
+        run: python3 bench/agent_workflows.py --codeq target/debug/codeq
