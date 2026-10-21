@@ -1,0 +1,197 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "cpus": 4,
+  "load_before": [
+    2.46728515625,
+    1.578125,
+    1.11865234375
+  ],
+  "runs": 5,
+  "binary_sha256": {
+    "before": "2251c3be6083c0b68749ae3627381a3abb8a265c82f8b107fa8472c2794cb919",
+    "after": "2251c3be6083c0b68749ae3627381a3abb8a265c82f8b107fa8472c2794cb919"
+  },
+  "workloads": {
+    "dense_bytes": {
+      "command": [
+        "astgrep",
+        "selected_call($X)",
+        "--language",
+        "python",
+        "--source",
+        "--max-tokens",
+        "80",
+        "--limit",
+        "0"
+      ],
+      "samples_ms": {
+        "before": [
+          260.153455,
+          269.593888,
+          260.185913,
+          260.575386,
+          269.51622
+        ],
+        "after": [
+          261.330476,
+          266.752575,
+          268.703683,
+          269.276207,
+          260.66191
+        ]
+      },
+      "source_chunks": 8,
+      "answer_sha256": "d2a1a437550faf20e6a6abc080d5721f37d27f52ee00e578e93578ff03d124c4",
+      "median_ms": {
+        "before": 260.575386,
+        "after": 266.752575
+      },
+      "range_ms": {
+        "before": [
+          260.153455,
+          269.593888
+        ],
+        "after": [
+          260.66191,
+          269.276207
+        ]
+      },
+      "files": 1
+    },
+    "dense_names": {
+      "command": [
+        "explore",
+        "target",
+        "--max-tokens",
+        "80",
+        "--max-response-tokens",
+        "1000000"
+      ],
+      "samples_ms": {
+        "before": [
+          872.526861,
+          848.698433,
+          841.356061,
+          842.198325,
+          840.900369
+        ],
+        "after": [
+          841.275934,
+          841.064163,
+          840.716212,
+          836.639961,
+          844.941951
+        ]
+      },
+      "source_chunks": 13,
+      "answer_sha256": "879259bd387407b2dd06d216afdd7e1c9c3d24fbaa6e30ac814f646b8f2991a8",
+      "median_ms": {
+        "before": 842.198325,
+        "after": 841.064163
+      },
+      "range_ms": {
+        "before": [
+          840.900369,
+          872.526861
+        ],
+        "after": [
+          836.639961,
+          844.941951
+        ]
+      },
+      "files": 1
+    },
+    "many_files": {
+      "command": [
+        "explore",
+        "target",
+        "--max-tokens",
+        "80",
+        "--max-response-tokens",
+        "1000000"
+      ],
+      "samples_ms": {
+        "before": [
+          20.775923,
+          20.764921,
+          20.560921,
+          20.72979,
+          20.701195
+        ],
+        "after": [
+          20.628173,
+          20.514704,
+          21.601635,
+          20.590912,
+          20.604167
+        ]
+      },
+      "source_chunks": 13,
+      "answer_sha256": "3760f69a0311b4bba471efe42a942da366af7efe6f0ed13a2784bb4d938d9697",
+      "median_ms": {
+        "before": 20.72979,
+        "after": 20.604167
+      },
+      "range_ms": {
+        "before": [
+          20.560921,
+          20.775923
+        ],
+        "after": [
+          20.514704,
+          21.601635
+        ]
+      },
+      "files": 129
+    },
+    "sparse": {
+      "command": [
+        "search",
+        "unique_marker",
+        "--source",
+        "--max-tokens",
+        "80"
+      ],
+      "samples_ms": {
+        "before": [
+          6.757251,
+          6.700205,
+          6.721623,
+          6.671626,
+          6.801453
+        ],
+        "after": [
+          6.737354,
+          6.712864,
+          6.741009,
+          6.831284,
+          6.787398
+        ]
+      },
+      "source_chunks": 1,
+      "answer_sha256": "63abefc7fc4593dbc177934d3d4d608b9a9cffba76b75d73f0e5a7cb662db2fe",
+      "median_ms": {
+        "before": 6.721623,
+        "after": 6.741009
+      },
+      "range_ms": {
+        "before": [
+          6.671626,
+          6.801453
+        ],
+        "after": [
+          6.712864,
+          6.831284
+        ]
+      },
+      "files": 1
+    }
+  },
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    2.1123046875,
+    1.55615234375,
+    1.12060546875
+  ]
+}

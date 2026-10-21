@@ -1,0 +1,294 @@
+{
+  "platform": "Linux-7.2.9-2-cachyos-x86_64-with-glibc2.44",
+  "load_before": [
+    1.74462890625,
+    1.53564453125,
+    1.15087890625
+  ],
+  "runs": 5,
+  "binary_sha256": {
+    "before": "2251c3be6083c0b68749ae3627381a3abb8a265c82f8b107fa8472c2794cb919",
+    "after": "2251c3be6083c0b68749ae3627381a3abb8a265c82f8b107fa8472c2794cb919"
+  },
+  "limits": "Whole CLI indexing into a fresh database or after editing every fixture file. Filesystem caches warm. Peak RSS measured separately through a small interpreter. Database IDs normalized by path; all facts, spans, calls, relations, file hashes and parse health compared. Integrity and foreign keys checked.",
+  "revision": "f4394355d6e168bd44a74a6e8d2e92187931b72b",
+  "source_sha256": {
+    "src/index.rs": "8e3d2fe0135ba3e5470ea8a409a1a6b9cfbaf8988d15b44cfd094fc8b4bd643b",
+    "bench/relation_inserts.py": "6b34ac8c7c06d0cc4b997dbbafd7a3b680eab8763fbbbd2662aea233171508e3"
+  },
+  "workloads": {
+    "dense_cold": {
+      "source_bytes": 280720,
+      "rows": {
+        "files": 8,
+        "facts": 1024,
+        "impls": 32768,
+        "calls": 0,
+        "spans": 1024
+      },
+      "index_sha256": "b1d21c69133b5c582b833b89c281e8578ede47614c7c510b6ec76d0c5bf263b0",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "max_ms": {
+        "before": 219.215686,
+        "after": 204.31521
+      },
+      "samples_ms": {
+        "before": [
+          203.179607,
+          203.992541,
+          219.215686,
+          202.745644,
+          205.068408
+        ],
+        "after": [
+          203.270802,
+          202.839069,
+          203.420599,
+          204.31521,
+          202.536236
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 16184,
+        "after": 16096
+      },
+      "database_bytes": {
+        "before": 4079616,
+        "after": 4079616
+      },
+      "median_ms": {
+        "before": 203.992541,
+        "after": 203.270802
+      }
+    },
+    "dense_edited": {
+      "source_bytes": 280720,
+      "rows": {
+        "files": 8,
+        "facts": 1024,
+        "impls": 32768,
+        "calls": 0,
+        "spans": 1024
+      },
+      "index_sha256": "b1d21c69133b5c582b833b89c281e8578ede47614c7c510b6ec76d0c5bf263b0",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "max_ms": {
+        "before": 215.899486,
+        "after": 222.715181
+      },
+      "samples_ms": {
+        "before": [
+          215.087295,
+          214.757045,
+          215.899486,
+          214.997498,
+          214.61053
+        ],
+        "after": [
+          215.247404,
+          215.093678,
+          222.715181,
+          215.576979,
+          215.457609
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 16136,
+        "after": 16208
+      },
+      "database_bytes": {
+        "before": 4141056,
+        "after": 4141056
+      },
+      "median_ms": {
+        "before": 214.997498,
+        "after": 215.457609
+      }
+    },
+    "single_base_cold": {
+      "source_bytes": 1207120,
+      "rows": {
+        "files": 8,
+        "facts": 32000,
+        "impls": 32000,
+        "calls": 0,
+        "spans": 32000
+      },
+      "index_sha256": "4d71a742630e0d1b4d250a5565bf1c86a31c1d44b058b9ea5553b8bf444ba177",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "max_ms": {
+        "before": 505.923963,
+        "after": 507.615255
+      },
+      "samples_ms": {
+        "before": [
+          500.745807,
+          505.23996,
+          497.420534,
+          493.86048,
+          505.923963
+        ],
+        "after": [
+          499.32617,
+          507.615255,
+          496.402943,
+          499.749107,
+          497.939239
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 41548,
+        "after": 41704
+      },
+      "database_bytes": {
+        "before": 11821056,
+        "after": 11825152
+      },
+      "median_ms": {
+        "before": 500.745807,
+        "after": 499.32617
+      }
+    },
+    "single_base_edited": {
+      "source_bytes": 1207120,
+      "rows": {
+        "files": 8,
+        "facts": 32000,
+        "impls": 32000,
+        "calls": 0,
+        "spans": 32000
+      },
+      "index_sha256": "4d71a742630e0d1b4d250a5565bf1c86a31c1d44b058b9ea5553b8bf444ba177",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "max_ms": {
+        "before": 713.808133,
+        "after": 714.46821
+      },
+      "samples_ms": {
+        "before": [
+          709.948758,
+          708.368574,
+          704.77767,
+          705.275382,
+          713.808133
+        ],
+        "after": [
+          707.294094,
+          712.311257,
+          706.342515,
+          714.46821,
+          709.590465
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 44968,
+        "after": 44736
+      },
+      "database_bytes": {
+        "before": 11976704,
+        "after": 11952128
+      },
+      "median_ms": {
+        "before": 708.368574,
+        "after": 709.590465
+      }
+    },
+    "mixed_cold": {
+      "source_bytes": 114880,
+      "rows": {
+        "files": 32,
+        "facts": 3200,
+        "impls": 3200,
+        "calls": 0,
+        "spans": 3200
+      },
+      "index_sha256": "5fd515513343a2c419f2fb6ea9bb79b3ed23aedc55caeb0c25b4b0a8fc7dbf7c",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "max_ms": {
+        "before": 77.549601,
+        "after": 77.520321
+      },
+      "samples_ms": {
+        "before": [
+          76.994086,
+          77.395339,
+          77.549601,
+          77.308173,
+          77.331605
+        ],
+        "after": [
+          77.294063,
+          77.213508,
+          77.520321,
+          77.509481,
+          77.298228
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 13776,
+        "after": 13904
+      },
+      "database_bytes": {
+        "before": 1323008,
+        "after": 1323008
+      },
+      "median_ms": {
+        "before": 77.331605,
+        "after": 77.298228
+      }
+    },
+    "small_cold": {
+      "source_bytes": 1120,
+      "rows": {
+        "files": 32,
+        "facts": 32,
+        "impls": 32,
+        "calls": 0,
+        "spans": 32
+      },
+      "index_sha256": "4969eddebf42891c0258cd7ea000b43531de064facbb19a9f4fef2d5d28101b6",
+      "schema_sha256": "05dcc073176dcafea514c5475ec3c436ec9e0dc023991548c76f972d8f3b6eed",
+      "max_ms": {
+        "before": 17.894424,
+        "after": 18.192894
+      },
+      "samples_ms": {
+        "before": [
+          17.795716,
+          17.697413,
+          17.720913,
+          17.894424,
+          17.878452
+        ],
+        "after": [
+          17.863286,
+          18.032146,
+          17.786739,
+          18.192894,
+          18.173772
+        ]
+      },
+      "peak_rss_kib": {
+        "before": 12728,
+        "after": 12712
+      },
+      "database_bytes": {
+        "before": 114688,
+        "after": 114688
+      },
+      "median_ms": {
+        "before": 17.795716,
+        "after": 18.032146
+      }
+    }
+  },
+  "regressions": [],
+  "reader_snapshot": "old reader remains consistent while an edit commits; new reader sees replacement relations",
+  "errors": 0,
+  "answer_mismatches": 0,
+  "load_after": [
+    1.6083984375,
+    1.52978515625,
+    1.166015625
+  ]
+}
