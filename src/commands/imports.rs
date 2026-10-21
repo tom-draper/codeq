@@ -267,16 +267,79 @@ struct ExternalRow {
     resolution_reason: Option<String>,
 }
 
-pub fn cmd_deps(
-    cwd: &Path,
-    file: Option<&str>,
-    depth: usize,
-    cycles: bool,
-    external: bool,
-    out: Out,
-) -> Result<()> {
+pub struct DepsArgs<'a> {
+    pub file: Option<&'a str>,
+    pub depth: usize,
+    pub cycles: bool,
+    pub external: bool,
+    pub reverse: bool,
+    pub by: Option<&'a str>,
+    pub limit: usize,
+}
+
+pub fn cmd_deps(cwd: &Path, args: DepsArgs, out: Out) -> Result<()> {
+    let DepsArgs {
+        file,
+        depth,
+        cycles,
+        external,
+        reverse,
+        by,
+        limit,
+    } = args;
     let s = Session::open(cwd, false, out)?;
     let graph = s.dep_graph()?;
+
+    if by == Some("dir") {
+        let directory = |path: &str| {
+            let parent = path.rsplit_once('/').map_or(".", |(dir, _)| dir);
+            parent
+                .split('/')
+                .take(depth.max(1))
+                .collect::<Vec<_>>()
+                .join("/")
+        };
+        let mut grouped: BTreeMap<(String, String), HashSet<(String, String)>> = BTreeMap::new();
+        for (from, edge) in graph.edges() {
+            grouped
+                .entry((directory(from), directory(&edge.to)))
+                .or_default()
+                .insert((from.to_string(), edge.to.clone()));
+        }
+        let mut data: Vec<_> = grouped.into_iter().map(|((from, to), edges)| {
+            serde_json::json!({"from": from, "to": to, "edges": edges.len(), "resolution": "internal"})
+        }).collect();
+        let mut unresolved: BTreeMap<(String, String, String, String), HashSet<String>> =
+            BTreeMap::new();
+        let mut stmt = s.db.conn.prepare("SELECT DISTINCT path, name FROM facts WHERE kind = 'import' AND is_derived = 0 ORDER BY path, name")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        for row in rows {
+            let (path, module) = row?;
+            if graph.resolves(&path, &module) {
+                continue;
+            }
+            let reason = graph.unresolved_project_reason(&path, &module);
+            let resolution = if reason.is_some() || module.starts_with('.') {
+                "unresolved"
+            } else {
+                "external-or-unresolved"
+            };
+            unresolved
+                .entry((
+                    directory(&path),
+                    module,
+                    resolution.to_string(),
+                    reason.unwrap_or("no internal target resolved").to_string(),
+                ))
+                .or_default()
+                .insert(path);
+        }
+        data.extend(unresolved.into_iter().map(|((from, to, resolution, reason), files)| {
+            serde_json::json!({"from": from, "to": to, "edges": files.len(), "resolution": resolution, "resolution_reason": reason})
+        }));
+        let note = take_limit(&mut data, limit);
+        return s.emit_noted(data, note);
+    }
 
     // Imports that resolve to nothing inside the repo. For code that is the
     // third-party dependency list; for a markdown link, whose target is always a
@@ -323,11 +386,12 @@ pub fn cmd_deps(
         let note = data
             .is_empty()
             .then(|| "every import resolves to a file in this repo".to_string());
-        return s.emit_noted(data, note);
+        let capped = take_limit(&mut data, limit);
+        return s.emit_noted(data, capped.or(note));
     }
 
     if cycles {
-        let data: Vec<CycleRow> = graph
+        let mut data: Vec<CycleRow> = graph
             .cycles()
             .into_iter()
             .map(|c| CycleRow {
@@ -335,14 +399,19 @@ pub fn cmd_deps(
                 cycle: c,
             })
             .collect();
-        return s.emit(data);
+        let note = take_limit(&mut data, limit);
+        return s.emit_noted(data, note);
     }
 
     let file = file.ok_or_else(|| anyhow!("deps needs a <file> (or --cycles)"))?;
     // Resolve the query to an indexed file path: exact, else unique suffix match.
     let target = resolve_dep_target(&graph, &s, file)?;
-    let hops = graph.deps(&target, depth.max(1));
-    let data: Vec<DepRow> = hops
+    let hops = if reverse {
+        graph.reverse_deps(&target, depth.max(1))
+    } else {
+        graph.deps(&target, depth.max(1))
+    };
+    let mut data: Vec<DepRow> = hops
         .into_iter()
         .map(|h| DepRow {
             path: h.path,
@@ -350,7 +419,8 @@ pub fn cmd_deps(
             depth: h.depth,
         })
         .collect();
-    s.emit(data)
+    let note = take_limit(&mut data, limit);
+    s.emit_noted(data, note)
 }
 
 /// Map a user-supplied file query to an indexed path: use it verbatim if it is

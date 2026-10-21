@@ -537,6 +537,7 @@ fn build_args(tool: &str, a: &Value) -> Result<Vec<String>, String> {
 /// that decides when an agent reaches for the tool, so it is tuned, not derived.
 /// The order here is the order of `tools/list`.
 const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("codeq_packages", "Join manifest dependencies to import sites in npm, Cargo, Python project and Go manifests. name selects a package; undeclared and unimported filter declaration/import mismatches. Import matching is labeled exact or heuristic; unresolved imports and possible standard libraries remain explicit. limit caps rows."),
     ("codeq_discover", "Find definitions when the name is unknown. query splits identifiers and ranks word matches across names, signatures, docs and paths. Each candidate includes its score, match reasons and exact range. source adds candidate bodies under max_tokens. limit bounds the ranked candidates."),
     (
         "codeq_explore",

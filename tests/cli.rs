@@ -15181,3 +15181,106 @@ fn discover_ranks_split_identifiers_docs_paths_and_exact_sources() {
         serde_json::json!([])
     );
 }
+
+#[test]
+fn deps_reverse_and_directory_views_are_bounded_and_transitive() {
+    let f = Fixture::new();
+    f.write("core/util.ts", "export function helper() {}\n");
+    f.write(
+        "ui/view.ts",
+        "import { helper } from '../core/util';\nexport function view() { helper(); }\n",
+    );
+    f.write(
+        "app/main.ts",
+        "import { view } from '../ui/view';\nview();\n",
+    );
+    let data = f.run(&["deps", "core/util.ts", "--reverse", "--depth", "3"]);
+    assert_eq!(field_set(&data, "path"), ["ui/view.ts", "app/main.ts"]);
+    assert_eq!(data["data"][1]["depth"], 2);
+    let capped = f.run(&[
+        "deps",
+        "core/util.ts",
+        "--reverse",
+        "--depth",
+        "3",
+        "--limit",
+        "1",
+    ]);
+    assert_eq!(capped["data"].as_array().unwrap().len(), 1);
+    assert!(capped["note"].as_str().unwrap().contains("1"));
+    let grouped = f.run(&["deps", "--by", "dir"]);
+    assert!(grouped["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["from"] == "ui"
+            && r["to"] == "core"
+            && r["edges"] == 1
+            && r["resolution"] == "internal"));
+}
+
+#[test]
+fn packages_join_declarations_imports_and_preserve_uncertainty() {
+    let f = Fixture::new();
+    f.write(
+        "package.json",
+        r#"{"dependencies":{"express":"^5","unused":"1"}}"#,
+    );
+    f.write(
+        "main.ts",
+        "import express from 'express';\nimport missing from '@/missing';\nexpress(); missing();\n",
+    );
+    let packages = f.run(&["packages", "express"]);
+    assert_eq!(packages["data"][0]["declared"], true);
+    assert_eq!(
+        packages["data"][0]["importers"],
+        serde_json::json!(["main.ts"])
+    );
+    assert_eq!(packages["data"][0]["match_method"], "exact");
+    assert_eq!(
+        field_set(&f.run(&["packages", "--unimported"]), "name"),
+        ["unused"]
+    );
+    let undeclared = f.run(&["packages", "--undeclared"]);
+    assert!(undeclared["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["resolution_reason"].is_string()));
+    f.write(
+        "rust/Cargo.toml",
+        "[package]\nname='demo'\nversion='1.0.0'\n[dependencies]\nserde='1'\n",
+    );
+    f.write(
+        "rust/src/lib.rs",
+        "use serde::Serialize;\npub fn entry() {}\n",
+    );
+    let cargo = f.run(&["packages", "serde"]);
+    assert_eq!(
+        cargo["data"][0]["importers"],
+        serde_json::json!(["rust/src/lib.rs"])
+    );
+    f.write(
+        "python/pyproject.toml",
+        "[project]\nname='demo'\ndependencies=['httpx>=0.27']\n",
+    );
+    f.write("python/main.py", "import httpx\n");
+    let python = f.run(&["packages", "httpx"]);
+    assert_eq!(
+        python["data"][0]["match_method"],
+        "normalized-name-heuristic"
+    );
+    f.write(
+        "go/go.mod",
+        "module example.com/demo\n\nrequire example.com/lib v1.0.0\n",
+    );
+    f.write(
+        "go/main.go",
+        "package main\nimport \"example.com/lib/sub\"\nfunc main() {}\n",
+    );
+    let go = f.run(&["packages", "example.com/lib"]);
+    assert_eq!(
+        go["data"][0]["importers"],
+        serde_json::json!(["go/main.go"])
+    );
+}
