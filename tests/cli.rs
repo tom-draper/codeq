@@ -15726,6 +15726,69 @@ fn deps_reverse_and_directory_views_are_bounded_and_transitive() {
 }
 
 #[test]
+fn deps_mermaid_preserves_direction_bounds_and_uncertainty() {
+    let f = Fixture::new();
+    f.write("core/util.ts", "export function helper() {}\n");
+    f.write(
+        "ui/view.ts",
+        "import { helper } from '../core/util';\nexport function view() { helper(); }\n",
+    );
+    f.write(
+        "app/main.ts",
+        "import { view } from '../ui/view';\nimport missing from 'missing';\nview();\n",
+    );
+    let output = f.raw(&[
+        "deps",
+        "core/util.ts",
+        "--reverse",
+        "--depth",
+        "3",
+        "--mermaid",
+    ]);
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(text, "graph LR\n  n0[\"app/main.ts\"]\n  n1[\"core/util.ts\"]\n  n2[\"ui/view.ts\"]\n  n0 -->|\"../ui/view\"| n2\n  n2 -->|\"../core/util\"| n1\n");
+    let forward = f.raw(&["deps", "app/main.ts", "--depth", "3", "--mermaid"]);
+    assert_eq!(forward.stdout, text.as_bytes());
+    let capped = f.raw(&[
+        "deps",
+        "core/util.ts",
+        "--reverse",
+        "--depth",
+        "3",
+        "--limit",
+        "1",
+        "--mermaid",
+    ]);
+    let capped = String::from_utf8(capped.stdout).unwrap();
+    assert!(!capped.contains("app/main.ts"));
+    assert!(capped.contains("stopped at --limit"));
+    let grouped = f.raw(&["deps", "--by", "dir", "--mermaid"]);
+    assert!(grouped.status.success());
+    let grouped = String::from_utf8(grouped.stdout).unwrap();
+    assert!(grouped.contains("1 external-or-unresolved"));
+    assert!(grouped.contains("n0[\"app\"]"));
+    assert!(grouped.contains("-->|\"1\"|"));
+    f.write("alone.ts", "export function alone() {}\n");
+    let empty = f.raw(&["deps", "alone.ts", "--mermaid"]);
+    assert_eq!(
+        String::from_utf8(empty.stdout).unwrap(),
+        "graph LR\n  n0[\"alone.ts\"]\n  %% no dependency edges\n"
+    );
+    f.write("odd.ts", "import odd from 'x\"|]';\n");
+    let escaped = f.raw(&["deps", "--by", "dir", "--mermaid"]);
+    assert!(String::from_utf8(escaped.stdout)
+        .unwrap()
+        .contains("x#34;#124;#93;"));
+    for args in [
+        vec!["deps", "--cycles", "--mermaid"],
+        vec!["deps", "--external", "--mermaid"],
+    ] {
+        assert!(!f.raw(&args).status.success());
+    }
+}
+
+#[test]
 fn packages_join_declarations_imports_and_preserve_uncertainty() {
     let f = Fixture::new();
     f.write(

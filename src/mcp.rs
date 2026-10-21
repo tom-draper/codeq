@@ -637,7 +637,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_deps",
-        "Import dependencies of a file, transitive to depth; reverse walks incoming importers. by=dir needs no file and groups direct edges by directory, with depth counting path components. cycles lists repo-wide cycles; external lists unresolved/external imports. limit bounds rows. Directory results retain external/unresolved groups and reasons. Project-aware where supported, heuristic otherwise. Unresolved does not mean unused.",
+        "Import dependencies of a file, transitive to depth; reverse walks incoming importers. by=dir needs no file and groups direct edges by directory, with depth counting path components. mermaid renders importer-to-dependency arrows for file or directory views. cycles lists repo-wide cycles; external lists unresolved/external imports. limit bounds rows. Directory results retain external/unresolved groups and reasons. Project-aware where supported, heuristic otherwise. Unresolved does not mean unused.",
     ),
     (
         "codeq_astgrep",
@@ -830,7 +830,7 @@ mod tests {
             ("codeq_astgrep", &["explain"][..]),
             ("codeq_search", &["within", "within_at"][..]),
             ("codeq_references", &["within", "within_at", "kind"][..]),
-            ("codeq_deps", &["reverse", "by", "limit"][..]),
+            ("codeq_deps", &["reverse", "by", "limit", "mermaid"][..]),
             ("codeq_discover", &["query", "source", "limit"][..]),
             ("codeq_packages", &["name", "limit"][..]),
         ] {
