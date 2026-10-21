@@ -698,7 +698,13 @@ fn render_row(
         let on = str_of("receiver")
             .map(|r| format!("  on={r}"))
             .unwrap_or_default();
-        let match_line = format!("{pad}{loc}{}{enclosing}{on}\n", t.trim());
+        let usage = str_of("use_kind")
+            .map(|kind| {
+                let evidence = str_of("evidence").unwrap_or("");
+                format!("  use={kind} evidence={evidence}")
+            })
+            .unwrap_or_default();
+        let match_line = format!("{pad}{loc}{}{enclosing}{on}{usage}\n", t.trim());
 
         // -A/-B/-C context lines: render grep-style (`path-line- content`) with
         // computed line numbers, so the flag isn't a silent no-op in text mode.
@@ -832,7 +838,11 @@ fn render_row(
         if CONSUMED.contains(&k.as_str()) {
             continue;
         }
-        if v.is_number() || v.is_boolean() || v.is_string() {
+        if v.is_number()
+            || v.is_boolean()
+            || v.is_string()
+            || matches!(k.as_str(), "reasons" | "importers") && v.is_array()
+        {
             parts.push(format!("{k}={}", inline(v)));
         }
     }

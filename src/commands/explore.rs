@@ -707,8 +707,8 @@ pub(super) struct AtPosition {
     line: i64,
     names: Vec<String>,
     pub(super) ranges: Vec<(usize, usize)>,
-    start_bytes: Vec<usize>,
-    end_bytes: Vec<usize>,
+    pub(super) start_bytes: Vec<usize>,
+    pub(super) end_bytes: Vec<usize>,
 }
 
 /// The imports declared by the files the focus definitions live in.

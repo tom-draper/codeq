@@ -139,6 +139,8 @@ fn callers_for(s: &Session, names: &[String], path: Option<&str>) -> Result<Vec<
 
 fn caller_scan_opts(call_only: bool, qualifier: Option<&str>) -> ScanOpts {
     ScanOpts {
+        within: None,
+        occurrences: false,
         before: 0,
         after: 0,
         out: OutMode::Matches,

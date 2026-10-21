@@ -549,7 +549,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_search",
-        "Search regex or fixed text with enclosing definitions. symbols returns ranked definitions; source includes their bodies under max_tokens. Scope with paths/path/language/glob. in selects code/comments/strings; Markdown fences are strings. limit bounds hits; group and max_per_file summarize files. Explicit unindexed paths are searched from disk.",
+        "Search regex or fixed text with enclosing definitions. symbols returns ranked definitions; source includes their bodies under max_tokens. Scope with paths/path/language/glob. within selects one exact definition; within_at selects its position and rejects ambiguous locations. in selects code/comments/strings; Markdown fences are strings. limit bounds hits; group and max_per_file summarize files. Explicit unindexed paths are searched from disk.",
     ),
     (
         "codeq_symbols",
@@ -561,7 +561,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_references",
-        "Textual identifier uses, with declarations flagged. calls selects syntax call sites; on matches a literal receiver. resolved filters import reachability without type checking. For distinct enclosing definitions use callers.",
+        "Textual identifier occurrences with syntax-backed use_kind and evidence. kind filters call/read/write/read-write/type-use/import/decl/unknown; read and write include read-write. Unsupported syntax stays unknown. within/within_at scope to one exact definition range. calls selects syntax call sites; on matches a literal receiver. resolved filters import reachability without type checking. For distinct enclosing definitions use callers.",
     ),
     (
         "codeq_callers",
@@ -828,6 +828,11 @@ mod tests {
             ("codeq_callers", &["limit"][..]),
             ("codeq_callees", &["limit"][..]),
             ("codeq_astgrep", &["explain"][..]),
+            ("codeq_search", &["within", "within_at"][..]),
+            ("codeq_references", &["within", "within_at", "kind"][..]),
+            ("codeq_deps", &["reverse", "by", "limit"][..]),
+            ("codeq_discover", &["query", "source", "limit"][..]),
+            ("codeq_packages", &["name", "limit"][..]),
         ] {
             for param in params {
                 assert!(

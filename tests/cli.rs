@@ -2969,8 +2969,8 @@ fn extracts_svelte_components_scripts_and_snippets() {
     );
     let v = f.run(&["references", "Button"]);
     let refs = v["data"]["references"].as_array().unwrap();
-    // Both the import and the `<Button …/>` markup usage.
-    assert_eq!(refs.len(), 2, "{refs:?}");
+    // Import identifier, module string and `<Button …/>` markup occurrence.
+    assert_eq!(refs.len(), 3, "{refs:?}");
     assert!(
         refs.iter().all(|r| r["path"] == "src/routes/+page.svelte"),
         "{refs:?}"
@@ -10731,7 +10731,7 @@ fn max_per_file_totals_survive_rows_that_are_counted_and_not_built() {
         "{refs}"
     );
     assert_eq!(
-        refs["notes"]["truncated_per_file"]["a.rs"], 6,
+        refs["notes"]["truncated_per_file"]["a.rs"], 12,
         "{:?}",
         refs["notes"]
     );
@@ -15287,4 +15287,145 @@ fn packages_join_declarations_imports_and_preserve_uncertainty() {
         go["data"][0]["importers"],
         serde_json::json!(["go/main.go"])
     );
+}
+
+#[test]
+fn definition_scopes_select_exact_ranges_before_limits_and_counts() {
+    let f = Fixture::new();
+    f.write("sample.py", "class A:\n    def run(self):\n        token = 1\n        return token\n\nclass B:\n    def run(self):\n        token = 2\n        return token\n");
+    let scoped = f.run(&[
+        "search",
+        "token",
+        "--within-at",
+        "sample.py:7",
+        "--limit",
+        "1",
+    ]);
+    assert_eq!(scoped["data"]["matches"][0]["line"], 8);
+    assert_eq!(scoped["data"]["matches"].as_array().unwrap().len(), 1);
+    let count = f.run(&["search", "token", "--within-at", "sample.py:7", "--count"]);
+    assert_eq!(count["data"]["counts"][0]["count"], 2);
+    let invert = f.run(&["search", "token", "--within-at", "sample.py:7", "-v"]);
+    let rows = invert["data"]["matches"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["line"], 7);
+    let references = f.run(&["references", "token", "--within-at", "sample.py:7"]);
+    let rows = references["data"]["references"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| r["line"].as_u64().unwrap() >= 8));
+    let ambiguous = f.raw(&["search", "token", "--within", "run"]);
+    assert!(!ambiguous.status.success());
+    assert!(String::from_utf8_lossy(&ambiguous.stderr).contains("matched 2 definitions"));
+    assert!(!f
+        .raw(&["search", "token", "--within", "absent"])
+        .status
+        .success());
+    assert!(!f
+        .raw(&[
+            "search",
+            "token",
+            "--within-at",
+            "sample.py:1",
+            "--within",
+            "run"
+        ])
+        .status
+        .success());
+}
+
+#[test]
+fn references_classify_each_occurrence_with_syntax_evidence() {
+    let f = Fixture::new();
+    f.write("handler.ts", "import { value } from './lib';\nfunction handler(state: State) {\n  state.value = state.value + 1;\n  state.value += 1;\n  state.value++;\n  value();\n  // value\n  const text = 'value';\n}\n");
+    let uses = f.run(&["references", "value", "--path", "handler.ts"]);
+    let rows = uses["data"]["references"].as_array().unwrap();
+    let kinds: Vec<_> = rows
+        .iter()
+        .map(|r| (r["line"].as_u64().unwrap(), r["use_kind"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            (1, "import"),
+            (3, "write"),
+            (3, "read"),
+            (4, "read-write"),
+            (5, "read-write"),
+            (6, "call"),
+            (7, "unknown"),
+            (8, "unknown")
+        ]
+    );
+    assert!(rows
+        .iter()
+        .all(|r| !r["evidence"].as_str().unwrap().is_empty()));
+    let text = f.raw(&["references", "value", "--kind", "write"]);
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(
+        text.contains("use=write evidence=tree-sitter/typescript:"),
+        "{text}"
+    );
+    let writes = f.run(&["references", "value", "--kind", "write", "--limit", "1"]);
+    assert_eq!(writes["data"]["references"][0]["line"], 3);
+    assert_eq!(writes["data"]["truncated"], true);
+    assert!(writes["note"]
+        .as_str()
+        .unwrap()
+        .contains("could not be classified"));
+    let receivers = f.run(&["references", "state", "--kind", "write"]);
+    assert!(receivers["data"]["references"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let types = f.run(&["references", "State", "--kind", "type-use"]);
+    assert_eq!(types["data"]["references"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn reference_categories_preserve_unknown_and_declarations() {
+    let f = Fixture::new();
+    f.write(
+        "sample.rs",
+        "fn target() {}\nfn handler() { let target = 1; target += 1; target(); }\n",
+    );
+    let refs = f.run(&["references", "target"]);
+    let kinds: Vec<_> = refs["data"]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["use_kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, vec!["decl", "decl", "read-write", "call"]);
+    f.write("other.go", "package main\nfunc target() {}\n");
+    let unknown = f.run(&[
+        "references",
+        "target",
+        "--path",
+        "other.go",
+        "--kind",
+        "unknown",
+    ]);
+    assert_eq!(unknown["data"]["references"].as_array().unwrap().len(), 1);
+    assert!(unknown["data"]["references"][0]["evidence"]
+        .as_str()
+        .unwrap()
+        .contains("unsupported"));
+}
+
+#[test]
+fn discovery_reasons_and_package_importers_are_visible_in_text() {
+    let f = Fixture::new();
+    f.write("package.json", r#"{"dependencies":{"lodash":"^4"}}"#);
+    f.write(
+        "src/auth.ts",
+        "import { get } from 'lodash';\nexport function refreshAuthToken() { return get({}); }\n",
+    );
+    let discover = f.raw(&["discover", "refresh auth token"]);
+    assert!(discover.status.success());
+    let text = String::from_utf8(discover.stdout).unwrap();
+    assert!(text.contains("reasons=name:auth"), "{text}");
+    let packages = f.raw(&["packages", "lodash"]);
+    assert!(packages.status.success());
+    let text = String::from_utf8(packages.stdout).unwrap();
+    assert!(text.contains("importers=src/auth.ts"), "{text}");
 }

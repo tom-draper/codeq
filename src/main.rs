@@ -21,6 +21,7 @@ mod mcp;
 mod output;
 mod repo;
 mod search;
+mod usage;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -428,6 +429,15 @@ pub(crate) enum Command {
     },
     /// Word-boundary references to an exact symbol name, with enclosing symbol.
     References {
+        /// Search within one exact definition, disambiguated by --path.
+        #[arg(long, conflicts_with = "within_at")]
+        within: Option<String>,
+        /// Search within the innermost definition at PATH:LINE.
+        #[arg(long)]
+        within_at: Option<String>,
+        /// Syntax use category. Read and write also include read-write.
+        #[arg(long = "kind", value_parser = ["call", "read", "write", "read-write", "type-use", "import", "decl", "unknown"])]
+        use_kind: Option<String>,
         /// Exact symbol name to find references to.
         name: String,
         /// Restrict to paths containing this substring.
@@ -728,6 +738,12 @@ pub(crate) enum Command {
     /// Content search; each match annotated with its enclosing definition.
     #[command(alias = "grep", alias = "rg")]
     Search {
+        /// Search within one exact definition, disambiguated by --path.
+        #[arg(long, conflicts_with = "within_at")]
+        within: Option<String>,
+        /// Search within the innermost definition at PATH:LINE.
+        #[arg(long)]
+        within_at: Option<String>,
         /// Pattern to search for (regex by default).
         #[arg(required_unless_present = "regexp")]
         pattern: Option<String>,
@@ -1188,6 +1204,9 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
             out,
         ),
         Command::References {
+            within,
+            within_at,
+            use_kind,
             name,
             path,
             language,
@@ -1198,6 +1217,9 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
         } => commands::cmd_references(
             cwd,
             commands::ReferencesArgs {
+                within: within.as_deref(),
+                within_at: within_at.as_deref(),
+                use_kind: use_kind.as_deref(),
                 name: &name,
                 path: path.as_deref(),
                 language: language.as_deref(),
@@ -1344,6 +1366,8 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
             ),
         },
         Command::Search {
+            within,
+            within_at,
             pattern,
             mut paths,
             regexp,
@@ -1379,6 +1403,8 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
             commands::cmd_search(
                 cwd,
                 commands::SearchArgs {
+                    within: within.as_deref(),
+                    within_at: within_at.as_deref(),
                     patterns: &patterns,
                     paths: &paths,
                     files_without_match,
