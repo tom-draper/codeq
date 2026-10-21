@@ -28,9 +28,7 @@ test on Linux, macOS, and Windows. Linux archives use musl.
 Build from source with a Rust toolchain and `git` on your PATH:
 
 ```sh
-git clone https://github.com/tom-draper/codeq.git
-cd codeq
-cargo install --path .
+cargo install --git https://github.com/tom-draper/codeq --locked
 ```
 
 Make sure your Cargo bin directory is on your PATH, usually `~/.cargo/bin`.
