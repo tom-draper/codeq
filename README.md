@@ -237,6 +237,9 @@ Use `deps src/util.ts --reverse --depth 3 --limit 50` for incoming file dependen
 internal edges separately from external or unresolved imports. In directory mode,
 `depth` is the number of directory components, rather than graph hops.
 
+TypeScript path aliases are read from the root `tsconfig.json`, including comments
+and trailing commas. Invalid or unreadable configs produce an error naming the file.
+
 `packages express` joins declarations to importing files. npm, Cargo, Python
 `project.dependencies` and optional groups, and Go `require` declarations are read
 from indexed manifests. Imports belong to the nearest manifest in that ecosystem.

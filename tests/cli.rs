@@ -1321,6 +1321,68 @@ fn resolved_callees_follow_typescript_aliases_reexports_and_workspaces() {
 }
 
 #[test]
+fn typescript_jsonc_config_preserves_alias_edges_and_resolved_callees() {
+    let f = Fixture::new();
+    f.write(
+        "tsconfig.json",
+        r#"{
+            // URLs and comment markers inside strings must stay intact.
+            "schema": "https://example.com/schema//config",
+            "escaped": "a\"//b",
+            "compilerOptions": {
+                /* Project-local aliases. */
+                "paths": {"@/*": ["src/*", /* fallback */],},
+            },
+        }"#,
+    );
+    f.write(
+        "app/main.ts",
+        "import { helper } from '@/lib';\nexport function main() { helper(); }\n",
+    );
+    f.write("src/lib.ts", "export function helper() {}\n");
+    f.write("other/lib.ts", "export function helper() {}\n");
+
+    assert_eq!(
+        field_set(&f.run(&["deps", "app/main.ts"]), "path"),
+        ["src/lib.ts"]
+    );
+    assert_eq!(
+        field_set(&f.run(&["callees", "main", "--resolved"]), "path"),
+        ["src/lib.ts"]
+    );
+}
+
+#[test]
+fn malformed_typescript_config_reports_the_file_and_parse_error() {
+    let f = Fixture::new();
+    f.write("main.ts", "import { helper } from '@/lib';\n");
+    for config in [
+        "{\n  \"compilerOptions\": invalid\n}",
+        "{\"compilerOptions\": { /* never closed",
+        "{\"compilerOptions\": {\"paths\": {\"@/*\": [,]}}}",
+    ] {
+        f.write("tsconfig.json", config);
+        let out = f.raw(&["deps", "main.ts"]);
+        let error = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "invalid config succeeded: {config}");
+        assert!(error.contains("tsconfig.json"), "{error}");
+        assert!(
+            error.contains("line") && error.contains("column"),
+            "{error}"
+        );
+    }
+    f.write(
+        "tsconfig.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+    );
+    f.write("src/lib.ts", "export function helper() {}\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "main.ts"]), "path"),
+        ["src/lib.ts"]
+    );
+}
+
+#[test]
 fn unresolved_typescript_aliases_keep_candidates_with_a_reason() {
     let f = Fixture::new();
     f.write(
