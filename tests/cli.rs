@@ -1421,6 +1421,285 @@ fn unresolved_typescript_aliases_keep_candidates_with_a_reason() {
 }
 
 #[test]
+fn project_aliases_belong_to_each_importers_nearest_config() {
+    let f = Fixture::new();
+    f.write(
+        "tsconfig.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["decoy/*"]}}}"#,
+    );
+    f.write("decoy/lib.ts", "export function helper() {}\n");
+    for project in ["one", "two"] {
+        f.write(
+            &format!("{project}/tsconfig.json"),
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        f.write(
+            &format!("{project}/main.ts"),
+            "import { helper } from '@/lib';\nexport function run() { helper(); }\n",
+        );
+        f.write(
+            &format!("{project}/src/lib.ts"),
+            "export function helper() {}\n",
+        );
+        assert_eq!(
+            field_set(&f.run(&["deps", &format!("{project}/main.ts")]), "path"),
+            [format!("{project}/src/lib.ts")]
+        );
+        assert_eq!(
+            field_set(
+                &f.run(&[
+                    "callees",
+                    "run",
+                    "--path",
+                    &format!("{project}/main.ts"),
+                    "--resolved"
+                ]),
+                "path"
+            ),
+            [format!("{project}/src/lib.ts")]
+        );
+    }
+}
+
+#[test]
+fn project_inheritance_preserves_path_origins_and_child_base_url_overrides() {
+    let f = Fixture::new();
+    f.write(
+        "config/base.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+    );
+    f.write("config/src/lib.ts", "export function helper() {}\n");
+    f.write("app/tsconfig.json", r#"{"extends":"../config/base"}"#);
+    f.write("app/main.ts", "import { helper } from '@/lib';\n");
+    f.write("app/src/lib.ts", "export function helper() {}\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "app/main.ts"]), "path"),
+        ["config/src/lib.ts"]
+    );
+    f.write(
+        "app/tsconfig.json",
+        r#"{"extends":"../config/base","compilerOptions":{"baseUrl":"."}}"#,
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "app/main.ts"]), "path"),
+        ["app/src/lib.ts"]
+    );
+}
+
+#[test]
+fn project_references_select_named_configs_without_sharing_aliases() {
+    let f = Fixture::new();
+    f.write("tsconfig.json", r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.test.json"}]}"#);
+    f.write(
+        "tsconfig.app.json",
+        r#"{"include":["app/**/*"],"compilerOptions":{"paths":{"@/*":["app/*"]}}}"#,
+    );
+    f.write(
+        "tsconfig.test.json",
+        r#"{"include":["test/**/*"],"compilerOptions":{"paths":{"@/*":["test/*"]}}}"#,
+    );
+    for directory in ["app", "test"] {
+        f.write(
+            &format!("{directory}/main.ts"),
+            "import { helper } from '@/lib';\n",
+        );
+        f.write(
+            &format!("{directory}/lib.ts"),
+            "export function helper() {}\n",
+        );
+        assert_eq!(
+            field_set(&f.run(&["deps", &format!("{directory}/main.ts")]), "path"),
+            [format!("{directory}/lib.ts")]
+        );
+    }
+}
+
+#[test]
+fn project_alias_specificity_and_child_paths_replacement_are_respected() {
+    let f = Fixture::new();
+    f.write(
+        "base.json",
+        r#"{"compilerOptions":{"paths":{"old/*":["old/*"]}}}"#,
+    );
+    f.write("tsconfig.json", r#"{"extends":"./base.json","compilerOptions":{"paths":{"@/*":["generic/*"],"@/lib":["specific/lib"],"@/special/*":["special/*"]}}}"#);
+    f.write(
+        "main.ts",
+        "import '@/lib';\nimport '@/special/lib';\nimport 'old/lib';\n",
+    );
+    for directory in ["generic", "generic/special", "specific", "special", "old"] {
+        f.write(
+            &format!("{directory}/lib.ts"),
+            "export function helper() {}\n",
+        );
+    }
+    assert_eq!(
+        field_set(&f.run(&["deps", "main.ts"]), "path"),
+        ["special/lib.ts", "specific/lib.ts"]
+    );
+}
+
+#[test]
+fn project_inheritance_errors_name_the_config_and_do_not_guess_edges() {
+    let f = Fixture::new();
+    f.write("main.ts", "import '@/lib';\n");
+    f.write("lib.ts", "export function helper() {}\n");
+    for (config, reason) in [
+        (r#"{"extends":"./missing"}"#, "missing"),
+        (r#"{"extends":"./tsconfig.json"}"#, "cycle"),
+        (r#"{"extends":"../outside.json"}"#, "outside"),
+    ] {
+        f.write("tsconfig.json", config);
+        let out = f.raw(&["deps", "main.ts"]);
+        let error = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{config} silently succeeded");
+        assert!(
+            error.contains("tsconfig.json") && error.contains(reason),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn project_imports_keep_excluded_helpers_in_the_importing_program() {
+    let f = Fixture::new();
+    f.write(
+        "tsconfig.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["root/*"]}}}"#,
+    );
+    f.write("root/value.ts", "export const value = 0;\n");
+    f.write(
+        "pkg/tsconfig.json",
+        r#"{"include":["src/main.ts"],"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+    );
+    f.write("pkg/src/main.ts", "import './helper';\n");
+    f.write("pkg/src/helper.ts", "import { value } from '@/value';\n");
+    f.write("pkg/src/value.ts", "export const value = 1;\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "pkg/src/helper.ts"]), "path"),
+        ["pkg/src/value.ts"]
+    );
+}
+
+#[test]
+fn project_ignored_configs_block_parent_aliases() {
+    let f = Fixture::new();
+    f.write(".ignore", "pkg/tsconfig.json\n");
+    f.write(
+        "tsconfig.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["root/*"]}}}"#,
+    );
+    f.write("root/value.ts", "export const value = 0;\n");
+    f.write(
+        "pkg/tsconfig.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+    );
+    f.write("pkg/main.ts", "import { value } from '@/value';\n");
+    f.write("pkg/src/value.ts", "export const value = 1;\n");
+    let rows = f.run(&["deps", "pkg/main.ts"]);
+    assert_eq!(field_set(&rows, "path"), Vec::<String>::new());
+    let external = f.run(&["deps", "--external"]);
+    assert!(
+        external["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["module"] == "@/value"
+                && row["resolution_reason"]
+                    .as_str()
+                    .is_some_and(|r| r.contains("not indexed"))),
+        "{external}"
+    );
+}
+
+#[test]
+fn project_default_out_dir_exclusion_and_literal_glob_braces_match_typescript() {
+    let f = Fixture::new();
+    f.write(
+        "tsconfig.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["root/*"]}}}"#,
+    );
+    f.write("root/value.ts", "export const value = 0;\n");
+    f.write(
+        "pkg/tsconfig.json",
+        r#"{"compilerOptions":{"outDir":"dist","paths":{"@/*":["src/*"]}}}"#,
+    );
+    f.write("pkg/dist/main.ts", "import { value } from '@/value';\n");
+    f.write("pkg/src/value.ts", "export const value = 1;\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "pkg/dist/main.ts"]), "path"),
+        ["root/value.ts"]
+    );
+    f.write(
+        "pkg/tsconfig.json",
+        r#"{"include":["src/{one,two}.ts"],"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+    );
+    f.write("pkg/src/one.ts", "import { value } from '@/value';\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "pkg/src/one.ts"]), "path"),
+        ["root/value.ts"]
+    );
+}
+
+#[test]
+fn project_typescript_config_takes_precedence_over_jsconfig() {
+    let f = Fixture::new();
+    f.write(
+        "tsconfig.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["typescript/*"]}}}"#,
+    );
+    f.write(
+        "jsconfig.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["javascript/*"]}}}"#,
+    );
+    f.write("main.ts", "import '@/lib';\n");
+    f.write("typescript/lib.ts", "export const value = 1;\n");
+    f.write("javascript/lib.ts", "export const value = 2;\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "main.ts"]), "path"),
+        ["typescript/lib.ts"]
+    );
+}
+
+#[test]
+fn project_multiple_extends_and_ambiguous_ownership_remain_explicit() {
+    let f = Fixture::new();
+    f.write(
+        "first.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["first/*"]}}}"#,
+    );
+    f.write(
+        "second.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["second/*"]}}}"#,
+    );
+    f.write(
+        "tsconfig.json",
+        r#"{"extends":["./first.json","./second.json"]}"#,
+    );
+    f.write("first/lib.ts", "export const value = 1;\n");
+    f.write("second/lib.ts", "export const value = 2;\n");
+    f.write("main.ts", "import '@/lib';\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "main.ts"]), "path"),
+        ["second/lib.ts"]
+    );
+    f.write(
+        "tsconfig.json",
+        r#"{"files":[],"references":[{"path":"./first.json"},{"path":"./second.json"}]}"#,
+    );
+    let external = f.run(&["deps", "--external"]);
+    assert!(
+        external["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["resolution_reason"]
+                .as_str()
+                .is_some_and(|s| s.contains("ambiguous project ownership"))),
+        "{external}"
+    );
+}
+
+#[test]
 fn callees_use_an_imported_module_receiver_to_narrow_same_named_defs() {
     let f = Fixture::new();
     f.write("context.rs", "pub fn build() {}\n");

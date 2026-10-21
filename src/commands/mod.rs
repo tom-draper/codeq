@@ -219,6 +219,12 @@ impl Session {
     /// The internal import graph, built on first use.
     fn dep_graph(&self) -> Result<Rc<deps::Graph>> {
         let mut cached = self.resources.dep_graph.borrow_mut();
+        if cached
+            .as_ref()
+            .is_some_and(|graph| !graph.project_inputs_unchanged())
+        {
+            *cached = None;
+        }
         if cached.is_none() {
             *cached = Some(Rc::new(imports::load_dep_graph(&self.db)?));
         }

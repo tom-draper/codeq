@@ -87,6 +87,7 @@ pub struct Graph {
     /// (`import { make as m }`). Module aliases have no source symbol here.
     binding_names: HashMap<String, HashMap<String, String>>,
     unresolved_project_imports: HashMap<String, Vec<(String, String)>>,
+    config_guards: Vec<(std::path::PathBuf, bool)>,
 }
 
 /// Split a module string into candidate path segments. Anything that is not an
@@ -437,6 +438,11 @@ fn go_packages(paths: &[String]) -> HashMap<&str, Vec<&str>> {
 }
 
 impl Graph {
+    pub fn project_inputs_unchanged(&self) -> bool {
+        self.config_guards
+            .iter()
+            .all(|(path, existed)| path.try_exists().ok() == Some(*existed))
+    }
     pub fn edges(&self) -> impl Iterator<Item = (&str, &Edge)> {
         self.edges
             .iter()
@@ -496,7 +502,7 @@ impl Graph {
         go_module: Option<&str>,
         root: &Path,
     ) -> Result<Graph> {
-        let project = ProjectResolution::load(root, &files)?;
+        let project = ProjectResolution::load(root, &files, &imports)?;
         Ok(Self::build_inner(files, imports, go_module, Some(project)))
     }
 
@@ -565,7 +571,7 @@ impl Graph {
             // or built-ins. Relative paths retain the ordinary file resolver.
             if uses_node_resolution(&from) && !module.starts_with('.') {
                 if let Some(project) = &project {
-                    match project.targets(&module, allow_imported_name, &paths) {
+                    match project.targets(&from, &module, allow_imported_name, &paths) {
                         Some(Ok(targets)) => {
                             for target in targets {
                                 edges.entry(from.clone()).or_default().push(Edge {
@@ -756,6 +762,7 @@ impl Graph {
             bindings,
             binding_names,
             unresolved_project_imports,
+            config_guards: project.map_or_else(Vec::new, |p| p.config_guards()),
         }
     }
 
