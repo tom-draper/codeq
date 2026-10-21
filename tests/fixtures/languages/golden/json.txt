@@ -1,0 +1,7 @@
+file sample.json b974c0be77e014a9
+fact key scripts 1:1-1:32 bytes=1-32 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/json confidence=1 sig=\"scripts\":{\"test\":\"cargo test\"} doc=-
+fact key scripts.test 1:12-1:31 bytes=12-31 vis=- owner=scripts derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/json confidence=1 sig=\"test\":\"cargo test\" doc=-
+fact key servers 1:33-1:65 bytes=33-65 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/json confidence=1 sig=\"servers\":[{\"host\":\"localhost\"}] doc=-
+fact key servers[0].host 1:45-1:63 bytes=45-63 vis=- owner=servers[0] derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/json confidence=1 sig=\"host\":\"localhost\" doc=-
+span 19-31 kind=1
+span 52-63 kind=1

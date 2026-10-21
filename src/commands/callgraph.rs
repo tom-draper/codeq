@@ -180,6 +180,9 @@ fn caller_rows(
     let mut pick: HashMap<(String, Option<String>), (Hit, bool)> = HashMap::new();
     let mut order: Vec<(String, Option<String>)> = Vec::new();
     for h in hits {
+        if h.kind.as_deref() == Some("key") {
+            continue;
+        }
         // Syntax filters already exclude declarations. Claiming their first
         // remaining hit would discard a recursive call.
         if !call_only && qualifier.is_none() && defsites.is_declaration(&h.path, h.line as i64) {
@@ -589,6 +592,9 @@ fn scan_called_names(
         // file for every `callees` query. Unsupported/opaque grammars keep
         // the existing textual fallback below.
         let lang = language_for(path).unwrap_or("");
+        if matches!(lang, "json" | "yaml" | "toml") {
+            continue;
+        }
         if crate::callsite::supports_syntax_calls(lang) {
             let rows =
                 calls_stmt.query_map(rusqlite::params![path, *sb as i64, *eb as i64], |r| {
@@ -681,7 +687,7 @@ fn callee_candidates(s: &Session, idents: &HashSet<String>) -> Result<Vec<Callee
         let placeholders = vec!["?"; chunk.len()].join(",");
         let sql = format!(
             "SELECT name, kind, path, start_line, owner, start_byte, end_byte FROM facts
-             WHERE kind NOT IN ('import', 'field', 'variant') AND name IN ({placeholders})"
+             WHERE kind NOT IN ('import', 'field', 'variant', 'key') AND name IN ({placeholders})"
         );
         let mut stmt = s.db.conn.prepare(&sql)?;
         let params: Vec<&dyn rusqlite::ToSql> =

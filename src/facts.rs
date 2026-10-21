@@ -17,6 +17,7 @@ use anyhow::{Context, Result};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, Point, Query, QueryCursor, Range};
 
+mod config;
 mod docs;
 use docs::{jinja_facts, markdown_facts, rst_facts};
 
@@ -891,6 +892,7 @@ impl Extractor {
     /// Query errors propagate to the caller instead of publishing an empty index.
     pub fn extract(&mut self, language: &str, path: &str, src: &[u8]) -> Result<Extracted> {
         match language {
+            "json" | "yaml" | "toml" => return config::config_facts(language, path, src),
             "markdown" => return Ok((markdown_facts(src), None, Vec::new())),
             "rst" => return Ok((rst_facts(src), None, Vec::new())),
             "jinja" => return Ok((jinja_facts(src), None, Vec::new())),
@@ -1088,6 +1090,9 @@ pub const LANGUAGES: &[&str] = &[
     "rst",
     "jinja",
     "sql",
+    "json",
+    "yaml",
+    "toml",
 ];
 
 /// The text of the first direct child of `node` whose kind is `kind`.

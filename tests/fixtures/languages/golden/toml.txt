@@ -1,0 +1,4 @@
+file sample.toml 61c22768320aff46
+fact key tool.ruff 2:0-4:0 bytes=24-54 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/toml confidence=1 sig=[tool.ruff] doc=-
+fact key tool.ruff.line-length 3:0-3:17 bytes=36-53 vis=- owner=tool.ruff derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/toml confidence=1 sig=line-length = 100 doc=-
+span 0-23 kind=0

@@ -994,7 +994,7 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
 /// Languages codeq indexes as files (so they are searchable) but does not
 /// extract definitions from — no grammar is wired up for them. Kept explicit so
 /// the drift test can tell "deliberately data-only" from "someone forgot".
-pub const NO_EXTRACTION: &[&str] = &["json", "yaml", "toml"];
+pub const NO_EXTRACTION: &[&str] = &[];
 
 /// Extension-based language classification. Deliberately syntactic and cheap;
 /// this is not content sniffing.
