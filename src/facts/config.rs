@@ -32,6 +32,9 @@ pub(super) fn config_facts(language: &str, path: &str, src: &[u8]) -> Result<Ext
     let mut stack = vec![(root, String::new(), 0)];
     let mut table_arrays: HashMap<String, usize> = HashMap::new();
     while let Some((node, parent, depth)) = stack.pop() {
+        if facts.len() > 10_000 {
+            return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()));
+        }
         if depth > 64 || node.is_error() || node.is_missing() {
             continue;
         }
@@ -137,6 +140,9 @@ pub(super) fn config_facts(language: &str, path: &str, src: &[u8]) -> Result<Ext
             };
             stack.push((child, name, depth + 1));
         }
+    }
+    if facts.len() > 10_000 {
+        return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()));
     }
     facts.sort_by_key(|f| f.start_byte);
     spans.sort_by_key(|s| s.0);
