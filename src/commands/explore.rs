@@ -753,6 +753,15 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
     // matched every README in the repo and mixed their definitions together.
     let rel = resolve_file(&s, path)?;
 
+    let (data, note) = at_definitions(&s, &rel, line)?;
+    s.emit_noted(data, note)
+}
+
+pub(super) fn at_definitions(
+    s: &Session,
+    rel: &str,
+    line: i64,
+) -> Result<(Vec<DefinitionRow>, Option<String>)> {
     let mut stmt = s.db.conn.prepare(
         "SELECT name, kind, path, language,
                 start_line, start_col, end_line, end_col, start_byte, end_byte,
@@ -788,7 +797,7 @@ pub fn cmd_at(cwd: &Path, location: &str, out: Out) -> Result<()> {
             format!("no definition encloses {rel}:{line} (between definitions, or past the end)")
         })
     });
-    s.emit_noted(data, note)
+    Ok((data, note))
 }
 
 pub fn cmd_context(cwd: &Path, req: Request, out: Out) -> Result<()> {

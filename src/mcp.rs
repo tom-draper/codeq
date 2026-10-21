@@ -232,6 +232,14 @@ const ROW_GLOBALS: &[&str] = &["fields", "group", "max_per_file"];
 /// exceptions together makes the remaining adapter metadata reviewable.
 const TOOL_OVERRIDES: &[(&str, ToolOverrides)] = &[
     (
+        "at",
+        ToolOverrides {
+            hidden: &["stdin"],
+            required: &["location"],
+            ..EMPTY_TOOL_OVERRIDES
+        },
+    ),
+    (
         "astgrep",
         ToolOverrides {
             globals: ROW_GLOBALS,
@@ -406,7 +414,14 @@ fn tools(profile: ToolProfile) -> Value {
             let props: serde_json::Map<String, Value> = t
                 .params
                 .iter()
-                .map(|p| (p.key.clone(), param_schema(p)))
+                .map(|p| {
+                    let schema = if t.command == "at" && p.key == "location" {
+                        json!({"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "minItems": 1}]})
+                    } else {
+                        param_schema(p)
+                    };
+                    (p.key.clone(), schema)
+                })
                 .collect();
             let required: Vec<&str> = t
                 .params
@@ -593,7 +608,7 @@ const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "codeq_at",
-        "Resolve a location (e.g. from a stack trace or compiler error) to the definition(s) enclosing it, innermost first. Location is <path>:<line>.",
+        "Resolve location as one path:line or path:line:column string, or an ordered array. A single location retains its definition list; batches retain unresolved and ambiguous entries under results. source adds one deduplicated innermost-definition bundle under max_tokens. Columns are accepted but resolution is by line.",
     ),
     (
         "codeq_read",
@@ -755,7 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn only_documented_search_options_are_omitted_from_mcp() {
+    fn only_documented_stdin_and_search_options_are_omitted_from_mcp() {
         let hidden: Vec<(&str, &str)> = TOOL_OVERRIDES
             .iter()
             .flat_map(|(command, overrides)| {
@@ -768,6 +783,7 @@ mod tests {
         assert_eq!(
             hidden,
             [
+                ("at", "stdin"),
                 ("search", "stdin"),
                 ("search", "regexp"),
                 ("search", "multiline")
@@ -858,5 +874,45 @@ mod tests {
         let args = build_args("codeq_read", &json!({ "file": "a.rs", "symbol": "f" })).unwrap();
         assert_eq!(args, ["read", "--symbol", "f", "--", "a.rs"]);
         assert!(build_args("codeq_read", &json!({})).is_err());
+    }
+
+    #[test]
+    fn at_accepts_scalar_or_ordered_locations_and_hides_stdin() {
+        assert_eq!(
+            build_args("codeq_at", &json!({"location": "a.rs:3"})).unwrap(),
+            ["at", "--", "a.rs:3"]
+        );
+        let args = build_args(
+            "codeq_at",
+            &json!({"location": ["b.rs:2", "a.rs:3", "b.rs:2"], "source": true, "max_tokens": 50}),
+        )
+        .unwrap();
+        assert_eq!(
+            args,
+            [
+                "at",
+                "--source",
+                "--max-tokens",
+                "50",
+                "--",
+                "b.rs:2",
+                "a.rs:3",
+                "b.rs:2"
+            ]
+        );
+        assert!(build_args("codeq_at", &json!({})).is_err());
+        assert!(build_args("codeq_at", &json!({"stdin": true})).is_err());
+        let tools = tools(ToolProfile::All);
+        let at = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "codeq_at")
+            .unwrap();
+        assert!(at["inputSchema"]["properties"].get("stdin").is_none());
+        assert_eq!(
+            at["inputSchema"]["properties"]["location"],
+            json!({"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "minItems": 1}]})
+        );
     }
 }

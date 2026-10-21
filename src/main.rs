@@ -616,8 +616,18 @@ pub(crate) enum Command {
     },
     /// The definition(s) enclosing a location, e.g. src/foo.rs:412.
     At {
-        /// Location as <path>:<line>.
-        location: String,
+        /// Locations as <path>:<line> or <path>:<line>:<column>.
+        #[arg(required_unless_present = "stdin", conflicts_with = "stdin")]
+        location: Vec<String>,
+        /// Read stack frames or compiler locations from standard input.
+        #[arg(long)]
+        stdin: bool,
+        /// Include innermost definitions as one budgeted source bundle.
+        #[arg(long)]
+        source: bool,
+        /// Source budget across all frames, approximately four bytes per token.
+        #[arg(long, default_value_t = 4000, requires = "source")]
+        max_tokens: u64,
     },
     /// Read a file, folding long function bodies so you expand only what you
     /// need (text output, not JSON).
@@ -1306,7 +1316,12 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
         Command::Tests { name, path, limit } => {
             commands::cmd_tests(cwd, &name, path.as_deref(), limit, out)
         }
-        Command::At { location } => commands::cmd_at(cwd, &location, out),
+        Command::At {
+            location,
+            stdin,
+            source,
+            max_tokens,
+        } => commands::cmd_at_locations(cwd, &location, stdin, source.then_some(max_tokens), out),
         Command::Read { at, raw, .. } if !at.is_empty() => {
             commands::cmd_read_at(cwd, &at, raw, out)
         }
