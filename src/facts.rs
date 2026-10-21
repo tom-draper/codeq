@@ -24,6 +24,7 @@ mod docs;
 mod flat_config;
 mod just;
 mod markup;
+mod r;
 mod sections;
 mod text;
 use docs::{jinja_facts, markdown_facts, rst_facts};
@@ -929,6 +930,18 @@ impl Extractor {
             return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()));
         };
         Ok(match language {
+            "r" => {
+                let Some(tree) = spec.parser.parse(src, None) else {
+                    return Ok(((Vec::new(), Vec::new(), Vec::new()), None, Vec::new()));
+                };
+                let root = tree.root_node();
+                let (_, spans, rels) = spec.harvest(root, src);
+                (
+                    (r::extract(root, src), spans, rels),
+                    Some(parse_health(root)),
+                    Vec::new(),
+                )
+            }
             "hcl" => {
                 let tree = match spec.parser.parse(src, None) {
                     Some(t) => t,
@@ -1087,6 +1100,7 @@ pub const LANGUAGES: &[&str] = &[
     "php",
     "bash",
     "lua",
+    "r",
     "scala",
     "kotlin",
     "swift",

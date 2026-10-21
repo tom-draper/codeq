@@ -180,6 +180,12 @@ pub(super) fn grammar(language: &str) -> Option<Grammar> {
         ),
         "php" => g(tree_sitter_php::LANGUAGE_PHP, PHP_QUERY, PHP_SPANS, PHP_REL),
         "bash" => g(tree_sitter_bash::LANGUAGE, BASH_QUERY, BASH_SPANS, ""),
+        "r" => g(
+            tree_sitter_r::LANGUAGE,
+            "",
+            include_str!("../../queries/r.spans.scm"),
+            "",
+        ),
         "lua" => g(tree_sitter_lua::LANGUAGE, LUA_QUERY, LUA_SPANS, ""),
         "scala" => g(
             tree_sitter_scala::LANGUAGE,

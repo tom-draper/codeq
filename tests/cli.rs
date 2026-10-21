@@ -16666,3 +16666,58 @@ fn build_language_imports_preserve_literal_paths() {
         [" file.just ", "common.just", "file?name.just", "tools.just"]
     );
 }
+
+#[test]
+fn r_language_functions_ranges_and_imports() {
+    let f = Fixture::new();
+    f.write("main.R", "# marker_comment\nlibrary(stats)\nrequire(package = \"utils\")\nsource(file = \"helpers.R\")\nf <- function(x) {\n  x + 1\n}\n`scale values` = function(x) x * 2\nshort <- \\(x) x\n(function(x) x) -> right\ntext <- \"marker_string\"\n");
+    f.write("helpers.R", "helper <- function() 1\n");
+    f.write("helpers.py", "def other(): pass\n");
+    let outline = f.run(&["outline", "main.R"]);
+    let names = field_set(&outline, "name");
+    for name in ["f", "scale values", "short", "right"] {
+        assert!(names.iter().any(|n| n == name), "{outline}");
+    }
+    let output = f.raw(&["read", "main.R", "--symbol", "f", "--raw"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "f <- function(x) {\n  x + 1\n}"
+    );
+    let imports = f.run(&["imports", "main.R"]);
+    let names = field_set(&imports, "module");
+    for name in ["stats", "utils", "./helpers.R"] {
+        assert!(names.iter().any(|n| n == name), "{imports}");
+    }
+    let deps = f.run(&["deps", "main.R"]);
+    let paths = field_set(&deps, "path");
+    assert!(paths.iter().any(|p| p == "helpers.R"), "{deps}");
+    assert!(!paths.iter().any(|p| p == "helpers.py"), "{deps}");
+    for (marker, kind, excluded) in [
+        ("marker_comment", "comments", "strings"),
+        ("marker_string", "strings", "comments"),
+    ] {
+        let hits = f.run(&["search", marker, "--in", kind]);
+        assert_eq!(
+            hits["data"]["matches"].as_array().unwrap().len(),
+            1,
+            "{hits}"
+        );
+        let hits = f.run(&["search", marker, "--in", excluded]);
+        assert!(
+            hits["data"]["matches"].as_array().unwrap().is_empty(),
+            "{hits}"
+        );
+    }
+}
+
+#[test]
+fn r_language_dynamic_and_quoted_code_is_not_indexed() {
+    let f = Fixture::new();
+    f.write("main.r", "quote(fake <- function() 1)\nexpression(other <- function() 2)\nsource(paste0(name, '.R'))\nrequireNamespace(pkg)\nlibrary(pkg, character.only = TRUE)\nlibrary(help = 'stats')\nobj$f <- function() 1\nsource('escaped\\n.R')\nlapply(xs, function(x) x)\n");
+    f.write("quoted.R", "base :: quote(qualified <- function() 1)\nbase:::expression(private <- function() 2)\n`quote`(backtick <- function() 3)\nbase::`substitute`(source('fake.R'))\n~ { formula <- function() 4 }\nresponse ~ I(binary <- function() 5)\nlibrary(pkg, NULL, 2, NULL, TRUE)\nrequire(pkg, NULL, FALSE, TRUE, TRUE)\nlibrary(pkg, character.on = TRUE)\nlibrary(pkg, `character.only` = TRUE)\nlibrary(pkg, pack = 'stats')\n");
+    assert!(field_set(&f.run(&["outline", "quoted.R"]), "name").is_empty());
+    assert!(field_set(&f.run(&["imports", "quoted.R"]), "module").is_empty());
+    assert!(field_set(&f.run(&["outline", "main.r"]), "name").is_empty());
+    assert!(field_set(&f.run(&["imports", "main.r"]), "module").is_empty());
+}

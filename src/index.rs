@@ -1092,6 +1092,7 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
     ("php", "php"),
     ("rb", "ruby"),
     ("lua", "lua"),
+    ("r", "r"),
     ("scala", "scala"),
     ("sc", "scala"),
     ("kt", "kotlin"),

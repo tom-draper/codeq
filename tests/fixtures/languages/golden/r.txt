@@ -1,0 +1,7 @@
+file sample.R abdb29890762b917
+fact import stats 2:0-2:14 bytes=26-40 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/r confidence=1 sig=stats doc=-
+fact import ./helpers.R 3:0-3:19 bytes=41-60 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/r confidence=1 sig=./helpers.R doc=-
+fact function summary_values 4:0-6:1 bytes=61-114 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/r confidence=1 sig=summary_values <- function(values) doc=-
+fact function scale values 7:0-7:34 bytes=115-149 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/r confidence=1 sig=scale values <- function(x) doc=-
+span 0-25 kind=0
+span 48-59 kind=1

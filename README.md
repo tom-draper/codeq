@@ -278,7 +278,7 @@ and truncation fields report withheld importers. `--limit 0` removes the caps.
 ## Language support and limits
 
 Codeq extracts definitions from Rust, Python, JavaScript, TypeScript, Go, Java,
-Ruby, C, C++, C#, PHP, Bash, Lua, Scala, Kotlin, Swift, Dart, Zig, Elixir,
+Ruby, C, C++, C#, PHP, Bash, Lua, R, Scala, Kotlin, Swift, Dart, Zig, Elixir,
 Solidity, Svelte, Vue, CSS, PowerShell, Protobuf, GraphQL, HCL, SQL, Markdown,
 reStructuredText, and Jinja templates. Other text files remain searchable.
 JSON, YAML, and TOML keys are definitions named by their full path.
@@ -383,6 +383,13 @@ lists ambiguous candidates and omits their bodies unless you pass
 Treat `unused`, `untested`, and `affected` as investigation aids. They cannot
 prove that code is dead, that tests cover behavior, or that every runtime effect
 of a change has been found.
+
+R files (`.r` and `.R`) expose named functions assigned with `<-`, `=`, `<<-`,
+`->`, or `->>`, including backtick names and `\(x)` functions. Literal
+`library`, `require`, `requireNamespace`, and `loadNamespace` calls expose package
+imports. Literal `source` and `sys.source` paths become file dependencies.
+Computed paths, escaped strings, quoted code, export visibility, and call
+relationships are not resolved. Comment and string filters use the R syntax tree.
 
 ## Benchmarks and development
 
