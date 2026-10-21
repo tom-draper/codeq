@@ -63,7 +63,7 @@ pub fn support(language: &str) -> Option<Support> {
         })
     };
     match language {
-        "dockerfile" | "make" | "cmake" => {
+        "dockerfile" | "make" | "cmake" | "just" => {
             let mut value = hand(true, language != "dockerfile", false, true, false)?;
             value.relation_kinds = vec!["depends-on".into()];
             return Some(value);
@@ -123,7 +123,16 @@ fn relation_kinds_of(rel: &str) -> Vec<String> {
 pub fn has_spans(language: &str) -> bool {
     if matches!(
         language,
-        "json" | "yaml" | "toml" | "html" | "xml" | "ini" | "dotenv" | "properties" | "cmake"
+        "json"
+            | "yaml"
+            | "toml"
+            | "html"
+            | "xml"
+            | "ini"
+            | "dotenv"
+            | "properties"
+            | "cmake"
+            | "just"
     ) {
         return true;
     }

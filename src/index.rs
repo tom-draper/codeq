@@ -1074,6 +1074,7 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
     ("dockerfile", "dockerfile"),
     ("mk", "make"),
     ("cmake", "cmake"),
+    ("just", "just"),
     ("jinja", "jinja"),
     ("jinja2", "jinja"),
     ("j2", "jinja"),
@@ -1132,6 +1133,9 @@ pub fn language_for(path: &str) -> Option<&'static str> {
         || lower.starts_with("containerfile.")
     {
         return Some("dockerfile");
+    }
+    if lower == "justfile" {
+        return Some("just");
     }
     if filename == "CMakeLists.txt" {
         return Some("cmake");
