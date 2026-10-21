@@ -1,0 +1,42 @@
+--- a/src/requests/utils.py
++++ b/src/requests/utils.py
+@@ -511,7 +511,7 @@
+     )
+ 
+ 
+-def _parse_content_type_header(header):
++def _split_content_type_header(header):
+     """Returns content type and parameters from given header
+ 
+     :param header: string
+@@ -548,7 +548,7 @@
+     if not content_type:
+         return None
+ 
+-    content_type, params = _parse_content_type_header(content_type)
++    content_type, params = _split_content_type_header(content_type)
+ 
+     if "charset" in params:
+         return params["charset"].strip("'\"")
+--- a/tests/test_utils.py
++++ b/tests/test_utils.py
+@@ -14,7 +14,7 @@
+ from requests.cookies import RequestsCookieJar
+ from requests.structures import CaseInsensitiveDict
+ from requests.utils import (
+-    _parse_content_type_header,
++    _split_content_type_header,
+     add_dict_to_cookiejar,
+     address_in_network,
+     dotted_netmask,
+@@ -604,8 +604,8 @@
+         ("application/json ; ; ", ("application/json", {})),
+     ),
+ )
+-def test__parse_content_type_header(value, expected):
+-    assert _parse_content_type_header(value) == expected
++def test__split_content_type_header(value, expected):
++    assert _split_content_type_header(value) == expected
+ 
+ 
+ @pytest.mark.parametrize(

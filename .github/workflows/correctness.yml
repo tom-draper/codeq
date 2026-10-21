@@ -22,3 +22,5 @@ jobs:
         run: cargo test --locked --test mcp_session
       - name: Check complete source retrieval and discovery
         run: python3 bench/agent_workflows.py --codeq target/debug/codeq
+      - name: Check evaluation scoring and source isolation
+        run: python3 -m unittest discover -s bench -p test_agent_eval.py
