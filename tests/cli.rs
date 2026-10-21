@@ -16907,3 +16907,107 @@ fn haskell_language_quotes_and_separate_scopes() {
         "{outline}"
     );
 }
+
+#[test]
+fn ocaml_language_definitions_ranges_and_module_imports() {
+    let f = Fixture::new();
+    f.write("main.ml", "(* marker_comment *)\nopen Data.Tools\ninclude Shared\nmodule Alias = Other.Nested\nmodule M = struct let f x = x + 1 end\nmodule type S = sig type t val apply : int -> int end\nlet rec even n = n = 0 || odd (n-1)\nand odd n = n <> 0 && even (n-1)\nlet anonymous = fun x -> x\nlet cases = function Some x -> x | None -> 0\nlet constant = \"marker_string\"\nlet (+@) x y = x + y\ntype point = { x : int; y : int }\nand color = Red | Blue\nexception Failure of string\nexternal sin : float -> float = \"sin\"\nclass counter = object method next x = x + 1 end\n");
+    let outline = f.run(&["outline", "main.ml"]);
+    assert_eq!(
+        field_set(&outline, "name"),
+        [
+            "Alias",
+            "M",
+            "f",
+            "S",
+            "t",
+            "apply",
+            "even",
+            "odd",
+            "anonymous",
+            "cases",
+            "constant",
+            "+@",
+            "point",
+            "color",
+            "Failure",
+            "sin",
+            "counter",
+            "next"
+        ],
+        "{outline}"
+    );
+    let read = f.raw(&["read", "main.ml", "--symbol", "even", "--raw"]);
+    assert!(read.status.success());
+    assert_eq!(
+        String::from_utf8(read.stdout).unwrap().trim(),
+        "let rec even n = n = 0 || odd (n-1)"
+    );
+    assert_eq!(
+        field_set(&f.run(&["imports", "main.ml"]), "module"),
+        ["Data.Tools", "Shared", "Other.Nested"]
+    );
+    for name in ["even", "odd", "anonymous", "cases", "+@"] {
+        let def = outline["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["name"] == name)
+            .unwrap();
+        assert_eq!(def["kind"], "function", "{def}");
+    }
+    for (marker, kind, excluded) in [
+        ("marker_comment", "comments", "strings"),
+        ("marker_string", "strings", "comments"),
+    ] {
+        let hits = f.run(&["search", marker, "--in", kind]);
+        assert_eq!(
+            hits["data"]["matches"].as_array().unwrap().len(),
+            1,
+            "{hits}"
+        );
+        let hits = f.run(&["search", marker, "--in", excluded]);
+        assert!(
+            hits["data"]["matches"].as_array().unwrap().is_empty(),
+            "{hits}"
+        );
+    }
+}
+
+#[test]
+fn ocaml_language_interfaces_use_the_signature_grammar() {
+    let f = Fixture::new();
+    f.write("api.mli", "(* Public API *)\nopen Tools\ninclude Shared.API\ntype t\nval create : int -> t\nval answer : int\nmodule M : sig val apply : int -> int end\nmodule type S = sig type item end\nexception Error of string\n");
+    let outline = f.run(&["outline", "api.mli"]);
+    assert_eq!(
+        field_set(&outline, "name"),
+        ["t", "create", "answer", "M", "apply", "S", "item", "Error"],
+        "{outline}"
+    );
+    assert_eq!(
+        field_set(&f.run(&["imports", "api.mli"]), "module"),
+        ["Tools", "Shared.API"]
+    );
+    let read = f.raw(&["read", "api.mli", "--symbol", "create", "--raw"]);
+    assert!(read.status.success());
+    assert_eq!(
+        String::from_utf8(read.stdout).unwrap().trim(),
+        "val create : int -> t"
+    );
+    f.write("implementation.ml", "let create x = x\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "implementation.ml"]), "name"),
+        ["create"]
+    );
+}
+
+#[test]
+fn ocaml_language_extension_payloads_strings_and_patterns_do_not_create_facts() {
+    let f = Fixture::new();
+    f.write("main.ml", "let quoted = [%expr let fake x = x]\n[%%generated let another x = x]\nlet text = {tag|let pretend x = x|tag}\n(* outer (* let hidden x = x *) nested *)\nlet (a, b) = (1, 2)\nlet _ = 1\nlet (named : int) = 1\nlet (identity : int -> int) = fun x -> x\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "main.ml"]), "name"),
+        ["quoted", "text", "named", "identity"]
+    );
+    assert!(field_set(&f.run(&["imports", "main.ml"]), "module").is_empty());
+}

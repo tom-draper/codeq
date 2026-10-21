@@ -1,0 +1,16 @@
+file sample.ml ce2bd9593f52c231
+fact import List 2:0-2:9 bytes=22-31 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=List doc=-
+fact import Shared 3:0-3:14 bytes=32-46 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=Shared doc=-
+fact module Alias 4:0-4:20 bytes=47-67 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=module Alias = doc=-
+fact import Other 4:7-4:20 bytes=54-67 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=Other doc=-
+fact interface S 5:0-8:3 bytes=68-125 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=module type S = doc=-
+fact type t 6:2-6:8 bytes=90-96 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=type t doc=-
+fact function apply 7:2-7:24 bytes=99-121 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=val apply : int -> int doc=-
+fact type point 9:0-9:33 bytes=126-159 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=type point = doc=-
+fact type Invalid 10:0-10:27 bytes=160-187 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=exception Invalid of string doc=-
+fact function double 11:0-11:20 bytes=188-208 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=let double x = doc=-
+fact constant name 12:0-12:18 bytes=209-227 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=let name = doc=-
+fact class counter 13:0-15:3 bytes=228-278 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=class counter = doc=-
+fact method next 14:2-14:23 bytes=253-274 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/ocaml confidence=1 sig=method next x = doc=-
+span 0-21 kind=0
+span 220-227 kind=1
