@@ -57,12 +57,12 @@ def main():
                 command = ["astgrep", "selected_call($X)", "--language", "python", "--source", "--max-tokens", "80", "--limit", "0"]
             elif name == "dense_names":
                 (root / "source.py").write_text("def target(): pass\n" + "".join(f"def item{i:04}(): target()\n" for i in range(1500)))
-                command = ["explore", "target", "--max-tokens", "80"]
+                command = ["explore", "target", "--max-tokens", "80", "--max-response-tokens", "1000000"]
             elif name == "many_files":
                 (root / "target.py").write_text("def target(): pass\n")
                 for i in range(128):
                     (root / f"item{i:03}.py").write_text(f"def item{i:03}(): target()\n")
-                command = ["explore", "target", "--max-tokens", "80"]
+                command = ["explore", "target", "--max-tokens", "80", "--max-response-tokens", "1000000"]
             else:
                 (root / "source.py").write_text("".join(f"def item{i:04}(): other()\n" for i in range(5000)) + "def selected(): unique_marker()\n")
                 command = ["search", "unique_marker", "--source", "--max-tokens", "80"]
