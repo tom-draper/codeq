@@ -307,6 +307,8 @@ impl GlobFilter {
 /// Options for the `search` command surface, kept in a struct so the CLI can
 /// grow without a huge argument list.
 pub struct SearchArgs<'a> {
+    pub within: Option<&'a str>,
+    pub within_at: Option<&'a str>,
     /// One or more patterns, OR'd — grep's `-e A -e B`.
     pub patterns: &'a [String],
     /// Positional paths, as grep takes them: `codeq search TODO src`. Matched as
@@ -417,7 +419,9 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         None => InFilter::Any,
     };
 
-    let opts = ScanOpts {
+    let mut opts = ScanOpts {
+        within: None,
+        occurrences: false,
         before: args.before,
         after: args.after,
         out: out_mode,
@@ -451,6 +455,11 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     // database. That keeps codeq usable as a plain filter outside a repository,
     // and keeps this branch entirely off the indexed path the MCP server uses.
     if args.stdin {
+        if args.within.is_some() || args.within_at.is_some() {
+            return Err(anyhow!(
+                "definition scopes require indexed source, not stdin"
+            ));
+        }
         // Piped output is never capped per file, so nothing is counted away.
         let opts = ScanOpts {
             per_file: None,
@@ -461,7 +470,12 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
     }
 
     let s = Session::open(cwd, false, out)?;
-    let scoped = args.path.is_some() || !args.paths.is_empty() || args.language.is_some();
+    opts.within = definition_scope(&s, args.within, args.within_at, args.path)?;
+    let scoped = args.within.is_some()
+        || args.within_at.is_some()
+        || args.path.is_some()
+        || !args.paths.is_empty()
+        || args.language.is_some();
 
     // A positional is a path substring over the index. One that selects no
     // indexed file is either a real path the index does not hold — gitignored
@@ -723,6 +737,8 @@ fn collapse_symbols(
 struct ReferenceRow {
     #[serde(flatten)]
     hit: Hit,
+    use_kind: String,
+    evidence: String,
     /// True when this line is the definition site of the symbol (not a use).
     #[serde(skip_serializing_if = "is_false")]
     definition: bool,
@@ -740,6 +756,9 @@ struct ReferencesResult {
 
 /// Arguments of `references`.
 pub struct ReferencesArgs<'a> {
+    pub within: Option<&'a str>,
+    pub within_at: Option<&'a str>,
+    pub use_kind: Option<&'a str>,
     pub name: &'a str,
     pub path: Option<&'a str>,
     pub language: Option<&'a str>,
@@ -755,6 +774,9 @@ pub struct ReferencesArgs<'a> {
 /// but far more precise than a substring grep.
 pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> {
     let ReferencesArgs {
+        within,
+        within_at,
+        use_kind,
         name,
         path,
         language,
@@ -778,6 +800,8 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         InFilter::Any
     };
     let opts = ScanOpts {
+        within: definition_scope(&s, within, within_at, path)?,
+        occurrences: true,
         before: 0,
         after: 0,
         out: OutMode::Matches,
@@ -815,25 +839,45 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
     hits.extend(alias_hits(&s, name, path, language, &opts)?);
     hits.sort_by(|a, b| (a.path.as_str(), a.line, a.col).cmp(&(b.path.as_str(), b.line, b.col)));
 
-    // Where this exact name is declared. Hits are sorted above, which is what
-    // `DeclSites` needs to tell a declaration from a recursive use.
+    let mut syntax = std::collections::HashMap::new();
     let mut defsites = DeclSites::load(&s.db.conn, name)?;
-
-    let references: Vec<ReferenceRow> = hits
-        .into_iter()
-        .map(|h| {
-            // Syntax filters already exclude declarations, so the first remaining
-            // hit inside a definition can be a recursive call.
-            let definition = !call_only
+    let mut unknown = 0;
+    let mut references = Vec::new();
+    for h in hits {
+        if !syntax.contains_key(&h.path) {
+            let language: Option<String> = s.db.conn.query_row(
+                "SELECT language FROM files WHERE path = ?1",
+                [&h.path],
+                |r| r.get(0),
+            )?;
+            let body = std::fs::read_to_string(s.repo.root.join(&h.path))?;
+            syntax.insert(
+                h.path.clone(),
+                crate::usage::Uses::parse(language.as_deref().unwrap_or("unknown"), &body),
+            );
+        }
+        let (kind, evidence) = syntax[&h.path].classify(h.byte);
+        if kind == "unknown" {
+            unknown += 1;
+        }
+        if use_kind.is_some_and(|filter| {
+            filter != kind && !(kind == "read-write" && matches!(filter, "read" | "write"))
+        }) {
+            continue;
+        }
+        let definition = kind == "decl"
+            || (kind == "unknown"
+                && !call_only
                 && qualifier.is_none()
-                && defsites.is_declaration(&h.path, h.line as i64);
-            ReferenceRow {
-                hit: h,
-                definition,
-                via: None,
-            }
-        })
-        .collect();
+                && defsites.is_declaration(&h.path, h.line as i64));
+        references.push(ReferenceRow {
+            hit: h,
+            definition,
+            use_kind: kind.into(),
+            evidence,
+            via: None,
+        });
+    }
     let mut references = resolve_rows(
         &s,
         name,
@@ -847,7 +891,12 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         truncated = true;
     }
 
-    let note = note_if_empty(&s, &references, name, "references", path)?;
+    let mut note = note_if_empty(&s, &references, name, "references", path)?;
+    if use_kind.is_some_and(|k| k != "unknown") && unknown > 0 {
+        let warning =
+            format!("{unknown} occurrences could not be classified; inspect --kind unknown");
+        note = Some(note.map_or(warning.clone(), |n| format!("{n}; {warning}")));
+    }
     s.emit_noted(
         ReferencesResult {
             references,
@@ -855,4 +904,43 @@ pub fn cmd_references(cwd: &Path, args: ReferencesArgs, out: Out) -> Result<()> 
         },
         note,
     )
+}
+
+fn definition_scope(
+    s: &Session,
+    name: Option<&str>,
+    at: Option<&str>,
+    path: Option<&str>,
+) -> Result<Option<crate::search::DefinitionScope>> {
+    if let Some(at) = at {
+        let selected = super::explore::definition_at(s, at)?;
+        if selected.start_bytes.len() != 1 {
+            return Err(anyhow!(
+                "scope position must identify exactly one definition"
+            ));
+        }
+        return Ok(Some(crate::search::DefinitionScope {
+            path: selected.rel,
+            start: selected.start_bytes[0],
+            end: selected.end_bytes[0],
+        }));
+    }
+    let Some(name) = name else { return Ok(None) };
+    let mut stmt = s.db.conn.prepare(
+        "SELECT path, start_byte, end_byte FROM facts WHERE name = ?1 AND kind <> 'import'
+         AND (?2 IS NULL OR instr(path, ?2) > 0) ORDER BY path, start_byte",
+    )?;
+    let rows = stmt
+        .query_map((name, path), |r| {
+            Ok(crate::search::DefinitionScope {
+                path: r.get(0)?,
+                start: r.get::<_, i64>(1)? as usize,
+                end: r.get::<_, i64>(2)? as usize,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if rows.len() != 1 {
+        return Err(anyhow!("scope '{name}' matched {} definitions; use --within-at PATH:LINE to select exactly one", rows.len()));
+    }
+    Ok(rows.into_iter().next())
 }

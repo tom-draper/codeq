@@ -272,7 +272,16 @@ impl WordRegex {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct DefinitionScope {
+    pub(crate) path: String,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+}
+
 pub(crate) struct ScanOpts {
+    pub(crate) within: Option<DefinitionScope>,
+    pub(crate) occurrences: bool,
     pub(crate) before: usize,
     pub(crate) after: usize,
     pub(crate) out: OutMode,
@@ -703,6 +712,10 @@ pub(crate) fn run_search_acc(
     let clauses = prefilter.filter(|l| !l.is_empty() && !opts.wants_non_matching());
     let mut sql = String::from("SELECT path, language FROM files WHERE is_text = 1");
     let mut params = Vec::<rusqlite::types::Value>::new();
+    if let Some(within) = &opts.within {
+        sql.push_str(" AND path = ?");
+        params.push(within.path.clone().into());
+    }
     if let Some(language) = scope.language {
         sql.push_str(" AND language = ?");
         params.push(language.to_string().into());
@@ -945,6 +958,8 @@ pub(crate) fn scan_names(
     visit: &mut dyn FnMut(usize, Vec<Hit>) -> bool,
 ) -> Result<()> {
     let opts = ScanOpts {
+        within: None,
+        occurrences: false,
         before: 0,
         after: 0,
         out: OutMode::Matches,
@@ -1231,6 +1246,9 @@ pub(crate) fn scan_doc(
     cap: usize,
     acc: &mut ScanAcc,
 ) -> bool {
+    if opts.within.as_ref().is_some_and(|w| w.path != path) {
+        return false;
+    }
     let matches = || -> Box<dyn Iterator<Item = regex::Match<'_>> + '_> {
         match &opts.word_regex {
             Some(word) => Box::new(word.matches(body, lang, spans)),
@@ -1243,6 +1261,13 @@ pub(crate) fn scan_doc(
     // (`^$`, `.*`) is on no line, so grep does not report it either.
     let ends_in_newline = body.is_empty() || body.ends_with('\n');
     let bounded = |m: &regex::Match<'_>| {
+        if opts
+            .within
+            .as_ref()
+            .is_some_and(|w| m.start() < w.start || m.end() > w.end)
+        {
+            return false;
+        }
         if ends_in_newline && m.start() == body.len() {
             return false;
         }
@@ -1361,7 +1386,7 @@ pub(crate) fn scan_doc(
                 }
                 let s = cache.starts.get_or_insert_with(|| line_starts_of(body));
                 let line_idx = s.partition_point(|&x| x <= off) - 1;
-                if line_idx == last_line && !opts.only_matching {
+                if line_idx == last_line && !opts.only_matching && !opts.occurrences {
                     continue; // one row per line
                 }
                 last_line = line_idx;
@@ -1442,7 +1467,12 @@ fn scan_inverted<'a>(
         let last = starts.partition_point(|&x| x < m.end().max(m.start() + 1)) - 1;
         matched[first..=last].iter_mut().for_each(|b| *b = true);
     }
-    let free = (0..n).filter(|&i| !matched[i]);
+    let free = (0..n).filter(|&i| {
+        !matched[i]
+            && opts.within.as_ref().is_none_or(|w| {
+                starts[i] < w.end && starts.get(i + 1).copied().unwrap_or(body.len()) > w.start
+            })
+    });
     match opts.out {
         OutMode::Files | OutMode::FilesWithout => {
             if (free.count() > 0) == (opts.out == OutMode::Files) {
@@ -1769,6 +1799,8 @@ mod tests {
             true
         };
         let opts = super::ScanOpts {
+            within: None,
+            occurrences: false,
             before: 0,
             after: 0,
             out: super::OutMode::Count,

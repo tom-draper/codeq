@@ -102,6 +102,27 @@ and paths from your repository.
 | Trace imports to local files | `codeq deps FILE` |
 | Inspect the impact of a change | `codeq affected --compare-to main` |
 
+Use `discover "refresh auth token"` when the name is unknown. Ranking splits
+camelCase and snake_case, then combines exact word matches in names, signatures,
+docs and paths. Candidates report scores and match reasons. The agent workflow
+suite includes deterministic discovery tasks; embeddings have not been evaluated.
+
+Scope text or references to one selected definition:
+
+```sh
+codeq search 'refresh' --within cmd_search --path src/commands/find.rs
+codeq references definition_scope --within cmd_search --path src/commands/find.rs --kind call
+```
+
+`--within` must match exactly one definition. `--within-at PATH:LINE` uses its
+exact byte range, including the declaration. Scope applies before limits and
+counts. References return each occurrence with `use_kind` and syntax `evidence`.
+Read/write classification currently covers Rust, Python and JavaScript/TypeScript.
+`--kind read` and `--kind write` include `read-write`. Comments, strings,
+unsupported syntax and unsupported languages retain `unknown`; filtered queries
+report how many unknown occurrences were excluded. References are textual uses,
+not a type-resolved identity analysis.
+
 For common names such as `new` or `open`, add `--path` to narrow the lookup.
 Name lookups are exact and case-sensitive; `symbols` searches name substrings
 without regard to case.

@@ -22,6 +22,7 @@ for programmatic parsing.
 
 | What you need | First command | What it saves |
 | --- | --- | --- |
+| Find code from task words | `codeq discover "refresh auth token" --source` | Ranked names, signatures, docs and paths with match reasons |
 | Definition and its usage before editing | `codeq explore NAME --path src/file.rs` | Definition, imports, callers/callees and their source in one call |
 | Only a definition's body | `codeq read file.rs --symbol NAME` | Exact boundaries, without a locating search or guessed window |
 | Body enclosing a search hit or stack frame | `codeq read --at file.rs:42` | Resolves and reads that occurrence in one call |
@@ -68,8 +69,7 @@ codeq read --at src/client.rs:83 --raw
 `read --at` returns the innermost definition at each position, deduplicates
 overlapping source and addresses the occurrence even when names repeat.
 A position outside a definition explains that and suggests reading the line.
-`explore --at` is for the wider neighbourhood; repeated names in the same file
-can contribute several focus definitions there.
+`explore --at` uses the exact selected definition for its wider neighbourhood.
 
 ## Replace guessed sed windows
 
@@ -94,6 +94,15 @@ matches with `[symbol]` and supports regex, `-F`, `-i`, `-w`, `-g`, `-l`, `-c`,
 `-A`/`-B`/`-C`, `-e`, `-o`, `-v`, `-L`, `--path` and `--language`.
 `--in code|comments|strings` excludes irrelevant syntax without manual filtering.
 Positional paths work too: `codeq search TODO src docs`.
+`--within NAME --path FILE` selects one exact definition; ambiguous names fail.
+`--within-at FILE:LINE` selects the innermost definition by its byte range, including
+its declaration. Scope applies before limits, counts and inversion.
+`references NAME --within-at FILE:LINE --kind write` labels each occurrence with
+syntax evidence. Categories are call/read/write/read-write/type-use/import/decl/unknown.
+Read and write include read-write. Classification covers Rust, Python and
+JavaScript/TypeScript; comments, strings and unsupported syntax remain unknown.
+A filtered query reports excluded unknown occurrences. Inspect `--kind unknown`
+before making a confident negative claim.
 
 Use `rg`/`grep` for a flat list of lines or an exact edit anchor when no definition,
 source expansion or structural filtering is needed. On identical line sets,
@@ -153,12 +162,21 @@ for flags rather than loading a complete command catalogue.
 - Change impact: `affected --compare-to main`; direct tests: `tests NAME`;
   multi-hop calls: `callers NAME --depth 3`; shortest chain: `callpath FROM TO`.
 - Imports: `imports PATH`, `deps FILE`, `importers MODULE`; cycles: `deps --cycles`.
+  `deps FILE --reverse --depth 3` finds transitive importers.
+  `deps --by dir --depth 2` groups direct edges by directory and retains unresolved imports.
+  `packages LIBRARY` joins declared npm/Cargo/Python/Go dependencies to import sites.
+  Matching methods and uncertainty are explicit; `--limit` bounds rows and importers.
 - Types: `members NAME`, `implementors TYPE`, `supertypes TYPE`, `graph`.
 - Cleanup: `unused PATH`, `untested PATH`, `clones PATH`, `hotspots PATH --calls`.
   These are candidates: framework entrypoints, indirect tests and name collisions
   need judgement; an empty `clones` result means no identical syntax trees.
 - Bundles: `context --symbols a,b --max-tokens 3000`; `--expand` adds references,
   `--resolved` prunes import-unreachable definitions.
+- JSON/YAML/TOML key paths are definitions: `outline package.json`,
+  `read package.json --symbol scripts.test`, or `at .github/workflows/ci.yml:10`.
+  Arrays use indices and literal dotted keys use brackets. Config values do not
+  create call edges. Lockfiles, files over 1 MiB or 10,000 keys and keys below depth 64 are skipped;
+  YAML aliases are not expanded.
 - Markdown headings are definitions: `outline README.md` and
   `read README.md --symbol 'Section'` read documentation in slices too.
   SQL tables/views/functions are definitions; `members TABLE` returns columns.
