@@ -390,6 +390,9 @@ fn cap_per_file(
                 result["truncated_per_file"] = serde_json::to_value(counts).unwrap();
             }
         }
+        if let Some(source) = data.get_mut("source") {
+            truncated = cap_per_file(source, n, &BTreeMap::new());
+        }
         return truncated;
     }
     match data {
@@ -454,6 +457,10 @@ fn render_value(
                 .map(|v| serde_json::from_value(v.clone()).unwrap())
                 .unwrap_or_default();
             render_value(&result["data"], group, &counts, out)?;
+        }
+        if let Some(source) = data.get("source") {
+            writeln!(out, "# source")?;
+            render_value(source, group, truncated, out)?;
         }
         return Ok(());
     }
@@ -897,6 +904,9 @@ fn project(data: &mut Value, fields: &[String]) -> (Vec<String>, Vec<String>) {
         for result in results {
             project(&mut result["data"], fields);
         }
+        if let Some(source) = data.get_mut("source") {
+            project(source, fields);
+        }
     } else {
         match data {
             Value::Array(rows) => {
@@ -929,6 +939,9 @@ fn collect_keys(data: &Value, out: &mut std::collections::BTreeSet<String>) {
     if let Some(results) = data.get("results").and_then(Value::as_array) {
         for result in results {
             collect_keys(&result["data"], out);
+        }
+        if let Some(source) = data.get("source") {
+            collect_keys(source, out);
         }
         return;
     }

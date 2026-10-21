@@ -147,6 +147,24 @@ each entry's rows. With `--max-per-file`, a capped entry includes
 
 ## Read only the source you need
 
+Resolve several locations in one call with `codeq at src/main.rs:20 src/repo.rs:37:5`.
+To resolve a stack trace or compiler output, use `codeq at --stdin < trace.txt`.
+Python, Rust, Node and Java or Kotlin frame locations are recognized. Columns are
+accepted, but definitions are selected by line. Non-location lines are counted as
+ignored. Input with no recognized locations is an error.
+
+A single positional location retains the existing definition list. Multiple
+locations, `--stdin`, or `--source` return `data.results` in input order, including
+repeated frames. Each entry has the original input in `name`, its innermost
+definitions in `data`, and a `status` of `resolved`, `unresolved`, or `ambiguous`.
+Unresolved frames carry a diagnostic. A Java basename that matches several indexed
+files remains ambiguous. Absolute paths outside the repository are unresolved.
+
+Add `--source --max-tokens 4000` for a shared, deduplicated source bundle under
+`data.source`. The budget covers source across all frames, at approximately four
+bytes per token. Definitions that do not fit are listed as omitted. MCP
+`codeq_at.location` accepts either one string or an ordered array of locations.
+
 `codeq read FILE` folds long bodies, keeping imports, signatures, and surrounding
 source visible. Expand a definition, a position, or a known range:
 

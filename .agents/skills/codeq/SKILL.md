@@ -161,6 +161,13 @@ for flags rather than loading a complete command catalogue.
   kinds or trusting an empty result, `astgrep --explain file.rs:42` shows the tree.
 - Change impact: `affected --compare-to main`; direct tests: `tests NAME`;
   multi-hop calls: `callers NAME --depth 3`; shortest chain: `callpath FROM TO`.
+- Stack traces: `at --stdin < trace.txt`, or `at a.rs:12 b.py:8:3` for explicit locations.
+  Batches retain input order, repeated frames, unresolved paths and ambiguous basenames.
+  Columns are accepted but selection is by line. `--source --max-tokens 4000` adds
+  one deduplicated source bundle with omissions. Single positional output stays unchanged;
+  batches, stdin and source mode use `data.results`, with per-entry `status` and `data`.
+  MCP `codeq_at.location` accepts a string or an ordered array. Empty or unrecognized
+  stdin is an error. Non-location lines are counted as ignored.
 - Imports: `imports PATH`, `deps FILE`, `importers MODULE`; cycles: `deps --cycles`.
   `deps FILE --reverse --depth 3` finds transitive importers.
   `deps --by dir --depth 2` groups direct edges by directory and retains unresolved imports.

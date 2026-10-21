@@ -4,6 +4,7 @@
 //! These deliberately exercise the CLI end to end (not internals), because the
 //! stable output envelope *is* the product surface.
 
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -124,6 +125,176 @@ fn field_names(v: &Value) -> Vec<String> {
         .iter()
         .filter_map(|s| s.as_str().map(|s| s.to_string()))
         .collect()
+}
+
+fn at_stdin(f: &Fixture, input: &str, extra: &[&str]) -> Output {
+    let mut child = Command::cargo_bin("codeq")
+        .unwrap()
+        .current_dir(f.path())
+        .args(["--json", "at", "--stdin"])
+        .args(extra)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn at_batches_keep_order_duplicates_and_unresolved_locations() {
+    let f = Fixture::new();
+    f.write("a.py", "class A:\n    def run(self):\n        return 1\n");
+    f.write("b.rs", "fn entry() {\n    let x = 1;\n}\n");
+    let single = f.run(&["at", "a.py:3"]);
+    assert_eq!(field_set(&single, "name"), ["run", "A"]);
+    let column = f.run(&["at", "a.py:3:8"]);
+    assert_eq!(column["data"], single["data"]);
+    let batch = f.run(&[
+        "at",
+        "b.rs:2",
+        "a.py:3:8",
+        "missing.py:1",
+        "a.py:3",
+        "a.py:99",
+    ]);
+    let rows = batch["data"]["results"].as_array().unwrap();
+    assert_eq!(rows.len(), 5);
+    assert_eq!(rows[0]["data"][0]["name"], "entry");
+    assert_eq!(rows[1]["data"].as_array().unwrap().len(), 1);
+    assert_eq!(rows[1]["data"][0]["name"], "run");
+    assert_eq!(rows[2]["status"], "unresolved");
+    assert!(rows[2]["note"].as_str().unwrap().contains("not found"));
+    assert_eq!(rows[3]["name"], "a.py:3");
+    assert_eq!(rows[4]["status"], "unresolved");
+    for location in [
+        "a.py:0",
+        "a.py:-1",
+        "a.py:1:0",
+        "a.py:9223372036854775808",
+        "a.py:bad",
+    ] {
+        assert!(!f.raw(&["at", location]).status.success(), "{location}");
+    }
+    let text = f.raw(&["at", "a.py:3", "b.rs:2"]);
+    assert!(text.status.success());
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.find("# a.py:3").unwrap() < text.find("# b.rs:2").unwrap());
+}
+
+#[test]
+fn at_stdin_resolves_stack_formats_without_dropping_unknown_frames() {
+    let f = Fixture::new();
+    f.write("src/a.py", "def first():\n    return 1\n");
+    f.write("src/main.rs", "fn entry() {\n    let x = 1;\n}\n");
+    f.write("src/view.ts", "function view() {\n    return 1;\n}\n");
+    f.write("one/Cls.java", "class Cls {\n  void run() {}\n}\n");
+    f.write("two/Cls.java", "class Cls {\n  void run() {}\n}\n");
+    let trace = "Traceback (most recent call last):\n  File \"src/a.py\", line 2, in first\n    return 1\n   at src/main.rs:2:5\n   at view (src/view.ts:2:4)\n   at pkg.Cls.run(Cls.java:2)\nsrc/main.rs:2:5: error: example\n   at lib.Native.call(Native Method)\n   at foreign (/outside/src/view.ts:2:4)\n  File \"src/a.py\", line 2, in first\n";
+    let output = at_stdin(&f, trace, &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let rows = value["data"]["results"].as_array().unwrap();
+    assert_eq!(rows.len(), 8);
+    for (i, name) in [
+        (0, "first"),
+        (1, "entry"),
+        (2, "view"),
+        (4, "entry"),
+        (7, "first"),
+    ] {
+        assert_eq!(rows[i]["status"], "resolved");
+        assert_eq!(rows[i]["data"][0]["name"], name);
+    }
+    assert_eq!(rows[3]["status"], "ambiguous");
+    assert!(rows[3]["note"]
+        .as_str()
+        .unwrap()
+        .contains("one/Cls.java, two/Cls.java"));
+    assert_eq!(rows[5]["status"], "unresolved");
+    assert_eq!(rows[6]["status"], "unresolved");
+    assert_eq!(value["data"]["ignored_lines"], 2);
+    assert!(!at_stdin(&f, "no frames here\n", &[]).status.success());
+    assert!(!at_stdin(&f, "", &[]).status.success());
+    assert!(!f.raw(&["at", "a.py:1", "--stdin"]).status.success());
+    let one = at_stdin(&f, "src/a.py:2\n", &[]);
+    let one: Value = serde_json::from_slice(&one.stdout).unwrap();
+    assert_eq!(one["data"]["results"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn at_source_uses_one_deduplicated_budget_for_all_frames() {
+    let f = Fixture::new();
+    f.write(
+        "a.py",
+        "def first():\n    return 1\n\ndef second():\n    return 2\n",
+    );
+    let value = f.run(&[
+        "at",
+        "a.py:2",
+        "a.py:5",
+        "a.py:2",
+        "--source",
+        "--max-tokens",
+        "100",
+    ]);
+    assert_eq!(value["data"]["results"].as_array().unwrap().len(), 3);
+    let source = &value["data"]["source"];
+    assert_eq!(source["chunks"].as_array().unwrap().len(), 2);
+    assert_eq!(source["chunks"][0]["name"], "first");
+    assert_eq!(source["chunks"][1]["name"], "second");
+    assert!(source["chunks"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("return 1"));
+    assert!(source["budget"]["used_tokens"].as_u64().unwrap() <= 100);
+    let empty = f.run(&["at", "a.py:2", "--source", "--max-tokens", "0"]);
+    assert_eq!(empty["data"]["source"]["chunks"], serde_json::json!([]));
+    assert_eq!(empty["data"]["source"]["omitted"][0]["name"], "first");
+    let text = f.raw(&["at", "a.py:2", "--source"]);
+    assert!(text.status.success());
+    assert!(String::from_utf8(text.stdout).unwrap().contains("return 1"));
+    let projected = f.run(&["at", "a.py:2", "--source", "--fields", "name"]);
+    assert_eq!(
+        projected["data"]["source"]["chunks"][0],
+        serde_json::json!({"name": "first"})
+    );
+    let capped = f.run(&["at", "a.py:2", "a.py:5", "--source", "--max-per-file", "1"]);
+    assert_eq!(
+        capped["data"]["source"]["chunks"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(capped["notes"]["truncated_per_file"]["a.py"], 2);
+}
+
+#[test]
+fn at_stdin_handles_compiler_arrows_parentheses_and_file_urls() {
+    let f = Fixture::new();
+    f.write("src/(generated)/a.py", "def generated():\n    return 1\n");
+    f.write("src/main.rs", "fn entry() {\n    let x = 1;\n}\n");
+    f.write("src/space name.py", "def spaced():\n    return 1\n");
+    let trace = format!(" --> src/main.rs:2:5\n ::: src/main.rs:2:5\nsrc/(generated)/a.py:2\n  at file://{}:2:4\nsrc/space name.py:2:1: diagnostic\n  at generated (src/(generated)/a.py:2)\n", f.path().join("src/main.rs").display());
+    let output = at_stdin(&f, &trace, &[]);
+    assert!(output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let frames = value["data"]["results"].as_array().unwrap();
+    assert_eq!(frames.len(), 6);
+    assert!(
+        frames.iter().all(|frame| frame["status"] == "resolved"),
+        "{value}"
+    );
+    assert_eq!(frames[2]["data"][0]["name"], "generated");
+    assert_eq!(frames[4]["data"][0]["name"], "spaced");
 }
 
 /// Collect the `symbol` of every chunk in a `context` result's `data` object.

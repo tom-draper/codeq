@@ -227,6 +227,37 @@ fn shared_dispatch_preserves_raw_bytes_and_result_notes() {
 }
 
 #[test]
+fn at_batches_preserve_frame_order_notes_and_updated_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sample.py");
+    std::fs::write(
+        &path,
+        "def first():\n    return 1\n\ndef second():\n    return 2\n",
+    )
+    .unwrap();
+    let mut server = Server::new(dir.path());
+    let text = server.call(
+        "codeq_at",
+        json!({"location": ["sample.py:5", "missing.py:1", "sample.py:2"], "source": true}),
+    );
+    assert!(text.find("# sample.py:5").unwrap() < text.find("# missing.py:1").unwrap());
+    assert!(text.contains("file not found in this index: missing.py"));
+    assert!(text.contains("return 1"));
+    assert!(text.contains("return 2"));
+    std::fs::write(
+        &path,
+        "def first():\n    return 3\n\ndef second():\n    return 4\n",
+    )
+    .unwrap();
+    let edited = server.call(
+        "codeq_at",
+        json!({"location": "sample.py:2", "source": true}),
+    );
+    assert!(edited.contains("return 3"));
+    assert!(!edited.contains("return 1"));
+}
+
+#[test]
 fn project_alias_cache_refreshes_after_a_config_only_edit() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
