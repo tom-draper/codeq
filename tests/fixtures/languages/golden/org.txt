@@ -1,0 +1,4 @@
+file sample.org 0b5620ee2c4e3ec9
+fact heading Guide 1:0-6:6 bytes=0-50 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=org confidence=1 sig=Guide doc=-
+fact import ./guide.org 3:7-3:16 bytes=16-25 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=org confidence=1 sig=./guide.org doc=-
+fact heading Setup 5:0-6:6 bytes=35-50 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=org confidence=1 sig=Setup doc=-

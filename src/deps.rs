@@ -167,10 +167,13 @@ fn exact_module_match(from: &str, path: &str, module: &str, allow_imported_name:
     // Do not use `Path::extension` alone: Python's `pkg.module` would then look
     // like a file path. The extension must be one codeq classifies as a file.
     let file_reference = is_file_reference(module);
+    if file_reference && path.rsplit(['/', '\\']).next() != module.rsplit(['/', '\\']).next() {
+        return false;
+    }
     let mut parts: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
     let file = parts.pop().unwrap_or(path);
     let stem = stem(file);
-    if matches!(file, "__init__.py" | "mod.rs") || (file.starts_with("index.") && !file_reference) {
+    if !file_reference && (matches!(file, "__init__.py" | "mod.rs") || file.starts_with("index.")) {
         // `pkg/__init__.py`, `pkg/index.ts`, and `pkg/mod.rs` are imported as
         // `pkg`, not their conventional entry-file name.
     } else {

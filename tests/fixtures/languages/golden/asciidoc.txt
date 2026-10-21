@@ -1,0 +1,4 @@
+file sample.adoc 71e2b0195a1119b4
+fact heading Guide 1:0-7:6 bytes=0-48 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=asciidoc confidence=1 sig=Guide doc=-
+fact import ./guide.adoc 3:0-3:22 bytes=9-31 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=asciidoc confidence=1 sig=./guide.adoc doc=-
+fact heading Setup 5:0-7:6 bytes=32-48 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=asciidoc confidence=1 sig=Setup doc=-
