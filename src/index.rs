@@ -1057,7 +1057,17 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
     ("md", "markdown"),
     ("markdown", "markdown"),
     ("rst", "rst"),
-    ("html", "jinja"),
+    ("html", "html"),
+    ("htm", "html"),
+    ("xml", "xml"),
+    ("svg", "xml"),
+    ("xsd", "xml"),
+    ("xsl", "xml"),
+    ("xslt", "xml"),
+    ("ini", "ini"),
+    ("cfg", "ini"),
+    ("env", "dotenv"),
+    ("properties", "properties"),
     ("jinja", "jinja"),
     ("jinja2", "jinja"),
     ("j2", "jinja"),
@@ -1109,7 +1119,11 @@ pub const NO_EXTRACTION: &[&str] = &[];
 /// Extension-based language classification. Deliberately syntactic and cheap;
 /// this is not content sniffing.
 pub fn language_for(path: &str) -> Option<&'static str> {
-    let ext = path.rsplit('.').next()?;
+    let filename = path.rsplit(['/', '\\']).next()?;
+    if filename == ".env" || filename.starts_with(".env.") {
+        return Some("dotenv");
+    }
+    let ext = filename.rsplit('.').next()?;
     EXTENSIONS
         .iter()
         .find(|(e, _)| e.eq_ignore_ascii_case(ext))

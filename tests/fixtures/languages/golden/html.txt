@@ -1,0 +1,8 @@
+file sample.html 767b7880cf35001d
+fact element html 2:0-2:79 bytes=16-95 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/html confidence=1 sig=<html> doc=-
+fact element page 2:6-2:72 bytes=22-88 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/html confidence=1 sig=<body id=\"page\"> doc=-
+fact element a 2:35-2:65 bytes=51-81 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/html confidence=1 sig=<a href=\"guide.html\"> doc=-
+fact import ./guide.html 2:43-2:55 bytes=59-71 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/html confidence=1 sig=./guide.html doc=-
+span 32-36 kind=1
+span 38-51 kind=0
+span 60-70 kind=1

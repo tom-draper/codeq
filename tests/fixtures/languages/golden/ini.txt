@@ -1,0 +1,5 @@
+file sample.ini 4f9294842105d681
+fact key server 2:0-3:12 bytes=11-32 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/ini confidence=1 sig=server doc=-
+fact key server.port 3:0-3:12 bytes=20-32 vis=- owner=server derived=0 test=0 decorator=- contract=- shape=-/0 source=lines/ini confidence=1 sig=server.port doc=-
+span 0-11 kind=0
+span 27-32 kind=1

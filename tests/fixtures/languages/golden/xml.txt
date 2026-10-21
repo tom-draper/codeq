@@ -1,0 +1,9 @@
+file sample.xml e53915ad98bf9f4f
+fact element /root[1] 2:0-2:80 bytes=22-102 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=xml confidence=1 sig=<root> doc=-
+fact element widget 2:19-2:49 bytes=41-71 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=xml confidence=1 sig=<item id=\"widget\"> doc=-
+fact element /root[1]/link[1] 2:49-2:73 bytes=71-95 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=xml confidence=1 sig=<link href=\"guide.xml\"/> doc=-
+fact import ./guide.xml 2:49-2:73 bytes=71-95 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=xml confidence=1 sig=./guide.xml doc=-
+span 21-22 kind=1
+span 28-41 kind=0
+span 59-64 kind=1
+span 102-103 kind=1

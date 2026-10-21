@@ -109,7 +109,7 @@ use rusqlite::{Connection, OptionalExtension};
 // v48 records Bash commands and SQL trigger functions as call sites.
 // v49 marks Python function-local definitions as private.
 // v50 propagates Rust enclosing module visibility to their declarations.
-pub const SCHEMA_VERSION: i64 = 52;
+pub const SCHEMA_VERSION: i64 = 53;
 
 pub struct Db {
     pub conn: Connection,
