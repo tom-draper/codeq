@@ -672,6 +672,49 @@ fn go_packages(paths: &[String]) -> HashMap<&str, Vec<&str>> {
 }
 
 impl Graph {
+    pub fn edges(&self) -> impl Iterator<Item = (&str, &Edge)> {
+        self.edges
+            .iter()
+            .flat_map(|(from, edges)| edges.iter().map(move |edge| (from.as_str(), edge)))
+    }
+
+    pub fn reverse_deps(&self, file: &str, depth: usize) -> Vec<DepHop> {
+        let mut incoming: HashMap<&str, Vec<(&str, &str)>> = HashMap::new();
+        for (from, edge) in self.edges() {
+            incoming
+                .entry(&edge.to)
+                .or_default()
+                .push((from, &edge.module));
+        }
+        for edges in incoming.values_mut() {
+            edges.sort_unstable();
+        }
+        let mut seen = HashSet::from([file]);
+        let mut frontier = vec![file];
+        let mut out = Vec::new();
+        for hop in 1..=depth {
+            let mut next = Vec::new();
+            for target in frontier {
+                for &(from, module) in incoming.get(target).into_iter().flatten() {
+                    if seen.insert(from) {
+                        out.push(DepHop {
+                            path: from.to_string(),
+                            module: module.to_string(),
+                            depth: hop,
+                        });
+                        next.push(from);
+                    }
+                }
+            }
+            frontier = next;
+            if frontier.is_empty() {
+                break;
+            }
+        }
+        out.sort_by(|a, b| a.depth.cmp(&b.depth).then(a.path.cmp(&b.path)));
+        out
+    }
+
     /// Build the internal graph from all repo `files` and all import facts
     /// `(importing_file, raw_module)`.
     pub fn build<F, I>(files: F, imports: I, go_module: Option<&str>) -> Graph

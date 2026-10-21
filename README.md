@@ -196,6 +196,21 @@ check the JSON `schema` and use `rows` to locate the result array when present.
 When the index schema changes, codeq rebuilds its cache on the next query;
 upgrades and downgrades need no manual index migration.
 
+## Dependency views
+
+Use `deps src/util.ts --reverse --depth 3 --limit 50` for incoming file dependencies.
+`deps --by dir --depth 2 --limit 50` groups direct imports by directory and labels
+internal edges separately from external or unresolved imports. In directory mode,
+`depth` is the number of directory components, rather than graph hops.
+
+`packages express` joins declarations to importing files. npm, Cargo, Python
+`project.dependencies` and optional groups, and Go `require` declarations are read
+from indexed manifests. Imports belong to the nearest manifest in that ecosystem.
+Use `--undeclared` or `--unimported` for mismatches. A missing declaration may be a
+standard library or local module, so it remains uncertain. Python name matching
+is heuristic. Package rows and each row's importer list share `--limit`; total
+and truncation fields report withheld importers. `--limit 0` removes the caps.
+
 ## Language support and limits
 
 Codeq extracts definitions from Rust, Python, JavaScript, TypeScript, Go, Java,

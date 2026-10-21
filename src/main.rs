@@ -671,6 +671,25 @@ pub(crate) enum Command {
         /// and broken local references (a markdown link or ./path to nothing).
         #[arg(long)]
         external: bool,
+        /// Walk incoming internal dependencies.
+        #[arg(long, requires = "file", conflicts_with_all = ["external", "cycles", "by"])]
+        reverse: bool,
+        /// Aggregate direct internal imports by directory, at --depth path components.
+        #[arg(long, value_parser = ["dir"], conflicts_with_all = ["file", "external", "cycles"])]
+        by: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
+    /// Join declared package dependencies to import sites.
+    Packages {
+        /// Package name to inspect. Omit to list all.
+        name: Option<String>,
+        #[arg(long, conflicts_with = "unimported")]
+        undeclared: bool,
+        #[arg(long)]
+        unimported: bool,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
     },
     /// Structural (AST) search: match a code pattern with `$VAR` metavariables.
     /// Parsed with the language's grammar, so it matches syntax, not text —
@@ -1281,7 +1300,28 @@ pub(crate) fn dispatch(cwd: &Path, command: Command, out: commands::Out) -> anyh
             depth,
             cycles,
             external,
-        } => commands::cmd_deps(cwd, file.as_deref(), depth, cycles, external, out),
+            reverse,
+            by,
+            limit,
+        } => commands::cmd_deps(
+            cwd,
+            commands::DepsArgs {
+                file: file.as_deref(),
+                depth,
+                cycles,
+                external,
+                reverse,
+                by: by.as_deref(),
+                limit,
+            },
+            out,
+        ),
+        Command::Packages {
+            name,
+            undeclared,
+            unimported,
+            limit,
+        } => commands::cmd_packages(cwd, name.as_deref(), undeclared, unimported, limit, out),
         Command::Astgrep {
             pattern,
             language,
