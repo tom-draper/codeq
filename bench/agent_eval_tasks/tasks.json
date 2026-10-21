@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "requests-merge-behavior",
+      "kind": "answer",
+      "repo": "requests",
+      "commit": "0e322af87745eff34caffe4df68456ebc20d9068",
+      "prompt": "In Requests, what does merge_setting({\"a\": null, \"c\": 3}, {\"a\": 1, \"b\": 2}) return? Treat null as Python None. Answer only JSON with key answer.",
+      "oracle": {
+        "expected": {
+          "b": 2,
+          "c": 3
+        },
+        "evidence": {
+          "src/requests/sessions.py": "ca44c8f145864a5b4e7c7d3b1caa25947ee44c11b0e168620556901a67244f0e",
+          "src/requests/utils.py": "1e2402e8dabf0dade4b5a32217342487e7429378901c7284b184b990373ef02c"
+        }
+      }
+    },
+    {
+      "id": "requests-find-setting-merge",
+      "kind": "discovery",
+      "repo": "requests",
+      "commit": "0e322af87745eff34caffe4df68456ebc20d9068",
+      "prompt": "Find the function that merges per-request and session mappings, with per-request values winning and None-valued keys removed. Return an object containing path and symbol. Answer only JSON with key answer.",
+      "oracle": {
+        "expected": {
+          "path": "src/requests/sessions.py",
+          "symbol": "merge_setting"
+        },
+        "evidence": {
+          "src/requests/sessions.py": "ca44c8f145864a5b4e7c7d3b1caa25947ee44c11b0e168620556901a67244f0e"
+        }
+      }
+    },
+    {
+      "id": "requests-select-header-tests",
+      "kind": "tests",
+      "repo": "requests",
+      "commit": "0e322af87745eff34caffe4df68456ebc20d9068",
+      "prompt": "Find the two test functions that directly exercise parsing Content-Type parameters and choosing an encoding from response headers. Return a sorted array of file::function strings. Ignore tests of other encoding helpers. Answer only JSON with key answer.",
+      "oracle": {
+        "expected": [
+          "tests/test_utils.py::test__parse_content_type_header",
+          "tests/test_utils.py::test_get_encoding_from_headers"
+        ],
+        "evidence": {
+          "tests/test_utils.py": "6d76461599944810c00b059c4c75acca1e034c3c96701a190b8115f87b5442af"
+        }
+      }
+    },
+    {
+      "id": "express-etag-disabled",
+      "kind": "answer",
+      "repo": "express",
+      "commit": "04bc62787be974874bc1467b23606c36bc9779ba",
+      "prompt": "When the ETag compiler in lib/utils.js receives false, does it return null, undefined, or a function? Return one of those three strings. Answer only JSON with key answer.",
+      "oracle": {
+        "expected": "undefined",
+        "evidence": {
+          "lib/utils.js": "9035c6d946ece511e749043cc823e32d3efe6727b8a9d52aac89649e99584f09"
+        }
+      }
+    },
+    {
+      "id": "requests-json-suffix",
+      "kind": "edit",
+      "repo": "requests",
+      "commit": "0e322af87745eff34caffe4df68456ebc20d9068",
+      "prompt": "Update Requests so get_encoding_from_headers defaults to utf-8 for application MIME types ending in +json, including application/problem+json and application/vnd.api+json. Explicit charset values take precedence. Preserve existing application/json, text/plain, missing header, and binary content behavior. Change only src/requests/utils.py. Answer only JSON with status done.",
+      "oracle": {
+        "checker": "check_encoding.py",
+        "solution": "json-suffix.patch",
+        "allowed_paths": [
+          "src/requests/utils.py"
+        ]
+      }
+    },
+    {
+      "id": "requests-rename-content-type-helper",
+      "kind": "edit",
+      "repo": "requests",
+      "commit": "0e322af87745eff34caffe4df68456ebc20d9068",
+      "prompt": "Rename the private helper _parse_content_type_header to _split_content_type_header. Update its production and test references in src/requests/utils.py and tests/test_utils.py, preserving behavior and existing test coverage. Change only those two files. Answer only JSON with status done.",
+      "oracle": {
+        "checker": "check_rename.py",
+        "solution": "rename-helper.patch",
+        "allowed_paths": [
+          "src/requests/utils.py",
+          "tests/test_utils.py"
+        ]
+      }
+    }
+  ]
+}

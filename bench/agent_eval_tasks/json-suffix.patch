@@ -1,0 +1,11 @@
+--- a/src/requests/utils.py
++++ b/src/requests/utils.py
+@@ -556,7 +556,7 @@
+     if "text" in content_type:
+         return "ISO-8859-1"
+ 
+-    if "application/json" in content_type:
++    if "application/json" in content_type or (content_type.startswith("application/") and content_type.endswith("+json")):
+         # Assume UTF-8 based on RFC 4627: https://www.ietf.org/rfc/rfc4627.txt since the charset was unset
+         return "utf-8"
+ 

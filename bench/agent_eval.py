@@ -16,6 +16,8 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
+from agent_eval_tasks import TaskSuite, snapshot
+
 HERE = Path(__file__).resolve().parent
 FIXTURE = HERE / "agent_eval_fixture"
 
@@ -30,7 +32,7 @@ def rpc_schemas(command, cwd, env):
     ]
     payload = "".join(json.dumps(item) + "\n" for item in requests)
     result = subprocess.run(command, input=payload, text=True, cwd=cwd, env=env,
-                            capture_output=True, check=True)
+                            capture_output=True, check=True, timeout=30)
     for line in result.stdout.splitlines():
         try:
             reply = json.loads(line)
@@ -64,24 +66,33 @@ def parse_events(stdout):
     calls, failures, followups, names = 0, 0, 0, []
     tool_events, tool_results = [], []
     usage_totals = {}
+    stream_message = None
+    message_usage = {}
     final_text = ""
     for event in events:
         event_type = event.get("type")
         usage = {}
         if event_type == "message_start":
             usage = event.get("message", {}).get("usage", {})
-            source = "stream"
+            if stream_message is not None:
+                totals = usage_totals.setdefault("stream", [0, 0])
+                totals[0] += stream_message[0]
+                totals[1] += stream_message[1]
+            stream_message = [sum(usage.get(key, 0) for key in (
+                "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
+                usage.get("output_tokens", 0)]
         elif event_type == "message_delta":
             usage = event.get("usage", {})
-            source = "stream"
+            if stream_message is None:
+                stream_message = [0, 0]
+            stream_message[1] = usage.get("output_tokens", stream_message[1])
         elif event_type == "assistant":
             usage = event.get("message", {}).get("usage", {})
-            source = "message"
-        if usage:
-            totals = usage_totals.setdefault(source, [0, 0])
-            totals[0] += sum(usage.get(key, 0) for key in (
-                "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
-            totals[1] += usage.get("output_tokens", 0)
+            if usage:
+                key = event.get("message", {}).get("id", len(message_usage))
+                message_usage[key] = [sum(usage.get(field, 0) for field in (
+                    "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
+                    usage.get("output_tokens", 0)]
         if event_type == "assistant":
             message = event.get("message", {})
             for block in message.get("content", []):
@@ -91,7 +102,8 @@ def parse_events(stdout):
                     names.append(name)
                     tool_events.append({"id": block.get("id"), "name": name,
                                         "input": block.get("input", {})})
-                    if calls > 1 and name in {"read_file", "read", "outline", "explore", "context"}:
+                    short_name = name.rsplit("__", 1)[-1].removeprefix("codeq_")
+                    if calls > 1 and short_name in {"read_file", "read", "outline", "explore", "context"}:
                         followups += 1
         elif event_type == "user":
             for block in event.get("message", {}).get("content", []):
@@ -105,13 +117,20 @@ def parse_events(stdout):
             final_text = event.get("result", "")
             # Some CLI versions emit only aggregate usage in the result event.
             usage = event.get("usage", {})
-            usage_totals["result"] = [
-                sum(usage.get(key, 0) for key in (
-                    "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
-                usage.get("output_tokens", 0),
-            ]
+            if usage:
+                usage_totals["result"] = [
+                    sum(usage.get(key, 0) for key in (
+                        "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
+                    usage.get("output_tokens", 0),
+                ]
+    if stream_message is not None:
+        totals = usage_totals.setdefault("stream", [0, 0])
+        totals[0] += stream_message[0]
+        totals[1] += stream_message[1]
+    if message_usage:
+        usage_totals["message"] = [sum(v[i] for v in message_usage.values()) for i in (0, 1)]
     input_tokens, output_tokens = next(
-        (usage_totals[source] for source in ("stream", "message", "result")
+        (usage_totals[source] for source in ("result", "message", "stream")
          if source in usage_totals), [0, 0])
     return {"events": events, "tool_calls": calls, "failed_calls": failures,
             "followup_reads": followups, "tool_names": names,
@@ -143,10 +162,8 @@ def validate(task, workspace):
         final_answer = json.loads(task["last_text"])
     except (json.JSONDecodeError, TypeError):
         final_answer = {}
-    originals = {p.relative_to(FIXTURE).as_posix(): p.read_bytes()
-                 for p in FIXTURE.rglob("*") if p.is_file()}
-    actual = {p.relative_to(workspace).as_posix(): p.read_bytes()
-              for p in workspace.rglob("*") if p.is_file()}
+    originals = snapshot(FIXTURE)
+    actual = snapshot(workspace)
     changed_files = sorted(path for path in originals.keys() | actual.keys()
                            if originals.get(path) != actual.get(path))
     passed = passed and final_answer.get("status") == "done" and changed_files == ["pricing.py"]
@@ -166,42 +183,78 @@ def main():
     parser.add_argument("--max-turns", type=int, default=20)
     parser.add_argument("--timeout-seconds", type=int, default=180)
     parser.add_argument("--output", type=Path, help="write the JSON report to this path")
+    parser.add_argument("--tasks", type=Path, help="pinned repository task manifest")
+    parser.add_argument("--corpus", type=Path, default=HERE / ".corpus")
+    parser.add_argument("--profiles", nargs="+", choices=("generic", "core", "all"),
+                        help="tool profiles, default generic/core/all for repository tasks")
+    parser.add_argument("--self-check", action="store_true",
+                        help="verify pinned sources and edit oracles without model calls")
     parser.add_argument("--dry-run", action="store_true", help="print setup and schema sizes without model calls")
     args = parser.parse_args()
+    suite = TaskSuite(args.tasks, args.corpus) if args.tasks else None
+    if args.self_check:
+        if suite is None:
+            parser.error("--self-check requires --tasks")
+        print(json.dumps({"manifest_sha256": suite.sha256, "checks": suite.self_check()}, indent=2))
+        return
     codeq = args.codeq.resolve()
     if not codeq.is_file():
         parser.error(f"Codeq executable not found: {codeq}")
-    generic = ["python3", str(HERE / "generic_tools_mcp.py")]
+    generic = [sys.executable, str(HERE / "generic_tools_mcp.py")]
     codeq_server = [str(codeq), "mcp", "--tools", args.codeq_tools]
     env = os.environ.copy()
     env["CODEQ_EVAL_WORKSPACE"] = str(FIXTURE)
     generic_schema, generic_stderr = rpc_schemas(generic, FIXTURE, env)
-    codeq_schema, codeq_stderr = rpc_schemas(codeq_server, FIXTURE, env)
-    version = subprocess.run([args.agent, "--version"], text=True, capture_output=True, check=True)
+    profiles = args.profiles or (["generic", "core", "all"] if suite else ["generic", "codeq"])
+    profiles = list(dict.fromkeys(profiles))
+    commands = {profile: [str(codeq), "mcp", "--tools",
+                         args.codeq_tools if profile == "codeq" else profile]
+                for profile in profiles if profile != "generic"}
+    schemas, schema_stderr = {"generic": generic_schema}, {"generic": generic_stderr}
+    for profile, command in commands.items():
+        schemas[profile], schema_stderr[profile] = rpc_schemas(command, FIXTURE, env)
+    try:
+        version = subprocess.run([args.agent, "--version"], text=True, capture_output=True,
+                                 check=True, timeout=30).stdout.strip()
+    except FileNotFoundError:
+        if not args.dry_run:
+            raise
+        version = None
     tasks = [
         {"id": "answer-current-behavior", "kind": "answer",
          "prompt": "Inspect pricing.py. For input [{\"price\": 12, \"cancelled\": true}, {\"price\": 5}], what integer does sum_prices return? Answer only JSON with key answer.",
          "expected_answer": 17},
         {"id": "edit-ignore-cancelled", "kind": "edit",
-         "prompt": "Update sum_prices in pricing.py so cancelled items are ignored. Keep the tests unchanged. Run the tests if useful. When finished, answer only JSON with key status and value done.",
+         "prompt": "Update sum_prices in pricing.py so cancelled items are ignored. Keep the tests unchanged. When finished, answer only JSON with key status and value done.",
          "last_text": ""},
     ]
+    if suite:
+        tasks = [{"id": task.id, "kind": task.kind, "prompt": task.prompt, "spec": task}
+                 for task in suite.tasks]
+        # Fail on missing source, stale evidence, or broken edit oracles before
+        # starting any provider calls, including later tasks in the matrix.
+        suite_checks = suite.self_check()
+    else:
+        suite_checks = None
     if args.dry_run:
-        print(json.dumps({"agent": args.agent, "version": version.stdout.strip(),
+        print(json.dumps({"agent": args.agent, "version": version,
                           "model": args.model, "codeq_command": codeq_server, "tasks": [t["id"] for t in tasks],
-                          "tool_schemas": {"generic": generic_schema, "codeq": codeq_schema},
-                          "schema_bytes": {"generic": len(json.dumps(generic_schema).encode()),
-                                           "codeq": len(json.dumps(codeq_schema).encode())},
-                          "schema_stderr": {"generic": generic_stderr, "codeq": codeq_stderr}}, indent=2))
+                          "profiles": profiles, "planned_model_calls": len(tasks) * len(profiles),
+                          "preflight": suite_checks, "tool_schemas": schemas,
+                          "schema_bytes": {name: len(json.dumps(value).encode())
+                                           for name, value in schemas.items()},
+                          "schema_stderr": schema_stderr}, indent=2))
         return
 
     reports = []
     with tempfile.TemporaryDirectory(prefix="codeq-agent-eval-") as temp:
         for task_index, task in enumerate(tasks):
-            profiles = ("generic", "codeq") if task_index % 2 == 0 else ("codeq", "generic")
-            for profile in profiles:
-                workspace = prepare_workspace(Path(temp) / f"{task['id']}-{profile}")
-                config = mcp_config(generic, codeq_server if profile == "codeq" else None)
+            order = profiles[task_index % len(profiles):] + profiles[:task_index % len(profiles)]
+            for profile in order:
+                destination = Path(temp) / f"{task['id']}-{profile}"
+                prepared = suite.prepare(task["spec"], destination) if suite else None
+                workspace = prepared.workspace if prepared else prepare_workspace(destination)
+                config = mcp_config(generic, commands.get(profile))
                 config_path = Path(temp) / f"{task['id']}-{profile}.mcp.json"
                 config_path.write_text(json.dumps(config))
                 prompt = task["prompt"] + "\nWorkspace: " + str(workspace)
@@ -226,8 +279,12 @@ def main():
                     stderr = error.stderr.decode(errors="replace") if isinstance(error.stderr, bytes) else error.stderr or ""
                 elapsed = time.monotonic() - start
                 parsed = parse_events(stdout)
-                task["last_text"] = parsed["final_text"]
-                validation = validate(task, workspace) if exit_code == 0 else {"passed": False}
+                if exit_code:
+                    validation = {"status": "error", "passed": False, "reason": "agent failed"}
+                elif prepared:
+                    validation = prepared.validate(parsed["final_text"])
+                else:
+                    validation = validate({**task, "last_text": parsed["final_text"]}, workspace)
                 reports.append({
                     "task": task["id"], "profile": profile, "command": command,
                     "exit_code": exit_code, "elapsed_seconds": elapsed,
@@ -239,6 +296,8 @@ def main():
                     "tool_events": parsed["tool_events"], "tool_results": parsed["tool_results"],
                     "model_answer": parsed["final_text"], "stderr": stderr,
                     "validation": validation,
+                    **({"repo": task["spec"].repo, "commit": task["spec"].commit,
+                        "source_sha256": prepared.source_sha256} if prepared else {}),
                 })
     fixture_hash = hashlib.sha256()
     for path in sorted(p for p in FIXTURE.rglob("*") if p.is_file()):
@@ -247,20 +306,22 @@ def main():
         fixture_hash.update(path.read_bytes())
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "agent": args.agent, "agent_version": version.stdout.strip(), "model": args.model,
-        "fixture_sha256": fixture_hash.hexdigest(),
+        "agent": args.agent, "agent_version": version, "model": args.model,
+        "fixture_sha256": fixture_hash.hexdigest() if not suite else None,
         "codeq_command": codeq_server,
-        "tool_schemas": {"generic": generic_schema, "codeq": codeq_schema},
-        "tool_schema_bytes": {"generic": len(json.dumps(generic_schema).encode()),
-                              "codeq": len(json.dumps(codeq_schema).encode())},
-        "schema_stderr": {"generic": generic_stderr, "codeq": codeq_stderr},
+        "profiles": profiles, "tool_schemas": schemas,
+        "tool_schema_bytes": {name: len(json.dumps(value).encode()) for name, value in schemas.items()},
+        "schema_stderr": schema_stderr,
+        "manifest_sha256": suite.sha256 if suite else None,
+        "preflight": suite_checks,
         "results": reports,
     }
     rendered = json.dumps(report, indent=2)
     if args.output:
         args.output.write_text(rendered + "\n")
     print(rendered)
+    return 0 if all(run["validation"]["passed"] for run in reports) else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

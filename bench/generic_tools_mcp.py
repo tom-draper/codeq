@@ -5,6 +5,8 @@ import os
 import sys
 from pathlib import Path
 
+from eval_files import source_paths
+
 
 TOOLS = [
     {"name": "list_files", "description": "List tracked-looking source files below a directory.",
@@ -37,15 +39,15 @@ def call(root, name, args):
     rel = args.get("path", ".")
     target = within(root, rel)
     if name == "list_files":
-        paths = sorted(p.relative_to(root).as_posix() for p in target.rglob("*")
-                       if p.is_file() and ".git" not in p.parts)
+        paths = sorted(p.relative_to(root).as_posix() for p in source_paths(target)
+                       if p.is_file() and p.resolve().is_relative_to(root))
         return "\n".join(paths[:500])
     if name == "search_text":
         query = args["query"]
         rows = []
-        files = [target] if target.is_file() else sorted(target.rglob("*"))
+        files = [target] if target.is_file() else sorted(source_paths(target))
         for path in files:
-            if not path.is_file() or ".git" in path.parts:
+            if not path.is_file() or not path.resolve().is_relative_to(root):
                 continue
             try:
                 lines = path.read_text().splitlines()
