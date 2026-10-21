@@ -40,8 +40,7 @@ jobs:
           version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
           echo "RELEASE_VERSION=v$version" >> "$GITHUB_ENV"
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi
-      - run: cargo test --locked --bin codeq
-      - run: cargo test --locked --test languages --test install
+      - run: cargo test --locked
       - name: Install Linux static C toolchain
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
