@@ -216,7 +216,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     //     changes (the untracked-cache trick git uses), and
     //   * every cached file's (size, mtime, ctime) is unchanged — catches content
     //     edits, including ones that restore mtime after writing.
-    // Only a real change short-circuits it into the full walk below.
+    // Platforms without change timestamps walk and hash files on every query.
     if is_fresh(db, repo_root)? {
         return Ok(RefreshStats {
             reindexed: 0,
@@ -394,7 +394,11 @@ fn walk_tree(repo: &Repo, existing: &HashMap<String, Stored>) -> Walked {
         // read. ctime is what makes this safe: mtime alone can be restored after
         // a write, so a same-size edit would otherwise slip through unnoticed.
         if let Some(prev) = existing.get(&rel) {
-            if prev.size == size && prev.mtime_ns == mtime_ns && prev.ctime_ns == ctime_ns {
+            if cfg!(unix)
+                && prev.size == size
+                && prev.mtime_ns == mtime_ns
+                && prev.ctime_ns == ctime_ns
+            {
                 continue;
             }
         }
@@ -782,6 +786,9 @@ fn replace_dirs(tx: &rusqlite::Transaction, dirs_seen: &HashMap<String, i64>) ->
 /// buffer (`root/…`) instead of allocating a fresh `PathBuf` per file — which at
 /// 100k files is ~200k allocations saved off the per-query cost.
 fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
+    if !cfg!(unix) {
+        return Ok(false);
+    }
     if db.get_meta("git_exclude_stamp")?.as_deref() != Some(git_exclude_stamp(root).as_str()) {
         return Ok(false);
     }
@@ -868,7 +875,7 @@ fn path_mtime(path: &std::path::Path) -> Option<i64> {
 /// `mtime` can be restored after a write (`touch -d`, `cp -p`, `rsync -a`, tar
 /// extraction), so a same-size edit could otherwise leave (size, mtime) intact
 /// and the index silently stale; `ctime` moves on every write. Unix-only —
-/// elsewhere this contributes nothing and freshness falls back to size + mtime.
+/// elsewhere freshness falls back to hashing file contents.
 #[cfg(unix)]
 fn ctime_ns_of(md: &std::fs::Metadata) -> i64 {
     use std::os::unix::fs::MetadataExt;
