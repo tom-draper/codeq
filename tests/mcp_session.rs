@@ -227,6 +227,76 @@ fn shared_dispatch_preserves_raw_bytes_and_result_notes() {
 }
 
 #[test]
+fn project_alias_cache_refreshes_after_a_config_only_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("app/one")).unwrap();
+    std::fs::create_dir_all(root.join("app/two")).unwrap();
+    std::fs::write(
+        root.join("app/main.ts"),
+        "import { helper } from '@/lib';\n",
+    )
+    .unwrap();
+    for directory in ["one", "two"] {
+        std::fs::write(
+            root.join(format!("app/{directory}/lib.ts")),
+            "export function helper() {}\n",
+        )
+        .unwrap();
+    }
+    let config = root.join("app/tsconfig.json");
+    std::fs::write(
+        &config,
+        r#"{"compilerOptions":{"paths":{"@/*":["one/*"]}}}"#,
+    )
+    .unwrap();
+    let mut server = Server::new(root);
+    let first = server.call("codeq_deps", json!({"file":"app/main.ts"}));
+    assert!(first.contains("app/one/lib.ts"), "{first}");
+    std::fs::write(
+        &config,
+        r#"{"compilerOptions":{"paths":{"@/*":["two/*"]}}}"#,
+    )
+    .unwrap();
+    let second = server.call("codeq_deps", json!({"file":"app/main.ts"}));
+    assert!(second.contains("app/two/lib.ts"), "{second}");
+    assert!(!second.contains("app/one/lib.ts"), "{second}");
+}
+
+#[test]
+fn project_alias_cache_detects_creation_and_removal_of_ignored_configs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::create_dir_all(root.join("root")).unwrap();
+    std::fs::write(root.join(".ignore"), "pkg/tsconfig.json\n").unwrap();
+    std::fs::write(
+        root.join("tsconfig.json"),
+        r#"{"compilerOptions":{"paths":{"@/*":["root/*"]}}}"#,
+    )
+    .unwrap();
+    std::fs::write(root.join("root/value.ts"), "export const value = 0;\n").unwrap();
+    std::fs::write(
+        root.join("pkg/main.ts"),
+        "import { value } from '@/value';\n",
+    )
+    .unwrap();
+    let mut server = Server::new(root);
+    let first = server.call("codeq_deps", json!({"file":"pkg/main.ts"}));
+    assert!(first.contains("root/value.ts"), "{first}");
+    let ignored = root.join("pkg/tsconfig.json");
+    std::fs::write(&ignored, "{}").unwrap();
+    let blocked = server.call("codeq_deps", json!({"external":true}));
+    assert!(blocked.contains("not indexed"), "{blocked}");
+    assert!(!server
+        .call("codeq_deps", json!({"file":"pkg/main.ts"}))
+        .contains("root/value.ts"));
+    std::fs::remove_file(ignored).unwrap();
+    let restored = server.call("codeq_deps", json!({"file":"pkg/main.ts"}));
+    assert!(restored.contains("root/value.ts"), "{restored}");
+}
+
+#[test]
 fn schema_rebuild_is_reported_once_and_does_not_end_the_session() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("sample.rs"), "fn target() {}\n").unwrap();
