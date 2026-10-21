@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -62,28 +63,25 @@ def parse_events(stdout):
             continue
     calls, failures, followups, names = 0, 0, 0, []
     tool_events, tool_results = [], []
-    input_tokens = output_tokens = 0
-    streamed_usage = False
-    message_usage = False
+    usage_totals = {}
     final_text = ""
     for event in events:
         event_type = event.get("type")
         usage = {}
         if event_type == "message_start":
             usage = event.get("message", {}).get("usage", {})
-            streamed_usage = True
+            source = "stream"
         elif event_type == "message_delta":
             usage = event.get("usage", {})
-            streamed_usage = True
+            source = "stream"
         elif event_type == "assistant":
             usage = event.get("message", {}).get("usage", {})
-            if usage:
-                message_usage = True
+            source = "message"
         if usage:
-            input_tokens += usage.get("input_tokens", 0)
-            input_tokens += usage.get("cache_creation_input_tokens", 0)
-            input_tokens += usage.get("cache_read_input_tokens", 0)
-            output_tokens += usage.get("output_tokens", 0)
+            totals = usage_totals.setdefault(source, [0, 0])
+            totals[0] += sum(usage.get(key, 0) for key in (
+                "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+            totals[1] += usage.get("output_tokens", 0)
         if event_type == "assistant":
             message = event.get("message", {})
             for block in message.get("content", []):
@@ -106,12 +104,15 @@ def parse_events(stdout):
         elif event_type == "result":
             final_text = event.get("result", "")
             # Some CLI versions emit only aggregate usage in the result event.
-            if not streamed_usage and not message_usage:
-                usage = event.get("usage", {})
-                input_tokens = usage.get("input_tokens", 0)
-                input_tokens += usage.get("cache_creation_input_tokens", 0)
-                input_tokens += usage.get("cache_read_input_tokens", 0)
-                output_tokens = usage.get("output_tokens", 0)
+            usage = event.get("usage", {})
+            usage_totals["result"] = [
+                sum(usage.get(key, 0) for key in (
+                    "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
+                usage.get("output_tokens", 0),
+            ]
+    input_tokens, output_tokens = next(
+        (usage_totals[source] for source in ("stream", "message", "result")
+         if source in usage_totals), [0, 0])
     return {"events": events, "tool_calls": calls, "failed_calls": failures,
             "followup_reads": followups, "tool_names": names,
             "tool_events": tool_events, "tool_results": tool_results,
@@ -126,17 +127,18 @@ def validate(task, workspace):
         except (json.JSONDecodeError, TypeError):
             return {"passed": False, "reason": "final answer was not JSON", "observed": task["last_text"]}
         observed = answer.get("answer") if isinstance(answer, dict) else answer
-        passed = isinstance(observed, str) and observed.strip() == task["expected_answer"]
+        expected = task["expected_answer"]
+        passed = type(observed) is type(expected) and observed == expected
         return {"passed": passed, "observed": observed}
-    source_path = workspace / "pricing.py"
-    source = source_path.read_text() if source_path.is_file() else ""
     tests_before = (FIXTURE / "test_pricing.py").read_bytes()
     tests_path = workspace / "test_pricing.py"
     tests_after = tests_path.read_bytes() if tests_path.is_file() else b""
-    proc = subprocess.run(["python3", "-m", "unittest", "-q"], cwd=workspace,
-                          capture_output=True, text=True)
-    passed = (proc.returncode == 0 and "if not item.get(\"cancelled\", False)" in source
-              and tests_after == tests_before)
+    try:
+        proc = subprocess.run([sys.executable, "-B", "-m", "unittest", "-q"], cwd=workspace,
+                              capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return {"passed": False, "reason": "validation timed out"}
+    passed = proc.returncode == 0 and tests_after == tests_before
     try:
         final_answer = json.loads(task["last_text"])
     except (json.JSONDecodeError, TypeError):
@@ -179,7 +181,7 @@ def main():
     tasks = [
         {"id": "answer-current-behavior", "kind": "answer",
          "prompt": "Inspect pricing.py. For input [{\"price\": 12, \"cancelled\": true}, {\"price\": 5}], what integer does sum_prices return? Answer only JSON with key answer.",
-         "expected_answer": "17"},
+         "expected_answer": 17},
         {"id": "edit-ignore-cancelled", "kind": "edit",
          "prompt": "Update sum_prices in pricing.py so cancelled items are ignored. Keep the tests unchanged. Run the tests if useful. When finished, answer only JSON with key status and value done.",
          "last_text": ""},
