@@ -216,8 +216,8 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     //     changes (the untracked-cache trick git uses), and
     //   * every cached file's (size, mtime, ctime) is unchanged — catches content
     //     edits, including ones that restore mtime after writing.
-    // Platforms without change timestamps walk and hash files on every query.
-    if is_fresh(db, repo_root)? {
+    // Platforms without change timestamps also hash files before trusting the cache.
+    if is_fresh(db, repo_root, !cfg!(unix))? {
         return Ok(RefreshStats {
             reindexed: 0,
             partial_failures: 0,
@@ -238,7 +238,7 @@ pub fn refresh(db: &Db, repo: &Repo) -> Result<RefreshStats> {
     // invocations noticing the same edit at once all decide to refresh, then
     // queue here. Re-check before the manifest load and walk as well as parsing
     // and writes. Dropping `tx` unwritten rolls back cleanly.
-    if is_fresh(db, repo_root)? {
+    if is_fresh(db, repo_root, !cfg!(unix))? {
         return Ok(RefreshStats {
             reindexed: 0,
             partial_failures: 0,
@@ -788,10 +788,7 @@ fn replace_dirs(tx: &rusqlite::Transaction, dirs_seen: &HashMap<String, i64>) ->
 /// cached path from the SQLite row (no per-row `String`) and reuses one path
 /// buffer (`root/…`) instead of allocating a fresh `PathBuf` per file — which at
 /// 100k files is ~200k allocations saved off the per-query cost.
-fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
-    if !cfg!(unix) {
-        return Ok(false);
-    }
+fn is_fresh(db: &Db, root: &std::path::Path, hash_contents: bool) -> Result<bool> {
     if db.get_meta("git_exclude_stamp")?.as_deref() != Some(git_exclude_stamp(root).as_str()) {
         return Ok(false);
     }
@@ -820,9 +817,12 @@ fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
     if !any_dir {
         return Ok(false);
     }
-    let mut stmt = db
-        .conn
-        .prepare("SELECT path, size_bytes, mtime_ns, ctime_ns FROM files")?;
+    let sql = if !hash_contents {
+        "SELECT path, size_bytes, mtime_ns, ctime_ns FROM files"
+    } else {
+        "SELECT path, size_bytes, mtime_ns, ctime_ns, content_hash FROM files"
+    };
+    let mut stmt = db.conn.prepare(sql)?;
     let mut rows = stmt.query([])?;
     while let Some(r) = rows.next()? {
         let rel = r.get_ref(0)?.as_str()?;
@@ -831,8 +831,19 @@ fn is_fresh(db: &Db, root: &std::path::Path) -> Result<bool> {
         let ctime: i64 = r.get::<_, Option<i64>>(3)?.unwrap_or(0);
         buf.truncate(base);
         buf.push_str(rel);
-        if file_stat_key(std::path::Path::new(&buf)) != Some((size, mtime, ctime)) {
+        let path = std::path::Path::new(&buf);
+        if file_stat_key(path) != Some((size, mtime, ctime)) {
             return Ok(false);
+        }
+        if hash_contents {
+            let Ok(bytes) = std::fs::read(path) else {
+                return Ok(false);
+            };
+            let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+            let hash = blake3::hash(bytes).to_hex();
+            if r.get::<_, Option<String>>(4)?.as_deref() != Some(hash.as_str()) {
+                return Ok(false);
+            }
         }
     }
     Ok(true)
@@ -1035,6 +1046,23 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_freshness_reads_bom_files_while_another_connection_holds_a_write_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.py");
+        std::fs::write(&path, b"\xEF\xBB\xBFdef before():\n    pass\n").unwrap();
+        let repo = Repo::at(dir.path(), true).unwrap();
+        let db = Db::open(&repo.root).unwrap();
+        refresh(&db, &repo).unwrap();
+        db.conn.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let writer = rusqlite::Connection::open(repo.root.join(".codeq/index.db")).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(is_fresh(&db, &repo.root, true).unwrap());
+        std::fs::write(&path, b"\xEF\xBB\xBFdef changed():\n    pass\n").unwrap();
+        assert!(!is_fresh(&db, &repo.root, true).unwrap());
+        writer.execute_batch("ROLLBACK").unwrap();
+    }
 
     /// Every language a file can be classified as must be either extractable
     /// (and therefore reported by `capabilities`) or explicitly data-only.
