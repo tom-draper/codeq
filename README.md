@@ -353,6 +353,23 @@ codeq read helpers.cmake --symbol configure_app
 codeq graph --language cmake --relation depends-on
 ```
 
+Justfiles and `.just` files expose recipes and aliases as targets, assignments
+as keys, and module and function declarations. Recipe source includes attributes
+and the command body. Literal single-line imports and explicit module paths
+become file dependencies. Implicit module lookup, escaped paths and expression evaluation are
+not supported. `graph --language just` connects recipes and aliases to targets
+declared in the same file, including parameterized and subsequent dependencies.
+Recipe commands remain opaque. Comments and strings outside recipe bodies support
+`search --in`. Files over 1 MiB or 10,000 facts or relations are skipped, and span
+extraction stops at depth 64. Just is never executed, and definitions do not
+become dead-code candidates.
+
+```sh
+codeq outline justfile
+codeq read justfile --symbol build
+codeq graph --language just --relation depends-on
+```
+
 Support varies by language and query. Run `codeq capabilities` for the support
 matrix bundled with your executable.
 

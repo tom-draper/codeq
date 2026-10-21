@@ -16580,3 +16580,89 @@ fn cmake_opaque_arguments_comments_and_dynamic_names_do_not_create_definitions()
     );
     assert!(field_set(&f.run(&["outline", "large.cmake"]), "name").is_empty());
 }
+
+#[test]
+fn just_recipes_aliases_variables_and_file_dependencies() {
+    let f = Fixture::new();
+    f.write("justfile", "# Tasks\nimport? 'common.just'\nmod tools 'tools.just'\nversion := '1.0'\nexport MODE := 'debug'\nalias b := build\nprepare:\n    echo ready\n[private]\n@build target='all': prepare\n    echo {{target}}\ntest: (build 'tests') && prepare\n    echo tested\n");
+    f.write("common.just", "common:\n    echo common\n");
+    f.write("tools.just", "tool:\n    echo tool\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "justfile"]), "name"),
+        ["tools", "version", "MODE", "b", "prepare", "build", "test"]
+    );
+    assert_eq!(
+        field_set(&f.run(&["deps", "justfile"]), "path"),
+        ["common.just", "tools.just"]
+    );
+    let read = f.raw(&["read", "justfile", "--symbol", "build", "--raw"]);
+    assert!(read.status.success());
+    assert_eq!(
+        String::from_utf8(read.stdout).unwrap(),
+        "[private]\n@build target='all': prepare\n    echo {{target}}\n"
+    );
+    let graph = f.run(&["graph", "--language", "just", "--relation", "depends-on"]);
+    let edges = graph["data"].as_array().unwrap();
+    assert_eq!(edges.len(), 4, "{graph}");
+    for (from, to) in [
+        ("b", "build"),
+        ("build", "prepare"),
+        ("test", "build"),
+        ("test", "prepare"),
+    ] {
+        assert!(
+            edges.iter().any(|e| e["from"] == from && e["to"] == to),
+            "{graph}"
+        );
+    }
+    assert!(field_set(&f.run(&["unused", "."]), "name").is_empty());
+    f.write("Justfile", "capital:\n    echo ok\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "Justfile"]), "name"),
+        ["capital"]
+    );
+}
+
+#[test]
+fn just_strings_and_recipe_commands_do_not_become_declarations() {
+    let f = Fixture::new();
+    f.write("tasks.just", "# fake: ignored\ntext := '''\nfake: ignored\nimport 'fake.just'\n'''\ncommand := `echo 'fake: ignored'`\nset shell := ['sh', '-cu']\nmod implicit\nreal value='has:colon':\n    # fake: ignored\n    echo 'import \"fake.just\"'\n    fake: still a command\n");
+    assert_eq!(
+        field_set(&f.run(&["outline", "tasks.just"]), "name"),
+        ["text", "command", "implicit", "real"]
+    );
+    assert!(field_set(&f.run(&["imports", "tasks.just"]), "module").is_empty());
+    f.write("crowded.just", &"entry := 'value'\n".repeat(10_001));
+    assert!(field_set(&f.run(&["outline", "crowded.just"]), "name").is_empty());
+}
+
+#[test]
+fn build_language_imports_preserve_literal_paths() {
+    let f = Fixture::new();
+    f.write(
+        "CMakeLists.txt",
+        "include(\"helpers#debug.cmake\")\ninclude(\" helpers.cmake\" )\n",
+    );
+    f.write("helpers#debug.cmake", "set(DEBUG yes)\n");
+    f.write(" helpers.cmake", "set(SPACED yes)\n");
+    f.write("helpers.cmake", "set(WRONG yes)\n");
+    assert_eq!(
+        field_set(&f.run(&["deps", "CMakeLists.txt"]), "path"),
+        [" helpers.cmake", "helpers#debug.cmake"]
+    );
+    f.write("justfile", "import '''common.just'''\nmod tools \"\"\"tools.just\"\"\"\nimport ' file.just '\nimport 'file?name.just'\n");
+    for path in [
+        "common.just",
+        "tools.just",
+        " file.just ",
+        "file?name.just",
+        "file.just",
+        "''common.just''",
+    ] {
+        f.write(path, "task:\n    echo ok\n");
+    }
+    assert_eq!(
+        field_set(&f.run(&["deps", "justfile"]), "path"),
+        [" file.just ", "common.just", "file?name.just", "tools.just"]
+    );
+}

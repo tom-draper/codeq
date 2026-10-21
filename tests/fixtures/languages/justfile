@@ -1,0 +1,11 @@
+# Build tasks
+import 'common.just'
+version := '1.0'
+export MODE := 'debug'
+alias b := build
+prepare:
+    echo ready
+build target='all': prepare
+    echo {{target}}
+test: (build 'tests') && prepare
+    echo tested

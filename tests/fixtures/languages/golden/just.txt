@@ -1,0 +1,18 @@
+file justfile f17ff23935d3086f
+fact import ./common.just 2:0-2:21 bytes=14-35 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/just confidence=1 sig=./common.just doc=-
+fact key version 3:0-3:17 bytes=35-52 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/just confidence=1 sig=version doc=-
+fact key MODE 4:0-4:23 bytes=52-75 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/just confidence=1 sig=MODE doc=-
+fact target b 5:0-5:17 bytes=75-92 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/just confidence=1 sig=b doc=-
+fact target prepare 6:0-7:15 bytes=92-116 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/just confidence=1 sig=prepare: doc=-
+fact target build 8:0-9:20 bytes=116-164 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/just confidence=1 sig=build target=\'all\': prepare doc=-
+fact target test 10:0-11:16 bytes=164-213 vis=- owner=- derived=0 test=0 decorator=- contract=- shape=-/0 source=tree-sitter/just confidence=1 sig=test: (build \'tests\') && prepare doc=-
+relation 5 b depends-on build
+relation 8 build depends-on prepare
+relation 10 test depends-on build
+relation 10 test depends-on prepare
+span 0-13 kind=0
+span 21-34 kind=1
+span 46-51 kind=1
+span 67-74 kind=1
+span 129-134 kind=1
+span 177-184 kind=1

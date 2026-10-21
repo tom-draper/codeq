@@ -22,6 +22,7 @@ mod cmake;
 mod config;
 mod docs;
 mod flat_config;
+mod just;
 mod markup;
 mod sections;
 mod text;
@@ -899,6 +900,7 @@ impl Extractor {
     pub fn extract(&mut self, language: &str, path: &str, src: &[u8]) -> Result<Extracted> {
         match language {
             "cmake" => return cmake::extract(src),
+            "just" => return just::extract(src),
             "json" | "yaml" | "toml" => return config::config_facts(language, path, src),
             "asciidoc" | "org" => return Ok((sections::extract(language, src), None, Vec::new())),
             "dockerfile" | "make" => return Ok((build::extract(language, src), None, Vec::new())),
@@ -1116,6 +1118,7 @@ pub const LANGUAGES: &[&str] = &[
     "dockerfile",
     "make",
     "cmake",
+    "just",
 ];
 
 /// The text of the first direct child of `node` whose kind is `kind`.
