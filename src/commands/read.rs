@@ -456,17 +456,17 @@ pub(super) fn resolve_file(s: &Session, arg: &str) -> Result<String> {
     // often supply absolute paths or paths relative to the query directory.
     if let (Ok(path), Ok(root)) = (s.cwd.join(arg).canonicalize(), s.repo.root.canonicalize()) {
         if let Ok(relative) = path.strip_prefix(root) {
-            let relative = relative.to_string_lossy();
+            let relative = relative.to_string_lossy().replace('\\', "/");
             if s.db
                 .conn
                 .query_row(
                     "SELECT 1 FROM files WHERE path = ?1",
-                    [relative.as_ref()],
+                    [relative.as_str()],
                     |_| Ok(()),
                 )
                 .is_ok()
             {
-                return Ok(relative.into_owned());
+                return Ok(relative);
             }
         }
     }

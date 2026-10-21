@@ -502,7 +502,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
         let rel = on_disk
             .as_deref()
             .and_then(|p| p.strip_prefix(&root).ok())
-            .map(|p| p.to_string_lossy().into_owned())
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|| given.clone());
         if indexed.query_row([&rel], |r| r.get::<_, bool>(0))? {
             paths.push(rel);
@@ -544,7 +544,7 @@ pub fn cmd_search(cwd: &Path, args: SearchArgs, out: Out) -> Result<()> {
                 // how the positional target was spelled. External files keep
                 // their caller-visible path.
                 let relative = path.strip_prefix(&root).ok();
-                let glob_path = relative.map(|p| p.to_string_lossy());
+                let glob_path = relative.map(|p| p.to_string_lossy().replace('\\', "/"));
                 gf.accepts(glob_path.as_deref().unwrap_or(label))
             })
         };
